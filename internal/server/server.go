@@ -14,6 +14,7 @@ import (
 
 	"paihuo/internal/events"
 	"paihuo/internal/exec"
+	"paihuo/internal/sched"
 	"paihuo/internal/store"
 	"paihuo/internal/web"
 )
@@ -30,16 +31,18 @@ type Server struct {
 	st    *store.Store
 	hub   *events.Hub
 	ex    *exec.Executor
+	sched *sched.Scheduler
 	token string
 	pages map[string]*template.Template // 每页一个模板集（base + 页面，避免 content 冲突）
 	mux   *http.ServeMux
 }
 
-func New(st *store.Store, hub *events.Hub, ex *exec.Executor, token string) *Server {
+func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Scheduler, token string) *Server {
 	s := &Server{
 		st:    st,
 		hub:   hub,
 		ex:    ex,
+		sched: sc,
 		token: token,
 		pages: map[string]*template.Template{
 			"index":    template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/index.html")),

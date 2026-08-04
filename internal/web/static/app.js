@@ -312,14 +312,16 @@ function agentHTML(a) {
 /* ------------------------------------------------------------------ */
 /* 设置页：定时任务 */
 
-function openScheduleModal() {
+function openScheduleModal(id) {
   fillAgentSelects();
-  document.getElementById("sId").value = "";
-  document.getElementById("sName").value = "";
-  document.getElementById("sCron").value = "0 9 * * *";
-  document.getElementById("sTitle").value = "";
-  document.getElementById("sBody").value = "";
-  document.getElementById("sEnabled").checked = true;
+  const sc = id ? state.schedules.find(x => x.id === id) : null;
+  document.getElementById("sId").value = sc ? sc.id : "";
+  document.getElementById("sName").value = sc ? sc.name : "";
+  document.getElementById("sCron").value = sc ? sc.cron : "0 9 * * *";
+  document.getElementById("sTitle").value = sc ? sc.title_template : "";
+  document.getElementById("sBody").value = sc ? sc.body_template : "";
+  document.getElementById("sEnabled").checked = sc ? sc.enabled : true;
+  if (sc) document.getElementById("sAgent").value = sc.agent_id;
   openModal("scheduleModal");
 }
 
@@ -356,7 +358,8 @@ function scheduleHTML(sc) {
       <div class="item-sub">${esc(sc.cron)} → ${esc(sc.agent_name)}　上次：${esc(sc.last_run_at || "-")}</div>
     </div>
     <div class="item-actions">
-      <button class="btn small" onclick="deleteSchedule(${sc.id})">删除</button>
+      <button class="btn small" onclick="openScheduleModal(${sc.id})">编辑</button>
+      <button class="btn small danger" onclick="deleteSchedule(${sc.id})">删除</button>
     </div>
   </div>`;
 }

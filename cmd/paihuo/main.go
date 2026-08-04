@@ -13,6 +13,7 @@ import (
 
 	"paihuo/internal/events"
 	"paihuo/internal/exec"
+	"paihuo/internal/sched"
 	"paihuo/internal/server"
 	"paihuo/internal/store"
 )
@@ -39,12 +40,14 @@ func main() {
 
 	hub := events.NewHub()
 	ex := exec.New(st, hub)
+	sc := sched.New(st, hub, ex)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ex.Start(ctx)
+	sc.Start(ctx)
 
-	srv := server.New(st, hub, ex, token)
+	srv := server.New(st, hub, ex, sc, token)
 	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
 
 	go func() {

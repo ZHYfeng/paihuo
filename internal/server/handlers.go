@@ -403,6 +403,7 @@ func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.sched.Reload()
 	sc, err := s.st.GetSchedule(id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -436,6 +437,7 @@ func (s *Server) patchSchedule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.sched.Reload()
 	sc, err := s.st.GetSchedule(id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -453,5 +455,6 @@ func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.sched.Reload()
 	w.WriteHeader(http.StatusNoContent)
 }
