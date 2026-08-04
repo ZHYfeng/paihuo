@@ -1,0 +1,23 @@
+{{define "base"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>派活 PaiHuo</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-token="{{.Token}}">
+<header class="topbar">
+  <span class="logo">派活</span>
+  <nav>
+    <a href="/" class="{{if eq .Active "board"}}active{{end}}">看板</a>
+    <a href="/settings" class="{{if eq .Active "settings"}}active{{end}}">设置</a>
+  </nav>
+</header>
+<main>{{template "content" .}}</main>
+<div id="toast" class="toast hidden"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}

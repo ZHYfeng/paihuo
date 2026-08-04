@@ -1,0 +1,30 @@
+{{define "content"}}
+<div class="board-wrap">
+  <div class="board" id="board"></div>
+  <aside class="detail hidden" id="detail"></aside>
+</div>
+
+<div class="modal hidden" id="taskModal">
+  <div class="modal-box">
+    <h3>新建任务</h3>
+    <label>标题 <input id="tTitle" placeholder="要做什么"></label>
+    <label>提示词
+      <textarea id="tBody" rows="6" placeholder="给 agent 的详细指令。留空则由标题生成。"></textarea>
+    </label>
+    <div class="row">
+      <label>角色 <select id="tAgent"></select></label>
+      <label>权限
+        <select id="tPerm">
+          <option value="full">完整（直接读写执行）</option>
+          <option value="review">读 + 每轮确认</option>
+          <option value="readonly">只读</option>
+        </select>
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('taskModal')">取消</button>
+      <button class="btn primary" onclick="submitTask()">创建</button>
+    </div>
+  </div>
+</div>
+{{end}}
