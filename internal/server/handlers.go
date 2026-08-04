@@ -211,6 +211,20 @@ func (s *Server) getTaskLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, logs)
 }
 
+// getTaskChildren 返回子任务列表（多 agent 协作：拆分大任务并行执行）。
+func (s *Server) getTaskChildren(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	children, err := s.st.ListChildren(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, children)
+}
+
 // taskDiff 返回任务项目目录的 git 改动（审批时展示）。
 func (s *Server) taskDiff(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)

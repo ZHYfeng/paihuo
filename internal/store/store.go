@@ -415,6 +415,10 @@ func (s *Store) ClaimTask(id int64) (bool, error) {
 }
 
 func (s *Store) DeleteTask(id int64) error {
+	// 级联删除子任务（含其日志）
+	if _, err := s.db.Exec("DELETE FROM tasks WHERE parent_id=?", id); err != nil {
+		return err
+	}
 	_, err := s.db.Exec("DELETE FROM tasks WHERE id=?", id)
 	return err
 }
@@ -423,6 +427,24 @@ func (s *Store) HasTask(id int64) (bool, error) {
 	var n int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM tasks WHERE id=?", id).Scan(&n)
 	return n > 0, err
+}
+
+// ListChildren 返回某任务的全部子任务（旧→新）。
+func (s *Store) ListChildren(parentID int64) ([]Task, error) {
+	rows, err := s.db.Query("SELECT "+taskCols+" FROM tasks t LEFT JOIN agents a ON a.id=t.agent_id WHERE t.parent_id=? ORDER BY t.created_at, t.id", parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out = make([]Task, 0)
+	for rows.Next() {
+		tk, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, tk)
+	}
+	return out, rows.Err()
 }
 
 // ---------------------------------------------------------------------------

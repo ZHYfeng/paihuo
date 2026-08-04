@@ -64,6 +64,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("DELETE /api/tasks/{id}", s.deleteTask)
 	m.HandleFunc("GET /api/tasks/{id}/logs", s.getTaskLogs)
 	m.HandleFunc("GET /api/tasks/{id}/diff", s.taskDiff)
+	m.HandleFunc("GET /api/tasks/{id}/children", s.getTaskChildren)
 	m.HandleFunc("POST /api/tasks/cleanup", s.cleanupTasks)
 
 	m.HandleFunc("GET /api/settings", s.getSettings)

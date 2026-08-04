@@ -120,6 +120,7 @@ function renderDetail(t) {
     actions += `<button class="btn" onclick="setTaskStatus(${t.id},'queued')">重试</button>`;
   }
   actions += `<button class="btn danger" onclick="deleteTask(${t.id})">删除</button>`;
+  actions += `<button class="btn" onclick="openSubTask(${t.id})">拆分子任务</button>`;
 
   el.innerHTML = `
     <div class="detail-head">
@@ -133,12 +134,39 @@ function renderDetail(t) {
     </div>
     ${t.error ? `<div class="meta" style="color:var(--red)">错误：${esc(t.error)}</div>` : ""}
     <div class="actions">${actions}</div>
+    <div id="childrenBox"></div>
     ${t.status === "awaiting_review" ? `<div id="diffBox"><div class="empty">加载改动中...</div></div>` : ""}
     ${t.body ? `<div class="body">${esc(t.body)}</div>` : ""}
     <div class="logs" id="logBox">${logsHTML()}</div>`;
   const box = document.getElementById("logBox");
   box.scrollTop = box.scrollHeight;
   if (t.status === "awaiting_review") loadDiff(t.id);
+  loadChildren(t.id);
+}
+
+async function loadChildren(id) {
+  try {
+    const kids = await api(`/api/tasks/${id}/children`);
+    const box = document.getElementById("childrenBox");
+    if (!box) return;
+    if (!kids.length) return;
+    const done = kids.filter(k => ["succeeded", "failed", "cancelled"].includes(k.status)).length;
+    box.innerHTML = `<div class="meta" style="margin-top:6px">子任务 ${done}/${kids.length} 完成：</div>` +
+      kids.map(k => `<div class="card" style="padding:6px 8px;margin:4px 0" onclick="openTask(${k.id})">
+        <div class="card-meta"><span class="badge ${k.status}">${STATUS_LABEL[k.status]}</span>
+        <span>${esc(k.title)}</span></div></div>`).join("");
+  } catch (_) {}
+}
+
+function openSubTask(parentId) {
+  fillAgentSelects();
+  const t = state.tasks.find(x => x.id === parentId);
+  document.getElementById("tTitle").value = "";
+  document.getElementById("tBody").value = "";
+  document.getElementById("tPerm").value = t ? t.perm : "full";
+  document.getElementById("tParentId").value = parentId;
+  document.getElementById("taskModalTitle").textContent = "拆分子任务";
+  openModal("taskModal");
 }
 
 async function loadDiff(id) {
@@ -195,12 +223,15 @@ function openNewTask() {
   document.getElementById("tTitle").value = "";
   document.getElementById("tBody").value = "";
   document.getElementById("tPerm").value = "full";
+  document.getElementById("tParentId").value = "";
+  document.getElementById("taskModalTitle").textContent = "新建任务";
   openModal("taskModal");
 }
 
 async function submitTask() {
   const title = document.getElementById("tTitle").value.trim();
   if (!title) return toast("标题不能为空", true);
+  const parentId = Number(document.getElementById("tParentId").value) || null;
   try {
     await api("/api/tasks", {
       method: "POST",
@@ -209,6 +240,7 @@ async function submitTask() {
         body: document.getElementById("tBody").value,
         agent_id: Number(document.getElementById("tAgent").value) || null,
         perm: document.getElementById("tPerm").value,
+        parent_id: parentId,
       }),
     });
     closeModal("taskModal");
