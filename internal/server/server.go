@@ -1,6 +1,10 @@
 package server
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -37,6 +41,45 @@ type Server struct {
 	mux   *http.ServeMux
 }
 
+const (
+	sessionCookie = "paihuo_session"
+	sessionTTL    = 30 * 24 * time.Hour
+)
+
+// sessionValue 用令牌做 HMAC 签名会话（expiry.sig）：服务重启不失效，改令牌即全体失效。
+func (s *Server) sessionValue() string {
+	exp := time.Now().Add(sessionTTL).Unix()
+	mac := hmac.New(sha256.New, []byte(s.token))
+	fmt.Fprintf(mac, "%d", exp)
+	return fmt.Sprintf("%d.%x", exp, mac.Sum(nil)[:16])
+}
+
+func (s *Server) setSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: s.sessionValue(), Path: "/",
+		HttpOnly: true, SameSite: http.SameSiteLaxMode,
+		MaxAge: int(sessionTTL.Seconds()),
+	})
+}
+
+func (s *Server) validSession(r *http.Request) bool {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return false
+	}
+	parts := strings.SplitN(c.Value, ".", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	exp, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || time.Now().Unix() > exp {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(s.token))
+	fmt.Fprintf(mac, "%d", exp)
+	return subtle.ConstantTimeCompare([]byte(parts[1]), []byte(hex.EncodeToString(mac.Sum(nil)[:16]))) == 1
+}
+
 func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Scheduler, token string) *Server {
 	s := &Server{
 		st:    st,
@@ -46,15 +89,26 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 		token: token,
 		pages: map[string]*template.Template{
 			"index":    template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/index.html")),
+			"history":  template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/history.html")),
 			"settings": template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/settings.html")),
+			"login":    template.Must(template.ParseFS(web.FS, "templates/login.html")),
 		},
 		mux: http.NewServeMux(),
 	}
 
 	m := s.mux
 	m.HandleFunc("GET /", s.pageIndex)
+	m.HandleFunc("GET /history", s.pageHistory)
 	m.HandleFunc("GET /settings", s.pageSettings)
-	m.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(mustSub(web.FS, "static"))))
+	m.HandleFunc("GET /login", s.pageLogin)
+	m.HandleFunc("POST /login", s.login)
+	m.HandleFunc("POST /logout", s.logout)
+	fs := http.FileServerFS(mustSub(web.FS, "static"))
+	m.Handle("GET /static/", http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 内嵌资源随二进制更新，禁用缓存避免浏览器拿到旧版前端
+		w.Header().Set("Cache-Control", "no-cache")
+		fs.ServeHTTP(w, r)
+	})))
 	m.HandleFunc("GET /api/events", s.sse)
 
 	m.HandleFunc("GET /api/tasks", s.listTasks)
@@ -87,26 +141,29 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	return s
 }
 
+// Handler 返回带会话鉴权的处理器。
+// 令牌只用于「一次性登录」：POST /login 校验通过后签发 HttpOnly 会话
+// cookie，之后所有请求（含 SSE 的 EventSource）凭 cookie 访问，令牌不再
+// 出现在 URL / 前端代码里。
 func (s *Server) Handler() http.Handler {
 	if s.token == "" {
 		return s.mux
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 静态资源无敏感信息，且页面 HTML 本身已通过鉴权；放行避免浏览器
-		// 加载 <script>/<link> 时（不带 Authorization）被 401 挡死。
-		if strings.HasPrefix(r.URL.Path, "/static/") {
+		p := r.URL.Path
+		if strings.HasPrefix(p, "/static/") || p == "/login" {
 			s.mux.ServeHTTP(w, r)
 			return
 		}
-		got := r.Header.Get("Authorization")
-		got = strings.TrimPrefix(got, "Bearer ")
-		if got == "" {
-			got = r.URL.Query().Get("token")
-		}
-		if got != s.token {
-			http.Error(w, "未授权", http.StatusUnauthorized)
+		if !s.validSession(r) {
+			if strings.HasPrefix(p, "/api/") {
+				writeErr(w, http.StatusUnauthorized, "未登录")
+				return
+			}
+			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
+		s.setSessionCookie(w) // 滑动续期
 		s.mux.ServeHTTP(w, r)
 	})
 }
@@ -115,16 +172,42 @@ func (s *Server) Handler() http.Handler {
 // 页面
 
 type pageData struct {
-	Active string
-	Token  string
+	Active     string
+	LoginError string
 }
 
 func (s *Server) pageIndex(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "index", pageData{Active: "board", Token: s.token})
+	s.render(w, "index", pageData{Active: "board"})
+}
+
+func (s *Server) pageHistory(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "history", pageData{Active: "history"})
 }
 
 func (s *Server) pageSettings(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "settings", pageData{Active: "settings", Token: s.token})
+	s.render(w, "settings", pageData{Active: "settings"})
+}
+
+func (s *Server) pageLogin(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "login", pageData{})
+}
+
+// login 一次性验证令牌：正确则签发会话 cookie。
+func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	got := r.FormValue("token")
+	if s.token == "" || subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
+		s.render(w, "login", pageData{LoginError: "令牌不正确"})
+		return
+	}
+	s.setSessionCookie(w)
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: "", Path: "/", MaxAge: -1,
+	})
+	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
 func (s *Server) render(w http.ResponseWriter, page string, data pageData) {

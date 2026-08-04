@@ -1,22 +1,25 @@
-/* 派活前端逻辑：看板渲染、SSE 实时更新、CRUD。 */
+/* 派活前端逻辑：看板/历史/设置渲染、SSE 实时更新、CRUD。 */
 
-const TOKEN = document.body.dataset.token || "";
 const state = {
   tasks: [],
   agents: [],
-  devices: [],
   schedules: [],
+  templates: [],
   selected: null, // 当前查看的任务 id
-  logs: [], // 当前查看任务的日志
+  logs: [],       // 当前查看任务的日志
+  history: [],    // 历史页筛选结果
+  historySel: new Set(), // 历史页选中行
 };
 
 const STATUS_LABEL = {
   queued: "待执行", claimed: "领取中", running: "执行中",
   awaiting_review: "待审批", succeeded: "完成", failed: "失败", cancelled: "已取消",
 };
+// 看板只留活跃列：终态任务进「历史」页
 const COLUMNS = [
-  ["queued", "待执行"], ["claimed", "领取中"], ["running", "执行中"],
-  ["awaiting_review", "待审批"], ["succeeded", "完成"], ["failed", "失败"], ["cancelled", "已取消"],
+  ["queue", "排队", ["queued", "claimed"]],
+  ["running", "执行中", ["running"]],
+  ["awaiting_review", "待审批", ["awaiting_review"]],
 ];
 const PERM_LABEL = { full: "完整", review: "完成后审批" };
 
@@ -35,7 +38,6 @@ function toast(msg, isErr) {
 
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
-  if (TOKEN) headers["Authorization"] = "Bearer " + TOKEN;
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   const res = await fetch(path, { ...opts, headers });
   if (!res.ok) {
@@ -73,8 +75,9 @@ function renderSettings() {
 
 function renderBoard() {
   const board = document.getElementById("board");
-  board.innerHTML = COLUMNS.map(([key, label]) => {
-    const items = state.tasks.filter(t => t.status === key);
+  if (!board) return;
+  board.innerHTML = COLUMNS.map(([key, label, statuses]) => {
+    const items = state.tasks.filter(t => statuses.includes(t.status));
     return `<div class="column">
       <div class="col-head"><span>${label}</span><span class="count">${items.length}</span></div>
       ${items.map(cardHTML).join("") || `<div class="empty">—</div>`}
@@ -84,12 +87,15 @@ function renderBoard() {
 
 function cardHTML(t) {
   const when = (t.started_at || t.created_at || "").slice(5, 16).replace("T", " ");
-  return `<div class="card" onclick="openTask(${t.id})">
+  const tags = [];
+  if (t.perm === "review") tags.push(`<span class="tag review">审批</span>`);
+  if (t.review_rounds > 0) tags.push(`<span class="tag">第${t.review_rounds}轮</span>`);
+  return `<div class="card status-${t.status}" onclick="openTask(${t.id})">
     <div class="card-title">${esc(t.title)}</div>
     <div class="card-meta">
-      <span class="badge ${t.status}">${STATUS_LABEL[t.status]}</span>
       <span>${esc(t.agent_name || "未指派")}</span>
       <span>${when}</span>
+      ${tags.join("")}
     </div>
   </div>`;
 }
@@ -105,6 +111,7 @@ async function openTask(id) {
 
 function renderDetail(t) {
   const el = document.getElementById("detail");
+  if (!el) return;
   el.classList.remove("hidden");
   const status = t.status;
   let actions = "";
@@ -138,9 +145,17 @@ function renderDetail(t) {
     <div id="childrenBox"></div>
     ${t.status === "awaiting_review" ? `<div id="diffBox"><div class="empty">加载改动中...</div></div>` : ""}
     ${t.body ? `<div class="body">${esc(t.body)}</div>` : ""}
+    <div class="term-head">
+      <span class="term-dots"><i></i><i></i><i></i></span>
+      <span class="term-title">${esc(t.agent_name || "未指派")} · #${t.id} 对话</span>
+      <span class="term-ops">
+        <button class="btn ghost small" onclick="copyLogs(${t.id})">复制</button>
+        <button class="btn ghost small" onclick="openTerminal(${t.id})">全屏</button>
+      </span>
+    </div>
     <div class="logs" id="logBox">${logsHTML()}</div>`;
   const box = document.getElementById("logBox");
-  box.scrollTop = box.scrollHeight;
+  if (box) box.scrollTop = box.scrollHeight;
   if (t.status === "awaiting_review") loadDiff(t.id);
   loadChildren(t.id);
 }
@@ -153,9 +168,8 @@ async function loadChildren(id) {
     if (!kids.length) return;
     const done = kids.filter(k => ["succeeded", "failed", "cancelled"].includes(k.status)).length;
     box.innerHTML = `<div class="meta" style="margin-top:6px">子任务 ${done}/${kids.length} 完成：</div>` +
-      kids.map(k => `<div class="card" style="padding:6px 8px;margin:4px 0" onclick="openTask(${k.id})">
-        <div class="card-meta"><span class="badge ${k.status}">${STATUS_LABEL[k.status]}</span>
-        <span>${esc(k.title)}</span></div></div>`).join("");
+      kids.map(k => `<div class="card status-${k.status}" style="padding:6px 8px;margin:4px 0" onclick="openTask(${k.id})">
+        <div class="card-title">${esc(k.title)}</div></div>`).join("");
   } catch (_) {}
 }
 
@@ -191,18 +205,29 @@ async function loadDiff(id) {
   }
 }
 
+function tsOf(l) {
+  const m = /T(\d{2}:\d{2}:\d{2})/.exec(l.created_at || "");
+  return m ? m[1] : "";
+}
+
+function logLineHTML(l) {
+  return `<div class="line"><span class="ts">${tsOf(l)}</span><span class="c ${l.stream}">${esc(l.content)}</span></div>`;
+}
+
 function logsHTML() {
-  return state.logs.map(l =>
-    `<div class="line ${l.stream}">${esc(l.content)}</div>`).join("");
+  return state.logs.map(logLineHTML).join("");
 }
 
 function appendLog(l) {
   if (state.selected !== l.task_id) return;
   state.logs.push(l);
-  const box = document.getElementById("logBox");
-  if (!box) return;
-  box.insertAdjacentHTML("beforeend", `<div class="line ${l.stream}">${esc(l.content)}</div>`);
-  box.scrollTop = box.scrollHeight;
+  const html = logLineHTML(l);
+  for (const id of ["logBox", "termBox"]) {
+    const box = document.getElementById(id);
+    if (!box) continue;
+    box.insertAdjacentHTML("beforeend", html);
+    box.scrollTop = box.scrollHeight;
+  }
 }
 
 async function refreshDetail() {
@@ -214,6 +239,134 @@ async function refreshDetail() {
     state.logs = logs;
     renderDetail(task);
   } catch (e) { /* 任务可能已删除 */ state.selected = null; }
+}
+
+/* ------------------------------------------------------------------ */
+/* 历史页 */
+
+function fillHistoryAgent() {
+  const sel = document.getElementById("hAgent");
+  if (!sel) return;
+  sel.innerHTML = `<option value="">全部角色</option>` + state.agents.map(a =>
+    `<option value="${a.id}">${esc(a.name)}</option>`).join("");
+}
+
+async function loadHistory() {
+  const agentId = document.getElementById("hAgent").value;
+  const status = document.getElementById("hStatus").value;
+  const days = Number(document.getElementById("hDays").value) || 0;
+  state.history = state.tasks.filter(t => {
+    if (agentId && t.agent_id !== Number(agentId)) return false;
+    if (status && t.status !== status) return false;
+    if (days > 0) {
+      const end = t.finished_at || t.created_at;
+      if (!end || Date.now() - new Date(end).getTime() > days * 86400000) return false;
+    }
+    return true;
+  });
+  state.historySel.clear();
+  renderHistory();
+}
+
+function renderHistory() {
+  const body = document.getElementById("historyBody");
+  if (!body) return;
+  body.innerHTML = state.history.map(t => `
+    <tr data-id="${t.id}" class="${state.historySel.has(t.id) ? "selected" : ""}" onclick="toggleRow(this)">
+      <td class="chk"><input type="checkbox" ${state.historySel.has(t.id) ? "checked" : ""} onclick="event.stopPropagation()"></td>
+      <td>#${t.id}</td>
+      <td class="t-title" title="点击查看对话"><a class="t-link" onclick="event.stopPropagation();openTerminal(${t.id})">${esc(t.title)}</a></td>
+      <td>${esc(t.agent_name || "-")}</td>
+      <td>${PERM_LABEL[t.perm] || t.perm}</td>
+      <td><span class="badge ${t.status}">${STATUS_LABEL[t.status]}</span></td>
+      <td>${t.review_rounds || ""}</td>
+      <td>${esc((t.created_at || "").slice(0, 16).replace("T", " "))}</td>
+      <td>${esc((t.finished_at || "").slice(0, 16).replace("T", " "))}</td>
+      <td class="ops">
+        ${["succeeded", "failed", "cancelled"].includes(t.status)
+          ? `<button class="btn small" onclick="event.stopPropagation();retryTask(${t.id})">重试</button>` : ""}
+        <button class="btn small danger" onclick="event.stopPropagation();deleteTask(${t.id})">删除</button>
+      </td>
+    </tr>`).join("");
+  const empty = document.getElementById("historyEmpty");
+  if (empty) empty.classList.toggle("hidden", state.history.length > 0);
+  const cnt = document.getElementById("hSelCount");
+  if (cnt) cnt.textContent = state.historySel.size;
+}
+
+function toggleRow(tr) {
+  const id = Number(tr.dataset.id);
+  if (state.historySel.has(id)) state.historySel.delete(id); else state.historySel.add(id);
+  tr.classList.toggle("selected", state.historySel.has(id));
+  tr.querySelector("input[type=checkbox]").checked = state.historySel.has(id);
+  const cnt = document.getElementById("hSelCount");
+  if (cnt) cnt.textContent = state.historySel.size;
+}
+
+function toggleAll() {
+  const all = document.getElementById("hCheckAll").checked;
+  state.historySel.clear();
+  if (all) state.history.forEach(t => state.historySel.add(t.id));
+  renderHistory();
+}
+
+async function deleteSelected() {
+  const ids = [...state.historySel];
+  if (!ids.length) return toast("先勾选要删除的任务", true);
+  if (!confirm(`删除选中的 ${ids.length} 条任务？执行日志将一并删除。`)) return;
+  try {
+    for (const id of ids) await api(`/api/tasks/${id}`, { method: "DELETE" });
+    toast(`已删除 ${ids.length} 条`);
+    await loadAll();
+    await loadHistory();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function cleanupHistory() {
+  const agentId = Number(document.getElementById("hAgent").value) || null;
+  const days = Number(document.getElementById("hDays").value) || 0;
+  const before = days > 0 ? new Date(Date.now() - days * 86400000).toISOString() : "";
+  const cond = (agentId ? "该角色" : "全部角色") + (before ? `、${days} 天前` : "");
+  if (!confirm(`删除${cond}的所有终态任务（完成/失败/取消）？不可恢复！`)) return;
+  try {
+    const r = await api("/api/tasks/cleanup", {
+      method: "POST",
+      body: JSON.stringify({ agent_id: agentId, before }),
+    });
+    toast(`已删除 ${r.deleted} 条历史`);
+    await loadAll();
+    await loadHistory();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function retryTask(id) {
+  try {
+    await setTaskStatus(id, "queued");
+    location.href = "/";
+  } catch (e) { toast(e.message, true); }
+}
+
+async function copyLogs(id) {
+  const text = state.logs.map(l => l.content).join("\n");
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("已复制对话内容");
+  } catch (_) { toast("复制失败", true); }
+}
+
+function openTerminal(id) {
+  const t = state.tasks.find(x => x.id === id) || {};
+  document.getElementById("termTitle").textContent = `${t.agent_name || ""} · #${id} 对话`;
+  const box = document.getElementById("termBox");
+  box.innerHTML = `<div class="empty">加载对话中...</div>`;
+  openModal("termModal");
+  api(`/api/tasks/${id}/logs`).then(logs => {
+    state.logs = logs;
+    box.innerHTML = logsHTML();
+    box.scrollTop = box.scrollHeight;
+  }).catch(() => {
+    box.innerHTML = `<div class="empty">对话加载失败</div>`;
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -273,6 +426,7 @@ async function deleteTask(id) {
     await api(`/api/tasks/${id}`, { method: "DELETE" });
     if (state.selected === id) { state.selected = null; document.getElementById("detail").classList.add("hidden"); }
     await loadAll();
+    if (location.pathname.startsWith("/history")) await loadHistory();
   } catch (e) { toast(e.message, true); }
 }
 
@@ -419,16 +573,16 @@ function scheduleHTML(sc) {
 }
 
 /* ------------------------------------------------------------------ */
-/* 数据清理 */
+/* 数据清理与模板 */
 
 async function loadSettings() {
   try {
     const s = await api("/api/settings");
-    document.getElementById("retentionDays").value = s.retention_days || "";
+    const el = document.getElementById("retentionDays");
+    if (el) el.value = s.retention_days || "";
   } catch (_) {}
 }
 
-/* 任务模板 */
 async function loadTemplates() {
   try {
     state.templates = await api("/api/templates");
@@ -513,8 +667,13 @@ function fillCleanupAgent() {
 function openModal(id) { document.getElementById(id).classList.remove("hidden"); }
 function closeModal(id) { document.getElementById(id).classList.add("hidden"); }
 
+async function logout() {
+  try { await fetch("/logout", { method: "POST" }); } catch (_) {}
+  location.href = "/login";
+}
+
 function sse() {
-  const es = new EventSource(`/api/events${TOKEN ? "?token=" + encodeURIComponent(TOKEN) : ""}`);
+  const es = new EventSource("/api/events");
   es.addEventListener("task", ev => {
     try {
       const d = JSON.parse(ev.data);
@@ -523,6 +682,7 @@ function sse() {
       if (i >= 0) state.tasks[i] = t; else state.tasks.unshift(t);
       renderBoard();
       if (state.selected === t.id) renderDetail(t);
+      if (location.pathname.startsWith("/history")) loadHistory();
     } catch (_) {}
   });
   es.addEventListener("log", ev => {
@@ -532,10 +692,14 @@ function sse() {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
-  renderBoard();
-  document.getElementById("detail").classList.add("hidden");
+  const path = location.pathname;
   try { await loadAll(); } catch (e) { toast("加载失败: " + e.message, true); }
-  loadSettings();
-  loadTemplates();
+  if (path.startsWith("/history")) {
+    fillHistoryAgent();
+    await loadHistory();
+  } else if (path.startsWith("/settings")) {
+    loadSettings();
+    loadTemplates();
+  }
   sse();
 });

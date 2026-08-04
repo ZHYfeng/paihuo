@@ -64,7 +64,11 @@ func main() {
 
 	<-ctx.Done()
 	log.Println("正在关闭...")
-	_ = httpSrv.Shutdown(context.Background())
+	// 带超时关闭：SSE 等长连接不会自己结束，超时后强制退出
+	shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = httpSrv.Shutdown(shCtx)
+	log.Println("已关闭")
 }
 
 // autoCleanup 每小时执行：按 retention_days 设置清理终态历史，并删除孤儿会话目录。

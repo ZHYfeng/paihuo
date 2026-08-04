@@ -7,15 +7,30 @@
 <title>派活 PaiHuo</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
-<body data-token="{{.Token}}">
+<body>
 <header class="topbar">
-  <span class="logo">派活</span>
+  <span class="logo">派活<span class="logo-sub">PaiHuo</span></span>
   <nav>
     <a href="/" class="{{if eq .Active "board"}}active{{end}}">看板</a>
+    <a href="/history" class="{{if eq .Active "history"}}active{{end}}">历史</a>
     <a href="/settings" class="{{if eq .Active "settings"}}active{{end}}">设置</a>
   </nav>
+  <div class="topbar-right">
+    <button class="btn primary" onclick="openNewTask()">＋ 新建任务</button>
+    <button class="btn ghost small" onclick="logout()">登出</button>
+  </div>
 </header>
 <main>{{template "content" .}}</main>
+<div class="modal hidden" id="termModal">
+  <div class="modal-box term-modal">
+    <div class="term-head">
+      <span class="term-dots"><i></i><i></i><i></i></span>
+      <span class="term-title" id="termTitle"></span>
+      <span class="term-ops"><button class="btn ghost small" onclick="closeModal('termModal')">关闭</button></span>
+    </div>
+    <div class="logs term-full" id="termBox"></div>
+  </div>
+</div>
 <div id="toast" class="toast hidden"></div>
 <script src="/static/app.js"></script>
 </body>
