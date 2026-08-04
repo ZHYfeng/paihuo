@@ -18,7 +18,7 @@ const COLUMNS = [
   ["queued", "待执行"], ["claimed", "领取中"], ["running", "执行中"],
   ["awaiting_review", "待审批"], ["succeeded", "完成"], ["failed", "失败"], ["cancelled", "已取消"],
 ];
-const PERM_LABEL = { full: "完整", review: "读+确认", readonly: "只读" };
+const PERM_LABEL = { full: "完整", review: "完成后审批" };
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, c =>
@@ -112,8 +112,8 @@ function renderDetail(t) {
     actions += `<button class="btn danger" onclick="setTaskStatus(${t.id},'cancelled')">取消</button>`;
   }
   if (status === "awaiting_review") {
-    actions += `<button class="btn primary" onclick="setTaskStatus(${t.id},'queued')">批准继续</button>`;
-    actions += `<button class="btn" onclick="setTaskStatus(${t.id},'succeeded')">标记完成</button>`;
+    actions += `<button class="btn primary" onclick="setTaskStatus(${t.id},'succeeded')">审批通过</button>`;
+    actions += `<button class="btn" onclick="rejectTask(${t.id})">驳回重做</button>`;
     actions += `<button class="btn danger" onclick="setTaskStatus(${t.id},'cancelled')">取消</button>`;
   }
   if (["succeeded", "failed", "cancelled"].includes(status)) {
@@ -246,6 +246,18 @@ async function submitTask() {
     });
     closeModal("taskModal");
     await loadAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function rejectTask(id) {
+  const note = prompt("驳回原因 / 修改意见（将追加到任务提示词，重新执行）");
+  if (note === null) return;
+  try {
+    await api(`/api/tasks/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "queued", review_note: note }),
+    });
+    toast("已驳回，任务重新执行");
   } catch (e) { toast(e.message, true); }
 }
 

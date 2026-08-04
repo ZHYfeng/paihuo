@@ -18,9 +18,8 @@ const (
 
 // 权限模式（每任务单独配置）
 const (
-	PermFull     = "full"     // 直接读写执行
-	PermReview   = "review"   // 读 + 每轮确认
-	PermReadonly = "readonly" // 只读
+	PermFull   = "full"   // 完整：直接执行
+	PermReview = "review" // 完成后审批：跑完进入待审批，通过才算成功
 )
 
 // RoleConfig 是角色的执行配置，翻译为各 CLI 的原生参数。

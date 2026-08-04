@@ -29,11 +29,10 @@ cd paihuo && go build -o paihuo ./cmd/paihuo
 
 | 模式 | 行为 |
 |---|---|
-| `完整` | agent 直接读写执行 |
-| `读 + 确认` | 分阶段执行：每完成一个可检查的进展就停下，展示本轮输出 + `git diff` 文件改动，批准后**续跑同一会话**继续，或标记完成 |
-| `只读` | 提示词强制只读（claude 额外启用 plan 模式）；软约束，非沙箱 |
+| `完整` | agent 一次性执行到底，直接记成功 |
+| `完成后审批` | agent 一次性执行到底，然后进入「待审批」：展示完整输出 + `git diff` 文件改动，由你 **审批通过**（记成功）、**驳回重做**（填写修改意见，自动追加到提示词后重新执行）或取消 |
 
-> 审批不是沙箱：agent CLI 是你自己的进程。审查靠"回合暂停 + diff 展示"。
+> 审批发生在**任务完整执行之后**，不是执行中途暂停：agent 一口气干完，你看结果决定收不收。审批不是沙箱——agent CLI 是你的进程，审查靠"结果 + diff"。驳回重做是全新会话干净重跑（带修改意见），不是续跑上次对话。
 
 ## 定时任务
 
@@ -55,7 +54,7 @@ cd paihuo && go build -o paihuo ./cmd/paihuo
 | claude | `-p` | model / system_prompt / skills(`--add-dir`) / 权限映射（只读→plan 模式） |
 | codex | `exec` | model / system_prompt / reasoning_effort |
 
-通用字段：`extra_args`（原样追加）、`env`（环境变量覆盖）。会话按任务隔离（`--session-dir`），审批续跑 `-c` 复用本任务会话，互不干扰。
+通用字段：`extra_args`（原样追加）、`env`（环境变量覆盖）。会话按任务隔离（`--session-dir`），同角色多任务互不干扰。
 
 ## 数据与隐私
 

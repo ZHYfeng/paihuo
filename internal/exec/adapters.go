@@ -16,9 +16,8 @@ type RunOptions struct {
 	Dir        string // 项目目录
 	Prompt     string // 任务提示词（已含权限模式修饰）
 	Role       store.RoleConfig
-	Perm       string // 任务权限模式：full | review | readonly
-	Continue   bool   // 是否为审批续跑轮（复用最近会话）
-	SessionDir string // 任务专属会话目录（会话隔离，续跑无歧义）
+	Perm       string // 任务权限模式：full | review
+	SessionDir string // 任务专属会话目录（会话隔离，互不干扰）
 }
 
 // Adapter 是 agent CLI 的适配器。
@@ -108,9 +107,6 @@ func (a *ompAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	if o.SessionDir != "" {
 		args = append(args, "--session-dir", o.SessionDir)
 	}
-	if o.Continue {
-		args = append(args, "-c") // 继续本任务会话
-	}
 	if m := o.Role.Model; m != "" {
 		args = append(args, "--model", m)
 	}
@@ -143,9 +139,6 @@ type openCodeAdapter struct{ baseAdapter }
 
 func (a *openCodeAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	args := []string{"run", "--dir", o.Dir}
-	if o.Continue {
-		args = append(args, "-c") // 继续最近会话
-	}
 	if m := o.Role.Model; m != "" {
 		args = append(args, "--model", m)
 	}
@@ -185,9 +178,6 @@ func (a *piAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	if o.SessionDir != "" {
 		args = append(args, "--session-dir", o.SessionDir)
 	}
-	if o.Continue {
-		args = append(args, "-c") // 继续本任务会话
-	}
 	if m := o.Role.Model; m != "" {
 		args = append(args, "--model", m)
 	}
@@ -214,16 +204,12 @@ func (a *piAdapter) Warnings(o RunOptions) []string {
 
 // ---------------------------------------------------------------------------
 // claude：claude -p "提示词"
-// 角色映射：model→--model；system_prompt→--append-system-prompt；skills→--add-dir；
-// 权限：readonly→--permission-mode plan（只读计划模式）。
+// 角色映射：model→--model；system_prompt→--append-system-prompt；skills→--add-dir。
 
 type claudeAdapter struct{ baseAdapter }
 
 func (a *claudeAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	args := []string{"-p", o.Prompt}
-	if o.Continue {
-		args = append(args, "--continue") // 继续最近会话
-	}
 	if m := o.Role.Model; m != "" {
 		args = append(args, "--model", m)
 	}
@@ -233,12 +219,7 @@ func (a *claudeAdapter) Build(o RunOptions) (string, []string, []string, error) 
 	for _, d := range o.Role.Skills {
 		args = append(args, "--add-dir", d)
 	}
-	switch o.Perm {
-	case store.PermReadonly:
-		args = append(args, "--permission-mode", "plan")
-	default:
-		args = append(args, "--permission-mode", "acceptEdits")
-	}
+	args = append(args, "--permission-mode", "acceptEdits")
 	args = append(args, o.Role.ExtraArgs...)
 	return a.bin, args, mergeEnv(o.Role.Env), nil
 }
@@ -261,12 +242,6 @@ func (a *claudeAdapter) Warnings(o RunOptions) []string {
 type codexAdapter struct{ baseAdapter }
 
 func (a *codexAdapter) Build(o RunOptions) (string, []string, []string, error) {
-	if o.Continue {
-		// 续跑最近会话；角色 flags 由会话自身携带
-		args := []string{"exec", "resume", "--last"}
-		args = append(args, o.Prompt)
-		return a.bin, args, mergeEnv(o.Role.Env), nil
-	}
 	args := []string{"exec"}
 	if m := o.Role.Model; m != "" {
 		args = append(args, "-c", "model="+tomlQuote(m))

@@ -119,6 +119,10 @@ func migrate(db *sql.DB) error {
 			}
 		}
 	}
+	// readonly 权限模式已移除：历史任务按完整权限继续执行
+	if _, err := db.Exec("UPDATE tasks SET perm='full' WHERE perm='readonly'"); err != nil {
+		return err
+	}
 	return nil
 }
 

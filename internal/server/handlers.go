@@ -7,6 +7,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"paihuo/internal/exec"
@@ -28,7 +29,7 @@ var manualTransitions = map[string]map[string]bool{
 }
 
 var validPerms = map[string]bool{
-	store.PermFull: true, store.PermReview: true, store.PermReadonly: true,
+	store.PermFull: true, store.PermReview: true,
 }
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +129,22 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 			set["finished_at"] = nil
 			set["error"] = ""
 			set["exit_code"] = nil
+		}
+		if to == store.StatusQueued && cur.Status == store.StatusAwaitingReview {
+			// 驳回重做：追加修改意见到提示词，清空会话目录全新执行
+			if note, ok := set["review_note"]; ok {
+				n := strings.TrimSpace(fmt.Sprint(note))
+				if n != "" {
+					body := cur.Body
+					if body != "" {
+						body += "\n\n"
+					}
+					body += fmt.Sprintf("【修改意见 第 %d 轮 %s】%s", cur.ReviewRounds, time.Now().Format("2006-01-02 15:04"), n)
+					set["body"] = body
+				}
+			}
+			delete(set, "review_note")
+			_ = os.RemoveAll(filepath.Join(os.TempDir(), "paihuo-sessions", fmt.Sprintf("task-%d", id)))
 		}
 		if to == store.StatusCancelled {
 			s.ex.CancelTask(id)
