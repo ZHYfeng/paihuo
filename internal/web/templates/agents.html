@@ -1,0 +1,77 @@
+{{define "content"}}
+<header class="page-header">
+  <span class="crumb">派活 / <b>角色</b></span>
+  <span class="spacer"></span>
+  <button class="btn brand sm" onclick="openAgentModal()">＋ 新建角色</button>
+</header>
+<div class="page-content">
+  <div id="agentListShell">
+    <div class="toolbar">
+      <input id="aSearch" placeholder="搜索角色…" style="width:220px" oninput="renderAgentList()">
+      <span class="spacer"></span>
+      <span id="agentCount" style="font-size:12px;color:var(--fg-faint)"></span>
+    </div>
+    <div class="list-wrap">
+      <table class="list-grid">
+        <thead><tr><th>角色</th><th>CLI</th><th>模型</th><th>项目目录</th><th>状态</th><th style="width:110px">操作</th></tr></thead>
+        <tbody id="agentList"></tbody>
+      </table>
+      <div id="agentEmpty" class="empty hidden">还没有角色，点击右上角「新建角色」</div>
+    </div>
+  </div>
+
+  <div id="agentDetailShell" class="hidden" style="display:flex;flex-direction:column;flex:1;min-height:0">
+    <div class="tab-bar" id="agentTabs">
+      <button class="active" data-tab="general" onclick="agentTab('general')">概况</button>
+      <button data-tab="model" onclick="agentTab('model')">模型与指令</button>
+      <button data-tab="skills" onclick="agentTab('skills')">技能与参数</button>
+      <button data-tab="env" onclick="agentTab('env')">环境变量</button>
+    </div>
+    <div id="agentForm" class="tab-panel" style="overflow-y:auto"></div>
+  </div>
+</div>
+
+<div class="modal hidden" id="agentModal">
+  <div class="modal-box wide">
+    <h3 id="agentModalTitle">新建角色</h3>
+    <div class="sub">配置角色身份与 CLI 执行参数</div>
+    <input type="hidden" id="aId">
+    <div class="row">
+      <label class="field">角色名 <input id="aName" placeholder="如：编码工"></label>
+      <label class="field">CLI
+        <select id="aCli">
+          <option value="omp">OMP（Oh My Pi）</option>
+          <option value="opencode">OpenCode</option>
+          <option value="pi">Pi Agent</option>
+          <option value="claude">Claude Code</option>
+          <option value="codex">Codex</option>
+        </select>
+      </label>
+    </div>
+    <label class="field">绑定项目目录 <input id="aProjectDir" placeholder="/path/to/project"></label>
+    <label class="field">描述 <input id="aDesc" placeholder="这个角色负责什么"></label>
+    <div class="row">
+      <label class="field">默认权限
+        <select id="aPerm"><option value="full">完整（直接执行）</option><option value="review">完成后审批</option></select>
+      </label>
+      <label class="field">模型 <input id="aModel" placeholder="留空用 CLI 默认"></label>
+    </div>
+    <label class="field">系统提示词 <textarea id="aSysPrompt" rows="3" placeholder="角色定位、行为规范。会追加到 CLI 默认提示词之后"></textarea></label>
+    <div class="row">
+      <label class="field">思考级别
+        <select id="aThinking"><option value="">默认</option><option value="low">低（快速/省钱）</option><option value="medium">中</option><option value="high">高（深度推理）</option></select>
+      </label>
+      <label class="field">技能目录（逗号分隔）<input id="aSkills" placeholder="/path/to/skills1,/path/to/skills2"></label>
+    </div>
+    <div class="row">
+      <label class="field">插件/配置文件 <input id="aPlugins" placeholder="插件路径或配置叠加文件"></label>
+      <label class="field">额外参数 <input id="aExtra" placeholder="--no-lsp --no-session"></label>
+    </div>
+    <label class="field">环境变量（每行 K=V）<textarea id="aEnv" rows="2" placeholder="KEY=VALUE"></textarea></label>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('agentModal')">取消</button>
+      <button class="btn primary" onclick="submitAgent()">保存</button>
+    </div>
+  </div>
+</div>
+{{end}}

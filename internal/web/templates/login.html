@@ -9,11 +9,14 @@
 </head>
 <body class="login-body">
 <div class="login-card">
-  <div class="login-logo">派活<span>PaiHuo</span></div>
+  <div class="login-logo">
+    <span class="logo-mark">派</span>
+    <span>派活 PaiHuo</span>
+  </div>
   <p class="login-sub">个人 agent 调度平台</p>
   {{if .LoginError}}<div class="login-error">{{.LoginError}}</div>{{end}}
   <form method="post" action="/login" autocomplete="off">
-    <label>访问令牌</label>
+    <label class="field">访问令牌</label>
     <input type="password" name="token" id="loginToken" placeholder="输入令牌登录" autofocus required>
     <button type="submit" class="btn primary login-btn">登 录</button>
   </form>

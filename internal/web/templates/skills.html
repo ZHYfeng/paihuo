@@ -1,0 +1,19 @@
+{{define "content"}}
+<header class="page-header">
+  <span class="crumb">派活 / <b>技能模板</b></span>
+  <span class="spacer"></span>
+</header>
+<div class="page-content">
+  <div class="toolbar">
+    <span style="font-size:12px;color:var(--fg-muted)">从任务详情「保存为模板」沉淀常用提示词，新建任务时一键套用</span>
+    <span class="spacer"></span>
+  </div>
+  <div class="list-wrap">
+    <table class="list-grid">
+      <thead><tr><th>名称</th><th>内容预览</th><th>关联角色</th><th>创建时间</th><th style="width:80px">操作</th></tr></thead>
+      <tbody id="templateList"></tbody>
+    </table>
+    <div id="templateEmpty" class="empty hidden">还没有模板：打开任意任务详情 →「保存为模板」</div>
+  </div>
+</div>
+{{end}}

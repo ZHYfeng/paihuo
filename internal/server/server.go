@@ -88,10 +88,13 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 		sched: sc,
 		token: token,
 		pages: map[string]*template.Template{
-			"index":    template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/index.html")),
-			"history":  template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/history.html")),
-			"settings": template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/settings.html")),
-			"login":    template.Must(template.ParseFS(web.FS, "templates/login.html")),
+			"index":      template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/index.html")),
+			"history":    template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/history.html")),
+			"agents":     template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/agents.html")),
+			"autopilots": template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/autopilots.html")),
+			"skills":     template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/skills.html")),
+			"settings":   template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/settings.html")),
+			"login":      template.Must(template.ParseFS(web.FS, "templates/login.html")),
 		},
 		mux: http.NewServeMux(),
 	}
@@ -99,6 +102,9 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m := s.mux
 	m.HandleFunc("GET /", s.pageIndex)
 	m.HandleFunc("GET /history", s.pageHistory)
+	m.HandleFunc("GET /agents", s.pageAgents)
+	m.HandleFunc("GET /autopilots", s.pageAutopilots)
+	m.HandleFunc("GET /skills", s.pageSkills)
 	m.HandleFunc("GET /settings", s.pageSettings)
 	m.HandleFunc("GET /login", s.pageLogin)
 	m.HandleFunc("POST /login", s.login)
@@ -182,6 +188,18 @@ func (s *Server) pageIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) pageHistory(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "history", pageData{Active: "history"})
+}
+
+func (s *Server) pageAgents(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "agents", pageData{Active: "agents"})
+}
+
+func (s *Server) pageAutopilots(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "autopilots", pageData{Active: "autopilots"})
+}
+
+func (s *Server) pageSkills(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "skills", pageData{Active: "skills"})
 }
 
 func (s *Server) pageSettings(w http.ResponseWriter, r *http.Request) {

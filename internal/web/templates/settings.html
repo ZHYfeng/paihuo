@@ -1,118 +1,60 @@
 {{define "content"}}
-<div class="settings">
-  <section>
-    <div class="sec-head">
-      <h3>角色（Agent）</h3>
-      <button class="btn primary" onclick="openAgentModal()">新建角色</button>
+<header class="page-header">
+  <span class="crumb">派活 / <b>设置</b></span>
+  <span class="spacer"></span>
+</header>
+<div class="page-content">
+  <div class="settings">
+    <div>
+      <div class="page-title">设置</div>
+      <div class="page-sub">数据保留与清理策略</div>
     </div>
-    <div id="agentList" class="card-list"></div>
-  </section>
 
-  <section>
-    <div class="sec-head">
-      <h3>定时任务</h3>
-      <button class="btn primary" onclick="openScheduleModal()">新建定时任务</button>
-    </div>
-    <div id="scheduleList" class="card-list"></div>
-  </section>
-
-  <section>
-    <div class="sec-head"><h3>任务模板（技能沉淀）</h3></div>
-    <div id="templateList" class="card-list"></div>
-  </section>
-
-  <section>
-    <div class="sec-head"><h3>数据清理</h3></div>
-    <div class="item">
-      <div class="item-main">
-        <div class="item-title">保留期限（自动清理）</div>
-        <div class="item-sub">终态任务（完成/失败/取消）超过保留天数后自动删除，含执行日志与会话。0 或留空 = 不自动清理</div>
-      </div>
-      <div class="item-actions">
-        <input id="retentionDays" type="number" min="0" style="width:80px" placeholder="天数">
-        <button class="btn small" onclick="saveRetention()">保存</button>
-      </div>
-    </div>
-    <div class="item">
-      <div class="item-main">
-        <div class="item-title">手动清理</div>
-        <div class="item-sub">按条件删除历史任务（不可恢复）</div>
-      </div>
-      <div class="item-actions">
-        <select id="cleanupAgent" style="width:140px"><option value="">全部角色</option></select>
-        <input id="cleanupDays" type="number" min="0" style="width:90px" placeholder="早于N天">
-        <button class="btn small danger" onclick="runCleanup()">删除</button>
+    <div class="settings-card">
+      <div class="card-head">数据清理</div>
+      <div class="card-body">
+        <div class="set-row">
+          <div>
+            <div class="s-title">保留期限（自动清理）</div>
+            <div class="s-sub">终态任务（完成/失败/取消）超过保留天数自动删除，含日志与会话。0 或留空 = 不自动清理</div>
+          </div>
+          <div class="s-ctl">
+            <input id="retentionDays" type="number" min="0" placeholder="天数">
+            <button class="btn sm" onclick="saveRetention()">保存</button>
+          </div>
+        </div>
+        <div class="set-row">
+          <div>
+            <div class="s-title">手动清理</div>
+            <div class="s-sub">按角色 / 时间批量删除历史任务（不可恢复）</div>
+          </div>
+          <div class="s-ctl">
+            <select id="cleanupAgent" style="width:130px"><option value="">全部角色</option></select>
+            <input id="cleanupDays" type="number" min="0" placeholder="早于N天">
+            <button class="btn sm danger" onclick="runCleanup()">删除</button>
+          </div>
+        </div>
       </div>
     </div>
-  </section>
-</div>
 
-<div class="modal hidden" id="agentModal">
-  <div class="modal-box wide">
-    <h3 id="agentModalTitle">新建角色</h3>
-    <input type="hidden" id="aId">
-    <div class="row">
-      <label>角色名 <input id="aName" placeholder="如：编码工"></label>
-      <label>CLI
-        <select id="aCli">
-          <option value="omp">OMP（Oh My Pi）</option>
-          <option value="opencode">OpenCode</option>
-          <option value="pi">Pi Agent</option>
-          <option value="claude">Claude Code</option>
-          <option value="codex">Codex</option>
-        </select>
-      </label>
-    </div>
-    <label>绑定项目目录 <input id="aProjectDir" placeholder="/path/to/project"></label>
-    <label>描述 <input id="aDesc" placeholder="这个角色负责什么"></label>
-    <div class="row">
-      <label>默认权限
-        <select id="aPerm">
-          <option value="full">完整</option>
-          <option value="review">完成后审批</option>
-        </select>
-      </label>
-      <label>模型 <input id="aModel" placeholder="留空用 CLI 默认，如 gpt-5.2"></label>
-    </div>
-    <label>系统提示词 <textarea id="aSysPrompt" rows="3" placeholder="角色定位、行为规范。会追加到 CLI 默认提示词之后"></textarea></label>
-    <div class="row">
-      <label>思考级别
-        <select id="aThinking">
-          <option value="">默认</option>
-          <option value="low">低（快速/省钱）</option>
-          <option value="medium">中</option>
-          <option value="high">高（深度推理）</option>
-        </select>
-      </label>
-      <label>技能目录（逗号分隔）<input id="aSkills" placeholder="/path/to/skills1,/path/to/skills2"></label>
-    </div>
-    <div class="row">
-      <label>插件/配置文件（逗号分隔）<input id="aPlugins" placeholder="插件路径或配置叠加文件"></label>
-      <label>额外参数（空格分隔）<input id="aExtra" placeholder="--no-lsp --no-session"></label>
-    </div>
-    <label>环境变量（每行 K=V）<textarea id="aEnv" rows="2" placeholder="KEY=VALUE"></textarea></label>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeModal('agentModal')">取消</button>
-      <button class="btn primary" onclick="submitAgent()">保存</button>
-    </div>
-  </div>
-</div>
-
-<div class="modal hidden" id="scheduleModal">
-  <div class="modal-box">
-    <h3>新建定时任务</h3>
-    <input type="hidden" id="sId">
-    <label>名称 <input id="sName" placeholder="每日巡检"></label>
-    <div class="row">
-      <label>Cron 表达式 <input id="sCron" placeholder="0 9 * * *" value="0 9 * * *"></label>
-      <label>角色 <select id="sAgent"></select></label>
-    </div>
-    <label>标题模板 <input id="sTitle" placeholder="每日巡检 {{`{{.date}}`}}"></label>
-    <label>提示词模板 <textarea id="sBody" rows="4" placeholder="检查服务状态并汇报。可用 {{`{{.date}}`}} 变量"></textarea></label>
-    <label><input type="checkbox" id="sEnabled" checked> 启用</label>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeModal('scheduleModal')">取消</button>
-      <button class="btn primary" onclick="submitSchedule()">保存</button>
+    <div class="settings-card">
+      <div class="card-head">会话</div>
+      <div class="card-body">
+        <div class="set-row">
+          <div>
+            <div class="s-title">当前登录</div>
+            <div class="s-sub">会话 cookie 30 天滑动有效；令牌改后全员重新登录</div>
+          </div>
+          <div class="s-ctl"><button class="btn sm" onclick="logout()">登出</button></div>
+        </div>
+        <div class="set-row">
+          <div>
+            <div class="s-title">服务信息</div>
+            <div class="s-sub">单二进制部署于本机，任务在本地执行；数据库文件即完整备份</div>
+          </div>
+          <div class="s-ctl"><span style="font-size:12px;color:var(--fg-faint)" id="srvInfo"></span></div>
+        </div>
+      </div>
     </div>
   </div>
 </div>

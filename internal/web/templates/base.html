@@ -8,28 +8,44 @@
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<header class="topbar">
-  <span class="logo">派活<span class="logo-sub">PaiHuo</span></span>
-  <nav>
-    <a href="/" class="{{if eq .Active "board"}}active{{end}}">看板</a>
-    <a href="/history" class="{{if eq .Active "history"}}active{{end}}">历史</a>
-    <a href="/settings" class="{{if eq .Active "settings"}}active{{end}}">设置</a>
-  </nav>
-  <div class="topbar-right">
-    <button class="btn primary" onclick="openNewTask()">＋ 新建任务</button>
-    <button class="btn ghost small" onclick="logout()">登出</button>
-  </div>
-</header>
-<main>{{template "content" .}}</main>
-<div class="modal hidden" id="termModal">
-  <div class="modal-box term-modal">
-    <div class="term-head">
-      <span class="term-dots"><i></i><i></i><i></i></span>
-      <span class="term-title" id="termTitle"></span>
-      <span class="term-ops"><button class="btn ghost small" onclick="closeModal('termModal')">关闭</button></span>
+<div class="shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <span class="logo-mark">派</span>
+      <span class="text">派活 PaiHuo</span>
     </div>
-    <div class="logs term-full" id="termBox"></div>
-  </div>
+    <nav class="sidebar-nav">
+      <a class="sidebar-link {{if eq .Active "board"}}active{{end}}" href="/">
+        <span class="s-icon">▦</span><span>看板</span>
+        <span class="s-count" id="sbBoardCount"></span>
+      </a>
+      <a class="sidebar-link {{if eq .Active "history"}}active{{end}}" href="/history">
+        <span class="s-icon">☰</span><span>历史</span>
+      </a>
+      <div class="sidebar-group-label">工作区</div>
+      <a class="sidebar-link {{if eq .Active "agents"}}active{{end}}" href="/agents">
+        <span class="s-icon">◉</span><span>角色</span>
+      </a>
+      <a class="sidebar-link {{if eq .Active "autopilots"}}active{{end}}" href="/autopilots">
+        <span class="s-icon">◷</span><span>定时任务</span>
+      </a>
+      <a class="sidebar-link {{if eq .Active "skills"}}active{{end}}" href="/skills">
+        <span class="s-icon">✦</span><span>技能模板</span>
+      </a>
+      <div class="sidebar-group-label">配置</div>
+      <a class="sidebar-link {{if eq .Active "settings"}}active{{end}}" href="/settings">
+        <span class="s-icon">⚙</span><span>设置</span>
+      </a>
+    </nav>
+    <div class="sidebar-footer">
+      <button class="sidebar-link" style="width:100%;border:none;background:none;cursor:pointer;color:var(--fg-muted)" onclick="logout()">
+        <span class="s-icon">⎋</span><span>登出</span>
+      </button>
+    </div>
+  </aside>
+  <main class="main">
+    {{template "content" .}}
+  </main>
 </div>
 <div id="toast" class="toast hidden"></div>
 <script src="/static/app.js"></script>
