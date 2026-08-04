@@ -92,6 +92,12 @@ func (s *Server) Handler() http.Handler {
 		return s.mux
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 静态资源无敏感信息，且页面 HTML 本身已通过鉴权；放行避免浏览器
+		// 加载 <script>/<link> 时（不带 Authorization）被 401 挡死。
+		if strings.HasPrefix(r.URL.Path, "/static/") {
+			s.mux.ServeHTTP(w, r)
+			return
+		}
 		got := r.Header.Get("Authorization")
 		got = strings.TrimPrefix(got, "Bearer ")
 		if got == "" {
