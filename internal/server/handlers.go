@@ -1,8 +1,11 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"os"
+	osexec "os/exec"
+	"time"
 
 	"paihuo/internal/exec"
 	"paihuo/internal/store"
@@ -15,8 +18,8 @@ import (
 var manualTransitions = map[string]map[string]bool{
 	store.StatusQueued:         {store.StatusCancelled: true},
 	store.StatusClaimed:        {store.StatusCancelled: true},
-	store.StatusRunning:        {store.StatusCancelled: true, store.StatusAwaitingReview: true},
-	store.StatusAwaitingReview: {store.StatusRunning: true, store.StatusCancelled: true},
+	store.StatusRunning:        {store.StatusCancelled: true},
+	store.StatusAwaitingReview: {store.StatusQueued: true, store.StatusSucceeded: true, store.StatusCancelled: true},
 	store.StatusSucceeded:      {store.StatusQueued: true},
 	store.StatusFailed:         {store.StatusQueued: true},
 	store.StatusCancelled:      {store.StatusQueued: true},
@@ -202,6 +205,39 @@ func (s *Server) getTaskLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, logs)
+}
+
+// taskDiff 返回任务项目目录的 git 改动（审批时展示）。
+func (s *Server) taskDiff(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	tk, err := s.st.GetTask(id)
+	if err != nil || tk.ProjectDir == "" {
+		writeJSON(w, http.StatusOK, map[string]string{"stat": "", "diff": ""})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	stat, err1 := gitOut(ctx, tk.ProjectDir, "diff", "--stat")
+	diff, err2 := gitOut(ctx, tk.ProjectDir, "diff")
+	if err1 != nil || err2 != nil {
+		writeJSON(w, http.StatusOK, map[string]string{"stat": "", "diff": "", "note": "不是 git 仓库或读取失败"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"stat": stat, "diff": diff})
+}
+
+func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := osexec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // ---------------------------------------------------------------------------

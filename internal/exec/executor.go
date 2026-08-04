@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -40,7 +41,24 @@ func New(st *store.Store, hub *events.Hub) *Executor {
 }
 
 func (e *Executor) Start(ctx context.Context) {
+	e.resetInterrupted()
 	go e.loop(ctx)
+}
+
+// resetInterrupted 服务重启时，把卡在运行态的任务标记为失败（进程已死）。
+func (e *Executor) resetInterrupted() {
+	tasks, err := e.st.ListRunningTasks()
+	if err != nil {
+		return
+	}
+	for _, tk := range tasks {
+		msg := "服务重启，任务中断"
+		_ = e.st.UpdateTask(tk.ID, map[string]any{
+			"status": store.StatusFailed, "finished_at": store.Now(), "error": msg,
+		})
+		e.log(tk.ID, "sys", "✗ "+msg)
+		e.publishTask(tk.ID)
+	}
 }
 
 // Wake 触发一次立即派发（创建/重试任务后调用）。
@@ -159,8 +177,15 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		cancel()
 	}()
 
-	e.log(tk.ID, "sys", fmt.Sprintf("▶ 开始执行：角色=%s CLI=%s 权限=%s", agent.Name, agent.CLI, tk.Perm))
-	ro := RunOptions{Dir: tk.ProjectDir, Prompt: tk.Body, Role: agent.RoleConfig, Perm: tk.Perm}
+	e.log(tk.ID, "sys", fmt.Sprintf("▶ 开始执行：角色=%s CLI=%s 权限=%s%s", agent.Name, agent.CLI, tk.Perm, map[bool]string{true: " 续跑轮", false: ""}[tk.ReviewRounds > 0]))
+	ro := RunOptions{Dir: tk.ProjectDir, Prompt: buildPrompt(tk), Role: agent.RoleConfig, Perm: tk.Perm, Continue: tk.ReviewRounds > 0}
+	// 任务专属会话目录：会话隔离 + 审批续跑无歧义
+	sessDir := filepath.Join(os.TempDir(), "paihuo-sessions", fmt.Sprintf("task-%d", tk.ID))
+	if err := os.MkdirAll(sessDir, 0o755); err == nil {
+		ro.SessionDir = sessDir
+	} else {
+		e.log(tk.ID, "sys", "⚠ 会话目录创建失败，续跑可能不可用: "+err.Error())
+	}
 	for _, w := range adapter.Warnings(ro) {
 		e.log(tk.ID, "sys", "⚠ "+w)
 	}
@@ -197,11 +222,33 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		e.publishTask(tk.ID)
 		return
 	}
+	if tk.Perm == store.PermReview {
+		rounds := tk.ReviewRounds + 1
+		_ = e.st.UpdateTask(tk.ID, map[string]any{
+			"status": store.StatusAwaitingReview, "finished_at": store.Now(), "exit_code": 0, "review_rounds": rounds,
+		})
+		e.log(tk.ID, "sys", fmt.Sprintf("⏸ 第 %d 轮完成，等待审批", rounds))
+		e.publishTask(tk.ID)
+		return
+	}
 	_ = e.st.UpdateTask(tk.ID, map[string]any{
 		"status": store.StatusSucceeded, "finished_at": store.Now(), "exit_code": 0,
 	})
 	e.log(tk.ID, "sys", "✓ 完成")
 	e.publishTask(tk.ID)
+}
+func buildPrompt(tk store.Task) string {
+	body := tk.Body
+	switch tk.Perm {
+	case store.PermReview:
+		if tk.ReviewRounds > 0 {
+			return "继续推进任务，完成下一个可检查的进展后停止并汇报。若任务已完成，请明确说明完成情况。\n\n原任务：" + body
+		}
+		return body + "\n\n[审批模式] 请推进任务，完成一个可检查的进展后停止并汇报，等待人工确认。不要一次性做完所有工作，先做最关键的一步。"
+	case store.PermReadonly:
+		return body + "\n\n[只读模式] 只允许读取、分析和规划，禁止修改任何文件，禁止执行有副作用的命令。"
+	}
+	return body
 }
 
 // runLocal 在本地执行 CLI；取消时杀掉整个进程组。

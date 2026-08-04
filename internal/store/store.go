@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   error       TEXT NOT NULL DEFAULT '',
   exit_code   INTEGER,
   review_note TEXT NOT NULL DEFAULT '',
+  review_rounds INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL,
   started_at  TEXT,
   finished_at TEXT,
@@ -76,6 +77,18 @@ CREATE TABLE IF NOT EXISTS schedules (
 // migrate 结构迁移：老库升级到新 schema（pre-1.0 阶段直接删旧结构）。
 func migrate(db *sql.DB) error {
 	// 移除已废弃的设备概念（SSH 通道不再需要：服务直接部署在执行机上）
+	// 注意顺序：先删引用列（agents.device_id / tasks.device_id），再删 devices 表
+	for _, stmt := range []string{
+		"ALTER TABLE agents DROP COLUMN device_id",
+		"ALTER TABLE tasks DROP COLUMN device_id",
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			// 列不存在则忽略（可能已删）
+			if !strings.Contains(err.Error(), "no such column") {
+				return err
+			}
+		}
+	}
 	if have, err := tableExists(db, "devices"); err != nil {
 		return err
 	} else if have {
@@ -84,12 +97,11 @@ func migrate(db *sql.DB) error {
 		}
 	}
 	for _, stmt := range []string{
-		"ALTER TABLE agents DROP COLUMN device_id",
-		"ALTER TABLE tasks DROP COLUMN device_id",
+		"ALTER TABLE tasks ADD COLUMN review_rounds INTEGER NOT NULL DEFAULT 0",
 	} {
 		if _, err := db.Exec(stmt); err != nil {
-			// 列不存在则忽略（可能已删）
-			if !strings.Contains(err.Error(), "no such column") {
+			// 列已存在则忽略
+			if !strings.Contains(err.Error(), "duplicate column name") {
 				return err
 			}
 		}
@@ -273,7 +285,7 @@ func (s *Store) DeleteAgent(id int64) error {
 
 const taskCols = `t.id, t.title, t.body, t.status, t.perm, t.agent_id, COALESCE(a.name, ''),
 	t.project_dir, t.parent_id, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.created_at, t.started_at, t.finished_at, t.updated_at`
+	t.review_note, t.review_rounds, t.created_at, t.started_at, t.finished_at, t.updated_at`
 
 func scanTask(rows scanner) (Task, error) {
 	var tk Task
@@ -282,7 +294,7 @@ func scanTask(rows scanner) (Task, error) {
 	var started, finished sql.NullString
 	err := rows.Scan(&tk.ID, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &agentID, &agentName,
 		&tk.ProjectDir, &parentID, &scheduleID, &tk.Error, &exitCode,
-		&tk.ReviewNote, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt)
+		&tk.ReviewNote, &tk.ReviewRounds, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt)
 	if err != nil {
 		return tk, err
 	}
@@ -324,6 +336,24 @@ func (s *Store) ListTasks() ([]Task, error) {
 
 func (s *Store) ListQueuedTasks() ([]Task, error) {
 	rows, err := s.db.Query("SELECT " + taskCols + " FROM tasks t LEFT JOIN agents a ON a.id=t.agent_id WHERE t.status='queued' AND t.agent_id IS NOT NULL ORDER BY t.created_at")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out = make([]Task, 0)
+	for rows.Next() {
+		tk, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, tk)
+	}
+	return out, rows.Err()
+}
+
+// ListRunningTasks 返回卡在执行态的任务（服务重启时用于重置）。
+func (s *Store) ListRunningTasks() ([]Task, error) {
+	rows, err := s.db.Query("SELECT "+taskCols+" FROM tasks t LEFT JOIN agents a ON a.id=t.agent_id WHERE t.status IN ('running','claimed','awaiting_review')")
 	if err != nil {
 		return nil, err
 	}

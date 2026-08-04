@@ -99,11 +99,13 @@ function renderDetail(t) {
   el.classList.remove("hidden");
   const status = t.status;
   let actions = "";
-  if (["queued", "claimed", "running", "awaiting_review"].includes(status)) {
+  if (["queued", "claimed", "running"].includes(status)) {
     actions += `<button class="btn danger" onclick="setTaskStatus(${t.id},'cancelled')">取消</button>`;
   }
   if (status === "awaiting_review") {
-    actions += `<button class="btn primary" onclick="setTaskStatus(${t.id},'running')">批准继续</button>`;
+    actions += `<button class="btn primary" onclick="setTaskStatus(${t.id},'queued')">批准继续</button>`;
+    actions += `<button class="btn" onclick="setTaskStatus(${t.id},'succeeded')">标记完成</button>`;
+    actions += `<button class="btn danger" onclick="setTaskStatus(${t.id},'cancelled')">取消</button>`;
   }
   if (["succeeded", "failed", "cancelled"].includes(status)) {
     actions += `<button class="btn" onclick="setTaskStatus(${t.id},'queued')">重试</button>`;
@@ -118,14 +120,37 @@ function renderDetail(t) {
     <div class="meta">
       角色：${esc(t.agent_name || "未指派")}　权限：${PERM_LABEL[t.perm] || t.perm}　
       目录：${esc(t.project_dir || "-")}　
-      创建：${esc(t.created_at || "")}
+      创建：${esc(t.created_at || "")}${t.review_rounds ? `　轮次：${t.review_rounds}` : ""}
     </div>
     ${t.error ? `<div class="meta" style="color:var(--red)">错误：${esc(t.error)}</div>` : ""}
     <div class="actions">${actions}</div>
+    ${t.status === "awaiting_review" ? `<div id="diffBox"><div class="empty">加载改动中...</div></div>` : ""}
     ${t.body ? `<div class="body">${esc(t.body)}</div>` : ""}
     <div class="logs" id="logBox">${logsHTML()}</div>`;
   const box = document.getElementById("logBox");
   box.scrollTop = box.scrollHeight;
+  if (t.status === "awaiting_review") loadDiff(t.id);
+}
+
+async function loadDiff(id) {
+  try {
+    const d = await api(`/api/tasks/${id}/diff`);
+    const box = document.getElementById("diffBox");
+    if (!box) return;
+    const stat = d.stat.trim();
+    const diff = d.diff.trim();
+    if (!stat && !diff) {
+      box.innerHTML = `<div class="meta">无文件改动或非 git 仓库${d.note ? "（" + esc(d.note) + "）" : ""}</div>`;
+      return;
+    }
+    box.innerHTML = `<div class="meta" style="color:var(--green)">文件改动（git diff）：</div>
+      <div class="logs" style="max-height:200px"><div class="line sys">${esc(stat)}</div></div>
+      ${diff ? `<div class="logs" style="max-height:280px">${esc(diff).split("\n").map(l =>
+        `<div class="line ${l.startsWith("+") && !l.startsWith("+++") ? "out" : l.startsWith("-") && !l.startsWith("---") ? "err" : "sys"}">${esc(l)}</div>`).join("")}</div>` : ""}`;
+  } catch (e) {
+    const box = document.getElementById("diffBox");
+    if (box) box.innerHTML = `<div class="meta">diff 加载失败</div>`;
+  }
 }
 
 function logsHTML() {

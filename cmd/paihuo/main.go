@@ -19,13 +19,16 @@ import (
 
 func main() {
 	var addr, db, token string
-	flag.StringVar(&addr, "addr", "127.0.0.1:8080", "监听地址")
+	flag.StringVar(&addr, "addr", "0.0.0.0:8080", "监听地址（部署在服务器时保持 0.0.0.0 供浏览器访问）")
 	flag.StringVar(&db, "db", "paihuo.db", "SQLite 数据库路径")
 	flag.StringVar(&token, "token", "", "访问令牌（空则不鉴权；也可用环境变量 PAIHUO_TOKEN）")
 	flag.Parse()
 
 	if token == "" {
 		token = os.Getenv("PAIHUO_TOKEN")
+	}
+	if token == "" {
+		log.Printf("⚠ 警告：未设置访问令牌（--token 或 PAIHUO_TOKEN）。服务暴露在网络上时任何人都能操作，强烈建议设置。")
 	}
 
 	st, err := store.Open(db)

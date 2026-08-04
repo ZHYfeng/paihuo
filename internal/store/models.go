@@ -58,9 +58,10 @@ type Task struct {
 	ProjectDir string  `json:"project_dir"`
 	ParentID   *int64  `json:"parent_id"`
 	ScheduleID *int64  `json:"schedule_id"`
-	Error      string  `json:"error"`
-	ExitCode   *int    `json:"exit_code"`
-	ReviewNote string  `json:"review_note"`
+	Error       string  `json:"error"`
+	ExitCode    *int    `json:"exit_code"`
+	ReviewNote  string  `json:"review_note"`
+	ReviewRounds int    `json:"review_rounds"`
 	CreatedAt  string  `json:"created_at"`
 	StartedAt  *string `json:"started_at"`
 	FinishedAt *string `json:"finished_at"`
