@@ -15,6 +15,31 @@
     </div>
     <div id="scheduleList" class="card-list"></div>
   </section>
+
+  <section>
+    <div class="sec-head"><h3>数据清理</h3></div>
+    <div class="item">
+      <div class="item-main">
+        <div class="item-title">保留期限（自动清理）</div>
+        <div class="item-sub">终态任务（完成/失败/取消）超过保留天数后自动删除，含执行日志与会话。0 或留空 = 不自动清理</div>
+      </div>
+      <div class="item-actions">
+        <input id="retentionDays" type="number" min="0" style="width:80px" placeholder="天数">
+        <button class="btn small" onclick="saveRetention()">保存</button>
+      </div>
+    </div>
+    <div class="item">
+      <div class="item-main">
+        <div class="item-title">手动清理</div>
+        <div class="item-sub">按条件删除历史任务（不可恢复）</div>
+      </div>
+      <div class="item-actions">
+        <select id="cleanupAgent" style="width:140px"><option value="">全部角色</option></select>
+        <input id="cleanupDays" type="number" min="0" style="width:90px" placeholder="早于N天">
+        <button class="btn small danger" onclick="runCleanup()">删除</button>
+      </div>
+    </div>
+  </section>
 </div>
 
 <div class="modal hidden" id="agentModal">

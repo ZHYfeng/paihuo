@@ -5,11 +5,15 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"syscall"
+	"time"
 
 	"paihuo/internal/events"
 	"paihuo/internal/exec"
@@ -46,6 +50,7 @@ func main() {
 	defer stop()
 	ex.Start(ctx)
 	sc.Start(ctx)
+	go autoCleanup(ctx, st)
 
 	srv := server.New(st, hub, ex, sc, token)
 	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
@@ -60,4 +65,50 @@ func main() {
 	<-ctx.Done()
 	log.Println("正在关闭...")
 	_ = httpSrv.Shutdown(context.Background())
+}
+
+// autoCleanup 每小时执行：按 retention_days 设置清理终态历史，并删除孤儿会话目录。
+func autoCleanup(ctx context.Context, st *store.Store) {
+	run := func() {
+		days := "0"
+		if v, err := st.GetSetting("retention_days"); err == nil && v != "" {
+			days = v
+		}
+		if n, err := strconv.Atoi(days); err == nil && n > 0 {
+			before := time.Now().Add(-time.Duration(n) * 24 * time.Hour).UTC().Format(time.RFC3339)
+			if deleted, err := st.CleanupTasks(nil, before); err == nil && deleted > 0 {
+				log.Printf("自动清理：删除 %d 条超过 %d 天的历史任务", deleted, n)
+			}
+		}
+		// 清理没有对应任务的会话目录
+		sessRoot := filepath.Join(os.TempDir(), "paihuo-sessions")
+		entries, err := os.ReadDir(sessRoot)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			var id int64
+			if _, err := fmt.Sscanf(e.Name(), "task-%d", &id); err != nil {
+				continue
+			}
+			exists, err := st.HasTask(id)
+			if err == nil && !exists {
+				_ = os.RemoveAll(filepath.Join(sessRoot, e.Name()))
+			}
+		}
+	}
+	run()
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			run()
+		}
+	}
 }

@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	osexec "os/exec"
+	"path/filepath"
 	"time"
 
 	"paihuo/internal/exec"
@@ -191,6 +193,8 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// 清理任务专属会话目录（隐私：删除执行痕迹）
+	_ = os.RemoveAll(filepath.Join(os.TempDir(), "paihuo-sessions", fmt.Sprintf("task-%d", id)))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -371,6 +375,53 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---------------------------------------------------------------------------
+// 历史清理与设置
+
+func (s *Server) cleanupTasks(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentID *int64 `json:"agent_id"`
+		Before  string `json:"before"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	n, err := s.st.CleanupTasks(in.AgentID, in.Before)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
+}
+
+func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
+	all, err := s.st.AllSettings()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, all)
+}
+
+func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
+	var in map[string]string
+	if !readJSON(w, r, &in) {
+		return
+	}
+	for k, v := range in {
+		if err := s.st.SetSetting(k, v); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	all, err := s.st.AllSettings()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, all)
 }
 
 // ---------------------------------------------------------------------------

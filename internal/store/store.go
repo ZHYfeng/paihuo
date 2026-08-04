@@ -72,6 +72,11 @@ CREATE TABLE IF NOT EXISTS schedules (
   next_run_at    TEXT,
   created_at     TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT ''
+);
 `
 
 // migrate 结构迁移：老库升级到新 schema（pre-1.0 阶段直接删旧结构）。
@@ -414,6 +419,12 @@ func (s *Store) DeleteTask(id int64) error {
 	return err
 }
 
+func (s *Store) HasTask(id int64) (bool, error) {
+	var n int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM tasks WHERE id=?", id).Scan(&n)
+	return n > 0, err
+}
+
 // ---------------------------------------------------------------------------
 // 任务日志
 
@@ -523,4 +534,65 @@ func (s *Store) UpdateSchedule(id int64, set map[string]any) error {
 func (s *Store) DeleteSchedule(id int64) error {
 	_, err := s.db.Exec("DELETE FROM schedules WHERE id=?", id)
 	return err
+}
+
+// ---------------------------------------------------------------------------
+// 历史清理
+
+// CleanupTasks 删除符合条件的任务（级联删除日志）。条件：
+//   - agentID 非空：仅该角色的任务
+//   - before 非空：仅早于该时间的任务
+// 只删除终态任务（succeeded/failed/cancelled），进行中的任务不动。
+func (s *Store) CleanupTasks(agentID *int64, before string) (int64, error) {
+	q := "DELETE FROM tasks WHERE status IN ('succeeded','failed','cancelled')"
+	args := []any{}
+	if agentID != nil {
+		q += " AND agent_id=?"
+		args = append(args, *agentID)
+	}
+	if before != "" {
+		q += " AND created_at < ?"
+		args = append(args, before)
+	}
+	res, err := s.db.Exec(q, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// ---------------------------------------------------------------------------
+// 设置（key-value）
+
+func (s *Store) GetSetting(key string) (string, error) {
+	var v string
+	err := s.db.QueryRow("SELECT value FROM settings WHERE key=?", key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return v, err
+}
+
+func (s *Store) SetSetting(key, value string) error {
+	_, err := s.db.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
+	return err
+}
+
+func (s *Store) AllSettings() (map[string]string, error) {
+	rows, err := s.db.Query("SELECT key, value FROM settings")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		out[k] = v
+	}
+	return out, rows.Err()
 }

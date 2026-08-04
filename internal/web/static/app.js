@@ -59,7 +59,16 @@ async function loadAll() {
   state.schedules = schedules;
   renderBoard();
   fillAgentSelects();
+  fillCleanupAgent();
+  renderSettings();
   if (state.selected) refreshDetail();
+}
+
+function renderSettings() {
+  const al = document.getElementById("agentList");
+  if (al) al.innerHTML = state.agents.map(agentHTML).join("") || `<div class="empty">还没有角色，点击右上角新建</div>`;
+  const sl = document.getElementById("scheduleList");
+  if (sl) sl.innerHTML = state.schedules.map(scheduleHTML).join("") || `<div class="empty">还没有定时任务</div>`;
 }
 
 function renderBoard() {
@@ -365,6 +374,47 @@ function scheduleHTML(sc) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 数据清理 */
+
+async function loadSettings() {
+  try {
+    const s = await api("/api/settings");
+    document.getElementById("retentionDays").value = s.retention_days || "";
+  } catch (_) {}
+}
+
+async function saveRetention() {
+  try {
+    const days = document.getElementById("retentionDays").value.trim();
+    await api("/api/settings", { method: "PUT", body: JSON.stringify({ retention_days: days }) });
+    toast("已保存，每小时执行一次自动清理");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function runCleanup() {
+  const agentId = Number(document.getElementById("cleanupAgent").value) || null;
+  const days = Number(document.getElementById("cleanupDays").value);
+  const before = days > 0 ? new Date(Date.now() - days * 86400000).toISOString() : "";
+  const cond = (agentId ? "该角色" : "全部角色") + (before ? `、早于${days}天` : "");
+  if (!confirm(`删除${cond}的所有终态历史任务？不可恢复！`)) return;
+  try {
+    const r = await api("/api/tasks/cleanup", {
+      method: "POST",
+      body: JSON.stringify({ agent_id: agentId, before }),
+    });
+    toast(`已删除 ${r.deleted} 条历史`);
+    await loadAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+function fillCleanupAgent() {
+  const sel = document.getElementById("cleanupAgent");
+  if (!sel) return;
+  sel.innerHTML = `<option value="">全部角色</option>` + state.agents.map(a =>
+    `<option value="${a.id}">${esc(a.name)}</option>`).join("");
+}
+
+/* ------------------------------------------------------------------ */
 /* 通用 */
 
 function openModal(id) { document.getElementById(id).classList.remove("hidden"); }
@@ -392,5 +442,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderBoard();
   document.getElementById("detail").classList.add("hidden");
   try { await loadAll(); } catch (e) { toast("加载失败: " + e.message, true); }
+  loadSettings();
   sse();
 });
