@@ -10,14 +10,6 @@
 
   <section>
     <div class="sec-head">
-      <h3>设备</h3>
-      <button class="btn primary" onclick="openDeviceModal()">添加设备</button>
-    </div>
-    <div id="deviceList" class="card-list"></div>
-  </section>
-
-  <section>
-    <div class="sec-head">
       <h3>定时任务</h3>
       <button class="btn primary" onclick="openScheduleModal()">新建定时任务</button>
     </div>
@@ -41,10 +33,7 @@
         </select>
       </label>
     </div>
-    <div class="row">
-      <label>设备 <select id="aDevice"></select></label>
-      <label>绑定项目目录 <input id="aProjectDir" placeholder="/path/to/project"></label>
-    </div>
+    <label>绑定项目目录 <input id="aProjectDir" placeholder="/path/to/project"></label>
     <label>描述 <input id="aDesc" placeholder="这个角色负责什么"></label>
     <div class="row">
       <label>默认权限
@@ -76,32 +65,6 @@
     <div class="modal-actions">
       <button class="btn" onclick="closeModal('agentModal')">取消</button>
       <button class="btn primary" onclick="submitAgent()">保存</button>
-    </div>
-  </div>
-</div>
-
-<div class="modal hidden" id="deviceModal">
-  <div class="modal-box">
-    <h3>添加设备</h3>
-    <input type="hidden" id="dId">
-    <label>设备名 <input id="dName" placeholder="如：家里的服务器"></label>
-    <div class="row">
-      <label>类型
-        <select id="dKind">
-          <option value="local">本机</option>
-          <option value="ssh">远程 SSH</option>
-        </select>
-      </label>
-      <label>主机 <input id="dHost" placeholder="192.168.1.10"></label>
-    </div>
-    <div class="row">
-      <label>端口 <input id="dPort" type="number" value="22"></label>
-      <label>用户 <input id="dUser" placeholder="root"></label>
-    </div>
-    <label>SSH 私钥路径 <input id="dKey" placeholder="~/.ssh/id_ed25519"></label>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeModal('deviceModal')">取消</button>
-      <button class="btn primary" onclick="submitDevice()">保存</button>
     </div>
   </div>
 </div>

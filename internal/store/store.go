@@ -15,27 +15,12 @@ const schema = `
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
-CREATE TABLE IF NOT EXISTS devices (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  name       TEXT NOT NULL,
-  kind       TEXT NOT NULL DEFAULT 'local',
-  host       TEXT NOT NULL DEFAULT '',
-  port       INTEGER NOT NULL DEFAULT 22,
-  user       TEXT NOT NULL DEFAULT '',
-  key_path   TEXT NOT NULL DEFAULT '',
-  status     TEXT NOT NULL DEFAULT 'unknown',
-  last_seen  TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS agents (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   name          TEXT NOT NULL UNIQUE,
   description   TEXT NOT NULL DEFAULT '',
   cli           TEXT NOT NULL,
   role_config   TEXT NOT NULL DEFAULT '{}',
-  device_id     INTEGER NOT NULL REFERENCES devices(id),
   project_dir   TEXT NOT NULL DEFAULT '',
   default_perm  TEXT NOT NULL DEFAULT 'full',
   enabled       INTEGER NOT NULL DEFAULT 1,
@@ -51,7 +36,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   perm        TEXT NOT NULL DEFAULT 'full',
   agent_id    INTEGER REFERENCES agents(id),
   project_dir TEXT NOT NULL DEFAULT '',
-  device_id   INTEGER REFERENCES devices(id),
   parent_id   INTEGER REFERENCES tasks(id),
   schedule_id INTEGER,
   error       TEXT NOT NULL DEFAULT '',
@@ -87,10 +71,39 @@ CREATE TABLE IF NOT EXISTS schedules (
   next_run_at    TEXT,
   created_at     TEXT NOT NULL
 );
-
-INSERT OR IGNORE INTO devices (id, name, kind, created_at, updated_at)
-VALUES (1, '本机', 'local', '', '');
 `
+
+// migrate 结构迁移：老库升级到新 schema（pre-1.0 阶段直接删旧结构）。
+func migrate(db *sql.DB) error {
+	// 移除已废弃的设备概念（SSH 通道不再需要：服务直接部署在执行机上）
+	if have, err := tableExists(db, "devices"); err != nil {
+		return err
+	} else if have {
+		if _, err := db.Exec("DROP TABLE devices"); err != nil {
+			return fmt.Errorf("删除 devices 表失败: %w", err)
+		}
+	}
+	for _, stmt := range []string{
+		"ALTER TABLE agents DROP COLUMN device_id",
+		"ALTER TABLE tasks DROP COLUMN device_id",
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			// 列不存在则忽略（可能已删）
+			if !strings.Contains(err.Error(), "no such column") {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func tableExists(db *sql.DB, table string) (bool, error) {
+	var n int
+	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
 
 // Store 封装 SQLite 访问。SetMaxOpenConns(1) 保证读写顺序一致（WAL 下单写者足够）。
 type Store struct {
@@ -106,6 +119,10 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("初始化数据库失败: %w", err)
+	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("迁移数据库失败: %w", err)
 	}
 	return &Store{db: db}, nil
 }
@@ -160,88 +177,16 @@ type scanner interface {
 }
 
 // ---------------------------------------------------------------------------
-// 设备
-
-const deviceCols = "id, name, kind, host, port, user, key_path, status, last_seen, created_at, updated_at"
-
-func scanDevice(rows scanner) (Device, error) {
-	var d Device
-	var lastSeen sql.NullString
-	err := rows.Scan(&d.ID, &d.Name, &d.Kind, &d.Host, &d.Port, &d.User, &d.KeyPath,
-		&d.Status, &lastSeen, &d.CreatedAt, &d.UpdatedAt)
-	d.LastSeen = lastSeen.String
-	return d, err
-}
-
-func (s *Store) ListDevices() ([]Device, error) {
-	rows, err := s.db.Query("SELECT " + deviceCols + " FROM devices ORDER BY id")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out = make([]Device, 0)
-	for rows.Next() {
-		d, err := scanDevice(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) GetDevice(id int64) (*Device, error) {
-	row := s.db.QueryRow("SELECT "+deviceCols+" FROM devices WHERE id=?", id)
-	d, err := scanDevice(row)
-	if err != nil {
-		return nil, err
-	}
-	return &d, nil
-}
-
-func (s *Store) CreateDevice(d Device) (int64, error) {
-	if d.CreatedAt == "" {
-		d.CreatedAt = Now()
-	}
-	if d.UpdatedAt == "" {
-		d.UpdatedAt = d.CreatedAt
-	}
-	res, err := s.db.Exec(`INSERT INTO devices (name, kind, host, port, user, key_path, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 'unknown', ?, ?)`,
-		d.Name, d.Kind, d.Host, d.Port, d.User, d.KeyPath, d.CreatedAt, d.UpdatedAt)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
-}
-
-func (s *Store) UpdateDevice(id int64, set map[string]any) error {
-	return updateOne(s.db, "devices", id, set)
-}
-
-func (s *Store) DeleteDevice(id int64) error {
-	var n int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM agents WHERE device_id=?", id).Scan(&n); err != nil {
-		return err
-	}
-	if n > 0 {
-		return errors.New("该设备仍被角色引用，无法删除")
-	}
-	_, err := s.db.Exec("DELETE FROM devices WHERE id=?", id)
-	return err
-}
-
-// ---------------------------------------------------------------------------
 // 角色（agent）
 
-const agentCols = `a.id, a.name, a.description, a.cli, a.role_config, a.device_id,
-	a.project_dir, a.default_perm, a.enabled, a.created_at, a.updated_at, d.name`
+const agentCols = `a.id, a.name, a.description, a.cli, a.role_config,
+	a.project_dir, a.default_perm, a.enabled, a.created_at, a.updated_at`
 
 func scanAgent(rows scanner) (Agent, error) {
 	var a Agent
 	var rc string
-	err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.CLI, &rc, &a.DeviceID,
-		&a.ProjectDir, &a.DefaultPerm, &a.Enabled, &a.CreatedAt, &a.UpdatedAt, &a.DeviceName)
+	err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.CLI, &rc,
+		&a.ProjectDir, &a.DefaultPerm, &a.Enabled, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		return a, err
 	}
@@ -252,7 +197,7 @@ func scanAgent(rows scanner) (Agent, error) {
 }
 
 func (s *Store) ListAgents() ([]Agent, error) {
-	rows, err := s.db.Query("SELECT " + agentCols + " FROM agents a JOIN devices d ON d.id=a.device_id ORDER BY a.id")
+	rows, err := s.db.Query("SELECT " + agentCols + " FROM agents a ORDER BY a.id")
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +214,7 @@ func (s *Store) ListAgents() ([]Agent, error) {
 }
 
 func (s *Store) GetAgent(id int64) (*Agent, error) {
-	row := s.db.QueryRow("SELECT "+agentCols+" FROM agents a JOIN devices d ON d.id=a.device_id WHERE a.id=?", id)
+	row := s.db.QueryRow("SELECT "+agentCols+" FROM agents a WHERE a.id=?", id)
 	a, err := scanAgent(row)
 	if err != nil {
 		return nil, err
@@ -288,9 +233,9 @@ func (s *Store) CreateAgent(a Agent) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := s.db.Exec(`INSERT INTO agents (name, description, cli, role_config, device_id, project_dir, default_perm, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.Name, a.Description, a.CLI, string(rc), a.DeviceID, a.ProjectDir, a.DefaultPerm, a.Enabled, a.CreatedAt, a.UpdatedAt)
+	res, err := s.db.Exec(`INSERT INTO agents (name, description, cli, role_config, project_dir, default_perm, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Name, a.Description, a.CLI, string(rc), a.ProjectDir, a.DefaultPerm, a.Enabled, a.CreatedAt, a.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -327,16 +272,16 @@ func (s *Store) DeleteAgent(id int64) error {
 // 任务
 
 const taskCols = `t.id, t.title, t.body, t.status, t.perm, t.agent_id, COALESCE(a.name, ''),
-	t.project_dir, t.device_id, t.parent_id, t.schedule_id, t.error, t.exit_code,
+	t.project_dir, t.parent_id, t.schedule_id, t.error, t.exit_code,
 	t.review_note, t.created_at, t.started_at, t.finished_at, t.updated_at`
 
 func scanTask(rows scanner) (Task, error) {
 	var tk Task
-	var agentID, deviceID, parentID, scheduleID, exitCode sql.NullInt64
+	var agentID, parentID, scheduleID, exitCode sql.NullInt64
 	var agentName string
 	var started, finished sql.NullString
 	err := rows.Scan(&tk.ID, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &agentID, &agentName,
-		&tk.ProjectDir, &deviceID, &parentID, &scheduleID, &tk.Error, &exitCode,
+		&tk.ProjectDir, &parentID, &scheduleID, &tk.Error, &exitCode,
 		&tk.ReviewNote, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt)
 	if err != nil {
 		return tk, err
@@ -345,9 +290,6 @@ func scanTask(rows scanner) (Task, error) {
 		tk.AgentID = &agentID.Int64
 	}
 	tk.AgentName = agentName
-	if deviceID.Valid {
-		tk.DeviceID = &deviceID.Int64
-	}
 	if parentID.Valid {
 		tk.ParentID = &parentID.Int64
 	}
@@ -413,9 +355,9 @@ func (s *Store) CreateTask(t Task) (int64, error) {
 	if t.UpdatedAt == "" {
 		t.UpdatedAt = t.CreatedAt
 	}
-	res, err := s.db.Exec(`INSERT INTO tasks (title, body, status, perm, agent_id, project_dir, device_id, parent_id, schedule_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.Title, t.Body, t.Status, t.Perm, nullInt64(t.AgentID), t.ProjectDir, nullInt64(t.DeviceID),
+	res, err := s.db.Exec(`INSERT INTO tasks (title, body, status, perm, agent_id, project_dir, parent_id, schedule_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.Title, t.Body, t.Status, t.Perm, nullInt64(t.AgentID), t.ProjectDir,
 		nullInt64(t.ParentID), nullInt64(t.ScheduleID), t.CreatedAt, t.UpdatedAt)
 	if err != nil {
 		return 0, err

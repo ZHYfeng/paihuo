@@ -23,20 +23,6 @@ const (
 	PermReadonly = "readonly" // 只读
 )
 
-type Device struct {
-	ID        int64  `json:"id"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"` // local | ssh
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	User      string `json:"user"`
-	KeyPath   string `json:"key_path"`
-	Status    string `json:"status"` // unknown | online | offline
-	LastSeen  string `json:"last_seen"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-}
-
 // RoleConfig 是角色的执行配置，翻译为各 CLI 的原生参数。
 type RoleConfig struct {
 	Model        string            `json:"model"`
@@ -49,39 +35,36 @@ type RoleConfig struct {
 }
 
 type Agent struct {
-	ID           int64      `json:"id"`
-	Name         string     `json:"name"`
-	Description  string     `json:"description"`
-	CLI          string     `json:"cli"` // 适配器 id：omp | opencode | pi | claude | codex
-	RoleConfig   RoleConfig `json:"role_config"`
-	DeviceID     int64      `json:"device_id"`
-	DeviceName   string     `json:"device_name,omitempty"`
-	ProjectDir   string     `json:"project_dir"` // 绑定的项目目录
-	DefaultPerm  string     `json:"default_perm"`
-	Enabled      bool       `json:"enabled"`
-	CreatedAt    string     `json:"created_at"`
-	UpdatedAt    string     `json:"updated_at"`
+	ID          int64      `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	CLI         string     `json:"cli"` // 适配器 id：omp | opencode | pi | claude | codex
+	RoleConfig  RoleConfig `json:"role_config"`
+	ProjectDir  string     `json:"project_dir"` // 绑定的项目目录
+	DefaultPerm string     `json:"default_perm"`
+	Enabled     bool       `json:"enabled"`
+	CreatedAt   string     `json:"created_at"`
+	UpdatedAt   string     `json:"updated_at"`
 }
 
 type Task struct {
-	ID          int64   `json:"id"`
-	Title       string  `json:"title"`
-	Body        string  `json:"body"`
-	Status      string  `json:"status"`
-	Perm        string  `json:"perm"`
-	AgentID     *int64  `json:"agent_id"`
-	AgentName   string  `json:"agent_name,omitempty"`
-	ProjectDir  string  `json:"project_dir"`
-	DeviceID    *int64  `json:"device_id"`
-	ParentID    *int64  `json:"parent_id"`
-	ScheduleID  *int64  `json:"schedule_id"`
-	Error       string  `json:"error"`
-	ExitCode    *int    `json:"exit_code"`
-	ReviewNote  string  `json:"review_note"`
-	CreatedAt   string  `json:"created_at"`
-	StartedAt   *string `json:"started_at"`
-	FinishedAt  *string `json:"finished_at"`
-	UpdatedAt   string  `json:"updated_at"`
+	ID         int64   `json:"id"`
+	Title      string  `json:"title"`
+	Body       string  `json:"body"`
+	Status     string  `json:"status"`
+	Perm       string  `json:"perm"`
+	AgentID    *int64  `json:"agent_id"`
+	AgentName  string  `json:"agent_name,omitempty"`
+	ProjectDir string  `json:"project_dir"`
+	ParentID   *int64  `json:"parent_id"`
+	ScheduleID *int64  `json:"schedule_id"`
+	Error      string  `json:"error"`
+	ExitCode   *int    `json:"exit_code"`
+	ReviewNote string  `json:"review_note"`
+	CreatedAt  string  `json:"created_at"`
+	StartedAt  *string `json:"started_at"`
+	FinishedAt *string `json:"finished_at"`
+	UpdatedAt  string  `json:"updated_at"`
 }
 
 type TaskLog struct {

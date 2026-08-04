@@ -66,11 +66,6 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, token string) *Ser
 	m.HandleFunc("PATCH /api/agents/{id}", s.patchAgent)
 	m.HandleFunc("DELETE /api/agents/{id}", s.deleteAgent)
 
-	m.HandleFunc("GET /api/devices", s.listDevices)
-	m.HandleFunc("POST /api/devices", s.createDevice)
-	m.HandleFunc("PATCH /api/devices/{id}", s.patchDevice)
-	m.HandleFunc("DELETE /api/devices/{id}", s.deleteDevice)
-
 	m.HandleFunc("GET /api/schedules", s.listSchedules)
 	m.HandleFunc("POST /api/schedules", s.createSchedule)
 	m.HandleFunc("PATCH /api/schedules/{id}", s.patchSchedule)

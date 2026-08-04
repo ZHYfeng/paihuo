@@ -59,7 +59,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tk := store.Task{Title: in.Title, Body: in.Body, Status: store.StatusQueued, Perm: perm, AgentID: in.AgentID, ParentID: in.ParentID}
-	// 指派角色时快照项目目录与设备（历史记录不随角色配置漂移）
+	// 指派角色时快照项目目录（历史记录不随角色配置漂移）
 	if in.AgentID != nil {
 		a, err := s.st.GetAgent(*in.AgentID)
 		if err != nil {
@@ -67,7 +67,6 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tk.ProjectDir = a.ProjectDir
-		tk.DeviceID = &a.DeviceID
 	}
 	id, err := s.st.CreateTask(tk)
 	if err != nil {
@@ -130,7 +129,7 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 指派角色：快照项目目录与设备
+	// 指派角色：快照项目目录
 	if v, ok := set["agent_id"]; ok {
 		if aid, isNum := v.(float64); isNum && aid > 0 {
 			a, err := s.st.GetAgent(int64(aid))
@@ -140,11 +139,9 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 			}
 			set["agent_id"] = int64(aid)
 			set["project_dir"] = a.ProjectDir
-			set["device_id"] = a.DeviceID
 		} else {
 			set["agent_id"] = nil
 			set["project_dir"] = ""
-			set["device_id"] = nil
 		}
 	}
 
@@ -220,15 +217,13 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 }
 
 type agentIn struct {
-	Name        string             `json:"name"`
-	Description string             `json:"description"`
-	CLI         string             `json:"cli"`
-	RoleConfig  store.RoleConfig   `json:"role_config"`
-	DeviceID    int64              `json:"device_id"`
-	ProjectDir  string             `json:"project_dir"`
-	DefaultPerm string             `json:"default_perm"`
-	Enabled     *bool              `json:"enabled"`
-	Extra       map[string]any     `json:"-"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	CLI         string           `json:"cli"`
+	RoleConfig  store.RoleConfig `json:"role_config"`
+	ProjectDir  string           `json:"project_dir"`
+	DefaultPerm string           `json:"default_perm"`
+	Enabled     *bool            `json:"enabled"`
 }
 
 func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
@@ -246,7 +241,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.st.CreateAgent(store.Agent{
 		Name: in.Name, Description: in.Description, CLI: in.CLI,
-		RoleConfig: in.RoleConfig, DeviceID: in.DeviceID, ProjectDir: in.ProjectDir,
+		RoleConfig: in.RoleConfig, ProjectDir: in.ProjectDir,
 		DefaultPerm: in.DefaultPerm, Enabled: enabled,
 	})
 	if err != nil {
@@ -267,12 +262,6 @@ func (s *Server) validateAgent(in *agentIn) error {
 	}
 	if _, ok := exec.GetAdapter(in.CLI); !ok {
 		return errMsg("未知 CLI: " + in.CLI)
-	}
-	if in.DeviceID <= 0 {
-		return errMsg("必须选择设备")
-	}
-	if _, err := s.st.GetDevice(in.DeviceID); err != nil {
-		return errMsg("设备不存在")
 	}
 	if in.ProjectDir == "" {
 		return errMsg("必须绑定项目目录")
@@ -298,7 +287,7 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "name", "description", "cli", "role_config", "device_id", "project_dir", "default_perm", "enabled")
+	set, ok := patchMap(w, r, "name", "description", "cli", "role_config", "project_dir", "default_perm", "enabled")
 	if !ok {
 		return
 	}
@@ -324,15 +313,6 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if v, ok := set["device_id"]; ok {
-		if d, isNum := v.(float64); isNum && d > 0 {
-			if _, err := s.st.GetDevice(int64(d)); err != nil {
-				writeErr(w, http.StatusBadRequest, "设备不存在")
-				return
-			}
-			set["device_id"] = int64(d)
-		}
-	}
 	if err := s.st.UpdateAgent(id, set); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -351,77 +331,6 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.st.DeleteAgent(id); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// ---------------------------------------------------------------------------
-// 设备
-
-func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
-	devices, err := s.st.ListDevices()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, devices)
-}
-
-func (s *Server) createDevice(w http.ResponseWriter, r *http.Request) {
-	var in store.Device
-	if !readJSON(w, r, &in) {
-		return
-	}
-	if in.Name == "" {
-		writeErr(w, http.StatusBadRequest, "设备名不能为空")
-		return
-	}
-	if in.Kind != "local" && in.Kind != "ssh" {
-		writeErr(w, http.StatusBadRequest, "设备类型只能是 local 或 ssh")
-		return
-	}
-	id, err := s.st.CreateDevice(in)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	d, err := s.st.GetDevice(id)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, d)
-}
-
-func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r)
-	if !ok {
-		return
-	}
-	set, ok := patchMap(w, r, "name", "kind", "host", "port", "user", "key_path", "status")
-	if !ok {
-		return
-	}
-	if err := s.st.UpdateDevice(id, set); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	d, err := s.st.GetDevice(id)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, d)
-}
-
-func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r)
-	if !ok {
-		return
-	}
-	if err := s.st.DeleteDevice(id); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}

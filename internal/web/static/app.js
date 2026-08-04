@@ -51,12 +51,11 @@ async function api(path, opts = {}) {
 /* 看板 */
 
 async function loadAll() {
-  const [tasks, agents, devices, schedules] = await Promise.all([
-    api("/api/tasks"), api("/api/agents"), api("/api/devices"), api("/api/schedules"),
+  const [tasks, agents, schedules] = await Promise.all([
+    api("/api/tasks"), api("/api/agents"), api("/api/schedules"),
   ]);
   state.tasks = tasks;
   state.agents = agents;
-  state.devices = devices;
   state.schedules = schedules;
   renderBoard();
   fillAgentSelects();
@@ -217,8 +216,6 @@ async function openAgentModal(id) {
   document.getElementById("aName").value = a ? a.name : "";
   document.getElementById("aDesc").value = a ? (a.description || "") : "";
   document.getElementById("aCli").value = a ? a.cli : "omp";
-  document.getElementById("aDevice").innerHTML = state.devices.map(d =>
-    `<option value="${d.id}" ${a && a.device_id === d.id ? "selected" : ""}>${esc(d.name)}</option>`).join("");
   document.getElementById("aProjectDir").value = a ? (a.project_dir || "") : "";
   document.getElementById("aPerm").value = a ? (a.default_perm || "full") : "full";
   const rc = a ? (a.role_config || {}) : {};
@@ -243,7 +240,6 @@ async function submitAgent() {
     name: document.getElementById("aName").value.trim(),
     description: document.getElementById("aDesc").value.trim(),
     cli: document.getElementById("aCli").value,
-    device_id: Number(document.getElementById("aDevice").value),
     project_dir: document.getElementById("aProjectDir").value.trim(),
     default_perm: document.getElementById("aPerm").value,
     role_config: {
@@ -279,63 +275,12 @@ function agentHTML(a) {
   return `<div class="item">
     <div class="item-main">
       <div class="item-title">${esc(a.name)} <span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "启用" : "停用"}</span></div>
-      <div class="item-sub">${esc(bits)}<br>设备：${esc(a.device_name)}　目录：${esc(a.project_dir)}</div>
+      <div class="item-sub">${esc(bits)}<br>目录：${esc(a.project_dir)}</div>
     </div>
     <div class="item-actions">
       <button class="btn small" onclick="openAgentModal(${a.id})">编辑</button>
       <button class="btn small danger" onclick="deleteAgent(${a.id})">删除</button>
     </div>
-  </div>`;
-}
-
-/* ------------------------------------------------------------------ */
-/* 设置页：设备 */
-
-function openDeviceModal() {
-  document.getElementById("dId").value = "";
-  document.getElementById("dName").value = "";
-  document.getElementById("dKind").value = "ssh";
-  document.getElementById("dHost").value = "";
-  document.getElementById("dPort").value = "22";
-  document.getElementById("dUser").value = "root";
-  document.getElementById("dKey").value = "~/.ssh/id_ed25519";
-  openModal("deviceModal");
-}
-
-async function submitDevice() {
-  const id = document.getElementById("dId").value;
-  const body = {
-    name: document.getElementById("dName").value.trim(),
-    kind: document.getElementById("dKind").value,
-    host: document.getElementById("dHost").value.trim(),
-    port: Number(document.getElementById("dPort").value) || 22,
-    user: document.getElementById("dUser").value.trim(),
-    key_path: document.getElementById("dKey").value.trim(),
-  };
-  try {
-    if (id) await api(`/api/devices/${id}`, { method: "PATCH", body: JSON.stringify(body) });
-    else await api("/api/devices", { method: "POST", body: JSON.stringify(body) });
-    closeModal("deviceModal");
-    await loadAll();
-  } catch (e) { toast(e.message, true); }
-}
-
-async function deleteDevice(id) {
-  if (!confirm("删除该设备？")) return;
-  try {
-    await api(`/api/devices/${id}`, { method: "DELETE" });
-    await loadAll();
-  } catch (e) { toast(e.message, true); }
-}
-
-function deviceHTML(d) {
-  const conn = d.kind === "local" ? "本机" : `${d.user}@${d.host}:${d.port} (${d.key_path})`;
-  return `<div class="item">
-    <div class="item-main">
-      <div class="item-title">${esc(d.name)} <span class="badge queued">${d.kind === "local" ? "本机" : "SSH"}</span></div>
-      <div class="item-sub">${esc(conn)}</div>
-    </div>
-    <div class="item-actions"><button class="btn small danger" onclick="deleteDevice(${d.id})">删除</button></div>
   </div>`;
 }
 

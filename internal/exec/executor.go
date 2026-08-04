@@ -3,6 +3,7 @@ package exec
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -50,7 +51,7 @@ func (e *Executor) Wake() {
 	}
 }
 
-// CancelTask 终止正在运行的任务（进程组 SIGKILL）。
+// CancelTask 终止正在运行的任务。
 func (e *Executor) CancelTask(id int64) {
 	e.mu.Lock()
 	c, ok := e.cancels[id]
@@ -130,19 +131,6 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		fail("项目目录不存在: " + tk.ProjectDir)
 		return
 	}
-	if tk.DeviceID == nil {
-		fail("任务未绑定设备")
-		return
-	}
-	dev, err := e.st.GetDevice(*tk.DeviceID)
-	if err != nil {
-		fail("设备不存在: " + err.Error())
-		return
-	}
-	if dev.Kind != "local" {
-		fail(fmt.Sprintf("设备 [%s] 是远程设备，远程执行尚未支持", dev.Name))
-		return
-	}
 
 	agent, err := e.st.GetAgent(agentID)
 	if err != nil {
@@ -184,68 +172,26 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	}
 	e.log(tk.ID, "sys", "$ "+shellJoin(append([]string{bin}, args...)))
 
-	cmd := exec.Command(bin, args...)
-	cmd.Dir = tk.ProjectDir
-	cmd.Env = env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // 独立进程组，便于整组终止
+	onLine := func(stream, text string) { e.log(tk.ID, stream, text) }
+	code, runErr := e.runLocal(rctx, tk, bin, args, env, onLine)
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		fail("管道错误: " + err.Error())
-		return
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		fail("管道错误: " + err.Error())
-		return
-	}
-	if err := cmd.Start(); err != nil {
-		fail("启动失败: " + err.Error())
-		return
-	}
-
-	doneCh := make(chan struct{})
-	go func() {
-		select {
-		case <-doneCh:
-		case <-rctx.Done():
-			// 杀掉整个进程组（CLI 派生的子进程一起终止）
-			if cmd.Process != nil {
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			}
-		}
-	}()
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go e.scanLines(tk.ID, "out", stdout, &wg)
-	go e.scanLines(tk.ID, "err", stderr, &wg)
-	wg.Wait()
-	runErr := cmd.Wait()
-	close(doneCh)
-
-	// 先查最新状态：取消优先于失败判定。
+	// 终态判定：取消优先于失败。
 	cur, _ := e.st.GetTask(tk.ID)
 	if cur != nil && cur.Status == store.StatusCancelled {
 		e.log(tk.ID, "sys", "■ 已取消")
 		return
 	}
-	if rctx.Err() != nil {
-		_ = e.st.UpdateTask(tk.ID, map[string]any{
-			"status": store.StatusCancelled, "finished_at": store.Now(), "error": "已终止",
-		})
-		e.log(tk.ID, "sys", "■ 已终止")
-		e.publishTask(tk.ID)
-		return
-	}
 	if runErr != nil {
-		code := -1
-		if ee, ok := runErr.(*exec.ExitError); ok {
-			code = ee.ExitCode()
+		if rctx.Err() != nil || errors.Is(runErr, context.Canceled) {
+			_ = e.st.UpdateTask(tk.ID, map[string]any{
+				"status": store.StatusCancelled, "finished_at": store.Now(), "error": "已终止",
+			})
+			e.log(tk.ID, "sys", "■ 已终止")
+			e.publishTask(tk.ID)
+			return
 		}
-		msg := runErr.Error()
 		_ = e.st.UpdateTask(tk.ID, map[string]any{
-			"status": store.StatusFailed, "finished_at": store.Now(), "exit_code": code, "error": msg,
+			"status": store.StatusFailed, "finished_at": store.Now(), "exit_code": code, "error": runErr.Error(),
 		})
 		e.log(tk.ID, "sys", fmt.Sprintf("✗ 执行失败 exit=%d", code))
 		e.publishTask(tk.ID)
@@ -258,12 +204,64 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	e.publishTask(tk.ID)
 }
 
-func (e *Executor) scanLines(taskID int64, stream string, r io.Reader, wg *sync.WaitGroup) {
+// runLocal 在本地执行 CLI；取消时杀掉整个进程组。
+func (e *Executor) runLocal(ctx context.Context, tk store.Task, bin string, args []string, env []string, onLine func(stream, line string)) (int, error) {
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = tk.ProjectDir
+	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // 独立进程组，便于整组终止
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return -1, err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return -1, err
+	}
+	if err := cmd.Start(); err != nil {
+		return -1, err
+	}
+
+	doneCh := make(chan struct{})
+	go func() {
+		select {
+		case <-doneCh:
+		case <-ctx.Done():
+			if cmd.Process != nil {
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go scanLines(tk.ID, "out", stdout, onLine, &wg)
+	go scanLines(tk.ID, "err", stderr, onLine, &wg)
+	wg.Wait()
+	runErr := cmd.Wait()
+	close(doneCh)
+
+	if ctx.Err() != nil {
+		return -1, ctx.Err()
+	}
+	if runErr != nil {
+		code := -1
+		var ee *exec.ExitError
+		if errors.As(runErr, &ee) {
+			code = ee.ExitCode()
+		}
+		return code, runErr
+	}
+	return 0, nil
+}
+
+func scanLines(taskID int64, stream string, r io.Reader, onLine func(stream, line string), wg *sync.WaitGroup) {
 	defer wg.Done()
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for sc.Scan() {
-		e.log(taskID, stream, sc.Text())
+		onLine(stream, sc.Text())
 	}
 }
 
