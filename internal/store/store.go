@@ -77,6 +77,14 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS templates (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  body       TEXT NOT NULL DEFAULT '',
+  agent_id   INTEGER REFERENCES agents(id),
+  created_at TEXT NOT NULL
+);
 `
 
 // migrate 结构迁移：老库升级到新 schema（pre-1.0 阶段直接删旧结构）。
@@ -617,4 +625,55 @@ func (s *Store) AllSettings() (map[string]string, error) {
 		out[k] = v
 	}
 	return out, rows.Err()
+}
+
+// ---------------------------------------------------------------------------
+// 任务模板（技能沉淀：从成功任务保存提示词复用）
+
+type Template struct {
+	ID        int64   `json:"id"`
+	Name      string  `json:"name"`
+	Body      string  `json:"body"`
+	AgentID   *int64  `json:"agent_id"`
+	AgentName string  `json:"agent_name,omitempty"`
+	CreatedAt string  `json:"created_at"`
+}
+
+func (s *Store) ListTemplates() ([]Template, error) {
+	rows, err := s.db.Query(`SELECT t.id, t.name, t.body, t.agent_id, COALESCE(a.name,''), t.created_at
+		FROM templates t LEFT JOIN agents a ON a.id=t.agent_id ORDER BY t.id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out = make([]Template, 0)
+	for rows.Next() {
+		var tpl Template
+		var aid sql.NullInt64
+		if err := rows.Scan(&tpl.ID, &tpl.Name, &tpl.Body, &aid, &tpl.AgentName, &tpl.CreatedAt); err != nil {
+			return nil, err
+		}
+		if aid.Valid {
+			tpl.AgentID = &aid.Int64
+		}
+		out = append(out, tpl)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateTemplate(tpl Template) (int64, error) {
+	if tpl.CreatedAt == "" {
+		tpl.CreatedAt = Now()
+	}
+	res, err := s.db.Exec("INSERT INTO templates (name, body, agent_id, created_at) VALUES (?, ?, ?, ?)",
+		tpl.Name, tpl.Body, nullInt64(tpl.AgentID), tpl.CreatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) DeleteTemplate(id int64) error {
+	_, err := s.db.Exec("DELETE FROM templates WHERE id=?", id)
+	return err
 }

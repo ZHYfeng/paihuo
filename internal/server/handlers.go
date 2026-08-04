@@ -439,6 +439,51 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
+// 任务模板
+
+func (s *Server) listTemplates(w http.ResponseWriter, r *http.Request) {
+	templates, err := s.st.ListTemplates()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, templates)
+}
+
+func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
+	var in store.Template
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if in.Name == "" {
+		writeErr(w, http.StatusBadRequest, "模板名不能为空")
+		return
+	}
+	if in.Body == "" {
+		writeErr(w, http.StatusBadRequest, "模板内容不能为空")
+		return
+	}
+	id, err := s.st.CreateTemplate(in)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
+}
+
+func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.st.DeleteTemplate(id); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---------------------------------------------------------------------------
 // 定时任务（M5：调度器接入）
 
 func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {

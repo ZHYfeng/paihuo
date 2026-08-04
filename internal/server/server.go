@@ -70,6 +70,10 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("GET /api/settings", s.getSettings)
 	m.HandleFunc("PUT /api/settings", s.putSettings)
 
+	m.HandleFunc("GET /api/templates", s.listTemplates)
+	m.HandleFunc("POST /api/templates", s.createTemplate)
+	m.HandleFunc("DELETE /api/templates/{id}", s.deleteTemplate)
+
 	m.HandleFunc("GET /api/agents", s.listAgents)
 	m.HandleFunc("POST /api/agents", s.createAgent)
 	m.HandleFunc("PATCH /api/agents/{id}", s.patchAgent)

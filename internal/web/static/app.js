@@ -121,6 +121,7 @@ function renderDetail(t) {
   }
   actions += `<button class="btn danger" onclick="deleteTask(${t.id})">删除</button>`;
   actions += `<button class="btn" onclick="openSubTask(${t.id})">拆分子任务</button>`;
+  if (t.body) actions += `<button class="btn" onclick="saveAsTemplate(${t.id})">保存为模板</button>`;
 
   el.innerHTML = `
     <div class="detail-head">
@@ -415,6 +416,54 @@ async function loadSettings() {
   } catch (_) {}
 }
 
+/* 任务模板 */
+async function loadTemplates() {
+  try {
+    state.templates = await api("/api/templates");
+    const sel = document.getElementById("tTemplate");
+    if (sel) sel.innerHTML = `<option value="">—</option>` + state.templates.map(t =>
+      `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+    const tl = document.getElementById("templateList");
+    if (tl) tl.innerHTML = state.templates.map(t => `<div class="item">
+      <div class="item-main">
+        <div class="item-title">${esc(t.name)}</div>
+        <div class="item-sub">${esc((t.body || "").slice(0, 80))}${(t.body || "").length > 80 ? "…" : ""}</div>
+      </div>
+      <div class="item-actions"><button class="btn small danger" onclick="deleteTemplate(${t.id})">删除</button></div>
+    </div>`).join("") || `<div class="empty">还没有模板：在任务详情里点「保存为模板」沉淀常用提示词</div>`;
+  } catch (_) {}
+}
+
+function applyTemplate() {
+  const t = state.templates.find(x => x.id === Number(document.getElementById("tTemplate").value));
+  if (!t) return;
+  document.getElementById("tBody").value = t.body || "";
+  if (t.agent_id) document.getElementById("tAgent").value = t.agent_id;
+}
+
+async function saveAsTemplate(taskId) {
+  const t = state.tasks.find(x => x.id === taskId);
+  if (!t) return;
+  const name = prompt("模板名称（用于复用该任务的提示词）", t.title);
+  if (!name) return;
+  try {
+    await api("/api/templates", {
+      method: "POST",
+      body: JSON.stringify({ name, body: t.body, agent_id: t.agent_id }),
+    });
+    toast("已保存为模板");
+    loadTemplates();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function deleteTemplate(id) {
+  if (!confirm("删除该模板？")) return;
+  try {
+    await api(`/api/templates/${id}`, { method: "DELETE" });
+    loadTemplates();
+  } catch (e) { toast(e.message, true); }
+}
+
 async function saveRetention() {
   try {
     const days = document.getElementById("retentionDays").value.trim();
@@ -475,5 +524,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("detail").classList.add("hidden");
   try { await loadAll(); } catch (e) { toast("加载失败: " + e.message, true); }
   loadSettings();
+  loadTemplates();
   sse();
 });
