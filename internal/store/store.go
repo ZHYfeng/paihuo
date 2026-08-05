@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS agents (
   cli           TEXT NOT NULL,
   role_config   TEXT NOT NULL DEFAULT '{}',
   project_dir   TEXT NOT NULL DEFAULT '',
+  max_concurrency INTEGER NOT NULL DEFAULT 1 CHECK(max_concurrency >= 1),
   enabled       INTEGER NOT NULL DEFAULT 1,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
@@ -174,11 +175,15 @@ func migrate(db *sql.DB) error {
 	}
 	// 索引在迁移阶段创建：老库先补列再建索引；新库 schema 建表时列已存在
 	for _, stmt := range []string{
+		"ALTER TABLE agents ADD COLUMN max_concurrency INTEGER NOT NULL DEFAULT 1",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)",
 	} {
 		if _, err := db.Exec(stmt); err != nil {
-			return err
+			// 列已存在则忽略（老库可能已带该列）
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return err
+			}
 		}
 	}
 	// readonly 权限模式已移除：历史任务按完整权限继续执行
@@ -291,13 +296,13 @@ type scanner interface {
 // 角色（agent）
 
 const agentCols = `a.id, a.name, a.description, a.cli, a.role_config,
-	a.project_dir, a.enabled, a.created_at, a.updated_at`
+	a.project_dir, a.max_concurrency, a.enabled, a.created_at, a.updated_at`
 
 func scanAgent(rows scanner) (Agent, error) {
 	var a Agent
 	var rc string
 	err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.CLI, &rc,
-		&a.ProjectDir, &a.Enabled, &a.CreatedAt, &a.UpdatedAt)
+		&a.ProjectDir, &a.MaxConcurrency, &a.Enabled, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		return a, err
 	}
@@ -340,13 +345,16 @@ func (s *Store) CreateAgent(a Agent) (int64, error) {
 	if a.UpdatedAt == "" {
 		a.UpdatedAt = a.CreatedAt
 	}
+	if a.MaxConcurrency < 1 {
+		a.MaxConcurrency = 1 // 默认串行；CHECK(max_concurrency >= 1) 兜底
+	}
 	rc, err := json.Marshal(a.RoleConfig)
 	if err != nil {
 		return 0, err
 	}
-	res, err := s.db.Exec(`INSERT INTO agents (name, description, cli, role_config, project_dir, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.Name, a.Description, a.CLI, string(rc), a.ProjectDir, a.Enabled, a.CreatedAt, a.UpdatedAt)
+	res, err := s.db.Exec(`INSERT INTO agents (name, description, cli, role_config, project_dir, max_concurrency, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Name, a.Description, a.CLI, string(rc), a.ProjectDir, a.MaxConcurrency, a.Enabled, a.CreatedAt, a.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}

@@ -16,8 +16,9 @@ import (
 )
 
 // Executor 轮询领取 queued 任务并执行。
-// 约束：同一角色（agent）同时只跑一个任务，避免模型 API 并发冲突；
-// 不同角色可并行（每任务一个 goroutine）。任务在 git worktree 隔离目录中执行。
+// 约束：同一角色（agent）同时运行的任务数不超过其 max_concurrency（默认 1），
+// 避免模型 API 并发冲突；不同角色可并行（每任务一个 goroutine）。任务在 git
+// worktree 隔离目录中执行。
 type Executor struct {
 	st           *store.Store
 	hub          *events.Hub
@@ -25,7 +26,7 @@ type Executor struct {
 	taskSessions *taskSessionStore
 	runner       *tmuxRunner
 	mu           sync.Mutex
-	busy         map[int64]struct{} // 正在执行任务的 agent id
+	busy         map[int64]int // 各 agent 正在执行的任务数（受 max_concurrency 限制）
 	// cancels 是任务级取消句柄
 	cancels map[int64]context.CancelFunc
 	wake    chan struct{}
@@ -42,7 +43,7 @@ func New(st *store.Store, hub *events.Hub, sessionsRoot, instanceID string) *Exe
 		sessionsRoot: sessionsRoot,
 		taskSessions: newTaskSessionStore(sessionsRoot, instanceID),
 		runner:       newTmuxRunner(sessionsRoot),
-		busy:         make(map[int64]struct{}),
+		busy:         make(map[int64]int),
 		cancels:      make(map[int64]context.CancelFunc),
 		wake:         make(chan struct{}, 1),
 	}
@@ -89,7 +90,7 @@ func (e *Executor) recoverInterrupted(ctx context.Context) {
 			continue
 		}
 		e.mu.Lock()
-		e.busy[*tk.AgentID] = struct{}{}
+		e.busy[*tk.AgentID]++
 		e.mu.Unlock()
 		e.log(tk.ID, "sys", "↻ 服务恢复：重新接管专用 tmux window")
 		go e.monitorRecovered(ctx, tk)
@@ -163,14 +164,27 @@ func (e *Executor) dispatch(ctx context.Context) {
 	if err != nil {
 		return
 	}
+	// 每轮派发读一次角色并发上限：配置变更（PATCH /api/agents）下一轮即生效
+	agents, err := e.st.ListAgents()
+	if err != nil {
+		return
+	}
+	maxConc := make(map[int64]int, len(agents))
+	for _, a := range agents {
+		if a.MaxConcurrency < 1 {
+			maxConc[a.ID] = 1
+		} else {
+			maxConc[a.ID] = a.MaxConcurrency
+		}
+	}
 	for _, tk := range tasks {
 		if tk.AgentID == nil {
 			continue
 		}
 		e.mu.Lock()
-		_, busy := e.busy[*tk.AgentID]
+		n := e.busy[*tk.AgentID]
 		e.mu.Unlock()
-		if busy {
+		if n >= maxConc[*tk.AgentID] {
 			continue
 		}
 		claimed, err := e.st.ClaimTask(tk.ID)
@@ -178,7 +192,7 @@ func (e *Executor) dispatch(ctx context.Context) {
 			continue
 		}
 		e.mu.Lock()
-		e.busy[*tk.AgentID] = struct{}{}
+		e.busy[*tk.AgentID]++
 		e.mu.Unlock()
 		go e.runTask(ctx, tk)
 	}
@@ -188,7 +202,11 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	agentID := *tk.AgentID
 	defer func() {
 		e.mu.Lock()
-		delete(e.busy, agentID)
+		if e.busy[agentID] > 1 {
+			e.busy[agentID]--
+		} else {
+			delete(e.busy, agentID)
+		}
 		e.mu.Unlock()
 		e.Wake()
 	}()
@@ -304,7 +322,11 @@ func (e *Executor) monitorRecovered(ctx context.Context, tk store.Task) {
 	}
 	defer func() {
 		e.mu.Lock()
-		delete(e.busy, *tk.AgentID)
+		if e.busy[*tk.AgentID] > 1 {
+			e.busy[*tk.AgentID]--
+		} else {
+			delete(e.busy, *tk.AgentID)
+		}
 		e.mu.Unlock()
 		e.Wake()
 	}()

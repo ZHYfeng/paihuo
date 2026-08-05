@@ -197,7 +197,6 @@
     term.clear();
     term.write("\x1B[90m# loading logs...\x1B[0m\r\n");
     state.termTask = id;
-    syncTerminalInput(t);
     api(`/api/tasks/${id}/logs`).then((logs) => {
       if (state.termTask !== id) return;
       term.clear();
@@ -209,41 +208,7 @@
   }
   function closeTerminal() {
     state.termTask = null;
-    const bar = document.getElementById("termInputBar");
-    if (bar) bar.classList.add("hidden");
     closeModal("termModal");
-  }
-  function syncTerminalInput(t) {
-    const bar = document.getElementById("termInputBar");
-    const input = document.getElementById("termInput");
-    if (!bar || !input) return;
-    const enabled = t?.run_mode === "interactive" && t?.status === "running";
-    bar.classList.toggle("hidden", !enabled);
-    input.disabled = !enabled;
-    if (!enabled) input.value = "";
-  }
-  async function sendTaskInput(id, inputID, explicitMessage) {
-    const input = inputID ? document.getElementById(inputID) : null;
-    const message = explicitMessage ?? input?.value ?? "";
-    if (!message.trim()) {
-      toast("\u6D88\u606F\u4E0D\u80FD\u4E3A\u7A7A", true);
-      return false;
-    }
-    try {
-      await api(`/api/tasks/${id}/input`, { method: "POST", body: JSON.stringify({ message }) });
-      if (input) {
-        input.value = "";
-        input.focus();
-      }
-      return true;
-    } catch (e) {
-      toast(e.message, true);
-      return false;
-    }
-  }
-  function sendTerminalInput() {
-    if (!state.termTask) return;
-    sendTaskInput(state.termTask, "termInput");
   }
 
   // internal/web/static/src/dashboard.js
@@ -614,7 +579,6 @@
       <span class="st-dot"></span><span class="c-id">#${t.id}</span>
       <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
       ${t.perm === "review" ? `<span class="chip review">\u5BA1\u6279</span>` : ""}
-      ${t.run_mode === "interactive" ? `<span class="chip">\u4EA4\u4E92</span>` : ""}
       ${t.review_rounds > 0 ? `<span class="chip">\u7B2C${t.review_rounds}\u8F6E</span>` : ""}
     </div>
     <div class="c-title">${esc(t.title)}</div>
@@ -718,11 +682,6 @@
   function renderDetail(t) {
     const main = document.getElementById("dMain");
     if (!main) return;
-    const isInteractive = t.run_mode === "interactive" && t.status === "running";
-    const input = isInteractive ? `<div class="term-input detail-input">
-      <input id="taskInput" autocomplete="off" aria-label="\u53D1\u9001\u7ED9 Pi \u7684\u6D88\u606F" placeholder="\u53D1\u9001\u6D88\u606F\u7ED9 Pi\uFF08Enter \u53D1\u9001\uFF09" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();sendTaskInput(${t.id},'taskInput')}">
-      <button class="btn primary" onclick="sendTaskInput(${t.id},'taskInput')">\u53D1\u9001</button>
-    </div>` : "";
     main.innerHTML = `
     <h2>${esc(t.title)}</h2>
     <div class="detail-id">#${t.id} \xB7 \u521B\u5EFA\u4E8E ${esc((t.created_at || "").slice(0, 16).replace("T", " "))}
@@ -741,7 +700,6 @@
         <button class="btn ghost xs" onclick="openTerminal(${t.id})">${icon("expand")}\u5168\u5C4F</button>
       </div>
       <div class="term-body" id="logBox">${logsHTML()}</div>
-      ${input}
     </div>`;
     const box = document.getElementById("logBox");
     if (box) box.scrollTop = box.scrollHeight;
@@ -815,9 +773,6 @@
     if (["queued", "claimed", "running"].includes(t.status)) {
       actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}\u53D6\u6D88\u4EFB\u52A1</button>`;
     }
-    if (t.run_mode === "interactive" && t.status === "running") {
-      actions += `<button class="btn sm" onclick="endInteractiveTask(${t.id})">${icon("terminal")}\u7ED3\u675F\u4F1A\u8BDD</button>`;
-    }
     if (t.status === "awaiting_review") {
       actions += `<button class="btn sm brand" onclick="setTaskStatus(${t.id},'succeeded')">${icon("check")}\u5BA1\u6279\u901A\u8FC7</button>`;
       actions += `<button class="btn sm" onclick="rejectTask(${t.id})">${icon("retry")}\u9A73\u56DE\u91CD\u505A</button>`;
@@ -838,7 +793,6 @@
       <span class="v"><select onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
     <div class="prop-row"><span class="k">\u89D2\u8272</span><span class="v">${esc(t.agent_name || "\u672A\u6307\u6D3E")}</span></div>
     <div class="prop-row"><span class="k">\u6743\u9650</span><span class="v">${PERM_LABEL[t.perm] || t.perm}</span></div>
-    <div class="prop-row"><span class="k">\u65B9\u5F0F</span><span class="v">${t.run_mode === "interactive" ? "\u4EA4\u4E92\u5F0F Pi" : "\u6279\u5904\u7406 \xB7 -p"}</span></div>
     <div class="prop-row"><span class="k">\u6267\u884C\u5668</span><span class="v">tmux \xB7 ${["claimed", "running"].includes(t.status) ? `paihuo:task-${t.id}` : "\u65E5\u5FD7\u5DF2\u5F52\u6863"}</span></div>
     <div class="prop-row"><span class="k">\u76EE\u5F55</span><span class="v" style="font-size:12px;word-break:break-all">${esc(t.project_dir || "-")}</span></div>
     <div class="prop-row"><span class="k">\u8F6E\u6B21</span><span class="v">${t.review_rounds || "-"}</span></div>
@@ -874,12 +828,6 @@
       }
     } catch (e) {
       toast(e.message, true);
-    }
-  }
-  async function endInteractiveTask(id) {
-    if (!confirm("\u5411 Pi \u53D1\u9001 /exit \u5E76\u7ED3\u675F\u4EA4\u4E92\u4F1A\u8BDD\uFF1F\u4EFB\u52A1\u4F1A\u6309\u6B63\u5E38\u9000\u51FA\u7ED3\u679C\u7ED3\u7B97\u3002")) return;
-    if (await sendTaskInput(id, "", "/exit")) {
-      toast("\u5DF2\u53D1\u9001 /exit\uFF0C\u7B49\u5F85 Pi \u9000\u51FA");
     }
   }
   async function rejectTask(id) {
@@ -939,11 +887,9 @@
     document.getElementById("tTitle").value = "";
     document.getElementById("tBody").value = "";
     document.getElementById("tPerm").value = t ? t.perm : "full";
-    document.getElementById("tRunMode").value = "batch";
     document.getElementById("tProject").value = t && t.project_id ? t.project_id : "";
     document.getElementById("tParentId").value = parentId;
     document.getElementById("taskModalTitle").textContent = "\u62C6\u5206\u5B50\u4EFB\u52A1";
-    syncTaskRunMode();
     openModal("taskModal");
   }
   async function resumeTask(id) {
@@ -1010,39 +956,10 @@
     document.getElementById("tTitle").value = "";
     document.getElementById("tBody").value = "";
     document.getElementById("tPerm").value = "full";
-    document.getElementById("tRunMode").value = "batch";
     document.getElementById("tProject").value = "";
     document.getElementById("tParentId").value = "";
     document.getElementById("taskModalTitle").textContent = "\u65B0\u5EFA\u4EFB\u52A1";
-    syncTaskRunMode();
     openModal("taskModal");
-  }
-  function openProjectTask(projectId) {
-    const p = state.projects.find((x) => x.id === projectId);
-    fillSelects();
-    document.getElementById("tTitle").value = "";
-    document.getElementById("tBody").value = "";
-    document.getElementById("tPerm").value = "full";
-    document.getElementById("tRunMode").value = "batch";
-    document.getElementById("tProject").value = projectId;
-    document.getElementById("tParentId").value = "";
-    document.getElementById("taskModalTitle").textContent = p ? `\u65B0\u5EFA\u4EFB\u52A1 \xB7 ${esc(p.name)}` : "\u65B0\u5EFA\u4EFB\u52A1";
-    syncTaskRunMode();
-    openModal("taskModal");
-  }
-  function syncTaskRunMode() {
-    const agentID = Number(document.getElementById("tAgent")?.value) || 0;
-    const agent = state.agents.find((a) => a.id === agentID);
-    const isPi = agent?.cli === "pi";
-    const select = document.getElementById("tRunMode");
-    const help = document.getElementById("tRunModeHelp");
-    if (!select) return;
-    const interactive = select.querySelector('option[value="interactive"]');
-    if (interactive) interactive.disabled = !isPi;
-    if (!isPi && select.value === "interactive") select.value = "batch";
-    if (help) {
-      help.textContent = isPi ? "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u4EA4\u4E92\u5F0F\u4F1A\u4FDD\u7559 Pi \u7EC8\u7AEF\uFF0C\u76F4\u5230\u4F60\u53D1\u9001 /exit\u3002" : "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u4EA4\u4E92\u5F0F\u76EE\u524D\u4EC5\u652F\u6301 Pi \u89D2\u8272\u3002";
-    }
   }
   async function submitTask() {
     const title = document.getElementById("tTitle").value.trim();
@@ -1058,7 +975,6 @@
           agent_id: Number(document.getElementById("tAgent").value) || null,
           project_id: projectId,
           perm: document.getElementById("tPerm").value,
-          run_mode: document.getElementById("tRunMode").value,
           parent_id: parentId
         })
       });
@@ -1068,7 +984,6 @@
       renderBoard();
       renderList();
       refreshOverview();
-      if (location.pathname === "/projects" && state.projectView) refreshProjectDetail();
     } catch (e) {
       toast(e.message, true);
     }
@@ -1078,7 +993,6 @@
     if (!t) return;
     document.getElementById("tBody").value = t.body || "";
     if (t.agent_id) document.getElementById("tAgent").value = t.agent_id;
-    syncTaskRunMode();
   }
   async function saveAsTemplate(taskId) {
     let t;
@@ -1214,13 +1128,9 @@
     <div class="sec-title">\u8FD1 14 \u5929\u5B8C\u6210</div>
     ${dailyChartHTML(s.daily, 14)}
 
-    <div class="sec-title" style="display:flex;align-items:center;justify-content:space-between">
-      <span>\u4EFB\u52A1 ${tasks.length}</span>
-      <button class="btn sm brand" onclick="openProjectTask(${p.id})">${icon("plus")}\u65B0\u5EFA\u4EFB\u52A1</button>
-    </div>
+    <div class="sec-title">\u4EFB\u52A1 ${tasks.length}</div>
     <div class="p-task-list">
-      ${rowHTML || `<div class="empty">\u8FD8\u6CA1\u6709\u4EFB\u52A1
-        <button class="btn xs brand" style="margin-left:8px" onclick="openProjectTask(${p.id})">${icon("plus")}\u6D3E\u6D3B</button></div>`}
+      ${rowHTML || `<div class="empty">\u8FD8\u6CA1\u6709\u4EFB\u52A1\uFF0C\u53BB\u770B\u677F\u6D3E\u6D3B\u5E76\u5F52\u5165\u672C\u9879\u76EE</div>`}
     </div>
 
     <div class="sec-title">\u6210\u5458\u7EDF\u8BA1\uFF08\u5728\u672C\u9879\u76EE\u4E0A\u5DE5\u4F5C\u7684 agent\uFF09</div>
@@ -1242,7 +1152,6 @@
     <div class="prop-row"><span class="k">\u521B\u5EFA</span><span class="v">${esc((p.created_at || "").slice(0, 16).replace("T", " "))}</span></div>
     <div class="sec-title">\u64CD\u4F5C</div>
     <div class="detail-actions">
-      <button class="btn sm brand" onclick="openProjectTask(${p.id})">${icon("plus")}\u65B0\u5EFA\u4EFB\u52A1</button>
       <button class="btn sm" onclick="openProjectModal(${p.id})">\u7F16\u8F91</button>
       <button class="btn sm danger" onclick="deleteProject(${p.id})">\u5220\u9664</button>
     </div>`;
@@ -2481,7 +2390,6 @@
   window.deleteSkill = deleteSkill;
   window.deleteTask = deleteTask;
   window.deleteTemplate = deleteTemplate;
-  window.endInteractiveTask = endInteractiveTask;
   window.gitInitProject = gitInitProject;
   window.installProvision = installProvision;
   window.loadHistory = loadHistory;
@@ -2494,7 +2402,6 @@
   window.openNewTask = openNewTask;
   window.openProject = openProject;
   window.openProjectModal = openProjectModal;
-  window.openProjectTask = openProjectTask;
   window.openScheduleModal = openScheduleModal;
   window.openSkillModal = openSkillModal;
   window.openSubTask = openSubTask;
@@ -2517,8 +2424,6 @@
   window.saveAsTemplate = saveAsTemplate;
   window.saveRetention = saveRetention;
   window.saveWtRetention = saveWtRetention;
-  window.sendTaskInput = sendTaskInput;
-  window.sendTerminalInput = sendTerminalInput;
   window.setAgentView = setAgentView;
   window.setSkillTab = setSkillTab;
   window.setTaskStatus = setTaskStatus;
@@ -2529,7 +2434,6 @@
   window.submitSchedule = submitSchedule;
   window.submitSkill = submitSkill;
   window.submitTask = submitTask;
-  window.syncTaskRunMode = syncTaskRunMode;
   window.toggleAll = toggleAll;
   window.toggleRow = toggleRow;
   window.toggleSchedule = toggleSchedule;

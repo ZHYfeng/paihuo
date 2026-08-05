@@ -40,10 +40,6 @@ var validPerms = map[string]bool{
 	store.PermFull: true, store.PermReview: true,
 }
 
-var validRunModes = map[string]bool{
-	store.RunModeBatch: true, store.RunModeInteractive: true,
-}
-
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f := store.TaskFilter{}
@@ -78,13 +74,12 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		AgentID   *int64 `json:"agent_id"`
 		ProjectID *int64 `json:"project_id"`
 		Perm      string `json:"perm"`
-		RunMode   string `json:"run_mode"`
 		ParentID  *int64 `json:"parent_id"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	s.createTaskInner(w, in.Title, in.Body, in.AgentID, in.ProjectID, in.Perm, in.RunMode, in.ParentID, nil)
+	s.createTaskInner(w, in.Title, in.Body, in.AgentID, in.ProjectID, in.Perm, in.ParentID, nil)
 }
 
 // resumeTask 续跑：新任务复用原任务的角色/项目/会话目录（attach 回上次对话）。
@@ -108,10 +103,10 @@ func (s *Server) resumeTask(w http.ResponseWriter, r *http.Request) {
 		body += "\n\n"
 	}
 	body += fmt.Sprintf("（这是任务 #%d 的续跑：请基于之前的进展继续完成目标。若有疑问先检查当前状态。）", id)
-	s.createTaskInner(w, title, body, src.AgentID, src.ProjectID, src.Perm, src.RunMode, nil, &id)
+	s.createTaskInner(w, title, body, src.AgentID, src.ProjectID, src.Perm, nil, &id)
 }
 
-func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agentID, projectID *int64, perm, runMode string, parentID, resumeOf *int64) {
+func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agentID, projectID *int64, perm string, parentID, resumeOf *int64) {
 	if title == "" {
 		writeErr(w, http.StatusBadRequest, "标题不能为空")
 		return
@@ -123,14 +118,7 @@ func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agen
 		writeErr(w, http.StatusBadRequest, "非法权限模式: "+perm)
 		return
 	}
-	if runMode == "" {
-		runMode = store.RunModeBatch
-	}
-	if !validRunModes[runMode] {
-		writeErr(w, http.StatusBadRequest, "非法执行方式: "+runMode)
-		return
-	}
-	tk := store.Task{Title: title, Body: body, Status: store.StatusQueued, Perm: perm, RunMode: runMode, AgentID: agentID, ParentID: parentID, ResumeOf: resumeOf}
+	tk := store.Task{Title: title, Body: body, Status: store.StatusQueued, Perm: perm, AgentID: agentID, ParentID: parentID, ResumeOf: resumeOf}
 	// 工作目录属于项目：快照项目目录（历史记录不随配置漂移）；
 	// 老数据兼容：项目未设目录时回退角色的旧 project_dir。
 	if projectID != nil {
@@ -142,22 +130,13 @@ func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agen
 		tk.ProjectID = projectID
 		tk.ProjectDir = p.ProjectDir
 	}
-	if agentID != nil {
+	if tk.ProjectDir == "" && agentID != nil {
 		a, err := s.st.GetAgent(*agentID)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "角色不存在")
 			return
 		}
-		if runMode == store.RunModeInteractive && a.CLI != "pi" {
-			writeErr(w, http.StatusBadRequest, "交互式执行目前只支持 Pi 角色")
-			return
-		}
-		if tk.ProjectDir == "" {
-			tk.ProjectDir = a.ProjectDir // 兼容旧数据：角色级目录
-		}
-	} else if runMode == store.RunModeInteractive {
-		writeErr(w, http.StatusBadRequest, "交互式任务必须指派 Pi 角色")
-		return
+		tk.ProjectDir = a.ProjectDir // 兼容旧数据：角色级目录
 	}
 	id, err := s.st.CreateTask(tk)
 	if err != nil {
@@ -171,29 +150,6 @@ func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agen
 		return
 	}
 	writeJSON(w, http.StatusCreated, tk2)
-}
-
-// sendTaskInput 把已登录用户的一条人工消息送进运行中的 Pi 交互式 pane。
-func (s *Server) sendTaskInput(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r)
-	if !ok {
-		return
-	}
-	if _, err := s.st.GetTask(id); err != nil {
-		writeErr(w, http.StatusNotFound, "任务不存在")
-		return
-	}
-	var in struct {
-		Message string `json:"message"`
-	}
-	if !readJSON(w, r, &in) {
-		return
-	}
-	if err := s.ex.SendInput(id, in.Message); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"sent": true})
 }
 
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
@@ -267,17 +223,9 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusBadRequest, "角色不存在")
 				return
 			}
-			if cur.RunMode == store.RunModeInteractive && a.CLI != "pi" {
-				writeErr(w, http.StatusBadRequest, "交互式执行目前只支持 Pi 角色")
-				return
-			}
 			set["agent_id"] = int64(aid)
 			set["project_dir"] = a.ProjectDir
 		} else {
-			if cur.RunMode == store.RunModeInteractive {
-				writeErr(w, http.StatusBadRequest, "交互式任务必须指派 Pi 角色")
-				return
-			}
 			set["agent_id"] = nil
 			set["project_dir"] = ""
 		}

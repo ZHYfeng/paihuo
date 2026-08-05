@@ -8,8 +8,8 @@ import { appendInstLine, closeInstTerminal, copyText, createDefaultRole, install
 import { deleteSchedule, openScheduleModal, renderScheduleList, submitSchedule, toggleSchedule } from "./schedules.js";
 import { loadSettings, runCleanup, saveRetention, saveWtRetention } from "./settings.js";
 import { deleteSkill, deleteTemplate, loadSkillLib, loadTemplates, openExtModal, openSkillModal, removeExt, renderSkillLib, setSkillTab, submitExt, submitSkill } from "./skills.js";
-import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskRunMode, wsDiscard, wsMerge } from "./task.js";
-import { closeTerminal, openTerminal, sendTaskInput, sendTerminalInput, syncTerminalInput } from "./terminal.js";
+import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, gitInitProject, hideDetail, openNewTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, wsDiscard, wsMerge } from "./task.js";
+import { closeTerminal, openTerminal } from "./terminal.js";
 
 export async function loadAll() {
   const [tasks, agents, schedules, projects] = await Promise.all([
@@ -335,7 +335,6 @@ window.deleteSelected = deleteSelected;
 window.deleteSkill = deleteSkill;
 window.deleteTask = deleteTask;
 window.deleteTemplate = deleteTemplate;
-window.endInteractiveTask = endInteractiveTask;
 window.gitInitProject = gitInitProject;
 window.installProvision = installProvision;
 window.loadHistory = loadHistory;
@@ -348,7 +347,6 @@ window.openExtModal = openExtModal;
 window.openNewTask = openNewTask;
 window.openProject = openProject;
 window.openProjectModal = openProjectModal;
-window.openProjectTask = openProjectTask;
 window.openScheduleModal = openScheduleModal;
 window.openSkillModal = openSkillModal;
 window.openSubTask = openSubTask;
@@ -371,8 +369,6 @@ window.saveAgentEnv = saveAgentEnv;
 window.saveAsTemplate = saveAsTemplate;
 window.saveRetention = saveRetention;
 window.saveWtRetention = saveWtRetention;
-window.sendTaskInput = sendTaskInput;
-window.sendTerminalInput = sendTerminalInput;
 window.setAgentView = setAgentView;
 window.setSkillTab = setSkillTab;
 window.setTaskStatus = setTaskStatus;
@@ -383,7 +379,6 @@ window.submitProject = submitProject;
 window.submitSchedule = submitSchedule;
 window.submitSkill = submitSkill;
 window.submitTask = submitTask;
-window.syncTaskRunMode = syncTaskRunMode;
 window.toggleAll = toggleAll;
 window.toggleRow = toggleRow;
 window.toggleSchedule = toggleSchedule;
