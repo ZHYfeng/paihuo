@@ -91,6 +91,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 			"index":      template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/index.html")),
 			"history":    template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/history.html")),
 			"agents":     template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/agents.html")),
+			"projects":   template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/projects.html")),
 			"autopilots": template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/autopilots.html")),
 			"skills":     template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/skills.html")),
 			"settings":   template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/settings.html")),
@@ -103,6 +104,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("GET /", s.pageIndex)
 	m.HandleFunc("GET /history", s.pageHistory)
 	m.HandleFunc("GET /agents", s.pageAgents)
+	m.HandleFunc("GET /projects", s.pageProjects)
 	m.HandleFunc("GET /autopilots", s.pageAutopilots)
 	m.HandleFunc("GET /skills", s.pageSkills)
 	m.HandleFunc("GET /settings", s.pageSettings)
@@ -138,6 +140,16 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("POST /api/agents", s.createAgent)
 	m.HandleFunc("PATCH /api/agents/{id}", s.patchAgent)
 	m.HandleFunc("DELETE /api/agents/{id}", s.deleteAgent)
+	m.HandleFunc("GET /api/agents/schema", s.listAgentSchemas)
+
+	m.HandleFunc("GET /api/projects", s.listProjects)
+	m.HandleFunc("POST /api/projects", s.createProject)
+	m.HandleFunc("PATCH /api/projects/{id}", s.patchProject)
+	m.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
+
+	m.HandleFunc("GET /api/stats/overview", s.overviewStats)
+	m.HandleFunc("GET /api/stats/agent/{id}", s.agentStats)
+	m.HandleFunc("GET /api/stats/project/{id}", s.projectStats)
 
 	m.HandleFunc("GET /api/schedules", s.listSchedules)
 	m.HandleFunc("POST /api/schedules", s.createSchedule)
@@ -192,6 +204,10 @@ func (s *Server) pageHistory(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) pageAgents(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "agents", pageData{Active: "agents"})
+}
+
+func (s *Server) pageProjects(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "projects", pageData{Active: "projects"})
 }
 
 func (s *Server) pageAutopilots(w http.ResponseWriter, r *http.Request) {

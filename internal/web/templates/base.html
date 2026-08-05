@@ -15,14 +15,19 @@
       <span class="text">派活 PaiHuo</span>
     </div>
     <nav class="sidebar-nav">
+      <div class="sidebar-group-label">工作区</div>
       <a class="sidebar-link {{if eq .Active "board"}}active{{end}}" href="/">
         <span class="s-icon">▦</span><span>看板</span>
         <span class="s-count" id="sbBoardCount"></span>
       </a>
+      <a class="sidebar-link {{if eq .Active "projects"}}active{{end}}" href="/projects">
+        <span class="s-icon">▤</span><span>项目</span>
+        <span class="s-count" id="sbProjectCount"></span>
+      </a>
       <a class="sidebar-link {{if eq .Active "history"}}active{{end}}" href="/history">
         <span class="s-icon">☰</span><span>历史</span>
       </a>
-      <div class="sidebar-group-label">工作区</div>
+      <div class="sidebar-group-label">智能体</div>
       <a class="sidebar-link {{if eq .Active "agents"}}active{{end}}" href="/agents">
         <span class="s-icon">◉</span><span>角色</span>
       </a>
@@ -48,6 +53,21 @@
   </main>
 </div>
 <div id="toast" class="toast hidden"></div>
+
+<!-- 全屏终端（所有页面共享） -->
+<div class="modal hidden" id="termModal">
+  <div class="modal-box term-modal">
+    <div class="term" style="margin:0;border-radius:0;border:none;flex:1;display:flex;flex-direction:column">
+      <div class="term-head">
+        <span class="term-dots"><i></i><i></i><i></i></span>
+        <span class="t-title" id="termTitle"></span>
+        <button class="btn ghost xs" onclick="closeTerminal()">关闭</button>
+      </div>
+      <div class="term-body term-full" id="termBox"></div>
+    </div>
+  </div>
+</div>
+
 <script src="/static/app.js"></script>
 </body>
 </html>

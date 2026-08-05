@@ -1,17 +1,27 @@
 /* ============================================================
    派活 PaiHuo — 前端逻辑
-   布局复刻 multica：侧边栏 + 页头 + 工具条 + 看板/列表/详情
+   布局高度复刻 multica：侧边栏分组 + 页头面包屑 + 统计条 + 看板/列表
+   两个维度：
+     1) 多 agent 多高度自定义角色（schema 驱动，每个 CLI 按官方文档
+        声明自己的配置字段，前端按 schema 渲染深度定制表单）
+     2) 任务管理（项目进度 + 在项目上工作的 agent 统计）
    ============================================================ */
 
 const state = {
-  tasks: [], agents: [], schedules: [], templates: [],
-  view: "board",          // board | list
-  selected: null,         // 详情中的任务 id
-  logs: [],               // 详情任务日志
-  history: [],            // 历史页筛选结果
-  historySel: new Set(),
-  agentEditing: null,     // 详情中的角色
-  agentTab: "general",
+  tasks: [], agents: [], schedules: [], templates: [], projects: [],
+  schema: {},        // cli -> {id, name, docs, fields}
+  overview: null,    // 总览统计
+  agentStats: {},    // agentId -> stats
+  projectStats: {},  // projectId -> stats
+  view: "board",
+  selected: null,
+  logs: [],
+  termTask: null,
+  history: [], historySel: new Set(),
+  agentEditing: null,
+  agentTab: "overview",
+  agentModalRC: {},  // 新建/编辑弹窗中的临时 role_config
+  projectView: null, // 项目详情中的项目 id
 };
 
 const STATUS_LABEL = {
@@ -29,10 +39,21 @@ const BOARD_COLS = [
   ["running", "执行中", ["running"]],
   ["awaiting_review", "待审批", ["awaiting_review"]],
 ];
+const BUILTIN_KEYS = ["model", "system_prompt", "thinking", "skills", "plugins", "extra_args", "env"];
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, c =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function fmtPct(x) { return (Math.round(x * 10) / 10) + "%"; }
+function fmtNum(x) { return Math.round(x * 10) / 10; }
+
+function fmtDur(sec) {
+  if (!sec || sec <= 0) return "-";
+  if (sec < 60) return Math.round(sec) + "s";
+  if (sec < 3600) return Math.round(sec / 60) + "m";
+  return (Math.round(sec / 360) / 10) + "h";
 }
 
 function toast(msg, isErr) {
@@ -70,13 +91,26 @@ async function logout() {
    ============================================================ */
 
 async function loadAll() {
-  const [tasks, agents, schedules] = await Promise.all([
-    api("/api/tasks"), api("/api/agents"), api("/api/schedules"),
+  const [tasks, agents, schedules, projects] = await Promise.all([
+    api("/api/tasks"), api("/api/agents"), api("/api/schedules"), api("/api/projects"),
   ]);
   state.tasks = tasks;
   state.agents = agents;
   state.schedules = schedules;
+  state.projects = projects;
   fillSelects();
+}
+
+async function loadSchema() {
+  try {
+    const list = await api("/api/agents/schema");
+    state.schema = {};
+    list.forEach(s => state.schema[s.id] = s);
+    const sel = document.getElementById("aCli");
+    if (sel) sel.innerHTML = list.map(s =>
+      `<option value="${s.id}">${esc(s.name)}</option>`).join("");
+    if (sel && !sel.value) sel.value = list.length ? list[0].id : "";
+  } catch (_) {}
 }
 
 function fillSelects() {
@@ -90,9 +124,46 @@ function fillSelects() {
     const el = document.getElementById(id);
     if (el) el.innerHTML = `<option value="">全部角色</option>` + opts(state.agents);
   }
+  const pOpts = state.projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  for (const id of ["fProject", "tProject"]) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = (id === "tProject" ? `<option value="">无项目</option>` : `<option value="">全部项目</option>`) + pOpts;
+  }
   const cnt = document.getElementById("sbBoardCount");
   if (cnt) cnt.textContent = state.tasks.filter(t =>
     ["queued", "claimed", "running", "awaiting_review"].includes(t.status)).length;
+  const pc = document.getElementById("sbProjectCount");
+  if (pc) pc.textContent = state.projects.filter(p => p.status === "active").length || "";
+}
+
+/* ============================================================
+   统计条（看板页顶部）
+   ============================================================ */
+
+async function refreshOverview() {
+  try { state.overview = await api("/api/stats/overview"); } catch (_) { return; }
+  renderStatsStrip();
+}
+
+function renderStatsStrip() {
+  const el = document.getElementById("dashStats");
+  if (!el) return;
+  const o = state.overview;
+  if (!o) { el.innerHTML = ""; return; }
+  const counts = o.status_counts || [];
+  const review = counts.find(s => s.status === "awaiting_review");
+  const today = o.daily && o.daily.length ? o.daily[o.daily.length - 1] : null;
+  const chips = [
+    ["进行中", o.in_flight || 0, "var(--st-running)"],
+    ["待审批", review ? review.count : 0, "var(--st-review)"],
+    ["今日完成", today ? today.count : 0, "var(--st-done)"],
+    ["完成率", fmtPct(o.success_rate), "var(--st-done)"],
+    ["平均耗时", fmtDur(o.avg_duration), "var(--fg-muted)"],
+    ["项目", o.projects || 0, "var(--fg-muted)"],
+  ];
+  el.innerHTML = chips.map(c => `<div class="stat-chip">
+    <span class="sc-dot" style="background:${c[2]}"></span>
+    <b>${c[1]}</b><span>${c[0]}</span></div>`).join("");
 }
 
 /* ============================================================
@@ -102,6 +173,7 @@ function fillSelects() {
 function currentFilters() {
   return {
     agent: Number(document.getElementById("fAgent")?.value) || null,
+    project: Number(document.getElementById("fProject")?.value) || null,
     status: document.getElementById("fStatus")?.value || "",
   };
 }
@@ -110,6 +182,7 @@ function filteredTasks() {
   const f = currentFilters();
   return state.tasks.filter(t => {
     if (f.agent && t.agent_id !== f.agent) return false;
+    if (f.project && t.project_id !== f.project) return false;
     if (f.status && t.status !== f.status) return false;
     return true;
   });
@@ -146,8 +219,9 @@ function cardHTML(t) {
     <div class="c-title">${esc(t.title)}</div>
     ${t.body ? `<div class="c-desc">${esc(t.body)}</div>` : ""}
     <div class="c-meta">
-      ${t.agent_name ? `<span class="c-agent"><span class="avatar sm">${esc((t.agent_name || "?").slice(0, 1))}</span>${esc(t.agent_name)}</span>` : `<span class="c-agent" style="color:var(--fg-faint)">未指派</span>`}
+      ${t.project_name ? `<span class="chip">${esc(t.project_name)}</span>` : ""}
       <span class="c-foot">
+        ${t.agent_name ? `<span class="c-agent"><span class="avatar sm">${esc((t.agent_name || "?").slice(0, 1))}</span>${esc(t.agent_name)}</span>` : `<span class="c-agent" style="color:var(--fg-faint)">未指派</span>`}
         ${t.error ? `<span style="color:var(--danger)">✗</span>` : ""}
       </span>
     </div>
@@ -163,6 +237,7 @@ function renderList() {
       <td class="chk"><span class="num">#${t.id}</span></td>
       <td class="t-title">${esc(t.title)}</td>
       <td>${esc(t.agent_name || "-")}</td>
+      <td>${esc(t.project_name || "-")}</td>
       <td><span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span></td>
       <td>${t.review_rounds || ""}</td>
       <td class="num">${(t.created_at || "").slice(5, 16).replace("T", " ")}</td>
@@ -197,9 +272,7 @@ function applyFilters() { state.view === "list" ? renderList() : renderBoard(); 
    任务详情（两栏）
    ============================================================ */
 
-function openTask(id) {
-  location.hash = "#/issue/" + id;
-}
+function openTask(id) { location.hash = "#/issue/" + id; }
 
 function closeDetail() {
   state.selected = null;
@@ -269,6 +342,8 @@ function renderSide(t) {
   if (!side) return;
   const statusOpts = Object.keys(STATUS_LABEL).map(s =>
     `<option value="${s}" ${s === t.status ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("");
+  const pOpts = `<option value="">无项目</option>` + state.projects.map(p =>
+    `<option value="${p.id}" ${t.project_id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
   let actions = "";
   if (["queued", "claimed", "running"].includes(t.status)) {
     actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">取消任务</button>`;
@@ -289,6 +364,8 @@ function renderSide(t) {
     <div class="sec-title">属性</div>
     <div class="prop-row"><span class="k">状态</span>
       <span class="v"><select onchange="patchTask(${t.id},{status:this.value})">${statusOpts}</select></span></div>
+    <div class="prop-row"><span class="k">项目</span>
+      <span class="v"><select onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
     <div class="prop-row"><span class="k">角色</span><span class="v">${esc(t.agent_name || "未指派")}</span></div>
     <div class="prop-row"><span class="k">权限</span><span class="v">${PERM_LABEL[t.perm] || t.perm}</span></div>
     <div class="prop-row"><span class="k">目录</span><span class="v" style="font-size:12px;word-break:break-all">${esc(t.project_dir || "-")}</span></div>
@@ -311,7 +388,14 @@ async function setTaskStatus(id, status) {
     await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
     if (status === "queued" && location.pathname === "/history") { location.href = "/"; return; }
     await loadAll();
-    if (state.selected === id && location.hash.startsWith("#/issue/")) showDetail(id);
+    const p = location.pathname;
+    if (p === "/" ) {
+      if (state.selected === id && location.hash.startsWith("#/issue/")) showDetail(id);
+    } else if (p === "/history") {
+      loadHistory();
+    } else if (p === "/projects" && state.projectView) {
+      refreshProjectDetail();
+    }
   } catch (e) { toast(e.message, true); }
 }
 
@@ -334,8 +418,10 @@ async function deleteTask(id) {
     await api(`/api/tasks/${id}`, { method: "DELETE" });
     toast("已删除");
     await loadAll();
+    const p = location.pathname;
     if (state.selected === id) { closeDetail(); location.hash = "#/"; }
-    if (location.pathname === "/history") loadHistory();
+    if (p === "/history") loadHistory();
+    if (p === "/projects" && state.projectView) refreshProjectDetail();
   } catch (e) { toast(e.message, true); }
 }
 
@@ -361,6 +447,7 @@ function openSubTask(parentId) {
   document.getElementById("tTitle").value = "";
   document.getElementById("tBody").value = "";
   document.getElementById("tPerm").value = t ? t.perm : "full";
+  document.getElementById("tProject").value = t && t.project_id ? t.project_id : "";
   document.getElementById("tParentId").value = parentId;
   document.getElementById("taskModalTitle").textContent = "拆分子任务";
   openModal("taskModal");
@@ -437,6 +524,11 @@ function openTerminal(id) {
   }).catch(() => { box.innerHTML = `<div class="empty">对话加载失败</div>`; });
 }
 
+function closeTerminal() {
+  state.termTask = null; // 停止向已关闭的弹窗追加日志
+  closeModal("termModal");
+}
+
 /* ============================================================
    任务创建 / 模板
    ============================================================ */
@@ -446,6 +538,7 @@ function openNewTask() {
   document.getElementById("tTitle").value = "";
   document.getElementById("tBody").value = "";
   document.getElementById("tPerm").value = "full";
+  document.getElementById("tProject").value = "";
   document.getElementById("tParentId").value = "";
   document.getElementById("taskModalTitle").textContent = "新建任务";
   openModal("taskModal");
@@ -455,6 +548,7 @@ async function submitTask() {
   const title = document.getElementById("tTitle").value.trim();
   if (!title) return toast("标题不能为空", true);
   const parentId = Number(document.getElementById("tParentId").value) || null;
+  const projectId = Number(document.getElementById("tProject").value) || null;
   try {
     await api("/api/tasks", {
       method: "POST",
@@ -462,6 +556,7 @@ async function submitTask() {
         title,
         body: document.getElementById("tBody").value,
         agent_id: Number(document.getElementById("tAgent").value) || null,
+        project_id: projectId,
         perm: document.getElementById("tPerm").value,
         parent_id: parentId,
       }),
@@ -470,6 +565,7 @@ async function submitTask() {
     toast("任务已创建");
     await loadAll();
     renderBoard(); renderList();
+    refreshOverview();
   } catch (e) { toast(e.message, true); }
 }
 
@@ -481,8 +577,9 @@ function applyTemplate() {
 }
 
 async function saveAsTemplate(taskId) {
-  const t = state.tasks.find(x => x.id === taskId);
-  if (!t) return;
+  // 列表接口的 body 是截断版（省载荷），模板必须用完整提示词
+  let t;
+  try { t = await api(`/api/tasks/${taskId}`); } catch (_) { return; }
   const name = prompt("模板名称（用于复用该任务的提示词）", t.title);
   if (!name) return;
   try {
@@ -522,6 +619,7 @@ function renderHistory() {
       <td class="num">#${t.id}</td>
       <td class="t-title"><span class="t-link" onclick="event.stopPropagation();openTerminal(${t.id})">${esc(t.title)}</span></td>
       <td>${esc(t.agent_name || "-")}</td>
+      <td>${esc(t.project_name || "-")}</td>
       <td>${PERM_LABEL[t.perm] || t.perm}</td>
       <td><span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span></td>
       <td>${t.review_rounds || ""}</td>
@@ -584,7 +682,249 @@ async function cleanupHistory() {
 }
 
 /* ============================================================
-   agents 页：列表 + 详情 tab
+   项目页（维度二：任务管理）
+   ============================================================ */
+
+function renderProjectList() {
+  const grid = document.getElementById("projectGrid");
+  if (!grid) return;
+  const q = (document.getElementById("pSearch")?.value || "").trim().toLowerCase();
+  const list = state.projects.filter(p => !q || p.name.toLowerCase().includes(q));
+  grid.innerHTML = list.map(p => {
+    const ts = state.tasks.filter(t => t.project_id === p.id);
+    const done = ts.filter(t => t.status === "succeeded").length;
+    const pct = ts.length ? done / ts.length * 100 : 0;
+    const agents = new Set(ts.map(t => t.agent_name).filter(Boolean));
+    return `<div class="project-card" onclick="openProject(${p.id})">
+      <div class="pc-top">
+        <b>${esc(p.name)}</b>
+        <span class="badge ${p.status === "active" ? "running" : "cancelled"}">${p.status === "active" ? "进行中" : "已归档"}</span>
+      </div>
+      ${p.description ? `<div class="pc-desc">${esc(p.description)}</div>` : ""}
+      <div class="pc-progress"><div class="pp-bar"><div style="width:${pct}%"></div></div>
+        <span class="pc-pct">${fmtPct(pct)}</span></div>
+      <div class="pc-meta">
+        <span>${ts.length} 个任务</span>
+        <span>${done} 完成</span>
+        <span>${agents.size} 个角色</span>
+        <span class="spacer"></span>
+        <span class="pc-date">${(p.updated_at || p.created_at || "").slice(5, 16).replace("T", " ")}</span>
+      </div>
+    </div>`;
+  }).join("");
+  const empty = document.getElementById("projectEmpty");
+  if (empty) empty.classList.toggle("hidden", list.length > 0);
+  const cnt = document.getElementById("projectCount");
+  if (cnt) cnt.textContent = `${list.length} 个项目`;
+}
+
+function openProject(id) { location.hash = "#/project/" + id; }
+function closeProjectDetail() { location.hash = "#/"; }
+
+function showProjectDetail(id) {
+  state.projectView = id;
+  document.getElementById("projectListShell").classList.add("hidden");
+  document.getElementById("projectDetailShell").classList.remove("hidden");
+  refreshProjectDetail();
+}
+
+function hideProjectDetail() {
+  document.getElementById("projectDetailShell").classList.add("hidden");
+  document.getElementById("projectListShell").classList.remove("hidden");
+  state.projectView = null;
+}
+
+async function refreshProjectDetail() {
+  if (!state.projectView) return;
+  const id = state.projectView;
+  const p = state.projects.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById("pdCrumb").innerHTML = `项目 / <b>${esc(p.name)}</b>`;
+  document.getElementById("pdBadge").innerHTML =
+    `<span class="badge ${p.status === "active" ? "running" : "cancelled"}">${p.status === "active" ? "进行中" : "已归档"}</span>`;
+  try {
+    const [stats, tasks] = await Promise.all([
+      api(`/api/stats/project/${id}`), api(`/api/tasks?project_id=${id}`),
+    ]);
+    state.projectStats[id] = stats;
+    renderProjectDetail(p, stats, tasks);
+  } catch (_) {}
+}
+
+function renderProjectDetail(p, s, tasks) {
+  const main = document.getElementById("pdMain");
+  const side = document.getElementById("pdSide");
+  if (!main || !side) return;
+  const counts = s.status_counts || [];
+  const review = counts.find(c => c.status === "awaiting_review");
+  const rowHTML = tasks.map(t => `
+    <div class="p-task-row" onclick="openTerminal(${t.id})">
+      <span class="num">#${t.id}</span>
+      <span class="t">${esc(t.title)}</span>
+      <span class="a">${t.agent_name ? `<span class="avatar sm">${esc(t.agent_name.slice(0, 1))}</span>${esc(t.agent_name)}` : "-"}</span>
+      <span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>
+      <span class="ops">
+        ${["succeeded", "failed", "cancelled"].includes(t.status)
+          ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">重试</button>` : ""}
+        <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">删除</button>
+      </span>
+    </div>`).join("");
+
+  const agentsHTML = (s.agents || []).map(a => `
+    <tr>
+      <td class="t-title"><span class="avatar sm">${esc((a.agent_name || "?").slice(0, 1))}</span>
+        <a class="t-link" href="/agents#/agent/${a.agent_id}">${esc(a.agent_name || "未指派")}</a></td>
+      <td class="num">${a.total}</td>
+      <td class="num" style="color:var(--success)">${a.succeeded}</td>
+      <td class="num" style="color:var(--danger)">${a.failed}</td>
+      <td class="num">${a.reviews || 0}</td>
+      <td class="num">${fmtPct(a.success_rate)}</td>
+      <td class="num">${fmtDur(a.avg_duration)}</td>
+    </tr>`).join("");
+
+  main.innerHTML = `
+    <h2>${esc(p.name)}</h2>
+    <div class="detail-id">创建于 ${esc((p.created_at || "").slice(0, 16).replace("T", " "))}</div>
+    ${p.description ? `<div class="detail-desc">${esc(p.description)}</div>` : ""}
+
+    <div class="pd-stats">
+      <div class="pd-ring">${ringHTML(s.progress || 0, "完成度")}</div>
+      <div class="pd-chips">
+        <div class="stat-chip"><span class="sc-dot" style="background:var(--st-running)"></span><b>${s.in_flight || 0}</b><span>进行中</span></div>
+        <div class="stat-chip"><span class="sc-dot" style="background:var(--st-review)"></span><b>${review ? review.count : 0}</b><span>待审批</span></div>
+        <div class="stat-chip"><span class="sc-dot" style="background:var(--st-done)"></span><b>${s.succeeded}</b><span>完成</span></div>
+        <div class="stat-chip"><span class="sc-dot" style="background:var(--st-failed)"></span><b>${s.failed}</b><span>失败</span></div>
+        <div class="stat-chip"><span class="sc-dot" style="background:var(--fg-muted)"></span><b>${s.total}</b><span>总任务</span></div>
+      </div>
+    </div>
+
+    <div class="sec-title">近 14 天完成</div>
+    ${dailyChartHTML(s.daily, 14)}
+
+    <div class="sec-title">任务 ${tasks.length}</div>
+    <div class="p-task-list">
+      ${rowHTML || `<div class="empty">还没有任务，去看板派活并归入本项目</div>`}
+    </div>
+
+    <div class="sec-title">成员统计（在本项目上工作的 agent）</div>
+    <div class="list-wrap" style="max-height:340px">
+      <table class="list-grid">
+        <thead><tr><th>角色</th><th>任务</th><th>完成</th><th>失败</th><th>审批轮次</th><th>成功率</th><th>平均耗时</th></tr></thead>
+        <tbody>${agentsHTML || `<tr><td colspan="7"><div class="empty">尚无产出统计</div></td></tr>`}</tbody>
+      </table>
+    </div>`;
+
+  side.innerHTML = `
+    <div class="sec-title">属性</div>
+    <div class="prop-row"><span class="k">状态</span>
+      <span class="v"><select onchange="patchProject(${p.id},{status:this.value})">
+        <option value="active" ${p.status === "active" ? "selected" : ""}>进行中</option>
+        <option value="archived" ${p.status === "archived" ? "selected" : ""}>已归档</option>
+      </select></span></div>
+    <div class="prop-row"><span class="k">描述</span><span class="v" style="font-size:12px;white-space:pre-wrap">${esc(p.description || "-")}</span></div>
+    <div class="prop-row"><span class="k">创建</span><span class="v">${esc((p.created_at || "").slice(0, 16).replace("T", " "))}</span></div>
+    <div class="sec-title">操作</div>
+    <div class="detail-actions">
+      <button class="btn sm" onclick="openProjectModal(${p.id})">编辑项目</button>
+      <button class="btn sm danger" onclick="deleteProject(${p.id})">删除项目</button>
+    </div>`;
+}
+
+function openProjectModal(id) {
+  const p = id ? state.projects.find(x => x.id === id) : null;
+  document.getElementById("projectModalTitle").textContent = p ? "编辑项目" : "新建项目";
+  document.getElementById("pId").value = p ? p.id : "";
+  document.getElementById("pName").value = p ? p.name : "";
+  document.getElementById("pDesc").value = p ? (p.description || "") : "";
+  document.getElementById("pStatus").value = p ? (p.status || "active") : "active";
+  openModal("projectModal");
+}
+
+async function submitProject() {
+  const id = document.getElementById("pId").value;
+  const body = {
+    name: document.getElementById("pName").value.trim(),
+    description: document.getElementById("pDesc").value.trim(),
+    status: document.getElementById("pStatus").value,
+  };
+  if (!body.name) return toast("项目名不能为空", true);
+  try {
+    if (id) await api(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+    else await api("/api/projects", { method: "POST", body: JSON.stringify(body) });
+    closeModal("projectModal");
+    await loadAll();
+    renderProjectList();
+    if (state.projectView) refreshProjectDetail();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function patchProject(id, set) {
+  try {
+    await api(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(set) });
+    await loadAll();
+    if (state.projectView === id) refreshProjectDetail();
+    renderProjectList();
+    toast("已更新");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function deleteProject(id) {
+  if (!id) id = state.projectView;
+  if (!id) return;
+  if (!confirm("删除该项目？项目下的任务将保留（转为无项目），项目统计随之消失。")) return;
+  try {
+    await api(`/api/projects/${id}`, { method: "DELETE" });
+    toast("已删除");
+    await loadAll();
+    if (state.projectView === id) { closeProjectDetail(); }
+    renderProjectList();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ============================================================
+   图表组件（纯 CSS，无外部依赖）
+   ============================================================ */
+
+function dailyChartHTML(daily, days) {
+  days = days || 14;
+  const map = {};
+  (daily || []).forEach(d => map[d.date] = d.count);
+  const vals = Object.values(map);
+  const max = Math.max(1, ...vals);
+  const out = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000);
+    const key = d.toISOString().slice(0, 10);
+    const c = map[key] || 0;
+    const today = i === 0;
+    out.push(`<div class="bc-col ${today ? "today" : ""}" title="${key}: ${c} 个完成">
+      <div class="bc-bar" style="height:${Math.round(c / max * 100)}%;${c === 0 ? "opacity:.22" : ""}"></div>
+      <div class="bc-day">${i % 2 === 0 ? key.slice(5) : ""}</div>
+    </div>`);
+  }
+  return `<div class="bar-chart">${out.join("")}</div>`;
+}
+
+function ringHTML(pct, label) {
+  const deg = Math.round(Math.min(100, pct) * 3.6);
+  return `<div class="ring" style="background:conic-gradient(var(--brand) ${deg}deg, rgba(255,255,255,.09) 0)">
+    <div class="ring-inner"><b>${fmtPct(pct)}</b><span>${label}</span></div>
+  </div>`;
+}
+
+function statusBarHTML(counts) {
+  const order = ["queued", "claimed", "running", "awaiting_review", "succeeded", "failed", "cancelled"];
+  const total = (counts || []).reduce((a, c) => a + c.count, 0);
+  if (!total) return `<div class="status-bar"><div class="sb-empty"></div></div>`;
+  const segs = [...(counts || [])]
+    .sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status))
+    .filter(c => c.count > 0)
+    .map(c => `<div class="sb-seg" title="${STATUS_LABEL[c.status]}: ${c.count}" style="width:${c.count / total * 100}%;background:${ST_COLOR[c.status]}"></div>`).join("");
+  return `<div class="status-bar">${segs}</div>`;
+}
+
+/* ============================================================
+   agents 页：列表 + 详情 tab（schema 驱动深度定制）
    ============================================================ */
 
 function renderAgentList() {
@@ -627,13 +967,8 @@ async function toggleAgent(id) {
   } catch (e) { toast(e.message, true); }
 }
 
-function openAgentDetail(id) {
-  location.hash = "#/agent/" + id;
-}
-
-function closeAgentDetail() {
-  location.hash = "#/";
-}
+function openAgentDetail(id) { location.hash = "#/agent/" + id; }
+function closeAgentDetail() { location.hash = "#/"; }
 
 function showAgentDetail(id) {
   const a = state.agents.find(x => x.id === id);
@@ -641,7 +976,11 @@ function showAgentDetail(id) {
   state.agentEditing = a;
   document.getElementById("agentListShell").classList.add("hidden");
   document.getElementById("agentDetailShell").classList.remove("hidden");
-  agentTab("general");
+  document.getElementById("adCrumb").innerHTML = `角色 / <b>${esc(a.name)}</b>`;
+  const docs = state.schema[a.cli]?.docs;
+  document.getElementById("adCliDocs").innerHTML =
+    `<span class="badge">${esc(a.cli)}</span> ${docs ? `<a class="t-link" target="_blank" rel="noreferrer" href="${esc(docs)}">官方文档 ↗</a>` : ""}`;
+  agentTab("overview");
 }
 
 function hideAgentDetail() {
@@ -655,86 +994,243 @@ function agentTab(name) {
   document.querySelectorAll("#agentTabs button").forEach(b =>
     b.classList.toggle("active", b.dataset.tab === name));
   const a = state.agentEditing;
-  const rc = a.role_config || {};
+  if (!a) return;
   const form = document.getElementById("agentForm");
-  let html = "";
-  if (name === "general") {
-    html = `
-      <div class="row">
-        <label class="field">角色名 <input id="gName" value="${esc(a.name)}"></label>
-        <label class="field">CLI <select id="gCli">
-          ${["omp", "opencode", "pi", "claude", "codex"].map(c =>
-            `<option value="${c}" ${c === a.cli ? "selected" : ""}>${c}</option>`).join("")}
-        </select></label>
-      </div>
-      <label class="field">项目目录 <input id="gDir" value="${esc(a.project_dir || "")}" placeholder="/path/to/project"></label>
-      <label class="field">描述 <input id="gDesc" value="${esc(a.description || "")}"></label>
-      <div class="row">
-        <label class="field">默认权限 <select id="gPerm">
-          <option value="full" ${(a.default_perm || "full") === "full" ? "selected" : ""}>完整</option>
-          <option value="review" ${a.default_perm === "review" ? "selected" : ""}>完成后审批</option>
-        </select></label>
-        <label class="field" style="display:flex;align-items:center;gap:8px;margin-top:26px">
-          <input type="checkbox" id="gEnabled" ${a.enabled ? "checked" : ""} style="width:auto"> 启用
-        </label>
-      </div>`;
-  } else if (name === "model") {
-    html = `
-      <label class="field">模型 <input id="gModel" value="${esc(rc.model || "")}" placeholder="留空用 CLI 默认"></label>
-      <label class="field">思考级别 <select id="gThink">
-        ${["", "low", "medium", "high"].map(v =>
-          `<option value="${v}" ${(rc.thinking || "") === v ? "selected" : ""}>${v === "" ? "默认" : v}</option>`).join("")}
-      </select></label>
-      <label class="field">系统提示词 <textarea id="gSys" rows="6" placeholder="角色定位、行为规范。会追加到 CLI 默认提示词之后">${esc(rc.system_prompt || "")}</textarea></label>`;
-  } else if (name === "skills") {
-    html = `
-      <label class="field">技能目录（逗号分隔）<input id="gSkills" value="${esc((rc.skills || []).join(","))}" placeholder="/path/to/skills1,/path/to/skills2"></label>
-      <label class="field">插件/配置文件（逗号分隔）<input id="gPlugins" value="${esc((rc.plugins || []).join(","))}"></label>
-      <label class="field">额外参数（空格分隔）<input id="gExtra" value="${esc((rc.extra_args || []).join(" "))}" placeholder="--no-lsp --no-session"></label>`;
-  } else if (name === "env") {
-    html = `
-      <label class="field">环境变量（每行 K=V）<textarea id="gEnv" rows="10" placeholder="KEY=VALUE">${esc(Object.entries(rc.env || {}).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea></label>`;
-  }
-  html += `<div style="margin-top:16px"><button class="btn primary" onclick="saveAgentDetail()">保存修改</button></div>`;
-  form.innerHTML = html;
+  if (name === "overview") renderAgentOverview(a);
+  else if (name === "config") renderAgentConfig(a);
+  else if (name === "env") renderAgentEnv(a);
+  else if (name === "stats") renderAgentStats(a);
 }
 
-async function saveAgentDetail() {
-  const a = state.agentEditing;
-  const rc = a.role_config || {};
-  const g = id => document.getElementById(id);
-  const body = {
-    name: (g("gName")?.value ?? a.name).trim(),
-    description: g("gDesc")?.value ?? a.description,
-    cli: g("gCli")?.value ?? a.cli,
-    project_dir: g("gDir")?.value ?? a.project_dir,
-    default_perm: g("gPerm")?.value ?? a.default_perm,
-    enabled: g("gEnabled") ? g("gEnabled").checked : a.enabled,
-    role_config: {
-      model: (g("gModel")?.value ?? rc.model).trim(),
-      thinking: g("gThink")?.value ?? rc.thinking,
-      system_prompt: g("gSys")?.value ?? rc.system_prompt,
-      skills: (g("gSkills")?.value ?? (rc.skills || []).join(",")).split(",").map(s => s.trim()).filter(Boolean),
-      plugins: (g("gPlugins")?.value ?? (rc.plugins || []).join(",")).split(",").map(s => s.trim()).filter(Boolean),
-      extra_args: (g("gExtra")?.value ?? (rc.extra_args || []).join(" ")).split(/\s+/).filter(Boolean),
-      env: g("gEnv") ? parseEnv(g("gEnv").value) : (rc.env || {}),
-    },
-  };
+async function loadAgentStats(a) {
+  if (!state.agentStats[a.id]) {
+    try { state.agentStats[a.id] = await api(`/api/stats/agent/${a.id}`); } catch (_) {}
+  }
+  return state.agentStats[a.id];
+}
+
+async function renderAgentOverview(a) {
+  const form = document.getElementById("agentForm");
+  if (!form) return;
+  const st = await loadAgentStats(a);
+  if (state.agentTab !== "overview") return;
+  form.innerHTML = `
+    <div class="agent-hero">
+      <span class="avatar lg">${esc((a.name || "?").slice(0, 1))}</span>
+      <div>
+        <div class="ah-name">${esc(a.name)} <span class="badge">${esc(a.cli)}</span>
+          <span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "启用" : "停用"}</span></div>
+        ${a.description ? `<div class="ah-desc">${esc(a.description)}</div>` : ""}
+        <div class="ah-sub">${esc(a.project_dir || "")}</div>
+      </div>
+    </div>
+    ${st ? `
+      <div class="pd-stats">
+        <div class="pd-chips">
+          <div class="stat-chip"><span class="sc-dot" style="background:var(--st-running)"></span><b>${st.in_flight}</b><span>进行中</span></div>
+          <div class="stat-chip"><span class="sc-dot" style="background:var(--st-done)"></span><b>${st.succeeded}</b><span>完成</span></div>
+          <div class="stat-chip"><span class="sc-dot" style="background:var(--st-failed)"></span><b>${st.failed}</b><span>失败</span></div>
+          <div class="stat-chip"><span class="sc-dot" style="background:var(--st-cancel)"></span><b>${st.cancelled}</b><span>取消</span></div>
+          <div class="stat-chip"><span class="sc-dot" style="background:var(--st-done)"></span><b>${fmtPct(st.success_rate)}</b><span>成功率</span></div>
+          <div class="stat-chip"><span class="sc-dot" style="background:var(--fg-muted)"></span><b>${fmtDur(st.avg_duration)}</b><span>平均耗时</span></div>
+        </div>
+      </div>
+      <div class="sec-title">近 14 天完成</div>
+      ${dailyChartHTML(st.daily, 14)}
+      ${st.projects && st.projects.length ? `
+        <div class="sec-title">分项目产出</div>
+        <div class="list-wrap" style="max-height:260px">
+          <table class="list-grid">
+            <thead><tr><th>项目</th><th>任务</th><th>完成</th><th>失败</th><th>审批轮次</th><th>成功率</th><th>平均耗时</th></tr></thead>
+            <tbody>${st.projects.map(ps => `
+              <tr ${ps.project_id > 0 ? `onclick="openProject(${ps.project_id})" style="cursor:pointer"` : ""}>
+                <td><a class="t-link" href="/projects#/project/${ps.project_id}">${esc(ps.project_name || "未命名")}</a></td>
+                <td class="num">${ps.total}</td>
+                <td class="num" style="color:var(--success)">${ps.succeeded}</td>
+                <td class="num" style="color:var(--danger)">${ps.failed}</td>
+                <td class="num">${ps.reviews || 0}</td>
+                <td class="num">${fmtPct(ps.success_rate)}</td>
+                <td class="num">${fmtDur(ps.avg_duration)}</td>
+              </tr>`).join("")}</tbody>
+          </table>
+        </div>` : ""}
+    ` : `<div class="empty">暂无统计</div>`}
+    <div class="sec-title">最近任务</div>
+    <div id="agentRecent"></div>`;
   try {
-    await api(`/api/agents/${a.id}`, { method: "PATCH", body: JSON.stringify(body) });
-    toast("已保存");
+    const recent = await api(`/api/tasks?agent_id=${a.id}&limit=8`);
+    const box = document.getElementById("agentRecent");
+    if (box) {
+      box.innerHTML = recent.map(t => `
+        <div class="p-task-row" onclick="openTerminal(${t.id})">
+          <span class="num">#${t.id}</span>
+          <span class="t">${esc(t.title)}</span>
+          <span class="a">${esc(t.project_name || "-")}</span>
+          <span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>
+        </div>`).join("") || `<div class="empty">还没有任务</div>`;
+    }
+  } catch (_) {}
+}
+
+async function renderAgentStats(a) {
+  const form = document.getElementById("agentForm");
+  if (!form) return;
+  form.innerHTML = `<div class="empty">加载统计中...</div>`;
+  const st = await loadAgentStats(a);
+  if (state.agentTab !== "stats") return;
+  if (!st) { form.innerHTML = `<div class="empty">统计不可用</div>`; return; }
+  form.innerHTML = `
+    <div class="sec-title">状态分布（${st.total} 个任务）</div>
+    <div class="sb-wrap">${statusBarHTML(st.status_counts)}
+      <div class="sb-legend">
+        ${(st.status_counts || []).map(c =>
+          `<span class="sb-item"><i style="background:${ST_COLOR[c.status]}"></i>${STATUS_LABEL[c.status]} ${c.count}</span>`).join("")}
+      </div></div>
+    <div class="sec-title">近 14 天完成</div>
+    ${dailyChartHTML(st.daily, 14)}
+    <div class="sec-title">分项目产出（维度二：agent 统计）</div>
+    <div class="list-wrap">
+      <table class="list-grid">
+        <thead><tr><th>项目</th><th>任务</th><th>完成</th><th>失败</th><th>审批轮次</th><th>成功率</th><th>平均耗时</th></tr></thead>
+        <tbody>${(st.projects || []).map(ps => `
+          <tr>
+            <td><a class="t-link" href="/projects#/project/${ps.project_id}">${esc(ps.project_name || "未命名")}</a></td>
+            <td class="num">${ps.total}</td>
+            <td class="num" style="color:var(--success)">${ps.succeeded}</td>
+            <td class="num" style="color:var(--danger)">${ps.failed}</td>
+            <td class="num">${ps.reviews || 0}</td>
+            <td class="num">${fmtPct(ps.success_rate)}</td>
+            <td class="num">${fmtDur(ps.avg_duration)}</td>
+          </tr>`).join("") || `<tr><td colspan="7"><div class="empty">暂无产出</div></td></tr>`}</tbody>
+      </table>
+    </div>`;
+}
+
+/* ---- schema 驱动的配置表单（深度定制核心） ---- */
+
+function fieldValue(f, rc) {
+  if (BUILTIN_KEYS.includes(f.key)) {
+    const v = rc[f.key];
+    if (f.type === "list") return Array.isArray(v) ? (v || []).join(",") : (v ?? "");
+    if (f.type === "env") return Object.entries(v || {}).map(([k, val]) => `${k}=${val}`).join("\n");
+    if (Array.isArray(v)) return (v || []).join(" "); // extra_args 等数组字段回显
+    return v ?? f.default ?? "";
+  }
+  return (rc.custom && rc.custom[f.key] != null) ? rc.custom[f.key] : (f.default ?? "");
+}
+
+function fieldControlHTML(f, rc) {
+  const val = fieldValue(f, rc);
+  const attrs = `data-key="${f.key}" data-type="${f.type}"`;
+  let ctl = "";
+  if (f.type === "select") {
+    ctl = `<select ${attrs}>${f.options.map(o =>
+      `<option value="${esc(o)}" ${String(val) === String(o) ? "selected" : ""}>${o === "" ? "默认" : esc(o)}</option>`).join("")}</select>`;
+  } else if (f.type === "textarea") {
+    ctl = `<textarea ${attrs} rows="5" placeholder="${esc(f.placeholder || "")}">${esc(val)}</textarea>`;
+  } else if (f.type === "env") {
+    ctl = `<textarea ${attrs} rows="6" placeholder="${esc(f.placeholder || "")}">${esc(val)}</textarea>`;
+  } else if (f.type === "list") {
+    ctl = `<input ${attrs} value="${esc(val)}" placeholder="${esc(f.placeholder || "")}">`;
+  } else {
+    ctl = `<input ${attrs} value="${esc(val)}" placeholder="${esc(f.placeholder || "")}">`;
+  }
+  return `<div class="schema-field">
+    <label class="field">${esc(f.label)}${ctl}</label>
+    ${f.help ? `<div class="field-help">${esc(f.help)}</div>` : ""}
+  </div>`;
+}
+
+function schemaFormHTML(schema, rc) {
+  const groups = {};
+  (schema.fields || []).forEach(f => { (groups[f.group] = groups[f.group] || []).push(f); });
+  return Object.entries(groups).map(([g, fs]) => `
+    <div class="schema-group">
+      <div class="schema-group-title">${esc(g)}</div>
+      <div class="schema-group-body">${fs.map(f => fieldControlHTML(f, rc)).join("")}</div>
+    </div>`).join("");
+}
+
+function readConfigFrom(schema, container) {
+  const cfg = { model: "", system_prompt: "", thinking: "", skills: [], plugins: [], extra_args: [], env: {}, custom: {} };
+  (schema.fields || []).forEach(f => {
+    const el = container.querySelector(`[data-key="${f.key}"]`);
+    if (!el) return;
+    if (f.type === "env") {
+      if (BUILTIN_KEYS.includes(f.key)) cfg.env = parseEnv(el.value);
+      else cfg.custom[f.key] = el.value;
+      return;
+    }
+    if (f.type === "list") {
+      const arr = el.value.split(",").map(s => s.trim()).filter(Boolean);
+      if (BUILTIN_KEYS.includes(f.key)) cfg[f.key] = arr;
+      else cfg.custom[f.key] = arr.join(",");
+      return;
+    }
+    if (f.key === "extra_args") {
+      cfg.extra_args = el.value.split(/\s+/).filter(Boolean);
+      return;
+    }
+    if (BUILTIN_KEYS.includes(f.key)) cfg[f.key] = el.value;
+    else cfg.custom[f.key] = el.value;
+  });
+  return cfg;
+}
+
+async function renderAgentConfig(a) {
+  const form = document.getElementById("agentForm");
+  if (!form) return;
+  const schema = state.schema[a.cli];
+  if (!schema) { form.innerHTML = `<div class="empty">CLI schema 未加载</div>`; return; }
+  form.innerHTML = `
+    <div class="schema-tip">该角色的可配置参数来自 ${esc(schema.name)} 官方文档
+      ${schema.docs ? `<a class="t-link" target="_blank" rel="noreferrer" href="${esc(schema.docs)}">查看文档 ↗</a>` : ""}。
+      每个 CLI 的字段不同——这是按角色深度定制，不是统一定制。</div>
+    <div id="configForm">${schemaFormHTML(schema, a.role_config || {})}</div>
+    <div style="margin-top:16px"><button class="btn primary" onclick="saveAgentConfig()">保存配置</button></div>`;
+}
+
+async function saveAgentConfig() {
+  const a = state.agentEditing;
+  if (!a) return;
+  const schema = state.schema[a.cli];
+  const cfg = readConfigFrom(schema, document.getElementById("configForm"));
+  try {
+    await api(`/api/agents/${a.id}`, { method: "PATCH", body: JSON.stringify({ role_config: cfg }) });
+    toast("配置已保存");
     await loadAll();
     showAgentDetail(a.id);
   } catch (e) { toast(e.message, true); }
 }
 
-function parseEnv(text) {
-  const env = {};
-  text.split("\n").forEach(line => {
-    const i = line.indexOf("=");
-    if (i > 0) env[line.slice(0, i).trim()] = line.slice(i + 1).trim();
-  });
-  return env;
+async function renderAgentEnv(a) {
+  const form = document.getElementById("agentForm");
+  if (!form) return;
+  const rc = a.role_config || {};
+  form.innerHTML = `
+    <div class="schema-tip">环境变量注入到该角色的每次执行进程（继承并覆盖系统环境）。</div>
+    <label class="field">环境变量（每行 K=V）
+      <textarea id="envText" rows="12" placeholder="KEY=VALUE">${esc(Object.entries(rc.env || {}).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea>
+    </label>
+    <div style="margin-top:16px"><button class="btn primary" onclick="saveAgentEnv()">保存环境变量</button></div>`;
+}
+
+async function saveAgentEnv() {
+  const a = state.agentEditing;
+  if (!a) return;
+  const rc = a.role_config || {};
+  const env = parseEnv(document.getElementById("envText").value);
+  const body = {
+    model: rc.model || "", system_prompt: rc.system_prompt || "", thinking: rc.thinking || "",
+    skills: rc.skills || [], plugins: rc.plugins || [], extra_args: rc.extra_args || [],
+    env, custom: rc.custom || {},
+  };
+  try {
+    await api(`/api/agents/${a.id}`, { method: "PATCH", body: JSON.stringify({ role_config: body }) });
+    toast("环境变量已保存");
+    await loadAll();
+    showAgentDetail(a.id);
+  } catch (e) { toast(e.message, true); }
 }
 
 async function openAgentModal(id) {
@@ -743,37 +1239,42 @@ async function openAgentModal(id) {
   document.getElementById("aId").value = a ? a.id : "";
   document.getElementById("aName").value = a ? a.name : "";
   document.getElementById("aDesc").value = a ? (a.description || "") : "";
-  document.getElementById("aCli").value = a ? a.cli : "omp";
   document.getElementById("aProjectDir").value = a ? (a.project_dir || "") : "";
   document.getElementById("aPerm").value = a ? (a.default_perm || "full") : "full";
-  const rc = a ? (a.role_config || {}) : {};
-  document.getElementById("aModel").value = rc.model || "";
-  document.getElementById("aSysPrompt").value = rc.system_prompt || "";
-  document.getElementById("aThinking").value = rc.thinking || "";
-  document.getElementById("aSkills").value = (rc.skills || []).join(",");
-  document.getElementById("aPlugins").value = (rc.plugins || []).join(",");
-  document.getElementById("aExtra").value = (rc.extra_args || []).join(" ");
-  document.getElementById("aEnv").value = Object.entries(rc.env || {}).map(([k, v]) => `${k}=${v}`).join("\n");
+  document.getElementById("aEnabled").checked = a ? a.enabled : true;
+  state.agentModalRC = a ? JSON.parse(JSON.stringify(a.role_config || {})) : {};
+  await loadSchema();
+  const sel = document.getElementById("aCli");
+  if (a) sel.value = a.cli;
+  else if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
+  renderAgentModalSchema();
   openModal("agentModal");
+}
+
+function renderAgentModalSchema() {
+  const schema = state.schema[document.getElementById("aCli").value];
+  const box = document.getElementById("agentModalSchema");
+  if (!box) return;
+  const sub = document.getElementById("agentModalSub");
+  if (sub && schema) {
+    sub.innerHTML = `配置按 ${esc(schema.name)} 官方文档定制
+      ${schema.docs ? `（<a class="t-link" target="_blank" rel="noreferrer" href="${esc(schema.docs)}">文档 ↗</a>）` : ""}，不同 CLI 字段不同`;
+  }
+  box.innerHTML = schema ? schemaFormHTML(schema, state.agentModalRC) : "";
 }
 
 async function submitAgent() {
   const id = document.getElementById("aId").value;
+  const cli = document.getElementById("aCli").value;
+  const schema = state.schema[cli];
   const body = {
     name: document.getElementById("aName").value.trim(),
     description: document.getElementById("aDesc").value.trim(),
-    cli: document.getElementById("aCli").value,
+    cli,
     project_dir: document.getElementById("aProjectDir").value.trim(),
     default_perm: document.getElementById("aPerm").value,
-    role_config: {
-      model: document.getElementById("aModel").value.trim(),
-      system_prompt: document.getElementById("aSysPrompt").value,
-      skills: document.getElementById("aSkills").value.split(",").map(s => s.trim()).filter(Boolean),
-      thinking: document.getElementById("aThinking").value,
-      plugins: document.getElementById("aPlugins").value.split(",").map(s => s.trim()).filter(Boolean),
-      extra_args: document.getElementById("aExtra").value.split(/\s+/).filter(Boolean),
-      env: parseEnv(document.getElementById("aEnv").value),
-    },
+    enabled: document.getElementById("aEnabled").checked,
+    role_config: schema ? readConfigFrom(schema, document.getElementById("agentModalSchema")) : {},
   };
   try {
     if (id) await api(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify(body) });
@@ -785,12 +1286,23 @@ async function submitAgent() {
 }
 
 async function deleteAgent(id) {
-  if (!confirm("删除该角色？未完成任务将失去指派。")) return;
+  if (!id) return;
+  if (!confirm("删除该角色？未完成任务将失去指派，历史任务保留。")) return;
   try {
     await api(`/api/agents/${id}`, { method: "DELETE" });
     await loadAll();
     renderAgentList();
+    if (state.agentEditing && state.agentEditing.id === id) hideAgentDetail();
   } catch (e) { toast(e.message, true); }
+}
+
+function parseEnv(text) {
+  const env = {};
+  text.split("\n").forEach(line => {
+    const i = line.indexOf("=");
+    if (i > 0) env[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  });
+  return env;
 }
 
 /* ============================================================
@@ -946,10 +1458,21 @@ async function runCleanup() {
 function route() {
   const h = location.hash;
   const path = location.pathname;
+  if (path === "/projects") {
+    const m = /^#\/project\/(\d+)/.exec(h);
+    if (m) showProjectDetail(Number(m[1]));
+    else if (state.projectView !== null) hideProjectDetail();
+    return;
+  }
   if (path === "/agents") {
     const m = /^#\/agent\/(\d+)/.exec(h);
-    if (m && state.agentEditing === null) showAgentDetail(Number(m[1]));
-    else if (!m && state.agentEditing !== null) hideAgentDetail();
+    if (m) {
+      const id = Number(m[1]);
+      // 详情内允许直接切到另一个角色（比如从项目成员表点进来再切换）
+      if (state.agentEditing === null || state.agentEditing.id !== id) showAgentDetail(id);
+    } else if (state.agentEditing !== null) {
+      hideAgentDetail();
+    }
     return;
   }
   const m = /^#\/issue\/(\d+)/.exec(h);
@@ -957,6 +1480,12 @@ function route() {
   else if (state.selected !== null || !document.getElementById("detailShell").classList.contains("hidden")) {
     hideDetail();
   }
+}
+
+let ovTimer = null;
+function refreshOverviewSoon() {
+  clearTimeout(ovTimer);
+  ovTimer = setTimeout(refreshOverview, 600);
 }
 
 function sse() {
@@ -970,11 +1499,14 @@ function sse() {
       if (path === "/") {
         state.view === "list" ? renderList() : renderBoard();
         if (state.selected === t.id) refreshDetail();
+        refreshOverviewSoon();
       } else if (path === "/history") {
         loadHistory();
       } else if (path === "/agents") {
-        const j = state.agents.findIndex(x => x.id === t.agent_id);
-        if (j < 0) loadAll().then(() => { renderAgentList(); });
+        if (state.agentTab === "overview") renderAgentOverview(state.agentEditing);
+      } else if (path === "/projects") {
+        renderProjectList();
+        if (state.projectView) refreshProjectDetail();
       }
       fillSelects();
     } catch (_) {}
@@ -986,17 +1518,23 @@ function sse() {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+  await loadSchema();
   try { await loadAll(); } catch (e) { toast("加载失败: " + e.message, true); }
   const path = location.pathname;
   if (path === "/") {
     renderBoard();
     loadTemplates();
+    refreshOverview();
     route();
     window.addEventListener("hashchange", route);
   } else if (path === "/history") {
     loadHistory();
   } else if (path === "/agents") {
     renderAgentList();
+    route();
+    window.addEventListener("hashchange", route);
+  } else if (path === "/projects") {
+    renderProjectList();
     route();
     window.addEventListener("hashchange", route);
   } else if (path === "/autopilots") {

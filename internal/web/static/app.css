@@ -439,3 +439,141 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); }
   color: var(--fg-muted); cursor: pointer; font-size: 14px;
 }
 .icon-btn:hover { background: var(--hover); color: var(--fg); }
+
+/* ============================================================
+   统计条（看板页顶部，复刻 multica dashboard 指标卡）
+   ============================================================ */
+.stats-strip {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  padding: 10px 16px 2px; flex-shrink: 0;
+}
+.stat-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 5px 10px; font-size: 12px; color: var(--fg-muted);
+}
+.stat-chip b { font-size: 13px; color: var(--fg); font-variant-numeric: tabular-nums; }
+.stat-chip .sc-dot { width: 7px; height: 7px; border-radius: 50%; }
+
+/* ============================================================
+   项目页
+   ============================================================ */
+.project-grid {
+  flex: 1; overflow-y: auto; padding: 14px 16px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px;
+  align-content: start;
+}
+.project-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl);
+  padding: 14px 16px; cursor: pointer; box-shadow: var(--sh-surface);
+  transition: border-color .12s, background .12s;
+}
+.project-card:hover { border-color: var(--border-strong); background: var(--raised); }
+.pc-top { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.pc-top b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-desc {
+  font-size: 12px; color: var(--fg-muted); margin-top: 4px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  min-height: 16px;
+}
+.pc-progress { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.pp-bar {
+  flex: 1; height: 5px; border-radius: 3px; background: rgba(255,255,255,.07); overflow: hidden;
+}
+.pp-bar div { height: 100%; background: linear-gradient(90deg, var(--brand), var(--sidebar-primary)); border-radius: 3px; transition: width .3s; }
+.pc-pct { font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; min-width: 40px; text-align: right; }
+.pc-meta { display: flex; align-items: center; gap: 12px; margin-top: 10px; font-size: 11px; color: var(--fg-faint); }
+.pc-meta .spacer { flex: 1; }
+.pc-date { font-variant-numeric: tabular-nums; }
+
+/* 项目详情 */
+.pd-stats { display: flex; gap: 18px; align-items: center; margin: 16px 0 4px; }
+.pd-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.pd-ring { display: flex; align-items: center; }
+.ring {
+  width: 76px; height: 76px; border-radius: 50%; position: relative;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.ring-inner {
+  width: 60px; height: 60px; border-radius: 50%;
+  background: var(--page-canvas);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.ring-inner b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.ring-inner span { font-size: 10px; color: var(--fg-faint); margin-top: 1px; }
+
+/* 任务行（项目详情 / agent 最近任务） */
+.p-task-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--surface); margin-bottom: 6px; cursor: pointer;
+  transition: border-color .12s, background .12s;
+}
+.p-task-row:hover { border-color: var(--border-strong); background: var(--raised); }
+.p-task-row .num { font-size: 11px; color: var(--fg-faint); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.p-task-row .t { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p-task-row .a { font-size: 12px; color: var(--fg-muted); flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; }
+.p-task-row .ops { display: flex; gap: 4px; flex-shrink: 0; }
+
+/* ============================================================
+   图表组件
+   ============================================================ */
+.bar-chart {
+  display: flex; align-items: flex-end; gap: 3px;
+  height: 96px; padding: 6px 2px 0; margin: 4px 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.bc-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; gap: 3px; }
+.bc-bar {
+  width: 100%; max-width: 18px; border-radius: 3px 3px 0 0;
+  background: linear-gradient(180deg, var(--brand), var(--sidebar-primary));
+  min-height: 2px; transition: height .3s;
+}
+.bc-col.today .bc-bar { outline: 1px solid rgba(255,255,255,.35); }
+.bc-day { font-size: 9px; color: var(--fg-faint); height: 12px; }
+
+.status-bar {
+  display: flex; height: 10px; border-radius: 5px; overflow: hidden;
+  background: rgba(255,255,255,.06); margin: 6px 0 10px;
+}
+.sb-seg { height: 100%; }
+.sb-empty { height: 100%; width: 100%; }
+.sb-legend { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.sb-item { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg-muted); }
+.sb-item i { width: 8px; height: 8px; border-radius: 50%; }
+
+/* ============================================================
+   schema 驱动的深度定制表单
+   ============================================================ */
+.schema-group { margin-bottom: 14px; }
+.schema-group-title {
+  font-size: 11px; font-weight: 600; color: var(--fg-faint);
+  text-transform: uppercase; letter-spacing: .8px; margin: 12px 0 2px;
+}
+.schema-group-body {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  padding: 2px 14px 12px;
+}
+.schema-field .field { margin: 12px 0 2px; }
+.schema-field .field > textarea { margin-top: 4px; }
+.field-help { font-size: 11px; color: var(--fg-faint); margin-top: 3px; line-height: 15px; }
+.schema-tip {
+  font-size: 12px; color: var(--fg-muted); background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  padding: 10px 14px; margin-bottom: 12px; line-height: 18px;
+}
+.schema-tip .t-link { color: var(--brand); }
+
+/* agent 详情头部 */
+.agent-hero { display: flex; gap: 14px; align-items: center; margin-bottom: 14px; }
+.avatar.lg { width: 44px; height: 44px; font-size: 17px; border-radius: 12px; }
+.ah-name { font-size: 17px; font-weight: 650; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ah-desc { font-size: 13px; color: var(--fg-muted); margin-top: 2px; }
+.ah-sub { font-size: 11px; color: var(--fg-faint); margin-top: 2px; font-family: var(--font-mono); }
+
+/* ============================================================
+   项目 / 角色 chip
+   ============================================================ */
+.chip { font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--raised); color: var(--fg-muted); border: 1px solid var(--border); }
+.chip.review { color: var(--warning); border-color: rgba(204,148,0,.4); background: rgba(204,148,0,.1); }
+.card .c-meta .chip { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

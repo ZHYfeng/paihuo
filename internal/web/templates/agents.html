@@ -5,6 +5,8 @@
   <button class="btn brand sm" onclick="openAgentModal()">＋ 新建角色</button>
 </header>
 <div class="page-content">
+
+  <!-- 角色列表 -->
   <div id="agentListShell">
     <div class="toolbar">
       <input id="aSearch" placeholder="搜索角色…" style="width:220px" oninput="renderAgentList()">
@@ -16,36 +18,39 @@
         <thead><tr><th>角色</th><th>CLI</th><th>模型</th><th>项目目录</th><th>状态</th><th style="width:110px">操作</th></tr></thead>
         <tbody id="agentList"></tbody>
       </table>
-      <div id="agentEmpty" class="empty hidden">还没有角色，点击右上角「新建角色」</div>
+      <div id="agentEmpty" class="empty hidden">还没有角色。每个角色绑定一种 CLI 与项目目录，配置按该 CLI 的官方文档深度定制。</div>
     </div>
   </div>
 
+  <!-- 角色详情 -->
   <div id="agentDetailShell" class="hidden" style="display:flex;flex-direction:column;flex:1;min-height:0">
+    <header class="page-header">
+      <button class="btn ghost sm" onclick="closeAgentDetail()">← 返回</button>
+      <span class="crumb" id="adCrumb"></span>
+      <span class="spacer"></span>
+      <span id="adCliDocs" style="font-size:12px"></span>
+      <button class="btn sm danger" onclick="deleteAgent(state.agentEditing ? state.agentEditing.id : null)">删除</button>
+    </header>
     <div class="tab-bar" id="agentTabs">
-      <button class="active" data-tab="general" onclick="agentTab('general')">概况</button>
-      <button data-tab="model" onclick="agentTab('model')">模型与指令</button>
-      <button data-tab="skills" onclick="agentTab('skills')">技能与参数</button>
+      <button class="active" data-tab="overview" onclick="agentTab('overview')">概况</button>
+      <button data-tab="config" onclick="agentTab('config')">配置</button>
       <button data-tab="env" onclick="agentTab('env')">环境变量</button>
+      <button data-tab="stats" onclick="agentTab('stats')">统计</button>
     </div>
     <div id="agentForm" class="tab-panel" style="overflow-y:auto"></div>
   </div>
 </div>
 
+<!-- 新建/编辑角色弹窗（配置区按所选 CLI 的 schema 渲染） -->
 <div class="modal hidden" id="agentModal">
   <div class="modal-box wide">
     <h3 id="agentModalTitle">新建角色</h3>
-    <div class="sub">配置角色身份与 CLI 执行参数</div>
+    <div class="sub" id="agentModalSub">不同 CLI 有各自官方的可配置参数，表单随之深度定制</div>
     <input type="hidden" id="aId">
     <div class="row">
       <label class="field">角色名 <input id="aName" placeholder="如：编码工"></label>
       <label class="field">CLI
-        <select id="aCli">
-          <option value="omp">OMP（Oh My Pi）</option>
-          <option value="opencode">OpenCode</option>
-          <option value="pi">Pi Agent</option>
-          <option value="claude">Claude Code</option>
-          <option value="codex">Codex</option>
-        </select>
+        <select id="aCli" onchange="renderAgentModalSchema()"></select>
       </label>
     </div>
     <label class="field">绑定项目目录 <input id="aProjectDir" placeholder="/path/to/project"></label>
@@ -54,20 +59,11 @@
       <label class="field">默认权限
         <select id="aPerm"><option value="full">完整（直接执行）</option><option value="review">完成后审批</option></select>
       </label>
-      <label class="field">模型 <input id="aModel" placeholder="留空用 CLI 默认"></label>
-    </div>
-    <label class="field">系统提示词 <textarea id="aSysPrompt" rows="3" placeholder="角色定位、行为规范。会追加到 CLI 默认提示词之后"></textarea></label>
-    <div class="row">
-      <label class="field">思考级别
-        <select id="aThinking"><option value="">默认</option><option value="low">低（快速/省钱）</option><option value="medium">中</option><option value="high">高（深度推理）</option></select>
+      <label class="field" style="display:flex;align-items:center;gap:8px;margin-top:26px">
+        <input type="checkbox" id="aEnabled" checked style="width:auto"> 启用
       </label>
-      <label class="field">技能目录（逗号分隔）<input id="aSkills" placeholder="/path/to/skills1,/path/to/skills2"></label>
     </div>
-    <div class="row">
-      <label class="field">插件/配置文件 <input id="aPlugins" placeholder="插件路径或配置叠加文件"></label>
-      <label class="field">额外参数 <input id="aExtra" placeholder="--no-lsp --no-session"></label>
-    </div>
-    <label class="field">环境变量（每行 K=V）<textarea id="aEnv" rows="2" placeholder="KEY=VALUE"></textarea></label>
+    <div id="agentModalSchema"></div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal('agentModal')">取消</button>
       <button class="btn primary" onclick="submitAgent()">保存</button>

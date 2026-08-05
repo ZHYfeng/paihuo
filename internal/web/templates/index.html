@@ -6,6 +6,9 @@
 </header>
 
 <div class="page-content">
+  <!-- 统计条 -->
+  <div class="stats-strip" id="dashStats"></div>
+
   <!-- 看板 / 列表 -->
   <div id="boardShell">
     <div class="toolbar">
@@ -13,6 +16,7 @@
         <button id="segBoard" class="active" onclick="setView('board')">看板</button>
         <button id="segList" onclick="setView('list')">列表</button>
       </div>
+      <select id="fProject" style="width:150px" onchange="applyFilters()"><option value="">全部项目</option></select>
       <select id="fAgent" style="width:130px" onchange="applyFilters()"><option value="">全部角色</option></select>
       <select id="fStatus" style="width:110px" onchange="applyFilters()">
         <option value="">全部状态</option>
@@ -69,30 +73,17 @@
     </label>
     <div class="row">
       <label class="field">角色 <select id="tAgent"></select></label>
-      <label class="field">权限
-        <select id="tPerm">
-          <option value="full">完整（直接执行）</option>
-          <option value="review">完成后审批</option>
-        </select>
-      </label>
+      <label class="field">项目 <select id="tProject"></select></label>
     </div>
+    <label class="field">权限
+      <select id="tPerm">
+        <option value="full">完整（直接执行）</option>
+        <option value="review">完成后审批</option>
+      </select>
+    </label>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal('taskModal')">取消</button>
       <button class="btn primary" onclick="submitTask()">创建</button>
-    </div>
-  </div>
-</div>
-
-<!-- 全屏终端 -->
-<div class="modal hidden" id="termModal">
-  <div class="modal-box term-modal">
-    <div class="term" style="margin:0;border-radius:0;border:none;flex:1;display:flex;flex-direction:column">
-      <div class="term-head">
-        <span class="term-dots"><i></i><i></i><i></i></span>
-        <span class="t-title" id="termTitle"></span>
-        <button class="btn ghost xs" onclick="closeModal('termModal')">关闭</button>
-      </div>
-      <div class="term-body term-full" id="termBox"></div>
     </div>
   </div>
 </div>

@@ -1,0 +1,56 @@
+{{define "content"}}
+<header class="page-header">
+  <span class="crumb">派活 / <b>项目</b></span>
+  <span class="spacer"></span>
+  <button class="btn brand sm" onclick="openProjectModal()">＋ 新建项目</button>
+</header>
+<div class="page-content">
+
+  <!-- 项目列表 -->
+  <div id="projectListShell" class="hidden">
+    <div class="toolbar">
+      <input id="pSearch" placeholder="搜索项目…" style="width:220px" oninput="renderProjectList()">
+      <span class="spacer"></span>
+      <span id="projectCount" style="font-size:12px;color:var(--fg-faint)"></span>
+    </div>
+    <div class="project-grid" id="projectGrid"></div>
+    <div id="projectEmpty" class="empty hidden">还没有项目。项目把任务和角色产出聚合到一起：先建项目，再往看板里派活。</div>
+  </div>
+
+  <!-- 项目详情 -->
+  <div id="projectDetailShell" class="hidden">
+    <header class="page-header">
+      <button class="btn ghost sm" onclick="closeProjectDetail()">← 返回</button>
+      <span class="crumb" id="pdCrumb"></span>
+      <span class="spacer"></span>
+      <span id="pdBadge"></span>
+      <button class="btn sm danger" onclick="deleteProject()">删除项目</button>
+    </header>
+    <div class="project-detail">
+      <div class="detail-main" id="pdMain"></div>
+      <aside class="detail-side" id="pdSide"></aside>
+    </div>
+  </div>
+</div>
+
+<!-- 新建/编辑项目弹窗 -->
+<div class="modal hidden" id="projectModal">
+  <div class="modal-box">
+    <h3 id="projectModalTitle">新建项目</h3>
+    <div class="sub">项目是任务管理的维度：聚合任务进度 + 在此工作的 agent 统计</div>
+    <input type="hidden" id="pId">
+    <label class="field">项目名 <input id="pName" placeholder="如：公司官网重构"></label>
+    <label class="field">描述 <textarea id="pDesc" rows="3" placeholder="这个项目要交付什么"></textarea></label>
+    <label class="field">状态
+      <select id="pStatus">
+        <option value="active">进行中</option>
+        <option value="archived">已归档</option>
+      </select>
+    </label>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('projectModal')">取消</button>
+      <button class="btn primary" onclick="submitProject()">保存</button>
+    </div>
+  </div>
+</div>
+{{end}}

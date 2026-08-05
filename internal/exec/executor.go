@@ -128,7 +128,15 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		e.Wake()
 	}()
 
-	if err := e.st.UpdateTask(tk.ID, map[string]any{"status": store.StatusRunning, "started_at": store.Now()}); err != nil {
+	// 原子开跑：若领取后任务已被取消/删除（cancel 与派发存在竞态），
+	// 此处返回 false，不能把终态覆盖回 running。
+	started, err := e.st.StartTask(tk.ID)
+	if err != nil {
+		e.log(tk.ID, "sys", "✗ 任务状态更新失败: "+err.Error())
+		return
+	}
+	if !started {
+		e.log(tk.ID, "sys", "■ 已取消")
 		return
 	}
 	e.publishTask(tk.ID)
@@ -237,6 +245,7 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	e.log(tk.ID, "sys", "✓ 完成")
 	e.publishTask(tk.ID)
 }
+
 // runLocal 在本地执行 CLI；取消时杀掉整个进程组。
 func (e *Executor) runLocal(ctx context.Context, tk store.Task, bin string, args []string, env []string, onLine func(stream, line string)) (int, error) {
 	cmd := exec.Command(bin, args...)
@@ -257,6 +266,7 @@ func (e *Executor) runLocal(ctx context.Context, tk store.Task, bin string, args
 	}
 
 	doneCh := make(chan struct{})
+	defer close(doneCh) // 覆盖所有返回路径，避免 Start 失败/提前返回时 watcher goroutine 泄漏
 	go func() {
 		select {
 		case <-doneCh:
@@ -273,7 +283,6 @@ func (e *Executor) runLocal(ctx context.Context, tk store.Task, bin string, args
 	go scanLines(tk.ID, "err", stderr, onLine, &wg)
 	wg.Wait()
 	runErr := cmd.Wait()
-	close(doneCh)
 
 	if ctx.Err() != nil {
 		return -1, ctx.Err()

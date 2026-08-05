@@ -7,6 +7,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,7 +34,25 @@ var validPerms = map[string]bool{
 }
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
-	tasks, err := s.st.ListTasks()
+	q := r.URL.Query()
+	f := store.TaskFilter{}
+	if v := q.Get("agent_id"); v != "" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil && id > 0 {
+			f.AgentID = &id
+		}
+	}
+	if v := q.Get("project_id"); v != "" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil && id > 0 {
+			f.ProjectID = &id
+		}
+	}
+	f.Status = q.Get("status")
+	if v := q.Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			f.Limit = n
+		}
+	}
+	tasks, err := s.st.ListTasksFiltered(f)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -43,11 +62,12 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Title    string  `json:"title"`
-		Body     string  `json:"body"`
-		AgentID  *int64  `json:"agent_id"`
-		Perm     string  `json:"perm"`
-		ParentID *int64  `json:"parent_id"`
+		Title     string `json:"title"`
+		Body      string `json:"body"`
+		AgentID   *int64 `json:"agent_id"`
+		ProjectID *int64 `json:"project_id"`
+		Perm      string `json:"perm"`
+		ParentID  *int64 `json:"parent_id"`
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -73,6 +93,13 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tk.ProjectDir = a.ProjectDir
+	}
+	if in.ProjectID != nil {
+		if _, err := s.st.GetProject(*in.ProjectID); err != nil {
+			writeErr(w, http.StatusBadRequest, "项目不存在")
+			return
+		}
+		tk.ProjectID = in.ProjectID
 	}
 	id, err := s.st.CreateTask(tk)
 	if err != nil {
@@ -106,7 +133,7 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "title", "body", "agent_id", "perm", "status", "review_note", "parent_id")
+	set, ok := patchMap(w, r, "title", "body", "agent_id", "perm", "status", "review_note", "parent_id", "project_id")
 	if !ok {
 		return
 	}
@@ -174,6 +201,20 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if v, ok := set["project_id"]; ok {
+		if v == nil {
+			set["project_id"] = nil
+		} else if pid, isNum := v.(float64); isNum && pid > 0 {
+			if _, err := s.st.GetProject(int64(pid)); err != nil {
+				writeErr(w, http.StatusBadRequest, "项目不存在")
+				return
+			}
+			set["project_id"] = int64(pid)
+		} else {
+			writeErr(w, http.StatusBadRequest, "project_id 非法")
+			return
+		}
+	}
 	if v, ok := set["parent_id"]; ok {
 		if v == nil {
 			set["parent_id"] = nil
@@ -204,6 +245,12 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
+	}
+	// 先取消还在运行的子任务进程，再删库（否则进程继续在项目目录里跑）
+	if kids, err := s.st.ListChildren(id); err == nil {
+		for _, k := range kids {
+			s.ex.CancelTask(k.ID)
+		}
 	}
 	s.ex.CancelTask(id)
 	if err := s.st.DeleteTask(id); err != nil {
@@ -584,4 +631,136 @@ func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sched.Reload()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---------------------------------------------------------------------------
+// 项目（维度二：任务管理的项目载体）
+
+func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
+	projects, err := s.st.ListProjects()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, projects)
+}
+
+func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
+	var in store.Project
+	if !readJSON(w, r, &in) {
+		return
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Name == "" {
+		writeErr(w, http.StatusBadRequest, "项目名不能为空")
+		return
+	}
+	id, err := s.st.CreateProject(in)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	p, err := s.st.GetProject(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, p)
+}
+
+func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	set, ok := patchMap(w, r, "name", "description", "status")
+	if !ok {
+		return
+	}
+	if v, ok := set["name"]; ok {
+		if strings.TrimSpace(fmt.Sprint(v)) == "" {
+			writeErr(w, http.StatusBadRequest, "项目名不能为空")
+			return
+		}
+	}
+	if v, ok := set["status"]; ok {
+		sv := fmt.Sprint(v)
+		if sv != "active" && sv != "archived" {
+			writeErr(w, http.StatusBadRequest, "非法项目状态: "+sv)
+			return
+		}
+	}
+	if err := s.st.UpdateProject(id, set); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	p, err := s.st.GetProject(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.st.DeleteProject(id); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---------------------------------------------------------------------------
+// 角色配置 schema（深度定制：按 CLI 文档声明可配置字段）
+
+func (s *Server) listAgentSchemas(w http.ResponseWriter, r *http.Request) {
+	var out []map[string]any
+	for _, a := range exec.Adapters() {
+		out = append(out, map[string]any{
+			"id": a.ID(), "name": a.Name(), "docs": a.Docs(), "fields": a.Schema(),
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ---------------------------------------------------------------------------
+// 统计（维度二：项目进度 + agent 产出统计）
+
+func (s *Server) overviewStats(w http.ResponseWriter, r *http.Request) {
+	ov, err := s.st.OverviewStatsOf()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, ov)
+}
+
+func (s *Server) agentStats(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	st, err := s.st.AgentStatsOf(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "角色不存在")
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) projectStats(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	st, err := s.st.ProjectStatsOf(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "项目不存在")
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
 }
