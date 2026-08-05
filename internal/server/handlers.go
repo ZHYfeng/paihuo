@@ -88,7 +88,8 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	s.createTaskInner(w, in.Title, in.Body, in.AgentID, in.ProjectID, in.Perm, in.RunMode, in.Concurrent, in.ParentID, nil)
 }
 
-// resumeTask 续跑：新任务复用原任务的角色/项目/会话目录（attach 回上次对话）。
+// resumeTask 在原任务上续跑。任务 ID 同时绑定 agent 会话目录和 git worktree，
+// 因此不能创建新任务；保留上下文，仅清空本轮执行状态后重新入队。
 func (s *Server) resumeTask(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
@@ -103,13 +104,49 @@ func (s *Server) resumeTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "原任务未指派角色，无法续跑")
 		return
 	}
-	title := fmt.Sprintf("续跑 #%d: %s", id, src.Title)
-	body := src.Body
-	if strings.TrimSpace(body) != "" {
-		body += "\n\n"
+	if !isTerminalTaskStatus(src.Status) {
+		writeErr(w, http.StatusConflict, "只有已完成、失败或已取消的任务可以继续对话")
+		return
 	}
-	body += fmt.Sprintf("（这是任务 #%d 的续跑：请基于之前的进展继续完成目标。若有疑问先检查当前状态。）", id)
-	s.createTaskInner(w, title, body, src.AgentID, src.ProjectID, src.Perm, src.RunMode, src.Concurrent, nil, &id)
+	// 成功的普通任务一旦已有合并任务，必须重试该合并任务，不能回头重跑
+	// 源任务并绕过确定性的合并链路。
+	if src.Status == store.StatusSucceeded && src.MergeOf == nil {
+		hasMerge, err := s.st.HasMergeTaskForSource(src.ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if hasMerge {
+			writeErr(w, http.StatusConflict, "源任务已有代码合并任务；请继续或重试该合并任务")
+			return
+		}
+	}
+	resumed, err := s.st.ResumeTask(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !resumed {
+		writeErr(w, http.StatusConflict, "任务状态已变化，无法继续对话")
+		return
+	}
+	if l, err := s.st.AppendLog(store.TaskLog{
+		TaskID: id, Stream: "sys", Content: "↻ 在原任务中继续：保留会话、工作空间和历史日志",
+	}); err == nil {
+		s.hub.Publish(events.Event{Type: "log", TaskID: id, Payload: l})
+	}
+	tk, err := s.st.GetTask(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.hub.Publish(events.Event{Type: "task", TaskID: id, Payload: tk})
+	s.ex.Wake()
+	writeJSON(w, http.StatusOK, tk)
+}
+
+func isTerminalTaskStatus(status string) bool {
+	return status == store.StatusSucceeded || status == store.StatusFailed || status == store.StatusCancelled
 }
 
 func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agentID, projectID *int64, perm, runMode string, concurrent bool, parentID, resumeOf *int64) {
@@ -235,16 +272,14 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		}
 		approveReview = cur.Status == store.StatusAwaitingReview && to == store.StatusSucceeded
 		if to == store.StatusQueued && cur.Status == store.StatusSucceeded && cur.MergeOf == nil {
-			tasks, err := s.st.ListTaskDeletionOrder(cur.ID)
+			hasMerge, err := s.st.HasMergeTaskForSource(cur.ID)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			for _, child := range tasks {
-				if child.MergeOf != nil && *child.MergeOf == cur.ID {
-					writeErr(w, http.StatusConflict, "源任务已有代码合并任务；请重试该合并任务，或新建任务")
-					return
-				}
+			if hasMerge {
+				writeErr(w, http.StatusConflict, "源任务已有代码合并任务；请重试该合并任务，或新建任务")
+				return
 			}
 		}
 		if to == store.StatusQueued {

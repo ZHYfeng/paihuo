@@ -168,6 +168,16 @@ export function initShortcuts() {
 export function route() {
   const h = location.hash;
   const path = location.pathname;
+  // 任务详情是所有页面共用的最高优先级路由。此前 projects/roles 在这里
+  // 提前 return，导致从它们的任务列表只能打开简陋终端而不能进入统一详情。
+  const task = /^#\/issue\/(\d+)/.exec(h);
+  if (task) {
+    showDetail(Number(task[1]));
+    return;
+  }
+  if (state.selected !== null || !document.getElementById("detailShell").classList.contains("hidden")) {
+    hideDetail();
+  }
   if (path === "/projects") {
     const m = /^#\/project\/(\d+)/.exec(h);
     if (m) showProjectDetail(Number(m[1]));
@@ -184,11 +194,6 @@ export function route() {
       hideAgentDetail();
     }
     return;
-  }
-  const m = /^#\/issue\/(\d+)/.exec(h);
-  if (m) showDetail(Number(m[1]));
-  else if (state.selected !== null || !document.getElementById("detailShell").classList.contains("hidden")) {
-    hideDetail();
   }
 }
 
@@ -217,11 +222,9 @@ export function sse() {
       const path = location.pathname;
       if (path === "/board") {
         state.view === "list" ? renderList() : renderBoard();
-        if (state.selected === t.id) refreshDetail();
         refreshOverviewSoon();
       } else if (path === "/") {
         loadDashboard();
-        if (state.selected === t.id) refreshDetail();
       } else if (path === "/history") {
         loadHistory();
       } else if (path === "/roles") {
@@ -231,6 +234,8 @@ export function sse() {
         if (state.projectView) refreshProjectDetail();
       }
       fillSelects();
+      // 任务详情可从任一页面打开；不要只在 Dashboard / Board 收到事件时刷新。
+      if (state.selected === t.id) refreshDetail();
     } catch (_) {}
   });
   es.addEventListener("log", ev => {
@@ -290,28 +295,20 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (path === "/") {
     loadDashboard();
     loadTemplates();
-    route();
-    window.addEventListener("hashchange", route);
   } else if (path === "/board") {
     renderBoard();
     loadTemplates();
     refreshOverview();
-    route();
-    window.addEventListener("hashchange", route);
   } else if (path === "/history") {
     loadHistory();
   } else if (path === "/roles") {
     let av = "grid";
     try { av = localStorage.getItem("paihuo.agentView") || "grid"; } catch (_) {}
     setAgentView(av === "table" ? "table" : "grid");
-    route();
-    window.addEventListener("hashchange", route);
   } else if (path === "/agents") {
     loadProvision();
   } else if (path === "/projects") {
     renderProjectList();
-    route();
-    window.addEventListener("hashchange", route);
   } else if (path === "/autopilots") {
     renderScheduleList();
   } else if (path === "/skills") {
@@ -319,6 +316,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   } else if (path === "/settings") {
     loadSettings();
   }
+  // 所有页面都能从任务列表/直链进入同一详情视图。
+  route();
+  window.addEventListener("hashchange", route);
   sse();
   await schemaP; // 首屏渲染不受 schema 拖累；等它落定后角色表单/详情即可直接用
 });

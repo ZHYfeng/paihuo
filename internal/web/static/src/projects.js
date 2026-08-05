@@ -1,8 +1,7 @@
 // 模块 projects（由 scripts/split-frontend.py 生成）
 import { STATUS_LABEL, ST_COLOR, api, closeModal, esc, fmtDur, fmtPct, icon, openModal, state, toast } from "./core.js";
 import { loadAll } from "./main.js";
-import { canRetryTask, deleteTask, setTaskStatus } from "./task.js";
-import { openTerminal } from "./terminal.js";
+import { canRetryTask, deleteTask, openTask, setTaskStatus } from "./task.js";
 
 export function renderProjectList() {
   const grid = document.getElementById("projectGrid");
@@ -80,7 +79,7 @@ export function renderProjectDetail(p, s, tasks) {
   const counts = s.status_counts || [];
   const review = counts.find(c => c.status === "awaiting_review");
   const rowHTML = tasks.map(t => `
-    <div class="p-task-row" onclick="openTerminal(${t.id})">
+    <div class="p-task-row" onclick="openTask(${t.id})">
       <span class="num">#${t.id}</span>
       <span class="t">${esc(t.title)}</span>
       <span class="a">${t.agent_name ? `<span class="avatar sm">${esc(t.agent_name.slice(0, 1))}</span>${esc(t.agent_name)}` : "-"}</span>

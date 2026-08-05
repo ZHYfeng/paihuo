@@ -209,7 +209,7 @@ POST   /api/workspace/{taskId}/merge     # merge --squash
 POST   /api/workspace/{taskId}/discard   # worktree remove --force
 POST   /api/workspace/cleanup            # 按策略清理
 
-POST   /api/tasks/{id}/resume            # 续跑（新任务，带会话）
+POST   /api/tasks/{id}/resume            # 在原任务上续跑（保留会话与 worktree）
 ```
 
 ### 执行器改动

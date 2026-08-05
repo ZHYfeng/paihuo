@@ -7,6 +7,11 @@ import { refreshProjectDetail } from "./projects.js";
 import { loadTemplates } from "./skills.js";
 import { openTerminal, sendTaskInput, term, termWrite } from "./terminal.js";
 
+// 任务详情是全站共享的视图。打开时只临时隐藏当前页面原本可见的直属内容，
+// 关闭后精确恢复，避免破坏项目/角色页自身的列表与详情切换状态。
+let detailBackground = null;
+let detailReturnHash = "#/";
+
 export function currentFilters() {
   return {
     agent: Number(document.getElementById("fAgent")?.value) || null,
@@ -83,7 +88,7 @@ export function renderList() {
       <td class="num">${(t.finished_at || "").slice(5, 16).replace("T", " ")}</td>
       <td>
         <span class="ops">
-          <button class="btn xs" onclick="event.stopPropagation();openTerminal(${t.id})">${icon("terminal")}对话</button>
+          <button class="btn xs" onclick="event.stopPropagation();openTask(${t.id})">${icon("expand")}详情</button>
           ${canRetryTask(t)
             ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>` : ""}
           <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>
@@ -119,23 +124,33 @@ export function applyFilters() {
    任务详情（两栏）
    ============================================================ */
 
-export function openTask(id) { location.hash = "#/issue/" + id; }
+export function openTask(id) {
+  if (!/^#\/issue\/\d+$/.test(location.hash)) detailReturnHash = location.hash || "#/";
+  location.hash = "#/issue/" + id;
+}
 
 export function closeDetail() {
-  state.selected = null;
-  location.hash = "#/";
+  const back = detailReturnHash || "#/";
+  detailReturnHash = "#/";
+  location.hash = back;
 }
 
 export function showDetail(id) {
   state.selected = id;
-  const shell = document.getElementById("boardShell") || document.getElementById("dashShell");
-  if (shell) shell.classList.add("hidden");
-  // 详情两栏页接管主区：隐藏页面自身的页头与内容（detailShell 位于 .main 内，
-  // flex:1 占满剩余空间），避免与详情自己的页头堆叠；hideDetail 时恢复。
   const main = document.querySelector(".main");
-  main?.querySelector(".page-header")?.classList.add("hidden");
-  main?.querySelector(".page-content")?.classList.add("hidden");
-  document.getElementById("detailShell").classList.remove("hidden");
+  const detailShell = document.getElementById("detailShell");
+  if (!detailShell) return;
+  // 详情两栏页接管主区。项目、角色等页面也各有自己的详情壳，不能只按
+  // board/dashboard 的 id 隐藏；记录本来可见的直属元素，返回时原样恢复。
+  if (detailBackground === null) {
+    detailBackground = [];
+    for (const child of main?.children || []) {
+      if (child === detailShell || child.classList.contains("hidden")) continue;
+      child.classList.add("hidden");
+      detailBackground.push(child);
+    }
+  }
+  detailShell.classList.remove("hidden");
   const t = state.tasks.find(x => x.id === id);
   if (t) {
     document.getElementById("dCrumb").innerHTML = `任务 / <b>#${t.id}</b>`;
@@ -146,12 +161,9 @@ export function showDetail(id) {
 }
 
 export function hideDetail() {
-  document.getElementById("detailShell").classList.add("hidden");
-  const shell = document.getElementById("boardShell") || document.getElementById("dashShell");
-  if (shell) shell.classList.remove("hidden");
-  const main = document.querySelector(".main");
-  main?.querySelector(".page-header")?.classList.remove("hidden");
-  main?.querySelector(".page-content")?.classList.remove("hidden");
+  document.getElementById("detailShell")?.classList.add("hidden");
+  for (const child of detailBackground || []) child.classList.remove("hidden");
+  detailBackground = null;
   state.selected = null;
 }
 
@@ -369,7 +381,7 @@ export async function deleteTask(id) {
     toast("已删除");
     await loadAll();
     const p = location.pathname;
-    if (state.selected === id) { closeDetail(); location.hash = "#/"; }
+    if (state.selected === id) closeDetail();
     if (p === "/history") loadHistory();
     if (p === "/projects" && state.projectView) refreshProjectDetail();
     if (p === "/") loadDashboard();
@@ -413,15 +425,16 @@ export function openSubTask(parentId) {
   openModal("taskModal");
 }
 
-/* ---- 续跑：attach 回上次对话 ---- */
+/* ---- 续跑：原任务继续 ---- */
 
 export async function resumeTask(id) {
-  if (!confirm(`续跑任务 #${id}？将创建新任务并复用原会话继续对话（pi/omp 真实续对话，其他 CLI 为全新会话）。`)) return;
+  if (!confirm(`继续任务 #${id}？将保留任务编号、任务会话目录、工作空间和历史记录，重新排队执行。`)) return;
   try {
     const t = await api(`/api/tasks/${id}/resume`, { method: "POST" });
-    toast(`已创建续跑任务 #${t.id}`);
+    toast(`任务 #${t.id} 已在原任务中重新排队`);
     await loadAll();
-    location.hash = "#/issue/" + t.id;
+    openTask(t.id);
+    if (state.selected === t.id) showDetail(t.id);
   } catch (e) { toast(e.message, true); }
 }
 

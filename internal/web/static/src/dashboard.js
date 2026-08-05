@@ -2,7 +2,6 @@
 import { ST_COLOR, api, esc, state } from "./core.js";
 import { refreshOverview } from "./main.js";
 import { openTask, rejectTask, setTaskStatus } from "./task.js";
-import { openTerminal } from "./terminal.js";
 
 export function dashCardHTML(t, actions) {
   return `<div class="card dash-card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
@@ -41,7 +40,7 @@ export function renderDashTasks() {
   rev.innerHTML = review.map(t => dashCardHTML(t,
     `<button class="btn xs brand" onclick="setTaskStatus(${t.id},'succeeded')">通过并合并</button>` +
     `<button class="btn xs" onclick="rejectTask(${t.id})">驳回</button>` +
-    `<button class="btn xs" onclick="openTerminal(${t.id})">看对话</button>`)).join("") || `<div class="empty">无待审批任务</div>`;
+    `<button class="btn xs" onclick="openTask(${t.id})">查看详情</button>`)).join("") || `<div class="empty">无待审批任务</div>`;
   const rc = document.getElementById("dashRunningCount");
   if (rc) rc.textContent = running.length;
   const vc = document.getElementById("dashReviewCount");

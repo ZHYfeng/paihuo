@@ -1,8 +1,7 @@
 // 模块 history（由 scripts/split-frontend.py 生成）
 import { PERM_LABEL, STATUS_LABEL, ST_COLOR, api, esc, icon, state, toast } from "./core.js";
 import { loadAll } from "./main.js";
-import { canRetryTask, deleteTask, setTaskStatus } from "./task.js";
-import { openTerminal } from "./terminal.js";
+import { canRetryTask, deleteTask, openTask, setTaskStatus } from "./task.js";
 
 export function loadHistory() {
   const agentId = document.getElementById("hAgent").value;
@@ -28,7 +27,7 @@ export function renderHistory() {
     <tr data-id="${t.id}" class="${state.historySel.has(t.id) ? "selected" : ""}" onclick="toggleRow(this)">
       <td class="chk"><input type="checkbox" ${state.historySel.has(t.id) ? "checked" : ""} onclick="event.stopPropagation()"></td>
       <td class="num">#${t.id}</td>
-      <td class="t-title"><span class="t-link" onclick="event.stopPropagation();openTerminal(${t.id})">${esc(t.title)}</span></td>
+      <td class="t-title"><span class="t-link" onclick="event.stopPropagation();openTask(${t.id})">${esc(t.title)}</span></td>
       <td>${esc(t.agent_name || "-")}</td>
       <td>${esc(t.project_name || "-")}</td>
       <td>${PERM_LABEL[t.perm] || t.perm}</td>

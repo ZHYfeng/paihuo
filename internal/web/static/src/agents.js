@@ -3,7 +3,7 @@ import { STATUS_LABEL, ST_COLOR, api, closeModal, esc, fmtDur, fmtPct, icon, ope
 import { loadAll, loadSchema } from "./main.js";
 import { dailyChartHTML, openProject, statusBarHTML } from "./projects.js";
 import { loadSkillLib } from "./skills.js";
-import { openTerminal } from "./terminal.js";
+import { openTask } from "./task.js";
 
 export let dlSeq = 0;
 
@@ -241,7 +241,7 @@ export async function renderAgentOverview(a) {
     const box = document.getElementById("agentRecent");
     if (box) {
       box.innerHTML = recent.map(t => `
-        <div class="p-task-row" onclick="openTerminal(${t.id})">
+        <div class="p-task-row" onclick="openTask(${t.id})">
           <span class="num">#${t.id}</span>
           <span class="t">${esc(t.title)}</span>
           <span class="a">${esc(t.project_name || "-")}</span>

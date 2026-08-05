@@ -133,118 +133,6 @@
     location.href = "/login";
   }
 
-  // internal/web/static/src/terminal.js
-  var term = null;
-  var termFit = null;
-  function initTerm() {
-    if (term) return;
-    term = new Terminal({
-      fontFamily: "var(--font-mono)",
-      fontSize: 12.5,
-      lineHeight: 1.35,
-      convertEol: true,
-      scrollback: 1e4,
-      cursorBlink: true,
-      theme: {
-        background: "#060a13",
-        foreground: "#c9d4e5",
-        cursor: "#38bdf8",
-        selectionBackground: "rgba(56, 189, 248, .3)",
-        black: "#0b1019",
-        red: "#f87171",
-        green: "#34d399",
-        yellow: "#fbbf24",
-        blue: "#38bdf8",
-        magenta: "#a78bfa",
-        cyan: "#22d3ee",
-        white: "#c9d4e5",
-        brightBlack: "#5d6b84",
-        brightRed: "#fca5a5",
-        brightGreen: "#6ee7b7",
-        brightYellow: "#fde047",
-        brightBlue: "#7dd3fc",
-        brightMagenta: "#c4b5fd",
-        brightCyan: "#67e8f9",
-        brightWhite: "#f1f5f9"
-      }
-    });
-    termFit = new FitAddon.FitAddon();
-    term.loadAddon(termFit);
-    term.open(document.getElementById("termX"));
-    termFit.fit();
-    window.addEventListener("resize", () => {
-      try {
-        termFit.fit();
-      } catch (_) {
-      }
-    });
-  }
-  function termWrite(content) {
-    if (term) term.write(String(content ?? "") + "\r\n");
-  }
-  function openTerminal(id) {
-    const t = state.tasks.find((x) => x.id === id) || {};
-    document.getElementById("termTitle").textContent = `${t.agent_name || ""} \xB7 #${id} \u5BF9\u8BDD`;
-    openModal("termModal");
-    initTerm();
-    setTimeout(() => {
-      try {
-        termFit.fit();
-      } catch (_) {
-      }
-    }, 30);
-    term.clear();
-    term.write("\x1B[90m# loading logs...\x1B[0m\r\n");
-    state.termTask = id;
-    syncTerminalInput(t);
-    api(`/api/tasks/${id}/logs`).then((logs) => {
-      if (state.termTask !== id) return;
-      term.clear();
-      logs.forEach((l) => termWrite(l.content));
-      if (!logs.length) term.write("\x1B[90m\uFF08\u6682\u65E0\u8F93\u51FA\uFF09\x1B[0m\r\n");
-    }).catch(() => {
-      term.write("\x1B[31m\u65E5\u5FD7\u52A0\u8F7D\u5931\u8D25\x1B[0m\r\n");
-    });
-  }
-  function closeTerminal() {
-    state.termTask = null;
-    const bar = document.getElementById("termInputBar");
-    if (bar) bar.classList.add("hidden");
-    closeModal("termModal");
-  }
-  function syncTerminalInput(t) {
-    const bar = document.getElementById("termInputBar");
-    const input = document.getElementById("termInput");
-    if (!bar || !input) return;
-    const enabled = t?.run_mode === "interactive" && t?.status === "running";
-    bar.classList.toggle("hidden", !enabled);
-    input.disabled = !enabled;
-    if (!enabled) input.value = "";
-  }
-  async function sendTaskInput(id, inputID, explicitMessage) {
-    const input = inputID ? document.getElementById(inputID) : null;
-    const message = explicitMessage ?? input?.value ?? "";
-    if (!message.trim()) {
-      toast("\u6D88\u606F\u4E0D\u80FD\u4E3A\u7A7A", true);
-      return false;
-    }
-    try {
-      await api(`/api/tasks/${id}/input`, { method: "POST", body: JSON.stringify({ message }) });
-      if (input) {
-        input.value = "";
-        input.focus();
-      }
-      return true;
-    } catch (e) {
-      toast(e.message, true);
-      return false;
-    }
-  }
-  function sendTerminalInput() {
-    if (!state.termTask) return;
-    sendTaskInput(state.termTask, "termInput");
-  }
-
   // internal/web/static/src/dashboard.js
   function dashCardHTML(t, actions) {
     return `<div class="card dash-card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
@@ -278,7 +166,7 @@
     run.innerHTML = running.map((t) => dashCardHTML(t)).join("") || `<div class="empty">\u6682\u65E0\u8FDB\u884C\u4E2D\u4EFB\u52A1</div>`;
     rev.innerHTML = review.map((t) => dashCardHTML(
       t,
-      `<button class="btn xs brand" onclick="setTaskStatus(${t.id},'succeeded')">\u901A\u8FC7\u5E76\u5408\u5E76</button><button class="btn xs" onclick="rejectTask(${t.id})">\u9A73\u56DE</button><button class="btn xs" onclick="openTerminal(${t.id})">\u770B\u5BF9\u8BDD</button>`
+      `<button class="btn xs brand" onclick="setTaskStatus(${t.id},'succeeded')">\u901A\u8FC7\u5E76\u5408\u5E76</button><button class="btn xs" onclick="rejectTask(${t.id})">\u9A73\u56DE</button><button class="btn xs" onclick="openTask(${t.id})">\u67E5\u770B\u8BE6\u60C5</button>`
     )).join("") || `<div class="empty">\u65E0\u5F85\u5BA1\u6279\u4EFB\u52A1</div>`;
     const rc = document.getElementById("dashRunningCount");
     if (rc) rc.textContent = running.length;
@@ -359,7 +247,7 @@
     <tr data-id="${t.id}" class="${state.historySel.has(t.id) ? "selected" : ""}" onclick="toggleRow(this)">
       <td class="chk"><input type="checkbox" ${state.historySel.has(t.id) ? "checked" : ""} onclick="event.stopPropagation()"></td>
       <td class="num">#${t.id}</td>
-      <td class="t-title"><span class="t-link" onclick="event.stopPropagation();openTerminal(${t.id})">${esc(t.title)}</span></td>
+      <td class="t-title"><span class="t-link" onclick="event.stopPropagation();openTask(${t.id})">${esc(t.title)}</span></td>
       <td>${esc(t.agent_name || "-")}</td>
       <td>${esc(t.project_name || "-")}</td>
       <td>${PERM_LABEL[t.perm] || t.perm}</td>
@@ -571,7 +459,121 @@
     }
   }
 
+  // internal/web/static/src/terminal.js
+  var term = null;
+  var termFit = null;
+  function initTerm() {
+    if (term) return;
+    term = new Terminal({
+      fontFamily: "var(--font-mono)",
+      fontSize: 12.5,
+      lineHeight: 1.35,
+      convertEol: true,
+      scrollback: 1e4,
+      cursorBlink: true,
+      theme: {
+        background: "#060a13",
+        foreground: "#c9d4e5",
+        cursor: "#38bdf8",
+        selectionBackground: "rgba(56, 189, 248, .3)",
+        black: "#0b1019",
+        red: "#f87171",
+        green: "#34d399",
+        yellow: "#fbbf24",
+        blue: "#38bdf8",
+        magenta: "#a78bfa",
+        cyan: "#22d3ee",
+        white: "#c9d4e5",
+        brightBlack: "#5d6b84",
+        brightRed: "#fca5a5",
+        brightGreen: "#6ee7b7",
+        brightYellow: "#fde047",
+        brightBlue: "#7dd3fc",
+        brightMagenta: "#c4b5fd",
+        brightCyan: "#67e8f9",
+        brightWhite: "#f1f5f9"
+      }
+    });
+    termFit = new FitAddon.FitAddon();
+    term.loadAddon(termFit);
+    term.open(document.getElementById("termX"));
+    termFit.fit();
+    window.addEventListener("resize", () => {
+      try {
+        termFit.fit();
+      } catch (_) {
+      }
+    });
+  }
+  function termWrite(content) {
+    if (term) term.write(String(content ?? "") + "\r\n");
+  }
+  function openTerminal(id) {
+    const t = state.tasks.find((x) => x.id === id) || {};
+    document.getElementById("termTitle").textContent = `${t.agent_name || ""} \xB7 #${id} \u5BF9\u8BDD`;
+    openModal("termModal");
+    initTerm();
+    setTimeout(() => {
+      try {
+        termFit.fit();
+      } catch (_) {
+      }
+    }, 30);
+    term.clear();
+    term.write("\x1B[90m# loading logs...\x1B[0m\r\n");
+    state.termTask = id;
+    syncTerminalInput(t);
+    api(`/api/tasks/${id}/logs`).then((logs) => {
+      if (state.termTask !== id) return;
+      term.clear();
+      logs.forEach((l) => termWrite(l.content));
+      if (!logs.length) term.write("\x1B[90m\uFF08\u6682\u65E0\u8F93\u51FA\uFF09\x1B[0m\r\n");
+    }).catch(() => {
+      term.write("\x1B[31m\u65E5\u5FD7\u52A0\u8F7D\u5931\u8D25\x1B[0m\r\n");
+    });
+  }
+  function closeTerminal() {
+    state.termTask = null;
+    const bar = document.getElementById("termInputBar");
+    if (bar) bar.classList.add("hidden");
+    closeModal("termModal");
+  }
+  function syncTerminalInput(t) {
+    const bar = document.getElementById("termInputBar");
+    const input = document.getElementById("termInput");
+    if (!bar || !input) return;
+    const enabled = t?.run_mode === "interactive" && t?.status === "running";
+    bar.classList.toggle("hidden", !enabled);
+    input.disabled = !enabled;
+    if (!enabled) input.value = "";
+  }
+  async function sendTaskInput(id, inputID, explicitMessage) {
+    const input = inputID ? document.getElementById(inputID) : null;
+    const message = explicitMessage ?? input?.value ?? "";
+    if (!message.trim()) {
+      toast("\u6D88\u606F\u4E0D\u80FD\u4E3A\u7A7A", true);
+      return false;
+    }
+    try {
+      await api(`/api/tasks/${id}/input`, { method: "POST", body: JSON.stringify({ message }) });
+      if (input) {
+        input.value = "";
+        input.focus();
+      }
+      return true;
+    } catch (e) {
+      toast(e.message, true);
+      return false;
+    }
+  }
+  function sendTerminalInput() {
+    if (!state.termTask) return;
+    sendTaskInput(state.termTask, "termInput");
+  }
+
   // internal/web/static/src/task.js
+  var detailBackground = null;
+  var detailReturnHash = "#/";
   function currentFilters() {
     return {
       agent: Number(document.getElementById("fAgent")?.value) || null,
@@ -644,7 +646,7 @@
       <td class="num">${(t.finished_at || "").slice(5, 16).replace("T", " ")}</td>
       <td>
         <span class="ops">
-          <button class="btn xs" onclick="event.stopPropagation();openTerminal(${t.id})">${icon("terminal")}\u5BF9\u8BDD</button>
+          <button class="btn xs" onclick="event.stopPropagation();openTask(${t.id})">${icon("expand")}\u8BE6\u60C5</button>
           ${canRetryTask(t) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}\u91CD\u8BD5</button>` : ""}
           <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}\u5220\u9664</button>
         </span>
@@ -676,20 +678,28 @@
     state.view === "list" ? renderList() : renderBoard();
   }
   function openTask(id) {
+    if (!/^#\/issue\/\d+$/.test(location.hash)) detailReturnHash = location.hash || "#/";
     location.hash = "#/issue/" + id;
   }
   function closeDetail() {
-    state.selected = null;
-    location.hash = "#/";
+    const back = detailReturnHash || "#/";
+    detailReturnHash = "#/";
+    location.hash = back;
   }
   function showDetail(id) {
     state.selected = id;
-    const shell = document.getElementById("boardShell") || document.getElementById("dashShell");
-    if (shell) shell.classList.add("hidden");
     const main = document.querySelector(".main");
-    main?.querySelector(".page-header")?.classList.add("hidden");
-    main?.querySelector(".page-content")?.classList.add("hidden");
-    document.getElementById("detailShell").classList.remove("hidden");
+    const detailShell = document.getElementById("detailShell");
+    if (!detailShell) return;
+    if (detailBackground === null) {
+      detailBackground = [];
+      for (const child of main?.children || []) {
+        if (child === detailShell || child.classList.contains("hidden")) continue;
+        child.classList.add("hidden");
+        detailBackground.push(child);
+      }
+    }
+    detailShell.classList.remove("hidden");
     const t = state.tasks.find((x) => x.id === id);
     if (t) {
       document.getElementById("dCrumb").innerHTML = `\u4EFB\u52A1 / <b>#${t.id}</b>`;
@@ -698,12 +708,9 @@
     refreshDetail();
   }
   function hideDetail() {
-    document.getElementById("detailShell").classList.add("hidden");
-    const shell = document.getElementById("boardShell") || document.getElementById("dashShell");
-    if (shell) shell.classList.remove("hidden");
-    const main = document.querySelector(".main");
-    main?.querySelector(".page-header")?.classList.remove("hidden");
-    main?.querySelector(".page-content")?.classList.remove("hidden");
+    document.getElementById("detailShell")?.classList.add("hidden");
+    for (const child of detailBackground || []) child.classList.remove("hidden");
+    detailBackground = null;
     state.selected = null;
   }
   async function refreshDetail() {
@@ -916,10 +923,7 @@
       toast("\u5DF2\u5220\u9664");
       await loadAll();
       const p = location.pathname;
-      if (state.selected === id) {
-        closeDetail();
-        location.hash = "#/";
-      }
+      if (state.selected === id) closeDetail();
       if (p === "/history") loadHistory();
       if (p === "/projects" && state.projectView) refreshProjectDetail();
       if (p === "/") loadDashboard();
@@ -964,12 +968,13 @@
     openModal("taskModal");
   }
   async function resumeTask(id) {
-    if (!confirm(`\u7EED\u8DD1\u4EFB\u52A1 #${id}\uFF1F\u5C06\u521B\u5EFA\u65B0\u4EFB\u52A1\u5E76\u590D\u7528\u539F\u4F1A\u8BDD\u7EE7\u7EED\u5BF9\u8BDD\uFF08pi/omp \u771F\u5B9E\u7EED\u5BF9\u8BDD\uFF0C\u5176\u4ED6 CLI \u4E3A\u5168\u65B0\u4F1A\u8BDD\uFF09\u3002`)) return;
+    if (!confirm(`\u7EE7\u7EED\u4EFB\u52A1 #${id}\uFF1F\u5C06\u4FDD\u7559\u4EFB\u52A1\u7F16\u53F7\u3001\u4EFB\u52A1\u4F1A\u8BDD\u76EE\u5F55\u3001\u5DE5\u4F5C\u7A7A\u95F4\u548C\u5386\u53F2\u8BB0\u5F55\uFF0C\u91CD\u65B0\u6392\u961F\u6267\u884C\u3002`)) return;
     try {
       const t = await api(`/api/tasks/${id}/resume`, { method: "POST" });
-      toast(`\u5DF2\u521B\u5EFA\u7EED\u8DD1\u4EFB\u52A1 #${t.id}`);
+      toast(`\u4EFB\u52A1 #${t.id} \u5DF2\u5728\u539F\u4EFB\u52A1\u4E2D\u91CD\u65B0\u6392\u961F`);
       await loadAll();
-      location.hash = "#/issue/" + t.id;
+      openTask(t.id);
+      if (state.selected === t.id) showDetail(t.id);
     } catch (e) {
       toast(e.message, true);
     }
@@ -1194,7 +1199,7 @@
     const counts = s.status_counts || [];
     const review = counts.find((c) => c.status === "awaiting_review");
     const rowHTML = tasks.map((t) => `
-    <div class="p-task-row" onclick="openTerminal(${t.id})">
+    <div class="p-task-row" onclick="openTask(${t.id})">
       <span class="num">#${t.id}</span>
       <span class="t">${esc(t.title)}</span>
       <span class="a">${t.agent_name ? `<span class="avatar sm">${esc(t.agent_name.slice(0, 1))}</span>${esc(t.agent_name)}` : "-"}</span>
@@ -1653,7 +1658,7 @@
       const box = document.getElementById("agentRecent");
       if (box) {
         box.innerHTML = recent.map((t) => `
-        <div class="p-task-row" onclick="openTerminal(${t.id})">
+        <div class="p-task-row" onclick="openTask(${t.id})">
           <span class="num">#${t.id}</span>
           <span class="t">${esc(t.title)}</span>
           <span class="a">${esc(t.project_name || "-")}</span>
@@ -2373,26 +2378,29 @@
   function route() {
     const h = location.hash;
     const path = location.pathname;
+    const task = /^#\/issue\/(\d+)/.exec(h);
+    if (task) {
+      showDetail(Number(task[1]));
+      return;
+    }
+    if (state.selected !== null || !document.getElementById("detailShell").classList.contains("hidden")) {
+      hideDetail();
+    }
     if (path === "/projects") {
-      const m2 = /^#\/project\/(\d+)/.exec(h);
-      if (m2) showProjectDetail(Number(m2[1]));
+      const m = /^#\/project\/(\d+)/.exec(h);
+      if (m) showProjectDetail(Number(m[1]));
       else if (state.projectView !== null) hideProjectDetail();
       return;
     }
     if (path === "/roles") {
-      const m2 = /^#\/agent\/(\d+)/.exec(h);
-      if (m2) {
-        const id = Number(m2[1]);
+      const m = /^#\/agent\/(\d+)/.exec(h);
+      if (m) {
+        const id = Number(m[1]);
         if (state.agentEditing === null || state.agentEditing.id !== id) showAgentDetail(id);
       } else if (state.agentEditing !== null) {
         hideAgentDetail();
       }
       return;
-    }
-    const m = /^#\/issue\/(\d+)/.exec(h);
-    if (m) showDetail(Number(m[1]));
-    else if (state.selected !== null || !document.getElementById("detailShell").classList.contains("hidden")) {
-      hideDetail();
     }
   }
   var ovTimer = null;
@@ -2414,11 +2422,9 @@
         const path = location.pathname;
         if (path === "/board") {
           state.view === "list" ? renderList() : renderBoard();
-          if (state.selected === t.id) refreshDetail();
           refreshOverviewSoon();
         } else if (path === "/") {
           loadDashboard();
-          if (state.selected === t.id) refreshDetail();
         } else if (path === "/history") {
           loadHistory();
         } else if (path === "/roles") {
@@ -2428,6 +2434,7 @@
           if (state.projectView) refreshProjectDetail();
         }
         fillSelects();
+        if (state.selected === t.id) refreshDetail();
       } catch (_) {
       }
     });
@@ -2498,14 +2505,10 @@
     if (path === "/") {
       loadDashboard();
       loadTemplates();
-      route();
-      window.addEventListener("hashchange", route);
     } else if (path === "/board") {
       renderBoard();
       loadTemplates();
       refreshOverview();
-      route();
-      window.addEventListener("hashchange", route);
     } else if (path === "/history") {
       loadHistory();
     } else if (path === "/roles") {
@@ -2515,14 +2518,10 @@
       } catch (_) {
       }
       setAgentView(av === "table" ? "table" : "grid");
-      route();
-      window.addEventListener("hashchange", route);
     } else if (path === "/agents") {
       loadProvision();
     } else if (path === "/projects") {
       renderProjectList();
-      route();
-      window.addEventListener("hashchange", route);
     } else if (path === "/autopilots") {
       renderScheduleList();
     } else if (path === "/skills") {
@@ -2530,6 +2529,8 @@
     } else if (path === "/settings") {
       loadSettings();
     }
+    route();
+    window.addEventListener("hashchange", route);
     sse();
     await schemaP;
   });

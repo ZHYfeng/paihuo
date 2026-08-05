@@ -684,6 +684,32 @@ func (s *Store) UpdateTask(id int64, set map[string]any) error {
 	return updateOne(s.db, "tasks", id, set)
 }
 
+// ResumeTask 原地续跑一个终态任务。任务身份、会话目录和 worktree 都由任务
+// ID 绑定，因此不能新建记录；这里只清空本轮执行痕迹并原子地放回队列。
+// 返回 false 表示任务已不处于可续跑的终态（例如被另一个请求重新领取）。
+func (s *Store) ResumeTask(id int64) (bool, error) {
+	now := Now()
+	res, err := s.db.Exec(`UPDATE tasks
+		SET status='queued', started_at=NULL, finished_at=NULL, error='', exit_code=NULL,
+			tmux_log_offset=0, updated_at=?
+		WHERE id=? AND status IN ('succeeded','failed','cancelled')`, now, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+// HasMergeTaskForSource 返回某个普通任务是否已有系统创建的代码合并任务。
+// 合并任务通过 merge_of 直接关联源任务，不依赖普通子任务树。
+func (s *Store) HasMergeTaskForSource(sourceID int64) (bool, error) {
+	var exists bool
+	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM tasks WHERE merge_of=?)`, sourceID).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 // UpdateTmuxLogOffset 记录已同步到 SQLite 的专用 tmux 原始日志位置。
 // 不更新 updated_at，避免高频终端输出扰动任务的业务更新时间。
 func (s *Store) UpdateTmuxLogOffset(id int64, offset int64) error {
