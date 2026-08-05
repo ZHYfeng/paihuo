@@ -75,6 +75,7 @@ type Task struct {
 	Status         string  `json:"status"`
 	Perm           string  `json:"perm"`
 	RunMode        string  `json:"run_mode"`
+	Concurrent     bool    `json:"concurrent"` // 是否并发执行：默认串行（同一项目同时只执行一个任务）
 	AgentID        *int64  `json:"agent_id"`
 	AgentName      string  `json:"agent_name,omitempty"`
 	ProjectID      *int64  `json:"project_id"`

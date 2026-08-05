@@ -73,18 +73,19 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Title     string `json:"title"`
-		Body      string `json:"body"`
-		AgentID   *int64 `json:"agent_id"`
-		ProjectID *int64 `json:"project_id"`
-		Perm      string `json:"perm"`
-		RunMode   string `json:"run_mode"`
-		ParentID  *int64 `json:"parent_id"`
+		Title      string `json:"title"`
+		Body       string `json:"body"`
+		AgentID    *int64 `json:"agent_id"`
+		ProjectID  *int64 `json:"project_id"`
+		Perm       string `json:"perm"`
+		RunMode    string `json:"run_mode"`
+		Concurrent bool   `json:"concurrent"` // 是否并发执行（默认串行：同一项目同时只跑一个任务）
+		ParentID   *int64 `json:"parent_id"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	s.createTaskInner(w, in.Title, in.Body, in.AgentID, in.ProjectID, in.Perm, in.RunMode, in.ParentID, nil)
+	s.createTaskInner(w, in.Title, in.Body, in.AgentID, in.ProjectID, in.Perm, in.RunMode, in.Concurrent, in.ParentID, nil)
 }
 
 // resumeTask 续跑：新任务复用原任务的角色/项目/会话目录（attach 回上次对话）。
@@ -108,10 +109,10 @@ func (s *Server) resumeTask(w http.ResponseWriter, r *http.Request) {
 		body += "\n\n"
 	}
 	body += fmt.Sprintf("（这是任务 #%d 的续跑：请基于之前的进展继续完成目标。若有疑问先检查当前状态。）", id)
-	s.createTaskInner(w, title, body, src.AgentID, src.ProjectID, src.Perm, src.RunMode, nil, &id)
+	s.createTaskInner(w, title, body, src.AgentID, src.ProjectID, src.Perm, src.RunMode, src.Concurrent, nil, &id)
 }
 
-func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agentID, projectID *int64, perm, runMode string, parentID, resumeOf *int64) {
+func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agentID, projectID *int64, perm, runMode string, concurrent bool, parentID, resumeOf *int64) {
 	if title == "" {
 		writeErr(w, http.StatusBadRequest, "标题不能为空")
 		return
@@ -130,7 +131,7 @@ func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agen
 		writeErr(w, http.StatusBadRequest, "非法执行方式: "+runMode)
 		return
 	}
-	tk := store.Task{Title: title, Body: body, Status: store.StatusQueued, Perm: perm, RunMode: runMode, AgentID: agentID, ParentID: parentID, ResumeOf: resumeOf}
+	tk := store.Task{Title: title, Body: body, Status: store.StatusQueued, Perm: perm, RunMode: runMode, Concurrent: concurrent, AgentID: agentID, ParentID: parentID, ResumeOf: resumeOf}
 	// 工作目录属于项目：快照项目目录（历史记录不随配置漂移）；
 	// 老数据兼容：项目未设目录时回退角色的旧 project_dir。
 	if projectID != nil {
@@ -214,7 +215,7 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "title", "body", "agent_id", "perm", "status", "review_note", "parent_id", "project_id")
+	set, ok := patchMap(w, r, "title", "body", "agent_id", "perm", "status", "review_note", "parent_id", "project_id", "concurrent")
 	if !ok {
 		return
 	}
@@ -291,6 +292,14 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "非法权限模式: "+p)
 			return
 		}
+	}
+	if v, ok := set["concurrent"]; ok {
+		b, isBool := v.(bool)
+		if !isBool {
+			writeErr(w, http.StatusBadRequest, "concurrent 必须是布尔值")
+			return
+		}
+		set["concurrent"] = b
 	}
 	if v, ok := set["project_id"]; ok {
 		if v == nil {
@@ -373,8 +382,8 @@ func (s *Server) approveReviewTask(w http.ResponseWriter, source store.Task) {
 		source.ID, source.Title, source.WorktreeBranch)
 	merge := store.Task{
 		Title: title, Body: body, Status: store.StatusQueued, Perm: store.PermFull,
-		RunMode: store.RunModeBatch, AgentID: source.AgentID, ProjectID: source.ProjectID,
-		ProjectDir: source.ProjectDir, ParentID: &sourceID, MergeOf: &sourceID,
+		RunMode: store.RunModeBatch, AgentID: source.AgentID, // 自动创建的合并任务默认串行（未勾选并发）
+		ProjectID: source.ProjectID, ProjectDir: source.ProjectDir, ParentID: &sourceID, MergeOf: &sourceID,
 	}
 	mergeID, err := s.st.ApproveTaskAndCreateMerge(source.ID, merge)
 	if err != nil {

@@ -52,6 +52,7 @@ export function cardHTML(t) {
       <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
       ${t.perm === "review" ? `<span class="chip review">审批</span>` : ""}
       ${t.run_mode === "interactive" ? `<span class="chip">交互</span>` : ""}
+      ${t.concurrent ? `<span class="chip">并发</span>` : ""}
       ${t.review_rounds > 0 ? `<span class="chip">第${t.review_rounds}轮</span>` : ""}
     </div>
     <div class="c-title">${esc(t.title)}</div>
@@ -290,6 +291,11 @@ export function renderSide(t) {
     <div class="prop-row"><span class="k">角色</span><span class="v">${esc(t.agent_name || "未指派")}</span></div>
     <div class="prop-row"><span class="k">权限</span><span class="v">${PERM_LABEL[t.perm] || t.perm}</span></div>
     <div class="prop-row"><span class="k">方式</span><span class="v">${t.run_mode === "interactive" ? "交互式 Pi" : "批处理 · -p"}</span></div>
+    <div class="prop-row"><span class="k">并发</span>
+      <span class="v"><select onchange="patchTask(${t.id},{concurrent:this.value==='1'})">
+        <option value="0" ${t.concurrent ? "" : "selected"}>串行（默认）</option>
+        <option value="1" ${t.concurrent ? "selected" : ""}>并发</option>
+      </select></span></div>
     <div class="prop-row"><span class="k">执行器</span><span class="v">tmux · ${["claimed", "running"].includes(t.status) ? `paihuo:task-${t.id}` : "日志已归档"}</span></div>
     <div class="prop-row"><span class="k">目录</span><span class="v" style="font-size:12px;word-break:break-all">${esc(t.project_dir || "-")}</span></div>
     <div class="prop-row"><span class="k">轮次</span><span class="v">${t.review_rounds || "-"}</span></div>
@@ -382,6 +388,7 @@ export function openSubTask(parentId) {
   document.getElementById("tBody").value = "";
   document.getElementById("tPerm").value = t ? t.perm : "full";
   document.getElementById("tRunMode").value = "batch";
+  document.getElementById("tConcurrent").checked = false;
   document.getElementById("tProject").value = t && t.project_id ? t.project_id : "";
   document.getElementById("tParentId").value = parentId;
   document.getElementById("taskModalTitle").textContent = "拆分子任务";
@@ -462,6 +469,7 @@ export function openNewTask() {
   document.getElementById("tBody").value = "";
   document.getElementById("tPerm").value = "full";
   document.getElementById("tRunMode").value = "batch";
+  document.getElementById("tConcurrent").checked = false;
   document.getElementById("tProject").value = "";
   document.getElementById("tParentId").value = "";
   document.getElementById("taskModalTitle").textContent = "新建任务";
@@ -478,6 +486,7 @@ export function openProjectTask(projectId) {
   document.getElementById("tBody").value = "";
   document.getElementById("tPerm").value = "full";
   document.getElementById("tRunMode").value = "batch";
+  document.getElementById("tConcurrent").checked = false;
   document.getElementById("tProject").value = projectId;
   document.getElementById("tParentId").value = "";
   document.getElementById("taskModalTitle").textContent = p ? `新建任务 · ${esc(p.name)}` : "新建任务";
@@ -519,6 +528,7 @@ export async function submitTask() {
         project_id: projectId,
         perm: document.getElementById("tPerm").value,
         run_mode: document.getElementById("tRunMode").value,
+        concurrent: document.getElementById("tConcurrent").checked,
         parent_id: parentId,
       }),
     });

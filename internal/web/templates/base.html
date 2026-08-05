@@ -122,6 +122,13 @@
       </select>
       <span class="field-help" id="tRunModeHelp">批处理会在完成后自动结算。</span>
     </label>
+    <label class="field">并发执行
+      <span style="display:flex;gap:8px;align-items:center;padding-top:4px">
+        <input type="checkbox" id="tConcurrent" style="width:auto">
+        <span>允许本任务与同项目其他任务并行执行</span>
+      </span>
+      <span class="field-help">默认不勾选：同一项目的任务串行执行（一次一个）。勾选后本任务跳过项目串行队列，仅受角色最大并发数约束。</span>
+    </label>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal('taskModal')">取消</button>
       <button class="btn primary" onclick="submitTask()">创建</button>

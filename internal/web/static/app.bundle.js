@@ -614,6 +614,7 @@
       <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
       ${t.perm === "review" ? `<span class="chip review">\u5BA1\u6279</span>` : ""}
       ${t.run_mode === "interactive" ? `<span class="chip">\u4EA4\u4E92</span>` : ""}
+      ${t.concurrent ? `<span class="chip">\u5E76\u53D1</span>` : ""}
       ${t.review_rounds > 0 ? `<span class="chip">\u7B2C${t.review_rounds}\u8F6E</span>` : ""}
     </div>
     <div class="c-title">${esc(t.title)}</div>
@@ -838,6 +839,11 @@
     <div class="prop-row"><span class="k">\u89D2\u8272</span><span class="v">${esc(t.agent_name || "\u672A\u6307\u6D3E")}</span></div>
     <div class="prop-row"><span class="k">\u6743\u9650</span><span class="v">${PERM_LABEL[t.perm] || t.perm}</span></div>
     <div class="prop-row"><span class="k">\u65B9\u5F0F</span><span class="v">${t.run_mode === "interactive" ? "\u4EA4\u4E92\u5F0F Pi" : "\u6279\u5904\u7406 \xB7 -p"}</span></div>
+    <div class="prop-row"><span class="k">\u5E76\u53D1</span>
+      <span class="v"><select onchange="patchTask(${t.id},{concurrent:this.value==='1'})">
+        <option value="0" ${t.concurrent ? "" : "selected"}>\u4E32\u884C\uFF08\u9ED8\u8BA4\uFF09</option>
+        <option value="1" ${t.concurrent ? "selected" : ""}>\u5E76\u53D1</option>
+      </select></span></div>
     <div class="prop-row"><span class="k">\u6267\u884C\u5668</span><span class="v">tmux \xB7 ${["claimed", "running"].includes(t.status) ? `paihuo:task-${t.id}` : "\u65E5\u5FD7\u5DF2\u5F52\u6863"}</span></div>
     <div class="prop-row"><span class="k">\u76EE\u5F55</span><span class="v" style="font-size:12px;word-break:break-all">${esc(t.project_dir || "-")}</span></div>
     <div class="prop-row"><span class="k">\u8F6E\u6B21</span><span class="v">${t.review_rounds || "-"}</span></div>
@@ -940,6 +946,7 @@
     document.getElementById("tBody").value = "";
     document.getElementById("tPerm").value = t ? t.perm : "full";
     document.getElementById("tRunMode").value = "batch";
+    document.getElementById("tConcurrent").checked = false;
     document.getElementById("tProject").value = t && t.project_id ? t.project_id : "";
     document.getElementById("tParentId").value = parentId;
     document.getElementById("taskModalTitle").textContent = "\u62C6\u5206\u5B50\u4EFB\u52A1";
@@ -1011,6 +1018,7 @@
     document.getElementById("tBody").value = "";
     document.getElementById("tPerm").value = "full";
     document.getElementById("tRunMode").value = "batch";
+    document.getElementById("tConcurrent").checked = false;
     document.getElementById("tProject").value = "";
     document.getElementById("tParentId").value = "";
     document.getElementById("taskModalTitle").textContent = "\u65B0\u5EFA\u4EFB\u52A1";
@@ -1024,6 +1032,7 @@
     document.getElementById("tBody").value = "";
     document.getElementById("tPerm").value = "full";
     document.getElementById("tRunMode").value = "batch";
+    document.getElementById("tConcurrent").checked = false;
     document.getElementById("tProject").value = projectId;
     document.getElementById("tParentId").value = "";
     document.getElementById("taskModalTitle").textContent = p ? `\u65B0\u5EFA\u4EFB\u52A1 \xB7 ${esc(p.name)}` : "\u65B0\u5EFA\u4EFB\u52A1";
@@ -1059,6 +1068,7 @@
           project_id: projectId,
           perm: document.getElementById("tPerm").value,
           run_mode: document.getElementById("tRunMode").value,
+          concurrent: document.getElementById("tConcurrent").checked,
           parent_id: parentId
         })
       });

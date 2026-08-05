@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   status      TEXT NOT NULL DEFAULT 'queued',
   perm        TEXT NOT NULL DEFAULT 'full',
   run_mode    TEXT NOT NULL DEFAULT 'batch',
+  concurrent  INTEGER NOT NULL DEFAULT 0, -- 1=允许并发（默认串行：同一项目同时只执行一个任务）
   agent_id    INTEGER REFERENCES agents(id),
   project_id  INTEGER REFERENCES projects(id),
   project_dir TEXT NOT NULL DEFAULT '',
@@ -141,6 +142,7 @@ func migrate(db *sql.DB) error {
 		"ALTER TABLE tasks ADD COLUMN review_rounds INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE tasks ADD COLUMN tmux_log_offset INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE tasks ADD COLUMN run_mode TEXT NOT NULL DEFAULT 'batch'",
+		"ALTER TABLE tasks ADD COLUMN concurrent INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE tasks ADD COLUMN project_id INTEGER REFERENCES projects(id)",
 		"ALTER TABLE projects ADD COLUMN project_dir TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE tasks ADD COLUMN worktree_branch TEXT NOT NULL DEFAULT ''",
@@ -405,13 +407,13 @@ func (s *Store) DeleteAgent(id int64) error {
 // 任务
 
 // taskCols 完整列（详情页用：含完整 body，驳回重做会追加修改意见）。
-const taskCols = `t.id, t.title, t.body, t.status, t.perm, t.run_mode, t.agent_id, COALESCE(a.name, ''),
+const taskCols = `t.id, t.title, t.body, t.status, t.perm, t.run_mode, t.concurrent, t.agent_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.schedule_id, t.error, t.exit_code,
 	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.created_at, t.started_at, t.finished_at, t.updated_at`
 
 // taskColsBrief 列表列（看板/历史/项目页用）：body 截断到 400 字符，
 // 避免大提示词把列表接口载荷撑爆。列序与 taskCols 完全一致（scanTask 共用）。
-const taskColsBrief = `t.id, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.run_mode, t.agent_id, COALESCE(a.name, ''),
+const taskColsBrief = `t.id, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.run_mode, t.concurrent, t.agent_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.schedule_id, t.error, t.exit_code,
 	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.created_at, t.started_at, t.finished_at, t.updated_at`
 
@@ -419,9 +421,10 @@ func scanTask(rows scanner) (Task, error) {
 	var tk Task
 	var agentID, projectID, parentID, scheduleID, exitCode sql.NullInt64
 	var agentName, projectName string
+	var concurrent int64
 	var started, finished sql.NullString
 	var resumeOf, mergeOf sql.NullInt64
-	err := rows.Scan(&tk.ID, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &tk.RunMode, &agentID, &agentName,
+	err := rows.Scan(&tk.ID, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &tk.RunMode, &concurrent, &agentID, &agentName,
 		&projectID, &projectName, &tk.ProjectDir, &parentID, &scheduleID, &tk.Error, &exitCode,
 		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt)
 	if err != nil {
@@ -430,6 +433,7 @@ func scanTask(rows scanner) (Task, error) {
 	if tk.RunMode == "" {
 		tk.RunMode = RunModeBatch
 	}
+	tk.Concurrent = concurrent != 0
 	if agentID.Valid {
 		tk.AgentID = &agentID.Int64
 	}
@@ -556,6 +560,14 @@ func (s *Store) GetTask(id int64) (*Task, error) {
 	return &tk, nil
 }
 
+// boolInt 把任务并发开关收敛为 SQLite 可存整数。
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func (s *Store) CreateTask(t Task) (int64, error) {
 	if t.CreatedAt == "" {
 		t.CreatedAt = Now()
@@ -566,9 +578,9 @@ func (s *Store) CreateTask(t Task) (int64, error) {
 	if t.RunMode == "" {
 		t.RunMode = RunModeBatch
 	}
-	res, err := s.db.Exec(`INSERT INTO tasks (title, body, status, perm, run_mode, agent_id, project_id, project_dir, parent_id, schedule_id, resume_of, merge_of, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.Title, t.Body, t.Status, t.Perm, t.RunMode, nullInt64(t.AgentID), nullInt64(t.ProjectID), t.ProjectDir,
+	res, err := s.db.Exec(`INSERT INTO tasks (title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, schedule_id, resume_of, merge_of, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.Title, t.Body, t.Status, t.Perm, t.RunMode, boolInt(t.Concurrent), nullInt64(t.AgentID), nullInt64(t.ProjectID), t.ProjectDir,
 		nullInt64(t.ParentID), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), t.CreatedAt, t.UpdatedAt)
 	if err != nil {
 		return 0, err
@@ -604,9 +616,9 @@ func (s *Store) ApproveTaskAndCreateMerge(sourceID int64, merge Task) (int64, er
 		return 0, errors.New("任务已审批或当前不在待审批状态")
 	}
 	res, err = tx.Exec(`INSERT INTO tasks
-		(title, body, status, perm, run_mode, agent_id, project_id, project_dir, parent_id, schedule_id, resume_of, merge_of, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		merge.Title, merge.Body, merge.Status, merge.Perm, merge.RunMode, nullInt64(merge.AgentID), nullInt64(merge.ProjectID), merge.ProjectDir,
+		(title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, schedule_id, resume_of, merge_of, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		merge.Title, merge.Body, merge.Status, merge.Perm, merge.RunMode, boolInt(merge.Concurrent), nullInt64(merge.AgentID), nullInt64(merge.ProjectID), merge.ProjectDir,
 		nullInt64(merge.ParentID), nullInt64(merge.ScheduleID), nullInt64(merge.ResumeOf), nullInt64(merge.MergeOf), merge.CreatedAt, merge.UpdatedAt)
 	if err != nil {
 		return 0, err

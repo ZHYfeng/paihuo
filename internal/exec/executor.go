@@ -18,6 +18,10 @@ import (
 // Executor 轮询领取 queued 任务并执行。角色是一个可配置大小的执行池：
 // 每个任务独立拥有 tmux window、agent 会话目录和（Git 项目时）worktree，
 // 因而同一角色可以并行；MaxConcurrency 只负责控制资源与上游配额占用。
+//
+// 项目级并发门禁：任务默认不并发——未勾选「并发执行」的任务要求所在项目
+// 当前没有任何活跃任务才允许启动（同一项目同时只执行一个任务）；勾选了
+// 并发的任务跳过门禁，只受角色并发上限约束。
 type Executor struct {
 	st           *store.Store
 	hub          *events.Hub
@@ -26,6 +30,7 @@ type Executor struct {
 	runner       *tmuxRunner
 	mu           sync.Mutex
 	active       map[int64]int // 每个 agent 当前已占用的执行槽位数
+	activeProj   map[int64]int // 每个项目当前活跃的任务数（非并发任务的串行门禁）
 	// cancels 是任务级取消句柄
 	cancels map[int64]context.CancelFunc
 	wake    chan struct{}
@@ -43,6 +48,7 @@ func New(st *store.Store, hub *events.Hub, sessionsRoot, instanceID string) *Exe
 		taskSessions: newTaskSessionStore(sessionsRoot, instanceID),
 		runner:       newTmuxRunner(sessionsRoot),
 		active:       make(map[int64]int),
+		activeProj:   make(map[int64]int),
 		cancels:      make(map[int64]context.CancelFunc),
 		wake:         make(chan struct{}, 1),
 	}
@@ -89,6 +95,7 @@ func (e *Executor) recoverInterrupted(ctx context.Context) {
 			continue
 		}
 		e.restoreAgentSlot(*tk.AgentID)
+		e.restoreProjectSlot(tk)
 		e.log(tk.ID, "sys", "↻ 服务恢复：重新接管专用 tmux window")
 		go e.monitorRecovered(ctx, tk)
 	}
@@ -179,9 +186,16 @@ func (e *Executor) dispatch(ctx context.Context) {
 		if !e.reserveAgentSlot(agentID, limit) {
 			continue
 		}
+		// 项目级串行门禁：非并发任务要求项目当前没有任何活跃任务。
+		// 先占槽再领取，领取失败要回滚两个槽位。
+		if !e.reserveProjectSlot(tk) {
+			e.releaseAgentSlot(agentID)
+			continue
+		}
 		claimed, err := e.st.ClaimTask(tk.ID)
 		if err != nil || !claimed {
 			e.releaseAgentSlot(agentID)
+			e.releaseProjectSlot(tk)
 			continue
 		}
 		go e.runTask(ctx, tk)
@@ -222,10 +236,56 @@ func (e *Executor) releaseAgentSlot(agentID int64) {
 	e.mu.Unlock()
 }
 
+// reserveProjectSlot 登记任务在项目中的占用，并执行非并发任务的串行门禁：
+// 未勾选「并发执行」的任务要求该项目当前没有任何活跃任务（无论并发与否）
+// 才允许启动，保证它不与同项目的任何任务重叠；显式勾选并发的任务不受门禁
+// 约束，但同样登记占用，让后续非并发任务等它结束。没有项目的任务不受
+// 项目级约束。
+func (e *Executor) reserveProjectSlot(tk store.Task) bool {
+	if tk.ProjectID == nil {
+		return true
+	}
+	pid := *tk.ProjectID
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !tk.Concurrent && e.activeProj[pid] > 0 {
+		return false
+	}
+	e.activeProj[pid]++
+	return true
+}
+
+// releaseProjectSlot 任务结束（或领取失败）时释放其项目占用。
+func (e *Executor) releaseProjectSlot(tk store.Task) {
+	if tk.ProjectID == nil {
+		return
+	}
+	pid := *tk.ProjectID
+	e.mu.Lock()
+	if e.activeProj[pid] <= 1 {
+		delete(e.activeProj, pid)
+	} else {
+		e.activeProj[pid]--
+	}
+	e.mu.Unlock()
+}
+
+// restoreProjectSlot 服务重启后接管尚存 tmux window 时恢复其项目占用，
+// 保证串行门禁不会在重启后错误放行同项目的新任务。
+func (e *Executor) restoreProjectSlot(tk store.Task) {
+	if tk.ProjectID == nil {
+		return
+	}
+	e.mu.Lock()
+	e.activeProj[*tk.ProjectID]++
+	e.mu.Unlock()
+}
+
 func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	agentID := *tk.AgentID
 	defer func() {
 		e.releaseAgentSlot(agentID)
+		e.releaseProjectSlot(tk)
 		e.Wake()
 	}()
 
@@ -366,6 +426,7 @@ func (e *Executor) monitorRecovered(ctx context.Context, tk store.Task) {
 	}
 	defer func() {
 		e.releaseAgentSlot(*tk.AgentID)
+		e.releaseProjectSlot(tk)
 		e.Wake()
 	}()
 	rctx, release := e.taskContext(tk.ID)
