@@ -380,11 +380,25 @@ func (s *Store) DeleteAgent(id int64) error {
 	if n > 0 {
 		return errors.New("该角色仍有未完成任务，无法删除")
 	}
-	if _, err := s.db.Exec("UPDATE tasks SET agent_id=NULL WHERE agent_id=?", id); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
 		return err
 	}
-	_, err := s.db.Exec("DELETE FROM agents WHERE id=?", id)
-	return err
+	defer tx.Rollback()
+	// 历史任务与模板解除指派（保留记录），定时任务随角色一并删除（agent_id NOT NULL）。
+	if _, err := tx.Exec("UPDATE tasks SET agent_id=NULL WHERE agent_id=?", id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("UPDATE templates SET agent_id=NULL WHERE agent_id=?", id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM schedules WHERE agent_id=?", id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM agents WHERE id=?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ---------------------------------------------------------------------------
