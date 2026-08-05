@@ -290,6 +290,78 @@ cat /proc/self/cgroup`
 	t.Fatal("等待脱离终端的 batch 任务结束超时")
 }
 
+func TestTmuxRunnerDetachedAgentSurvivesLostPane(t *testing.T) {
+	bin := requireTmuxIntegration(t)
+	if _, err := osexec.LookPath("setsid"); err != nil {
+		t.Skip("setsid 未安装")
+	}
+	if _, err := osexec.LookPath("tail"); err != nil {
+		t.Skip("tail 未安装")
+	}
+	requireUserSystemdRun(t)
+	r := newTmuxRunnerAt(t.TempDir(), fmt.Sprintf("paihuo-lost-pane-test-%d", os.Getpid()))
+	r.binary = bin
+	_ = r.command("kill-server")
+	t.Cleanup(func() {
+		r.Cleanup(42)
+		_ = r.command("kill-server")
+	})
+	if err := r.Start(42, t.TempDir(), "/bin/sh", []string{
+		"-c", "sleep 1; printf 'agent finished after pane loss\\n'",
+	}, nil, tmuxStartOptions{IsolateProcessGroup: true, DetachTerminal: true, IsolateCgroup: true}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if r.agentServiceAlive(42) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !r.agentServiceAlive(42) {
+		t.Fatalf("等待 agent service %s 启动超时", r.agentUnitName(42))
+	}
+	// 精确模拟最棘手的生产故障：日志 pane 已不在，但独立 agent service
+	// 仍在运行。执行器必须继续等待它，而不是立刻 Stop service 并把任务记失败。
+	if err := r.command("kill-window", "-t", r.target(42)); err != nil {
+		t.Fatalf("kill task pane: %v", err)
+	}
+	obs, err := r.Poll(42, 0)
+	if err != nil {
+		t.Fatalf("Poll after pane loss: %v", err)
+	}
+	if !obs.Alive || obs.Done {
+		t.Fatalf("pane 丢失后运行中的 agent 应继续存活，obs=%+v", obs)
+	}
+
+	var offset int64
+	var output []string
+	for time.Now().Before(deadline) {
+		obs, err := r.Poll(42, offset)
+		if err != nil {
+			t.Fatalf("Poll: %v", err)
+		}
+		output = append(output, obs.Lines...)
+		offset = obs.Offset
+		if !obs.Done {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		if obs.ExitCode != 0 {
+			t.Fatalf("ExitCode=%d output=%q", obs.ExitCode, output)
+		}
+		if !strings.Contains(strings.Join(output, "\n"), "agent finished after pane loss") {
+			t.Fatalf("pane 丢失后未从 agent 原始输出收集日志: %q", output)
+		}
+		if _, err := os.Stat(r.agentExitPath(42)); err != nil {
+			t.Fatalf("agent 应写回独立退出码: %v", err)
+		}
+		return
+	}
+	t.Fatal("等待 pane 丢失后的 agent 结算超时")
+}
+
 func TestTmuxRunnerStopTerminatesIsolatedAgentService(t *testing.T) {
 	bin := requireTmuxIntegration(t)
 	if _, err := osexec.LookPath("setsid"); err != nil {
@@ -343,6 +415,7 @@ func TestTmuxRunnerArchivesFailureArtifacts(t *testing.T) {
 	for name, want := range map[string]string{
 		"terminal.log":     "partial output\n",
 		"agent-output.log": "raw agent output\n",
+		"agent-exit-code":  "137\n",
 		"runner-cgroup":    "0::/test.scope\n",
 		"run.sh":           "#!/bin/sh\n",
 		"start":            "start\n",
@@ -358,6 +431,7 @@ func TestTmuxRunnerArchivesFailureArtifacts(t *testing.T) {
 	for name, want := range map[string]string{
 		"terminal.log":     "partial output\n",
 		"agent-output.log": "raw agent output\n",
+		"agent-exit-code":  "137\n",
 		"runner-cgroup":    "0::/test.scope\n",
 		"run.sh":           "#!/bin/sh\n",
 		"start":            "start\n",

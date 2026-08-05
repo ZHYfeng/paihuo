@@ -89,6 +89,13 @@ func (r *tmuxRunner) exitPath(taskID int64) string {
 	return filepath.Join(r.taskDir(taskID), "exit-code")
 }
 
+// agentExitPath 是从 tmux pane 迁出的 Codex agent 自己写回的退出码。它和
+// run.sh 的 exit-code 分开保存：即使 pane 被异常关闭，独立 systemd service
+// 仍能把实际结果交回执行器，不能把一个已完成的任务误判为 window 丢失。
+func (r *tmuxRunner) agentExitPath(taskID int64) string {
+	return filepath.Join(r.taskDir(taskID), "agent-exit-code")
+}
+
 func (r *tmuxRunner) gatePath(taskID int64) string {
 	return filepath.Join(r.taskDir(taskID), "start")
 }
@@ -198,7 +205,7 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, op
 	if err := os.Chmod(taskDir, 0o700); err != nil {
 		return fmt.Errorf("设置任务 tmux 目录权限失败: %w", err)
 	}
-	for _, path := range []string{r.exitPath(taskID), r.gatePath(taskID), r.agentOutputPath(taskID), r.runnerCgroupPath(taskID), r.agentUnitPath(taskID), r.agentEnvPath(taskID), r.agentLaunchPath(taskID)} {
+	for _, path := range []string{r.exitPath(taskID), r.agentExitPath(taskID), r.gatePath(taskID), r.agentOutputPath(taskID), r.runnerCgroupPath(taskID), r.agentUnitPath(taskID), r.agentEnvPath(taskID), r.agentLaunchPath(taskID)} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("重置 tmux 任务状态失败: %w", err)
 		}
@@ -356,7 +363,20 @@ func (r *tmuxRunner) writeAgentLaunchFiles(taskID int64, invocation string, env 
 	if err := os.WriteFile(r.agentEnvPath(taskID), []byte(source.String()), 0o600); err != nil {
 		return fmt.Errorf("写入 Codex agent 环境失败: %w", err)
 	}
-	launch := "#!/bin/sh\n. " + shQuote(r.agentEnvPath(taskID)) + "\nexec " + invocation + "\n"
+	// 不能 exec setsid：它虽能隔离 Codex 的进程组，却会让唯一能写回退出码的
+	// shell 也消失。保留一层很小的 service wrapper，在 Codex 自然退出或收到
+	// 可捕获的终止信号后原子写入 agent-exit-code；tmux pane 即使先丢失，任务
+	// 仍可由这个结果正确结算。
+	launch := "#!/bin/sh\n. " + shQuote(r.agentEnvPath(taskID)) + "\n" +
+		"agent_exit=" + shQuote(r.agentExitPath(taskID)) + "\n" +
+		"write_agent_exit() { tmp=\"$agent_exit.tmp.$$\"; printf '%s\\n' \"$1\" > \"$tmp\" && mv -f \"$tmp\" \"$agent_exit\"; }\n" +
+		"trap 'write_agent_exit 129; exit 129' HUP\n" +
+		"trap 'write_agent_exit 130; exit 130' INT\n" +
+		"trap 'write_agent_exit 143; exit 143' TERM\n" +
+		invocation + "\n" +
+		"status=$?\n" +
+		"write_agent_exit \"$status\"\n" +
+		"exit \"$status\"\n"
 	if err := os.WriteFile(r.agentLaunchPath(taskID), []byte(launch), 0o700); err != nil {
 		_ = os.Remove(r.agentEnvPath(taskID))
 		return fmt.Errorf("写入 Codex agent 启动脚本失败: %w", err)
@@ -451,12 +471,21 @@ func (r *tmuxRunner) Poll(taskID, offset int64) (tmuxObservation, error) {
 		return tmuxObservation{}, err
 	}
 	alive := r.hasWindow(taskID)
+	// Codex batch 的实际 agent 在独立 systemd service 中运行。它不依赖
+	// task pane 存活；pane 意外消失时只要 agent 仍在运行，就继续等待，并
+	// 从 agent-output.log 增量收集输出。这样不会因为日志转发层故障中断代码
+	// 执行，最终由 agent-exit-code 结算。
+	if !alive && !done && r.hasDetachedAgent(taskID) && r.agentServiceAlive(taskID) {
+		alive = true
+	}
 	if done && alive {
 		dead, err := r.paneDead(taskID)
-		if err != nil {
+		if err != nil && r.hasWindow(taskID) {
 			return tmuxObservation{}, fmt.Errorf("读取 tmux pane 状态失败: %w", err)
 		}
-		done = dead
+		if err == nil {
+			done = dead
+		}
 	}
 	lines, next, err := r.readLines(taskID, offset, done)
 	if err != nil {
@@ -470,22 +499,69 @@ func (r *tmuxRunner) Poll(taskID, offset int64) (tmuxObservation, error) {
 }
 
 func (r *tmuxRunner) exitCode(taskID int64) (int, bool, error) {
-	b, err := os.ReadFile(r.exitPath(taskID))
-	if errors.Is(err, os.ErrNotExist) {
-		return 0, false, nil
+	// Detached Codex service 的结果优先于 pane wrapper 的结果。前者由
+	// service 自己原子写入，能跨越 task pane 异常关闭的边界。
+	for _, path := range []string{r.agentExitPath(taskID), r.exitPath(taskID)} {
+		b, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return 0, false, fmt.Errorf("读取 tmux 退出码失败: %w", err)
+		}
+		code, err := strconv.Atoi(strings.TrimSpace(string(b)))
+		if err != nil {
+			return 0, false, fmt.Errorf("tmux 退出码非法: %w", err)
+		}
+		return code, true, nil
 	}
+	return 0, false, nil
+}
+
+// hasDetachedAgent 以 agent 原始输出文件作为一次 Codex cgroup 启动的可靠
+// 标记。该文件只会在 DetachTerminal 模式下由 Start 创建。
+func (r *tmuxRunner) hasDetachedAgent(taskID int64) bool {
+	_, err := os.Stat(r.agentOutputPath(taskID))
+	return err == nil
+}
+
+// agentServiceAlive 查询独立 Codex agent service，而不是只依赖 tmux pane。
+// 这里故意把查询异常视为未存活：正常启动的 transient service 很快进入 active，
+// 若 service 根本没启动，原有 pane 丢失错误仍会提供清晰的启动失败信号。
+func (r *tmuxRunner) agentServiceAlive(taskID int64) bool {
+	b, err := os.ReadFile(r.agentUnitPath(taskID))
 	if err != nil {
-		return 0, false, fmt.Errorf("读取 tmux 退出码失败: %w", err)
+		return false
 	}
-	code, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	unit := strings.TrimSpace(string(b))
+	if unit == "" || unit != r.agentUnitName(taskID) {
+		return false
+	}
+	systemctl, err := osexec.LookPath("systemctl")
 	if err != nil {
-		return 0, false, fmt.Errorf("tmux 退出码非法: %w", err)
+		return false
 	}
-	return code, true, nil
+	out, err := osexec.Command(systemctl, "--user", "show", unit, "--property=ActiveState", "--value").Output()
+	if err != nil {
+		return false
+	}
+	switch strings.TrimSpace(string(out)) {
+	case "active", "activating":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *tmuxRunner) readLines(taskID, offset int64, flushTail bool) ([]string, int64, error) {
-	f, err := os.Open(r.logPath(taskID))
+	// Detached agent 的输出文件独立于 tmux pipe-pane，pane 丢失后仍会持续
+	// 追加。正常情况下 tail 会把同样内容转发到 terminal.log 供人工 attach，
+	// 但持久化日志只读这一份原始流以避免双份重复。
+	path := r.logPath(taskID)
+	if r.hasDetachedAgent(taskID) {
+		path = r.agentOutputPath(taskID)
+	}
+	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, offset, nil
 	}
@@ -629,7 +705,7 @@ func (r *tmuxRunner) ArchiveFailureArtifacts(taskID int64, reason string) (strin
 	if err := os.Mkdir(archiveDir, 0o700); err != nil {
 		return "", fmt.Errorf("创建 tmux 故障归档失败: %w", err)
 	}
-	for _, name := range []string{"terminal.log", "agent-output.log", "runner-cgroup", "run.sh", "exit-code", "start"} {
+	for _, name := range []string{"terminal.log", "agent-output.log", "runner-cgroup", "run.sh", "exit-code", "agent-exit-code", "start"} {
 		from := filepath.Join(taskDir, name)
 		to := filepath.Join(archiveDir, name)
 		if err := os.Rename(from, to); errors.Is(err, os.ErrNotExist) {
