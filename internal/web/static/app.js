@@ -42,7 +42,7 @@ const BOARD_COLS = [
   ["running", "执行中", ["running"]],
   ["awaiting_review", "待审批", ["awaiting_review"]],
 ];
-const BUILTIN_KEYS = ["model", "system_prompt", "thinking", "skills", "plugins", "extra_args", "env"];
+const BUILTIN_KEYS = ["model", "system_prompt", "instructions", "thinking", "skills", "plugins", "extra_args", "env"];
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, c =>
@@ -354,11 +354,14 @@ function renderDetail(t) {
   if (!main) return;
   main.innerHTML = `
     <h2>${esc(t.title)}</h2>
-    <div class="detail-id">#${t.id} · 创建于 ${esc((t.created_at || "").slice(0, 16).replace("T", " "))}</div>
+    <div class="detail-id">#${t.id} · 创建于 ${esc((t.created_at || "").slice(0, 16).replace("T", " "))}
+      ${t.resume_of ? ` · <span style="color:var(--brand)">续跑自 #${t.resume_of}</span>` : ""}</div>
     ${t.body ? `<div class="detail-desc">${esc(t.body)}</div>` : ""}
     ${t.error ? `<div class="detail-desc" style="border-color:rgba(255,99,105,.4);color:var(--danger)">错误：${esc(t.error)}</div>` : ""}
     <div id="childrenBox"></div>
     ${t.status === "awaiting_review" ? `<div id="diffBox"><div class="empty">加载改动中...</div></div>` : ""}
+    <div class="sec-title">工作空间</div>
+    <div id="wsBox"><div class="empty">加载中...</div></div>
     <div class="term">
       <div class="term-head">
         <span class="term-dots"><i></i><i></i><i></i></span>
@@ -372,7 +375,67 @@ function renderDetail(t) {
   if (box) box.scrollTop = box.scrollHeight;
   if (t.status === "awaiting_review") loadDiff(t.id);
   loadChildren(t.id);
+  loadWorkspace(t.id);
   renderSide(t);
+}
+
+/* ---- 工作空间（git worktree 隔离） ---- */
+
+async function loadWorkspace(id) {
+  const box = document.getElementById("wsBox");
+  if (!box) return;
+  try {
+    const w = await api(`/api/workspace/${id}`);
+    const t = state.tasks.find(x => x.id === id) || {};
+    const done = ["succeeded", "failed", "cancelled"].includes(t.status);
+    if (!w.is_git) {
+      box.innerHTML = `<div class="ws-row"><span class="ws-label">隔离</span><span class="ws-val">项目非 git 仓库，任务直接在项目目录执行</span>` +
+        `<button class="btn xs" onclick="gitInitProject('${esc(w.path)}', ${id})">git init</button></div>`;
+      return;
+    }
+    if (!w.is_worktree) {
+      box.innerHTML = `<div class="ws-row"><span class="ws-label">隔离</span><span class="ws-val">${esc(w.note || "无独立工作空间")}</span></div>`;
+      return;
+    }
+    box.innerHTML = `
+      <div class="ws-row"><span class="ws-label">分支</span><span class="ws-val mono">${esc(w.branch)}</span></div>
+      <div class="ws-row"><span class="ws-label">HEAD</span><span class="ws-val mono">${esc(w.head || "-")}` +
+      (w.dirty ? ` <span class="ws-tag dirty">dirty</span>` : "") +
+      (w.ahead > 0 ? ` <span class="ws-tag ahead">+${w.ahead}</span>` : "") +
+      `</span></div>
+      <div class="ws-row"><span class="ws-label">路径</span><span class="ws-val mono" title="${esc(w.path)}">${esc(w.path)}</span></div>` +
+      (done ? `<div class="ws-actions">
+        <button class="btn sm brand" onclick="wsMerge(${id})">合并回主分支</button>
+        <button class="btn sm danger" onclick="wsDiscard(${id})">丢弃</button>
+      </div>` : "");
+  } catch (_) { box.innerHTML = `<div class="empty">工作空间信息不可用</div>`; }
+}
+
+async function wsMerge(id) {
+  if (!confirm(`把任务 #${id} 的改动 squash 合并回主分支？`)) return;
+  try {
+    const r = await api(`/api/workspace/${id}/merge`, { method: "POST" });
+    toast(`已合并${r.commit ? " (" + r.commit + ")" : ""}`);
+    loadWorkspace(id);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function wsDiscard(id) {
+  if (!confirm(`丢弃任务 #${id} 的工作空间？分支与 worktree 将删除，改动不可恢复。`)) return;
+  try {
+    await api(`/api/workspace/${id}/discard`, { method: "POST" });
+    toast("已丢弃");
+    loadWorkspace(id);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function gitInitProject(path, id) {
+  if (!confirm(`在 ${path} 初始化 git 仓库？之后的任务将获得独立 worktree。`)) return;
+  try {
+    await api("/api/workspace/git-init", { method: "POST", body: JSON.stringify({ path }) });
+    toast("已初始化");
+    loadWorkspace(id);
+  } catch (e) { toast(e.message, true); }
 }
 
 function renderSide(t) {
@@ -393,6 +456,7 @@ function renderSide(t) {
   }
   if (["succeeded", "failed", "cancelled"].includes(t.status)) {
     actions += `<button class="btn sm" onclick="setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>`;
+    actions += `<button class="btn sm" onclick="resumeTask(${t.id})">${icon("terminal")}继续对话</button>`;
   }
   actions += `<button class="btn sm" onclick="openSubTask(${t.id})">${icon("plus")}拆分子任务</button>`;
   if (t.body) actions += `<button class="btn sm" onclick="saveAsTemplate(${t.id})">${icon("bookmark")}保存为模板</button>`;
@@ -494,6 +558,18 @@ function openSubTask(parentId) {
   openModal("taskModal");
 }
 
+/* ---- 续跑：attach 回上次对话 ---- */
+
+async function resumeTask(id) {
+  if (!confirm(`续跑任务 #${id}？将创建新任务并复用原会话继续对话（pi/omp 真实续对话，其他 CLI 为全新会话）。`)) return;
+  try {
+    const t = await api(`/api/tasks/${id}/resume`, { method: "POST" });
+    toast(`已创建续跑任务 #${t.id}`);
+    await loadAll();
+    location.hash = "#/issue/" + t.id;
+  } catch (e) { toast(e.message, true); }
+}
+
 /* diff */
 async function loadDiff(id) {
   try {
@@ -506,7 +582,7 @@ async function loadDiff(id) {
       box.innerHTML = `<div class="detail-desc">无文件改动或非 git 仓库${d.note ? "（" + esc(d.note) + "）" : ""}</div>`;
       return;
     }
-    box.innerHTML = `<div class="detail-desc" style="color:var(--success)">文件改动（git diff）：</div>
+    box.innerHTML = `<div class="detail-desc" style="color:var(--success)">文件改动（git diff）${d.branch ? ` · 分支 <code class="mono">${esc(d.branch)}</code>` : ""}：</div>
       <div class="term"><div class="term-body" style="max-height:180px">${esc(stat)}</div></div>
       ${diff ? `<div class="term"><div class="term-body" style="max-height:300px">${esc(diff).split("\n").map(l =>
         `<div class="line"><span class="c ${l.startsWith("+") && !l.startsWith("+++") ? "out" : l.startsWith("-") && !l.startsWith("---") ? "err" : "sys"}">${esc(l)}</span></div>`).join("")}</div></div>` : ""}`;
@@ -537,11 +613,7 @@ function appendLog(l) {
     }
   }
   if (state.termTask === l.task_id) {
-    const box = document.getElementById("termBox");
-    if (box) {
-      box.insertAdjacentHTML("beforeend", logLineHTML(l));
-      box.scrollTop = box.scrollHeight;
-    }
+    if (term) termWrite(l.content);
   }
 }
 
@@ -552,17 +624,54 @@ async function copyLogs() {
   } catch (_) { toast("复制失败", true); }
 }
 
+/* ---- 全屏终端（xterm.js 渲染：ANSI 颜色 / 真实终端感） ---- */
+let term = null, termFit = null;
+
+function initTerm() {
+  if (term) return;
+  term = new Terminal({
+    fontFamily: "var(--font-mono)",
+    fontSize: 12.5,
+    lineHeight: 1.35,
+    convertEol: true,
+    scrollback: 10000,
+    cursorBlink: true,
+    theme: {
+      background: "#060a13", foreground: "#c9d4e5", cursor: "#38bdf8",
+      selectionBackground: "rgba(56, 189, 248, .3)",
+      black: "#0b1019", red: "#f87171", green: "#34d399", yellow: "#fbbf24",
+      blue: "#38bdf8", magenta: "#a78bfa", cyan: "#22d3ee", white: "#c9d4e5",
+      brightBlack: "#5d6b84", brightRed: "#fca5a5", brightGreen: "#6ee7b7",
+      brightYellow: "#fde047", brightBlue: "#7dd3fc", brightMagenta: "#c4b5fd",
+      brightCyan: "#67e8f9", brightWhite: "#f1f5f9",
+    },
+  });
+  termFit = new FitAddon.FitAddon();
+  term.loadAddon(termFit);
+  term.open(document.getElementById("termX"));
+  termFit.fit();
+  window.addEventListener("resize", () => { try { termFit.fit(); } catch (_) {} });
+}
+
+function termWrite(content) {
+  if (term) term.write(String(content ?? "") + "\r\n");
+}
+
 function openTerminal(id) {
   const t = state.tasks.find(x => x.id === id) || {};
   document.getElementById("termTitle").textContent = `${t.agent_name || ""} · #${id} 对话`;
-  const box = document.getElementById("termBox");
-  box.innerHTML = `<div class="empty">加载对话中...</div>`;
   openModal("termModal");
+  initTerm();
+  setTimeout(() => { try { termFit.fit(); } catch (_) {} }, 30);
+  term.clear();
+  term.write("\x1b[90m# loading logs...\x1b[0m\r\n");
   state.termTask = id;
   api(`/api/tasks/${id}/logs`).then(logs => {
-    box.innerHTML = logs.map(logLineHTML).join("");
-    box.scrollTop = box.scrollHeight;
-  }).catch(() => { box.innerHTML = `<div class="empty">对话加载失败</div>`; });
+    if (state.termTask !== id) return;
+    term.clear();
+    logs.forEach(l => termWrite(l.content));
+    if (!logs.length) term.write("\x1b[90m（暂无输出）\x1b[0m\r\n");
+  }).catch(() => { term.write("\x1b[31m日志加载失败\x1b[0m\r\n"); });
 }
 
 function closeTerminal() {
@@ -739,6 +848,7 @@ function renderProjectList() {
     return `<div class="project-card" onclick="openProject(${p.id})">
       <div class="pc-top">
         <b>${esc(p.name)}</b>
+        ${p.is_git ? `<span class="chip git-chip" title="git 仓库，任务将获得独立 worktree">git</span>` : `<span class="chip" title="非 git 仓库，任务直接在项目目录执行">no git</span>`}
         <span class="badge ${p.status === "active" ? "running" : "cancelled"}">${p.status === "active" ? "Active" : "Archived"}</span>
       </div>
       ${p.description ? `<div class="pc-desc">${esc(p.description)}</div>` : ""}
@@ -1453,7 +1563,7 @@ function schemaFormHTML(schema, rc) {
 }
 
 function readConfigFrom(schema, container) {
-  const cfg = { model: "", system_prompt: "", thinking: "", skills: [], plugins: [], extra_args: [], env: {}, custom: {} };
+  const cfg = { model: "", system_prompt: "", instructions: "", thinking: "", skills: [], plugins: [], extra_args: [], env: {}, custom: {} };
   (schema.fields || []).forEach(f => {
     const el = container.querySelector(`[data-key="${f.key}"]`);
     if (!el) return;
@@ -1523,9 +1633,9 @@ async function saveAgentEnv() {
   const rc = a.role_config || {};
   const env = parseEnv(document.getElementById("envText").value);
   const body = {
-    model: rc.model || "", system_prompt: rc.system_prompt || "", thinking: rc.thinking || "",
-    skills: rc.skills || [], plugins: rc.plugins || [], extra_args: rc.extra_args || [],
-    env, custom: rc.custom || {},
+    model: rc.model || "", system_prompt: rc.system_prompt || "", instructions: rc.instructions || "",
+    thinking: rc.thinking || "", skills: rc.skills || [], plugins: rc.plugins || [],
+    extra_args: rc.extra_args || [], env, custom: rc.custom || {},
   };
   try {
     await api(`/api/agents/${a.id}`, { method: "PATCH", body: JSON.stringify({ role_config: body }) });
@@ -1685,7 +1795,55 @@ async function deleteSchedule(id) {
 
 /* ============================================================
    skills 页：技能库管理（定向添加 → 复制到 paihuo 工作目录 → 角色按名称勾选）
+   + Pi Extensions 管理（pi install/list/remove）
    ============================================================ */
+
+function setSkillTab(tab) {
+  const skills = tab === "skills";
+  document.getElementById("segSkillLib").classList.toggle("active", skills);
+  document.getElementById("segExt").classList.toggle("active", !skills);
+  document.getElementById("skillShell").classList.toggle("hidden", !skills);
+  document.getElementById("extShell").classList.toggle("hidden", skills);
+  document.getElementById("btnAddSkill").classList.toggle("hidden", !skills);
+  document.getElementById("btnAddExt").classList.toggle("hidden", skills);
+  if (!skills) loadExtensions();
+}
+
+async function loadExtensions() {
+  const raw = document.getElementById("extRaw");
+  if (!raw) return;
+  try {
+    const d = await api("/api/extensions");
+    raw.textContent = d.raw || "（空）";
+    if (d.error && d.raw) raw.textContent = d.raw + "\n\n[执行提示] " + d.error;
+  } catch (e) { raw.textContent = "加载失败: " + e.message; }
+}
+
+function openExtModal() {
+  document.getElementById("extSource").value = "";
+  openModal("extModal");
+}
+
+async function submitExt() {
+  const source = document.getElementById("extSource").value.trim();
+  if (!source) return toast("需要 extension 来源", true);
+  try {
+    const d = await api("/api/extensions/install", { method: "POST", body: JSON.stringify({ source }) });
+    closeModal("extModal");
+    toast("已安装");
+    loadExtensions();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function removeExt() {
+  const name = prompt("输入要移除的 extension 名称（可从上方列表查看）");
+  if (!name) return;
+  try {
+    await api(`/api/extensions/${encodeURIComponent(name)}`, { method: "DELETE" });
+    toast("已移除");
+    loadExtensions();
+  } catch (e) { toast(e.message, true); }
+}
 
 async function loadSkillLib() {
   try {
@@ -1795,7 +1953,17 @@ async function loadSettings() {
     const s = await api("/api/settings");
     const el = document.getElementById("retentionDays");
     if (el) el.value = s.retention_days || "";
+    const wt = document.getElementById("wtRetentionDays");
+    if (wt) wt.value = s.worktree_retention_days || "";
   } catch (_) {}
+}
+
+async function saveWtRetention() {
+  try {
+    const days = document.getElementById("wtRetentionDays").value.trim();
+    await api("/api/settings", { method: "PUT", body: JSON.stringify({ worktree_retention_days: days }) });
+    toast("已保存，每小时自动清理一次");
+  } catch (e) { toast(e.message, true); }
 }
 
 async function saveRetention() {
@@ -1870,6 +2038,16 @@ function renderDashProjects() {
   const box = document.getElementById("dashProjects");
   if (!box) return;
   const active = state.projects.filter(p => p.status === "active");
+  if (!active.length) {
+    box.innerHTML = `<div class="dash-onboard">
+      <div class="ob-title">快速开始</div>
+      <a class="ob-step" href="/agents">1. 安装 Agent（CLI）</a>
+      <a class="ob-step" href="/roles">2. 创建 Role（角色配置）</a>
+      <a class="ob-step" href="/projects">3. 新建 Project（绑定工作目录）</a>
+      <a class="ob-step" href="/board">4. 在 Board 派发任务</a>
+    </div>`;
+    return;
+  }
   box.innerHTML = active.map(p => {
     const ts = state.tasks.filter(t => t.project_id === p.id);
     const done = ts.filter(t => t.status === "succeeded").length;

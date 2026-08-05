@@ -678,6 +678,20 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 .ring-inner b { font-size: 15px; font-variant-numeric: tabular-nums; }
 .ring-inner span { font-size: 10px; color: var(--fg-faint); margin-top: 1px; }
 
+/* 工作空间（任务详情） */
+.ws-row {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 28px; padding: 0 6px; border-radius: 6px; font-size: 12px;
+}
+.ws-row:hover { background: var(--hover); }
+.ws-row .ws-label { color: var(--fg-faint); font-size: 11px; width: 34px; flex-shrink: 0; }
+.ws-row .ws-val { color: var(--fg-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.mono { font-family: var(--font-mono); }
+.ws-tag { font-size: 10px; border-radius: 4px; padding: 0 5px; }
+.ws-tag.dirty { color: var(--warning); background: rgba(251, 191, 36, .12); }
+.ws-tag.ahead { color: var(--brand); background: var(--brand-dim); }
+.ws-actions { display: flex; gap: 6px; margin-top: 8px; }
+
 /* 任务行（项目详情 / agent 最近任务） */
 .p-task-row {
   display: flex; align-items: center; gap: 10px;
@@ -905,6 +919,23 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 /* ============================================================
    技能库（Skills 页）
    ============================================================ */
+.ext-wrap { flex: 1; overflow-y: auto; padding: 14px 16px; }
+.ext-note {
+  font-size: 12px; color: var(--fg-muted); background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  padding: 10px 14px; line-height: 19px; margin-bottom: 10px;
+}
+.ext-note code {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--brand);
+  background: var(--brand-dim); padding: 1px 5px; border-radius: 4px;
+}
+.ext-raw {
+  background: var(--inset); border: 1px solid var(--border); border-radius: var(--r-lg);
+  padding: 12px 14px; font-family: var(--font-mono); font-size: 12px; line-height: 18px;
+  color: var(--fg-muted); white-space: pre-wrap; word-break: break-all;
+  max-height: 46vh; overflow-y: auto; margin-bottom: 10px;
+}
+.ext-actions { display: flex; align-items: center; gap: 10px; }
 .skill-grid {
   flex: 1; overflow-y: auto; padding: 14px 16px;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px;
@@ -1016,7 +1047,20 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   background: var(--raised); color: var(--fg-muted); border: 1px solid var(--border);
 }
 .chip.review { color: var(--warning); border-color: rgba(251, 191, 36, .35); background: rgba(251, 191, 36, .1); }
+.chip.git-chip { color: var(--success); border-color: rgba(52, 211, 153, .35); background: rgba(52, 211, 153, .08); }
 .card .c-meta .chip { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Dashboard 引导 */
+.dash-onboard {
+  background: var(--surface); border: 1px dashed var(--border-strong); border-radius: var(--r-lg);
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 6px;
+}
+.ob-title { font-size: 12px; font-weight: 700; color: var(--fg); margin-bottom: 2px; }
+.ob-step {
+  font-size: 12px; color: var(--fg-muted); text-decoration: none;
+  padding: 4px 8px; border-radius: 6px;
+}
+.ob-step:hover { background: var(--hover); color: var(--brand); }
 
 /* ============================================================
    响应式

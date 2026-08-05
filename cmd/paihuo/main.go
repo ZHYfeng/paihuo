@@ -20,6 +20,7 @@ import (
 	"paihuo/internal/sched"
 	"paihuo/internal/server"
 	"paihuo/internal/store"
+	"paihuo/internal/workspace"
 )
 
 func main() {
@@ -43,14 +44,15 @@ func main() {
 	defer st.Close()
 
 	hub := events.NewHub()
-	ex := exec.New(st, hub)
+	sessionsRoot := filepath.Join(filepath.Dir(db), "sessions")
+	ex := exec.New(st, hub, sessionsRoot)
 	sc := sched.New(st, hub, ex)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ex.Start(ctx)
 	sc.Start(ctx)
-	go autoCleanup(ctx, st)
+	go autoCleanup(ctx, st, sessionsRoot)
 
 	srv := server.New(st, hub, ex, sc, token, filepath.Join(filepath.Dir(db), "skills"))
 	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
@@ -71,8 +73,8 @@ func main() {
 	log.Println("已关闭")
 }
 
-// autoCleanup 每小时执行：按 retention_days 设置清理终态历史，并删除孤儿会话目录。
-func autoCleanup(ctx context.Context, st *store.Store) {
+// autoCleanup 每小时执行：清理超期历史、孤儿会话、过期任务 worktree。
+func autoCleanup(ctx context.Context, st *store.Store, sessionsRoot string) {
 	run := func() {
 		days := "0"
 		if v, err := st.GetSetting("retention_days"); err == nil && v != "" {
@@ -82,6 +84,18 @@ func autoCleanup(ctx context.Context, st *store.Store) {
 			before := time.Now().Add(-time.Duration(n) * 24 * time.Hour).UTC().Format(time.RFC3339)
 			if deleted, err := st.CleanupTasks(nil, before); err == nil && deleted > 0 {
 				log.Printf("自动清理：删除 %d 条超过 %d 天的历史任务", deleted, n)
+			}
+		}
+		// worktree 保留天数（默认 7 天）
+		wtDays := 7
+		if v, err := st.GetSetting("worktree_retention_days"); err == nil && v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+				wtDays = n
+			}
+		}
+		if tasks, err := st.ListTasksForCleanup(); err == nil {
+			if n := workspace.Cleanup(sessionsRoot, wtDays, tasks); n > 0 {
+				log.Printf("自动清理：移除 %d 个过期任务 worktree", n)
 			}
 		}
 		// 清理没有对应任务的会话目录

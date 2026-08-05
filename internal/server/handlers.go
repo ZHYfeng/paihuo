@@ -17,6 +17,7 @@ import (
 	"paihuo/internal/events"
 	"paihuo/internal/exec"
 	"paihuo/internal/store"
+	"paihuo/internal/workspace"
 )
 
 // ---------------------------------------------------------------------------
@@ -76,11 +77,38 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if in.Title == "" {
+	s.createTaskInner(w, in.Title, in.Body, in.AgentID, in.ProjectID, in.Perm, in.ParentID, nil)
+}
+
+// resumeTask 续跑：新任务复用原任务的角色/项目/会话目录（attach 回上次对话）。
+func (s *Server) resumeTask(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	src, err := s.st.GetTask(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "任务不存在")
+		return
+	}
+	if src.AgentID == nil {
+		writeErr(w, http.StatusBadRequest, "原任务未指派角色，无法续跑")
+		return
+	}
+	title := fmt.Sprintf("续跑 #%d: %s", id, src.Title)
+	body := src.Body
+	if strings.TrimSpace(body) != "" {
+		body += "\n\n"
+	}
+	body += fmt.Sprintf("（这是任务 #%d 的续跑：请基于之前的进展继续完成目标。若有疑问先检查当前状态。）", id)
+	s.createTaskInner(w, title, body, src.AgentID, src.ProjectID, src.Perm, nil, &id)
+}
+
+func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agentID, projectID *int64, perm string, parentID, resumeOf *int64) {
+	if title == "" {
 		writeErr(w, http.StatusBadRequest, "标题不能为空")
 		return
 	}
-	perm := in.Perm
 	if perm == "" {
 		perm = store.PermFull
 	}
@@ -88,20 +116,20 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "非法权限模式: "+perm)
 		return
 	}
-	tk := store.Task{Title: in.Title, Body: in.Body, Status: store.StatusQueued, Perm: perm, AgentID: in.AgentID, ParentID: in.ParentID}
+	tk := store.Task{Title: title, Body: body, Status: store.StatusQueued, Perm: perm, AgentID: agentID, ParentID: parentID, ResumeOf: resumeOf}
 	// 工作目录属于项目：快照项目目录（历史记录不随配置漂移）；
 	// 老数据兼容：项目未设目录时回退角色的旧 project_dir。
-	if in.ProjectID != nil {
-		p, err := s.st.GetProject(*in.ProjectID)
+	if projectID != nil {
+		p, err := s.st.GetProject(*projectID)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "项目不存在")
 			return
 		}
-		tk.ProjectID = in.ProjectID
+		tk.ProjectID = projectID
 		tk.ProjectDir = p.ProjectDir
 	}
-	if tk.ProjectDir == "" && in.AgentID != nil {
-		a, err := s.st.GetAgent(*in.AgentID)
+	if tk.ProjectDir == "" && agentID != nil {
+		a, err := s.st.GetAgent(*agentID)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "角色不存在")
 			return
@@ -310,6 +338,24 @@ func (s *Server) taskDiff(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// worktree 隔离任务：diff = base_commit 到工作区（含已提交 + 未提交的全部改动）
+	info := workspace.Status(*tk, s.sessionsRoot)
+	if info.IsWorktree {
+		if info.BaseCommit == "" {
+			writeJSON(w, http.StatusOK, map[string]string{"stat": "", "diff": "", "note": "缺少基准 commit"})
+			return
+		}
+		stat, err1 := gitOut(ctx, info.Path, "diff", "--stat", info.BaseCommit)
+		diff, err2 := gitOut(ctx, info.Path, "diff", info.BaseCommit)
+		if err1 != nil || err2 != nil {
+			writeJSON(w, http.StatusOK, map[string]string{"stat": "", "diff": "", "note": "读取 worktree 改动失败"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"stat": stat, "diff": diff, "branch": info.Branch})
+		return
+	}
+
+	// 非 git 项目：沿用旧逻辑（项目目录工作区 diff）
 	stat, err1 := gitOut(ctx, tk.ProjectDir, "diff", "--stat")
 	diff, err2 := gitOut(ctx, tk.ProjectDir, "diff")
 	if err1 != nil || err2 != nil {
@@ -317,6 +363,75 @@ func (s *Server) taskDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"stat": stat, "diff": diff})
+}
+
+// ---------------------------------------------------------------------------
+// 任务工作空间（git worktree 隔离）
+
+func (s *Server) workspaceStatus(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	tk, err := s.st.GetTask(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "任务不存在")
+		return
+	}
+	writeJSON(w, http.StatusOK, workspace.Status(*tk, s.sessionsRoot))
+}
+
+func (s *Server) workspaceMerge(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	tk, err := s.st.GetTask(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "任务不存在")
+		return
+	}
+	hash, err := workspace.Merge(*tk, s.sessionsRoot)
+	if err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"merged": true, "commit": hash})
+}
+
+func (s *Server) workspaceDiscard(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	tk, err := s.st.GetTask(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "任务不存在")
+		return
+	}
+	if err := workspace.Discard(*tk, s.sessionsRoot); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"discarded": true})
+}
+
+func (s *Server) workspaceGitInit(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Path string `json:"path"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if strings.TrimSpace(in.Path) == "" {
+		writeErr(w, http.StatusBadRequest, "需要 path")
+		return
+	}
+	if err := workspace.GitInit(strings.TrimSpace(in.Path)); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"inited": true})
 }
 
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
@@ -648,6 +763,12 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// git 识别：标记哪些项目支持 worktree 隔离
+	for i := range projects {
+		if projects[i].ProjectDir != "" {
+			projects[i].IsGit = workspace.IsGitRepo(projects[i].ProjectDir)
+		}
 	}
 	writeJSON(w, http.StatusOK, projects)
 }
@@ -1085,4 +1206,59 @@ func (s *Server) provUnlock(cli string) {
 	s.provMu.Lock()
 	defer s.provMu.Unlock()
 	delete(s.provBusy, cli)
+}
+
+// ---------------------------------------------------------------------------
+// Pi Extensions 管理（包装 pi install/list/remove，Web 可操作）
+
+func runPi(timeout time.Duration, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := osexec.CommandContext(ctx, "pi", args...)
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func (s *Server) listExtensions(w http.ResponseWriter, r *http.Request) {
+	raw, err := runPi(15*time.Second, "list")
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"raw": strings.TrimSpace(raw), "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"raw": strings.TrimSpace(raw)})
+}
+
+func (s *Server) installExtension(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Source string `json:"source"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	in.Source = strings.TrimSpace(in.Source)
+	if in.Source == "" {
+		writeErr(w, http.StatusBadRequest, "需要 extension 来源（路径或包名）")
+		return
+	}
+	raw, err := runPi(120*time.Second, "install", in.Source)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "pi install 失败: "+strings.TrimSpace(raw))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"raw": strings.TrimSpace(raw)})
+}
+
+func (s *Server) removeExtension(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "需要 extension 名称")
+		return
+	}
+	raw, err := runPi(60*time.Second, "remove", name)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "pi remove 失败: "+strings.TrimSpace(raw))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"raw": strings.TrimSpace(raw)})
 }

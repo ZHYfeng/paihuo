@@ -31,7 +31,8 @@ type Server struct {
 	ex        *exec.Executor
 	sched     *sched.Scheduler
 	token     string
-	skillsDir string                        // 技能库工作目录（<db目录>/skills，定向添加的技能复制到这里）
+	skillsDir   string                        // 技能库工作目录（<db目录>/skills，定向添加的技能复制到这里）
+	sessionsRoot string                       // 任务 worktree 根目录（<db目录>/sessions）
 	pages     map[string]*template.Template // 每页一个模板集（base + 页面，避免 content 冲突）
 	mux       *http.ServeMux
 	provMu    sync.Mutex      // 安装互斥锁
@@ -84,7 +85,8 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 		ex:        ex,
 		sched:     sc,
 		token:     token,
-		skillsDir: skillsDir,
+		skillsDir:   skillsDir,
+		sessionsRoot: filepath.Join(filepath.Dir(skillsDir), "sessions"),
 		pages: map[string]*template.Template{
 			"index":      template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/index.html")),
 			"board":      template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/board.html")),
@@ -147,6 +149,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("GET /api/tasks/{id}", s.getTask)
 	m.HandleFunc("PATCH /api/tasks/{id}", s.patchTask)
 	m.HandleFunc("DELETE /api/tasks/{id}", s.deleteTask)
+	m.HandleFunc("POST /api/tasks/{id}/resume", s.resumeTask)
 	m.HandleFunc("GET /api/tasks/{id}/logs", s.getTaskLogs)
 	m.HandleFunc("GET /api/tasks/{id}/diff", s.taskDiff)
 	m.HandleFunc("GET /api/tasks/{id}/children", s.getTaskChildren)
@@ -169,6 +172,13 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("GET /api/skills", s.listSkills)
 	m.HandleFunc("POST /api/skills", s.createSkill)
 	m.HandleFunc("DELETE /api/skills/{id}", s.deleteSkill)
+	m.HandleFunc("GET /api/extensions", s.listExtensions)
+	m.HandleFunc("POST /api/extensions/install", s.installExtension)
+	m.HandleFunc("DELETE /api/extensions/{name}", s.removeExtension)
+	m.HandleFunc("GET /api/workspace/{id}", s.workspaceStatus)
+	m.HandleFunc("POST /api/workspace/{id}/merge", s.workspaceMerge)
+	m.HandleFunc("POST /api/workspace/{id}/discard", s.workspaceDiscard)
+	m.HandleFunc("POST /api/workspace/git-init", s.workspaceGitInit)
 	m.HandleFunc("GET /api/fs/dirs", s.fsDirs)
 	m.HandleFunc("POST /api/fs/mkdir", s.fsMkdir)
 

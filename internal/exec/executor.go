@@ -9,34 +9,38 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"paihuo/internal/events"
 	"paihuo/internal/store"
+	"paihuo/internal/workspace"
 )
 
 // Executor 轮询领取 queued 任务并执行。
-// 约束：同一角色（agent）同时只跑一个任务，避免项目目录冲突；
-// 不同角色可并行（每任务一个 goroutine）。
+// 约束：同一角色（agent）同时只跑一个任务，避免模型 API 并发冲突；
+// 不同角色可并行（每任务一个 goroutine）。任务在 git worktree 隔离目录中执行。
 type Executor struct {
-	st   *store.Store
-	hub  *events.Hub
-	mu   sync.Mutex
-	busy map[int64]struct{} // 正在执行任务的 agent id
+	st           *store.Store
+	hub          *events.Hub
+	sessionsRoot string // 任务工作空间根目录（<db目录>/sessions）
+	mu           sync.Mutex
+	busy         map[int64]struct{} // 正在执行任务的 agent id
 	// cancels 是任务级取消句柄
 	cancels map[int64]context.CancelFunc
 	wake    chan struct{}
 }
 
-func New(st *store.Store, hub *events.Hub) *Executor {
+func New(st *store.Store, hub *events.Hub, sessionsRoot string) *Executor {
 	return &Executor{
-		st:      st,
-		hub:     hub,
-		busy:    make(map[int64]struct{}),
-		cancels: make(map[int64]context.CancelFunc),
-		wake:    make(chan struct{}, 1),
+		st:           st,
+		hub:          hub,
+		sessionsRoot: sessionsRoot,
+		busy:         make(map[int64]struct{}),
+		cancels:      make(map[int64]context.CancelFunc),
+		wake:         make(chan struct{}, 1),
 	}
 }
 
@@ -186,9 +190,30 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	}()
 
 	e.log(tk.ID, "sys", fmt.Sprintf("▶ 开始执行：角色=%s CLI=%s 权限=%s", agent.Name, agent.CLI, tk.Perm))
-	ro := RunOptions{Dir: tk.ProjectDir, Prompt: tk.Body, Role: agent.RoleConfig, Perm: tk.Perm}
-	// 任务专属会话目录：会话隔离（同角色多任务互不干扰）
-	sessDir := filepath.Join(os.TempDir(), "paihuo-sessions", fmt.Sprintf("task-%d", tk.ID))
+	// 任务隔离工作空间：git worktree（独立分支+目录）；非 git 项目直接执行
+	dir, branch, baseCommit, werr := workspace.Ensure(tk, e.sessionsRoot)
+	if werr != nil {
+		e.log(tk.ID, "sys", "⚠ "+werr.Error())
+	}
+	if branch != "" {
+		_ = e.st.UpdateTask(tk.ID, map[string]any{"worktree_branch": branch, "base_commit": baseCommit})
+		e.log(tk.ID, "sys", fmt.Sprintf("🌿 独立工作空间: %s（分支 %s）", dir, branch))
+	} else {
+		e.log(tk.ID, "sys", "📁 在项目目录直接执行（非 git 仓库，无隔离）")
+	}
+
+	ro := RunOptions{Dir: dir, Prompt: tk.Body, Role: agent.RoleConfig, Perm: tk.Perm}
+	// instructions：任务指令模板，追加在提示词之前（适配器可按 CLI 映射为官方参数）
+	if instr := strings.TrimSpace(agent.RoleConfig.Instructions); instr != "" {
+		ro.Prompt = instr + "\n\n" + ro.Prompt
+	}
+	// 任务专属会话目录：会话隔离（同角色多任务互不干扰）；续跑任务复用原任务会话
+	sessID := tk.ID
+	if tk.ResumeOf != nil {
+		sessID = *tk.ResumeOf
+		e.log(tk.ID, "sys", fmt.Sprintf("↻ 续跑任务 #%d 的会话（attach 回上次对话）", sessID))
+	}
+	sessDir := filepath.Join(os.TempDir(), "paihuo-sessions", fmt.Sprintf("task-%d", sessID))
 	if err := os.MkdirAll(sessDir, 0o755); err == nil {
 		ro.SessionDir = sessDir
 	} else {
@@ -206,7 +231,7 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	e.log(tk.ID, "sys", "$ "+shellJoin(append([]string{bin}, args...)))
 
 	onLine := func(stream, text string) { e.log(tk.ID, stream, text) }
-	code, runErr := e.runLocal(rctx, tk, bin, args, env, onLine)
+	code, runErr := e.runLocal(rctx, tk, dir, bin, args, env, onLine)
 
 	// 终态判定：取消优先于失败。
 	cur, _ := e.st.GetTask(tk.ID)
@@ -247,9 +272,9 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 }
 
 // runLocal 在本地执行 CLI；取消时杀掉整个进程组。
-func (e *Executor) runLocal(ctx context.Context, tk store.Task, bin string, args []string, env []string, onLine func(stream, line string)) (int, error) {
+func (e *Executor) runLocal(ctx context.Context, tk store.Task, dir string, bin string, args []string, env []string, onLine func(stream, line string)) (int, error) {
 	cmd := exec.Command(bin, args...)
-	cmd.Dir = tk.ProjectDir
+	cmd.Dir = dir
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // 独立进程组，便于整组终止
 

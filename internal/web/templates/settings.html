@@ -34,6 +34,16 @@
             <button class="btn sm danger" onclick="runCleanup()">删除</button>
           </div>
         </div>
+        <div class="set-row">
+          <div>
+            <div class="s-title">工作空间保留（worktree）</div>
+            <div class="s-sub">终态任务的独立工作目录（git worktree）保留天数，到期自动清理；0 = 立即清理</div>
+          </div>
+          <div class="s-ctl">
+            <input id="wtRetentionDays" type="number" min="0" placeholder="天数">
+            <button class="btn sm" onclick="saveWtRetention()">保存</button>
+          </div>
+        </div>
       </div>
     </div>
 

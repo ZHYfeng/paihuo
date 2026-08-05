@@ -30,6 +30,7 @@ const (
 type RoleConfig struct {
 	Model        string            `json:"model"`
 	SystemPrompt string            `json:"system_prompt"`
+	Instructions string            `json:"instructions"` // 任务指令模板（追加在 system prompt 之后）
 	Skills       []string          `json:"skills"`   // 技能目录
 	Thinking     string            `json:"thinking"` // "" | low | medium | high
 	Plugins      []string          `json:"plugins"`  // 插件/配置文件
@@ -68,6 +69,9 @@ type Task struct {
 	ExitCode     *int    `json:"exit_code"`
 	ReviewNote   string  `json:"review_note"`
 	ReviewRounds int     `json:"review_rounds"`
+	WorktreeBranch string `json:"worktree_branch"` // 任务隔离 worktree 分支（paihuo/task-<id>）
+	BaseCommit     string `json:"base_commit"`     // 创建 worktree 时主分支 HEAD
+	ResumeOf       *int64  `json:"resume_of"`      // 续跑自哪个任务（复用其会话目录）
 	CreatedAt    string  `json:"created_at"`
 	StartedAt    *string `json:"started_at"`
 	FinishedAt   *string `json:"finished_at"`
@@ -94,6 +98,7 @@ type Project struct {
 	Description string `json:"description"`
 	Status      string `json:"status"` // active | archived
 	ProjectDir  string `json:"project_dir"`
+	IsGit       bool   `json:"is_git"` // git 仓库（列表时探测，非存储字段）
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }

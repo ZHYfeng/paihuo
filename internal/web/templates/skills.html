@@ -2,19 +2,42 @@
 <header class="page-header">
   <span class="crumb">派活 / <b>Skills</b></span>
   <span class="spacer"></span>
-  <button class="btn brand sm" onclick="openSkillModal()">
+  <button class="btn brand sm" id="btnAddSkill" onclick="openSkillModal()">
     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
     Add Skill
+  </button>
+  <button class="btn brand sm hidden" id="btnAddExt" onclick="openExtModal()">
+    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    Add Extension
   </button>
 </header>
 <div class="page-content">
   <div class="toolbar">
-    <span class="toolbar-note">技能库：定向添加本地技能（目录需含 <code>SKILL.md</code>），复制到 paihuo 工作目录后，Agents 配置里按名称勾选</span>
+    <div class="seg" id="skillViewSeg">
+      <button id="segSkillLib" class="active" onclick="setSkillTab('skills')">Skills</button>
+      <button id="segExt" onclick="setSkillTab('ext')">Extensions (pi)</button>
+    </div>
     <span class="spacer"></span>
     <span id="skillCount" class="count-info"></span>
   </div>
-  <div class="skill-grid" id="skillGrid"></div>
-  <div id="skillEmpty" class="empty hidden">技能库为空。点击右上角「Add Skill」，指定一个本地技能目录（含 SKILL.md）导入。</div>
+
+  <!-- Skills 库 -->
+  <div id="skillShell">
+    <div class="skill-grid" id="skillGrid"></div>
+    <div id="skillEmpty" class="empty hidden">技能库为空。点击右上角「Add Skill」，指定一个本地技能目录（含 SKILL.md）导入。</div>
+  </div>
+
+  <!-- Pi Extensions -->
+  <div id="extShell" class="hidden">
+    <div class="ext-wrap">
+      <div class="ext-note">Pi extensions 通过官方 <code>pi install</code> 管理：来源可以是本地目录或远程仓库。安装后对所有 pi/omp 角色生效。</div>
+      <pre class="ext-raw" id="extRaw">加载中...</pre>
+      <div class="ext-actions">
+        <span class="count-info">管理操作</span>
+        <button class="btn sm danger" onclick="removeExt()">移除 extension（输入名称）</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- 添加技能弹窗 -->
@@ -35,6 +58,21 @@
     <div class="modal-actions">
       <button class="btn" onclick="closeModal('skillModal')">Cancel</button>
       <button class="btn primary" onclick="submitSkill()">Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- 添加 extension 弹窗 -->
+<div class="modal hidden" id="extModal">
+  <div class="modal-box">
+    <h3>Add Extension</h3>
+    <div class="sub">pi install 官方命令：来源可以是本地目录或远程仓库</div>
+    <label class="field">Source
+      <input id="extSource" placeholder="/path/to/extension 或 git 仓库地址">
+    </label>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('extModal')">Cancel</button>
+      <button class="btn primary" onclick="submitExt()">Install</button>
     </div>
   </div>
 </div>
