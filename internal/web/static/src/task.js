@@ -1,0 +1,487 @@
+// 模块 task（由 scripts/split-frontend.py 生成）
+import { BOARD_COLS, PERM_LABEL, STATUS_LABEL, ST_COLOR, api, closeModal, esc, icon, openModal, state, toast } from "./core.js";
+import { loadDashboard } from "./dashboard.js";
+import { loadHistory } from "./history.js";
+import { fillSelects, loadAll, refreshOverview } from "./main.js";
+import { refreshProjectDetail } from "./projects.js";
+import { loadTemplates } from "./skills.js";
+import { openTerminal, term, termWrite } from "./terminal.js";
+
+export function currentFilters() {
+  return {
+    agent: Number(document.getElementById("fAgent")?.value) || null,
+    project: Number(document.getElementById("fProject")?.value) || null,
+    status: document.getElementById("fStatus")?.value || "",
+  };
+}
+
+export function filteredTasks() {
+  const f = currentFilters();
+  return state.tasks.filter(t => {
+    if (f.agent && t.agent_id !== f.agent) return false;
+    if (f.project && t.project_id !== f.project) return false;
+    if (f.status && t.status !== f.status) return false;
+    return true;
+  });
+}
+
+export function renderBoard() {
+  const el = document.getElementById("boardView");
+  if (!el) return;
+  const tasks = filteredTasks();
+  el.innerHTML = BOARD_COLS.map(([key, label, statuses]) => {
+    const items = tasks.filter(t => statuses.includes(t.status));
+    return `<div class="board-col" style="--st-color:${ST_COLOR[statuses[0]]}">
+      <div class="board-col-head">
+        <span class="st-dot"></span><span>${label}</span>
+        <span class="count">${items.length}</span>
+      </div>
+      <div class="board-col-body">
+        ${items.map(cardHTML).join("") || `<div class="empty">—</div>`}
+      </div>
+    </div>`;
+  }).join("");
+  const c = document.getElementById("viewCount");
+  if (c) c.textContent = `${tasks.length} 个任务`;
+}
+
+export function cardHTML(t) {
+  return `<div class="card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
+    <div class="c-top">
+      <span class="st-dot"></span><span>#${t.id}</span>
+      <span>${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
+      ${t.perm === "review" ? `<span class="chip review">审批</span>` : ""}
+      ${t.review_rounds > 0 ? `<span class="chip">第${t.review_rounds}轮</span>` : ""}
+    </div>
+    <div class="c-title">${esc(t.title)}</div>
+    ${t.body ? `<div class="c-desc">${esc(t.body)}</div>` : ""}
+    <div class="c-meta">
+      ${t.project_name ? `<span class="chip">${esc(t.project_name)}</span>` : ""}
+      <span class="c-foot">
+        ${t.agent_name ? `<span class="c-agent"><span class="avatar sm">${esc((t.agent_name || "?").slice(0, 1))}</span>${esc(t.agent_name)}</span>` : `<span class="c-agent" style="color:var(--fg-faint)">未指派</span>`}
+        ${t.error ? `<span style="color:var(--danger)">✗</span>` : ""}
+      </span>
+    </div>
+  </div>`;
+}
+
+export function renderList() {
+  const el = document.getElementById("listBody");
+  if (!el) return;
+  const tasks = filteredTasks();
+  el.innerHTML = tasks.map(t => `
+    <tr onclick="openTask(${t.id})">
+      <td class="num">#${t.id}</td>
+      <td class="t-title">${esc(t.title)}</td>
+      <td>${esc(t.agent_name || "-")}</td>
+      <td>${esc(t.project_name || "-")}</td>
+      <td><span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span></td>
+      <td>${t.review_rounds || ""}</td>
+      <td class="num">${(t.created_at || "").slice(5, 16).replace("T", " ")}</td>
+      <td class="num">${(t.finished_at || "").slice(5, 16).replace("T", " ")}</td>
+      <td>
+        <span class="ops">
+          <button class="btn xs" onclick="event.stopPropagation();openTerminal(${t.id})">${icon("terminal")}对话</button>
+          ${["succeeded", "failed", "cancelled"].includes(t.status)
+            ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>` : ""}
+          <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>
+        </span>
+      </td>
+    </tr>`).join("");
+  const empty = document.getElementById("listEmpty");
+  if (empty) empty.classList.toggle("hidden", tasks.length > 0);
+  const c = document.getElementById("viewCount");
+  if (c) c.textContent = `${tasks.length} 个任务`;
+}
+
+export function setView(v) {
+  state.view = v;
+  document.getElementById("segBoard").classList.toggle("active", v === "board");
+  document.getElementById("segList").classList.toggle("active", v === "list");
+  document.getElementById("boardView").classList.toggle("hidden", v !== "board");
+  document.getElementById("listView").classList.toggle("hidden", v !== "list");
+  if (v === "list") renderList(); else renderBoard();
+}
+
+export function applyFilters() { state.view === "list" ? renderList() : renderBoard(); }
+
+/* ============================================================
+   任务详情（两栏）
+   ============================================================ */
+
+export function openTask(id) { location.hash = "#/issue/" + id; }
+
+export function closeDetail() {
+  state.selected = null;
+  location.hash = "#/";
+}
+
+export function showDetail(id) {
+  state.selected = id;
+  const shell = document.getElementById("boardShell") || document.getElementById("dashShell");
+  if (shell) shell.classList.add("hidden");
+  document.getElementById("detailShell").classList.remove("hidden");
+  const t = state.tasks.find(x => x.id === id);
+  if (t) {
+    document.getElementById("dCrumb").innerHTML = `任务 / <b>#${t.id}</b>`;
+    document.getElementById("dBadge").innerHTML =
+      `<span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>`;
+  }
+  refreshDetail();
+}
+
+export function hideDetail() {
+  document.getElementById("detailShell").classList.add("hidden");
+  const shell = document.getElementById("boardShell") || document.getElementById("dashShell");
+  if (shell) shell.classList.remove("hidden");
+  state.selected = null;
+}
+
+export async function refreshDetail() {
+  if (!state.selected) return;
+  try {
+    const [task, logs] = await Promise.all([
+      api(`/api/tasks/${state.selected}`), api(`/api/tasks/${state.selected}/logs`),
+    ]);
+    const i = state.tasks.findIndex(x => x.id === task.id);
+    if (i >= 0) state.tasks[i] = task; else state.tasks.unshift(task);
+    state.logs = logs;
+    renderDetail(task);
+  } catch (_) { /* 任务已删除 */ }
+}
+
+export function renderDetail(t) {
+  const main = document.getElementById("dMain");
+  if (!main) return;
+  main.innerHTML = `
+    <h2>${esc(t.title)}</h2>
+    <div class="detail-id">#${t.id} · 创建于 ${esc((t.created_at || "").slice(0, 16).replace("T", " "))}
+      ${t.resume_of ? ` · <span style="color:var(--brand)">续跑自 #${t.resume_of}</span>` : ""}</div>
+    ${t.body ? `<div class="detail-desc">${esc(t.body)}</div>` : ""}
+    ${t.error ? `<div class="detail-desc" style="border-color:rgba(255,99,105,.4);color:var(--danger)">错误：${esc(t.error)}</div>` : ""}
+    <div id="childrenBox"></div>
+    ${t.status === "awaiting_review" ? `<div id="diffBox"><div class="empty">加载改动中...</div></div>` : ""}
+    <div class="sec-title">工作空间</div>
+    <div id="wsBox"><div class="empty">加载中...</div></div>
+    <div class="term">
+      <div class="term-head">
+        <span class="term-dots"><i></i><i></i><i></i></span>
+        <span class="t-title">${esc(t.agent_name || "未指派")} · 对话 · ${esc(t.project_dir || "")}</span>
+        <button class="btn ghost xs" onclick="copyLogs()">${icon("copy")}复制</button>
+        <button class="btn ghost xs" onclick="openTerminal(${t.id})">${icon("expand")}全屏</button>
+      </div>
+      <div class="term-body" id="logBox">${logsHTML()}</div>
+    </div>`;
+  const box = document.getElementById("logBox");
+  if (box) box.scrollTop = box.scrollHeight;
+  if (t.status === "awaiting_review") loadDiff(t.id);
+  loadChildren(t.id);
+  loadWorkspace(t.id);
+  renderSide(t);
+}
+
+/* ---- 工作空间（git worktree 隔离） ---- */
+
+export async function loadWorkspace(id) {
+  const box = document.getElementById("wsBox");
+  if (!box) return;
+  try {
+    const w = await api(`/api/workspace/${id}`);
+    const t = state.tasks.find(x => x.id === id) || {};
+    const done = ["succeeded", "failed", "cancelled"].includes(t.status);
+    if (!w.is_git) {
+      box.innerHTML = `<div class="ws-row"><span class="ws-label">隔离</span><span class="ws-val">项目非 git 仓库，任务直接在项目目录执行</span>` +
+        `<button class="btn xs" onclick="gitInitProject('${esc(w.path)}', ${id})">git init</button></div>`;
+      return;
+    }
+    if (!w.is_worktree) {
+      box.innerHTML = `<div class="ws-row"><span class="ws-label">隔离</span><span class="ws-val">${esc(w.note || "无独立工作空间")}</span></div>`;
+      return;
+    }
+    box.innerHTML = `
+      <div class="ws-row"><span class="ws-label">分支</span><span class="ws-val mono">${esc(w.branch)}</span></div>
+      <div class="ws-row"><span class="ws-label">HEAD</span><span class="ws-val mono">${esc(w.head || "-")}` +
+      (w.dirty ? ` <span class="ws-tag dirty">dirty</span>` : "") +
+      (w.ahead > 0 ? ` <span class="ws-tag ahead">+${w.ahead}</span>` : "") +
+      `</span></div>
+      <div class="ws-row"><span class="ws-label">路径</span><span class="ws-val mono" title="${esc(w.path)}">${esc(w.path)}</span></div>` +
+      (done ? `<div class="ws-actions">
+        <button class="btn sm brand" onclick="wsMerge(${id})">合并回主分支</button>
+        <button class="btn sm danger" onclick="wsDiscard(${id})">丢弃</button>
+      </div>` : "");
+  } catch (_) { box.innerHTML = `<div class="empty">工作空间信息不可用</div>`; }
+}
+
+export async function wsMerge(id) {
+  if (!confirm(`把任务 #${id} 的改动 squash 合并回主分支？`)) return;
+  try {
+    const r = await api(`/api/workspace/${id}/merge`, { method: "POST" });
+    toast(`已合并${r.commit ? " (" + r.commit + ")" : ""}`);
+    loadWorkspace(id);
+  } catch (e) { toast(e.message, true); }
+}
+
+export async function wsDiscard(id) {
+  if (!confirm(`丢弃任务 #${id} 的工作空间？分支与 worktree 将删除，改动不可恢复。`)) return;
+  try {
+    await api(`/api/workspace/${id}/discard`, { method: "POST" });
+    toast("已丢弃");
+    loadWorkspace(id);
+  } catch (e) { toast(e.message, true); }
+}
+
+export async function gitInitProject(path, id) {
+  if (!confirm(`在 ${path} 初始化 git 仓库？之后的任务将获得独立 worktree。`)) return;
+  try {
+    await api("/api/workspace/git-init", { method: "POST", body: JSON.stringify({ path }) });
+    toast("已初始化");
+    loadWorkspace(id);
+  } catch (e) { toast(e.message, true); }
+}
+
+export function renderSide(t) {
+  const side = document.getElementById("dSide");
+  if (!side) return;
+  const statusOpts = Object.keys(STATUS_LABEL).map(s =>
+    `<option value="${s}" ${s === t.status ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("");
+  const pOpts = `<option value="">无项目</option>` + state.projects.map(p =>
+    `<option value="${p.id}" ${t.project_id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+  let actions = "";
+  if (["queued", "claimed", "running"].includes(t.status)) {
+    actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}取消任务</button>`;
+  }
+  if (t.status === "awaiting_review") {
+    actions += `<button class="btn sm brand" onclick="setTaskStatus(${t.id},'succeeded')">${icon("check")}审批通过</button>`;
+    actions += `<button class="btn sm" onclick="rejectTask(${t.id})">${icon("retry")}驳回重做</button>`;
+    actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}取消</button>`;
+  }
+  if (["succeeded", "failed", "cancelled"].includes(t.status)) {
+    actions += `<button class="btn sm" onclick="setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>`;
+    actions += `<button class="btn sm" onclick="resumeTask(${t.id})">${icon("terminal")}继续对话</button>`;
+  }
+  actions += `<button class="btn sm" onclick="openSubTask(${t.id})">${icon("plus")}拆分子任务</button>`;
+  if (t.body) actions += `<button class="btn sm" onclick="saveAsTemplate(${t.id})">${icon("bookmark")}保存为模板</button>`;
+  actions += `<button class="btn sm danger" onclick="deleteTask(${t.id})">${icon("trash")}删除任务</button>`;
+
+  side.innerHTML = `
+    <div class="sec-title">属性</div>
+    <div class="prop-row"><span class="k">状态</span>
+      <span class="v"><select onchange="patchTask(${t.id},{status:this.value})">${statusOpts}</select></span></div>
+    <div class="prop-row"><span class="k">项目</span>
+      <span class="v"><select onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
+    <div class="prop-row"><span class="k">角色</span><span class="v">${esc(t.agent_name || "未指派")}</span></div>
+    <div class="prop-row"><span class="k">权限</span><span class="v">${PERM_LABEL[t.perm] || t.perm}</span></div>
+    <div class="prop-row"><span class="k">目录</span><span class="v" style="font-size:12px;word-break:break-all">${esc(t.project_dir || "-")}</span></div>
+    <div class="prop-row"><span class="k">轮次</span><span class="v">${t.review_rounds || "-"}</span></div>
+    <div class="prop-row"><span class="k">开始</span><span class="v">${esc((t.started_at || "-").slice(0, 16).replace("T", " "))}</span></div>
+    <div class="prop-row"><span class="k">结束</span><span class="v">${esc((t.finished_at || "-").slice(0, 16).replace("T", " "))}</span></div>
+    <div class="sec-title">操作</div>
+    <div class="detail-actions">${actions}</div>`;
+}
+
+export async function patchTask(id, set) {
+  try {
+    await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(set) });
+    toast("已更新");
+  } catch (e) { toast(e.message, true); }
+}
+
+export async function setTaskStatus(id, status) {
+  try {
+    await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
+    if (status === "queued" && location.pathname === "/history") { location.href = "/"; return; }
+    await loadAll();
+    const p = location.pathname;
+    if (p === "/" || p === "/board") {
+      if (state.selected === id && location.hash.startsWith("#/issue/")) showDetail(id);
+      if (p === "/") loadDashboard();
+    } else if (p === "/history") {
+      loadHistory();
+    } else if (p === "/projects" && state.projectView) {
+      refreshProjectDetail();
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
+export async function rejectTask(id) {
+  const note = prompt("驳回原因 / 修改意见（将追加到任务提示词，重新执行）");
+  if (note === null) return;
+  try {
+    await api(`/api/tasks/${id}`, {
+      method: "PATCH", body: JSON.stringify({ status: "queued", review_note: note }),
+    });
+    toast("已驳回，任务重新执行");
+    await loadAll();
+    showDetail(id);
+  } catch (e) { toast(e.message, true); }
+}
+
+export async function deleteTask(id) {
+  if (!confirm(`删除任务 #${id}？执行日志将一并删除。`)) return;
+  try {
+    await api(`/api/tasks/${id}`, { method: "DELETE" });
+    toast("已删除");
+    await loadAll();
+    const p = location.pathname;
+    if (state.selected === id) { closeDetail(); location.hash = "#/"; }
+    if (p === "/history") loadHistory();
+    if (p === "/projects" && state.projectView) refreshProjectDetail();
+    if (p === "/") loadDashboard();
+    if (p === "/board") { renderBoard(); renderList(); }
+  } catch (e) { toast(e.message, true); }
+}
+
+/* 子任务 */
+export async function loadChildren(id) {
+  try {
+    const kids = await api(`/api/tasks/${id}/children`);
+    const box = document.getElementById("childrenBox");
+    if (!box || !kids.length) return;
+    const done = kids.filter(k => ["succeeded", "failed", "cancelled"].includes(k.status)).length;
+    box.innerHTML = `<div class="sec-title">子任务 ${done}/${kids.length}</div>` +
+      kids.map(k => `<div class="card" style="padding:8px 10px;margin-bottom:6px" onclick="openTask(${k.id})">
+        <div class="c-title">#${k.id} ${esc(k.title)}</div>
+        <div class="c-meta"><span class="badge ${k.status}" style="--st-color:${ST_COLOR[k.status]}"><span class="st-dot"></span>${STATUS_LABEL[k.status]}</span>
+        <span style="font-size:11px;color:var(--fg-faint)">${esc(k.agent_name || "")}</span></div>
+      </div>`).join("");
+  } catch (_) {}
+}
+
+export function openSubTask(parentId) {
+  fillSelects();
+  const t = state.tasks.find(x => x.id === parentId);
+  document.getElementById("tTitle").value = "";
+  document.getElementById("tBody").value = "";
+  document.getElementById("tPerm").value = t ? t.perm : "full";
+  document.getElementById("tProject").value = t && t.project_id ? t.project_id : "";
+  document.getElementById("tParentId").value = parentId;
+  document.getElementById("taskModalTitle").textContent = "拆分子任务";
+  openModal("taskModal");
+}
+
+/* ---- 续跑：attach 回上次对话 ---- */
+
+export async function resumeTask(id) {
+  if (!confirm(`续跑任务 #${id}？将创建新任务并复用原会话继续对话（pi/omp 真实续对话，其他 CLI 为全新会话）。`)) return;
+  try {
+    const t = await api(`/api/tasks/${id}/resume`, { method: "POST" });
+    toast(`已创建续跑任务 #${t.id}`);
+    await loadAll();
+    location.hash = "#/issue/" + t.id;
+  } catch (e) { toast(e.message, true); }
+}
+
+/* diff */
+export async function loadDiff(id) {
+  try {
+    const d = await api(`/api/tasks/${id}/diff`);
+    const box = document.getElementById("diffBox");
+    if (!box) return;
+    const stat = d.stat.trim();
+    const diff = d.diff.trim();
+    if (!stat && !diff) {
+      box.innerHTML = `<div class="detail-desc">无文件改动或非 git 仓库${d.note ? "（" + esc(d.note) + "）" : ""}</div>`;
+      return;
+    }
+    box.innerHTML = `<div class="detail-desc" style="color:var(--success)">文件改动（git diff）${d.branch ? ` · 分支 <code class="mono">${esc(d.branch)}</code>` : ""}：</div>
+      <div class="term"><div class="term-body" style="max-height:180px">${esc(stat)}</div></div>
+      ${diff ? `<div class="term"><div class="term-body" style="max-height:300px">${esc(diff).split("\n").map(l =>
+        `<div class="line"><span class="c ${l.startsWith("+") && !l.startsWith("+++") ? "out" : l.startsWith("-") && !l.startsWith("---") ? "err" : "sys"}">${esc(l)}</span></div>`).join("")}</div></div>` : ""}`;
+  } catch (_) {}
+}
+
+/* 终端对话 */
+export function tsOf(l) {
+  const m = /T(\d{2}:\d{2}:\d{2})/.exec(l.created_at || "");
+  return m ? m[1] : "";
+}
+
+export function logLineHTML(l) {
+  return `<div class="line"><span class="ts">${tsOf(l)}</span><span class="c ${l.stream}">${esc(l.content)}</span></div>`;
+}
+
+export function logsHTML() {
+  return state.logs.map(logLineHTML).join("");
+}
+
+export function appendLog(l) {
+  if (state.selected === l.task_id) {
+    state.logs.push(l);
+    const box = document.getElementById("logBox");
+    if (box) {
+      box.insertAdjacentHTML("beforeend", logLineHTML(l));
+      box.scrollTop = box.scrollHeight;
+    }
+  }
+  if (state.termTask === l.task_id) {
+    if (term) termWrite(l.content);
+  }
+}
+
+export async function copyLogs() {
+  try {
+    await navigator.clipboard.writeText(state.logs.map(l => l.content).join("\n"));
+    toast("已复制对话内容");
+  } catch (_) { toast("复制失败", true); }
+}
+
+/* ---- 全屏终端（xterm.js 渲染：ANSI 颜色 / 真实终端感） ---- */
+export function openNewTask() {
+  fillSelects();
+  document.getElementById("tTitle").value = "";
+  document.getElementById("tBody").value = "";
+  document.getElementById("tPerm").value = "full";
+  document.getElementById("tProject").value = "";
+  document.getElementById("tParentId").value = "";
+  document.getElementById("taskModalTitle").textContent = "新建任务";
+  openModal("taskModal");
+}
+
+export async function submitTask() {
+  const title = document.getElementById("tTitle").value.trim();
+  if (!title) return toast("标题不能为空", true);
+  const parentId = Number(document.getElementById("tParentId").value) || null;
+  const projectId = Number(document.getElementById("tProject").value) || null;
+  try {
+    await api("/api/tasks", {
+      method: "POST",
+      body: JSON.stringify({
+        title,
+        body: document.getElementById("tBody").value,
+        agent_id: Number(document.getElementById("tAgent").value) || null,
+        project_id: projectId,
+        perm: document.getElementById("tPerm").value,
+        parent_id: parentId,
+      }),
+    });
+    closeModal("taskModal");
+    toast("任务已创建");
+    await loadAll();
+    renderBoard(); renderList();
+    refreshOverview();
+  } catch (e) { toast(e.message, true); }
+}
+
+export function applyTemplate() {
+  const t = state.templates.find(x => x.id === Number(document.getElementById("tTemplate").value));
+  if (!t) return;
+  document.getElementById("tBody").value = t.body || "";
+  if (t.agent_id) document.getElementById("tAgent").value = t.agent_id;
+}
+
+export async function saveAsTemplate(taskId) {
+  // 列表接口的 body 是截断版（省载荷），模板必须用完整提示词
+  let t;
+  try { t = await api(`/api/tasks/${taskId}`); } catch (_) { return; }
+  const name = prompt("模板名称（用于复用该任务的提示词）", t.title);
+  if (!name) return;
+  try {
+    await api("/api/templates", { method: "POST", body: JSON.stringify({ name, body: t.body, agent_id: t.agent_id }) });
+    toast("已保存为模板");
+    loadTemplates();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ============================================================
+   历史页
+   ============================================================ */

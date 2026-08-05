@@ -15,6 +15,15 @@ cd paihuo && go build -o paihuo ./cmd/paihuo
 # 或 export PAIHUO_TOKEN=xxx 后直接 ./paihuo
 ```
 
+**前端开发**：前端源码为 `internal/web/static/src/` 下的 ES 模块（核心逻辑按 12 个模块拆分：core/task/terminal/projects/agents/skills/dashboard/provision 等）。修改后需先打包再编译：
+
+```bash
+scripts/build-frontend.sh        # 打包 app.bundle.js（--minify 可压缩）
+go build -o paihuo ./cmd/paihuo
+```
+
+打包产物 `app.bundle.js`（单文件、无外部依赖）与模板、CSS、vendor 一起 embed 进 Go 二进制，部署仍是单文件。构建脚本内置校验：模板 `onclick` 引用的全局函数必须由 `main.js` 挂到 `window`，漏挂会直接报错。`scripts/split-frontend.py` 为模块化拆分工具（可重入）。
+
 - 浏览器访问 `http://服务器IP:8080`，**输入令牌登录**（一次性验证：令牌只用于登录这一次，之后浏览器持有 HttpOnly 会话 cookie，30 天滑动有效；顶栏可登出。服务重启不丢会话）
 - 数据库默认 `paihuo.db`（单文件，直接 `cp` 即可备份）；老库自动迁移（新增项目列/表，无需手工操作）
 - **务必设置 `--token`**：服务暴露在网络上时没有令牌等于裸奔

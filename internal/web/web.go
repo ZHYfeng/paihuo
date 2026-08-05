@@ -3,5 +3,5 @@ package web
 
 import "embed"
 
-//go:embed templates static
+//go:embed templates static/app.css static/app.bundle.js static/vendor
 var FS embed.FS
