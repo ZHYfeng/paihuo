@@ -17,6 +17,7 @@ const state = {
   selected: null,
   logs: [],
   termTask: null,
+  es: null,        // SSE 连接（隐藏时断开、可见时重连）
   history: [], historySel: new Set(),
   agentEditing: null,
   agentTab: "overview",
@@ -1488,8 +1489,15 @@ function refreshOverviewSoon() {
   ovTimer = setTimeout(refreshOverview, 600);
 }
 
+// SSE 连接管理：
+// - 页面隐藏（后台标签页）时主动断开：浏览器对同域名 HTTP/1.1 最多 6 个
+//   并发连接，每个页面的 SSE 长连接占一个名额；页面开多了连接池被占满，
+//   新页面导航会一直排队转圈。隐藏即释放，可见时重连。
+// - pagehide（导航/关页）时主动 close，不依赖浏览器异步 abort。
 function sse() {
+  if (state.es) return; // 已有连接（可见性切换重连时避免重复）
   const es = new EventSource("/api/events");
+  state.es = es;
   es.addEventListener("task", ev => {
     try {
       const t = JSON.parse(ev.data).payload;
@@ -1514,8 +1522,37 @@ function sse() {
   es.addEventListener("log", ev => {
     try { appendLog(JSON.parse(ev.data).payload); } catch (_) {}
   });
-  es.addEventListener("error", () => { /* EventSource 自动重连 */ });
+  es.addEventListener("error", () => {
+    // EventSource 自动重连；只有 es.close() 后不再重连
+    if (!state.es) return;
+  });
 }
+
+// 页面隐藏：断开 SSE 释放连接名额；可见：重连并刷新数据（隐藏期间可能错过事件）。
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (state.es) { state.es.close(); state.es = null; }
+    return;
+  }
+  if (!state.es) {
+    sse();
+    loadAll().then(() => {
+      const path = location.pathname;
+      if (path === "/") { renderBoard(); renderList(); refreshOverview(); }
+      else if (path === "/history") loadHistory();
+      else if (path === "/agents") renderAgentList();
+      else if (path === "/projects") renderProjectList();
+      else if (path === "/autopilots") renderScheduleList();
+      else if (path === "/skills") loadTemplates();
+      else if (path === "/settings") loadSettings();
+    }).catch(() => {});
+  }
+});
+
+// 导航/关页：主动关闭 SSE，避免连接残留占住浏览器连接池。
+window.addEventListener("pagehide", () => {
+  if (state.es) { state.es.close(); state.es = null; }
+});
 
 document.addEventListener("DOMContentLoaded", async () => {
   await loadSchema();

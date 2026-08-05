@@ -289,10 +289,14 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case ev := <-ch:
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, ev.Marshal())
+			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, ev.Marshal()); err != nil {
+				return // 客户端已断开，立即释放连接（写失败不等待下一个周期）
+			}
 			fl.Flush()
 		case <-tk.C:
-			fmt.Fprint(w, ": ping\n\n")
+			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+				return
+			}
 			fl.Flush()
 		}
 	}
