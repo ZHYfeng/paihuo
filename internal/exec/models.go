@@ -31,13 +31,64 @@ const modelsCacheTTL = time.Hour
 
 // probeTimeout：模型列表命令的超时。这些命令（pi --list-models /
 // omp models --json / opencode models）冷启动要拉起 Node 进程，正常
-// 5~6s，但偶发走目录刷新/网络路径会拖到 15~20s（实测 2025：opencode
-// models 5.5~20.8s、omp models 4.5~15.3s、pi --list-models 2.4~9.2s）。
+// 5~6s，但偶发走目录刷新/网络路径会拖到 15~20s，甚至超过 30s（实测 2025：
+// opencode models 5.5~20.8s、omp models 4.5~15.3s、pi --list-models 2.4~9.2s）。
 // 超时太短会触发配置回退，列出 agent 实际**不可用**的模型：opencode
 // 回退只剩 opencode.json 的 small_model；omp 回退 models.db 会带出
 // 无凭据/凭据已删除的 provider 目录（如 zenmux）。探测带 1h 缓存且
-// 后台并行加载，宽松超时几乎零成本——留 30s 保证权威命令总能跑完。
+// 后台并行加载，宽松超时几乎零成本——留 30s 保证权威命令总能跑完；
+// 仍超时时回退优先复用磁盘上最近一次成功结果（见 loadModelsDisk）。
 const probeTimeout = 30 * time.Second
+
+// ---------------------------------------------------------------------------
+// 探测结果磁盘缓存：权威命令偶发走网络目录刷新（opencode models 实测
+// 20~30s+，可能超过 probeTimeout），此时若直接回退到配置文件，候选会
+// 缩水到 1~2 个已配置模型。每次探测成功把候选列表落盘，命令超时/失败时
+// 优先复用 24h 内最近一次成功结果——既保证候选完整，又不含不可用模型。
+
+const modelsDiskTTL = 24 * time.Hour
+
+func modelsDiskPath(id string) string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		dir = os.TempDir()
+	}
+	return filepath.Join(dir, "paihuo", "models-"+id+".txt")
+}
+
+// saveModelsDisk 探测成功后保存候选列表（每行一个）。失败静默忽略（探测容错）。
+func saveModelsDisk(id string, models []string) {
+	if len(models) == 0 {
+		return
+	}
+	path := modelsDiskPath(id)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(path, []byte(strings.Join(models, "\n")), 0o600)
+}
+
+// loadModelsDisk 返回 24h 内最近一次成功的候选；缺失/过期返回 nil。
+func loadModelsDisk(id string) []string {
+	path := modelsDiskPath(id)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if fi, err := os.Stat(path); err == nil && time.Since(fi.ModTime()) > modelsDiskTTL {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			out = append(out, line)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
 
 var modelsCache struct {
 	sync.Mutex
@@ -148,8 +199,13 @@ func (a *piAdapter) Models() []string {
 				add(prov + "/" + model)
 			}
 			if len(out) > 0 {
+				saveModelsDisk("pi", out)
 				return capModels(out, 60)
 			}
+		}
+		// 命令超时/失败：优先复用最近一次成功结果，避免候选缩水到配置里的 1~2 个
+		if disk := loadModelsDisk("pi"); disk != nil {
+			return disk
 		}
 
 		// 回退：models-store.json 只取有凭据（auth.json）的 provider，
@@ -247,8 +303,13 @@ func ompModelsProbe(home string) []string {
 			}
 		}
 		if len(out) > 0 {
+			saveModelsDisk("omp", out)
 			return capModels(out, 80)
 		}
+	}
+	// 命令超时/失败：优先复用最近一次成功结果（死凭据过滤仍保证可用性）
+	if disk := loadModelsDisk("omp"); disk != nil {
+		return disk
 	}
 	return ompModelsFallback(home)
 }
@@ -385,8 +446,13 @@ func (a *openCodeAdapter) Models() []string {
 				add(strings.TrimSpace(line))
 			}
 			if len(out) > 0 {
+				saveModelsDisk("opencode", out)
 				return capModels(out, 60)
 			}
+		}
+		// opencode models 偶发走目录刷新超 30s：优先复用最近一次成功结果
+		if disk := loadModelsDisk("opencode"); disk != nil {
+			return disk
 		}
 		home, _ := os.UserHomeDir()
 		var cfg struct {
