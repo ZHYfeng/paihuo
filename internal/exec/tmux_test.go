@@ -221,6 +221,7 @@ test "$PAIHUO_TMUX_ENV_TEST" = ok || exit 2
 test "$` + taskNestedTmuxSkipEnv + `" = 1 || exit 3
 test "$BASH_ENV" = ` + shQuote(r.shellInitPath(42)) + ` || exit 4
 test "$(command -v tmux)" = ` + shQuote(r.tmuxWrapperPath(42)) + ` || exit 5
+test "$PWD" = ` + shQuote(workdir) + ` || exit 6
 printf 'detached agent output\n'
 printf 'pwd=%s\n' "$PWD"
 cat /proc/self/cgroup`
@@ -229,7 +230,7 @@ cat /proc/self/cgroup`
 	// 指向 paihuo task pane 的 pty，但输出仍必须实时回到 terminal.log。
 	if err := r.Start(42, workdir, "/bin/sh", []string{
 		"-c", probe,
-	}, []string{"PAIHUO_TMUX_ENV_TEST=ok"}, tmuxStartOptions{IsolateProcessGroup: true, DetachTerminal: true, IsolateCgroup: true}); err != nil {
+	}, []string{"PAIHUO_TMUX_ENV_TEST=ok", "PWD=/wrong-parent-directory"}, tmuxStartOptions{IsolateProcessGroup: true, DetachTerminal: true, IsolateCgroup: true}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -259,6 +260,13 @@ cat /proc/self/cgroup`
 		}
 		if !strings.Contains(string(raw), "pwd="+workdir) {
 			t.Fatalf("agent 未在任务工作目录执行: %q", raw)
+		}
+		envSource, err := os.ReadFile(r.agentEnvPath(42))
+		if err != nil {
+			t.Fatalf("读取 agent 环境文件: %v", err)
+		}
+		if strings.Contains(string(envSource), "export PWD=") {
+			t.Fatalf("agent 环境不应继承父进程 PWD: %q", envSource)
 		}
 		outer, err := os.ReadFile(r.runnerCgroupPath(42))
 		if err != nil {

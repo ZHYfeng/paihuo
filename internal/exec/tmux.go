@@ -316,6 +316,18 @@ func isShellEnvKey(key string) bool {
 	return true
 }
 
+// isTaskDerivedEnvKey 是由父 shell / systemd 注入、不能跨执行边界复用的变量。
+// 尤其 PWD 必须由 tmux -c 和 systemd-run --working-directory 各自重建，不能
+// 让 paihuo 服务自身的工作目录覆盖 agent 的真实 task worktree。
+func isTaskDerivedEnvKey(key string) bool {
+	switch key {
+	case "PWD", "OLDPWD", "SHLVL", "_", "MANAGERPID", "INVOCATION_ID", "JOURNAL_STREAM", "MEMORY_PRESSURE_WATCH", "MEMORY_PRESSURE_WRITE", "SYSTEMD_EXEC_PID":
+		return true
+	default:
+		return false
+	}
+}
+
 // writeAgentLaunchFiles 把 task 专属环境放在 0600 文件中，而不是 systemd-run
 // 的 argv。后者会暴露在同用户的进程列表里，不能承载角色配置中的密钥。
 func (r *tmuxRunner) writeAgentLaunchFiles(taskID int64, invocation string, env []string) error {
@@ -323,7 +335,7 @@ func (r *tmuxRunner) writeAgentLaunchFiles(taskID int64, invocation string, env 
 	source.WriteString("# 仅供本 task 的 systemd agent service 读取。\n")
 	for _, item := range env {
 		key, value, ok := strings.Cut(item, "=")
-		if !ok || isTmuxInternalEnv(key) {
+		if !ok || isTmuxInternalEnv(key) || isTaskDerivedEnvKey(key) {
 			continue
 		}
 		if !isShellEnvKey(key) {
