@@ -9,9 +9,10 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"io/fs"
 	"log"
+	"mime"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -22,14 +23,6 @@ import (
 	"paihuo/internal/store"
 	"paihuo/internal/web"
 )
-
-func mustSub(fsys fs.FS, dir string) fs.FS {
-	sub, err := fs.Sub(fsys, dir)
-	if err != nil {
-		panic(err)
-	}
-	return sub
-}
 
 type Server struct {
 	st    *store.Store
@@ -111,12 +104,32 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("GET /login", s.pageLogin)
 	m.HandleFunc("POST /login", s.login)
 	m.HandleFunc("POST /logout", s.logout)
-	fs := http.FileServerFS(mustSub(web.FS, "static"))
-	m.Handle("GET /static/", http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 内嵌资源随二进制更新，禁用缓存避免浏览器拿到旧版前端
+	m.Handle("GET /static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 内嵌资源随二进制更新：内容 hash 作 ETag，浏览器每次 revalidate。
+		// 二进制更新后 hash 变化，客户端必然拿到新版前端（旧实现无 ETag，
+		// 浏览器可能长期复用缓存的旧 app.js 导致页面脚本缺失）。
+		f, err := web.FS.Open(strings.TrimPrefix(r.URL.Path, "/"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer f.Close()
+		b, err := io.ReadAll(f)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		sum := sha256.Sum256(b)
+		etag := fmt.Sprintf(`"%x"`, sum[:8])
+		w.Header().Set("ETag", etag)
 		w.Header().Set("Cache-Control", "no-cache")
-		fs.ServeHTTP(w, r)
-	})))
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(r.URL.Path)))
+		w.Write(b)
+	}))
 	m.HandleFunc("GET /api/events", s.sse)
 
 	m.HandleFunc("GET /api/tasks", s.listTasks)
