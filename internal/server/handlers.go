@@ -310,7 +310,8 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 指派角色：快照项目目录
+	// 指派角色：没有项目的旧任务仍从角色继承目录；已绑定项目的任务
+	// 则必须保留项目目录快照，不能因为改派角色而跑到角色的遗留目录。
 	if v, ok := set["agent_id"]; ok {
 		if aid, isNum := v.(float64); isNum && aid > 0 {
 			a, err := s.st.GetAgent(int64(aid))
@@ -323,14 +324,18 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			set["agent_id"] = int64(aid)
-			set["project_dir"] = a.ProjectDir
+			if cur.ProjectID == nil {
+				set["project_dir"] = a.ProjectDir
+			}
 		} else {
 			if cur.RunMode == store.RunModeInteractive {
 				writeErr(w, http.StatusBadRequest, "交互式任务必须指派 Pi 角色")
 				return
 			}
 			set["agent_id"] = nil
-			set["project_dir"] = ""
+			if cur.ProjectID == nil {
+				set["project_dir"] = ""
+			}
 		}
 	}
 

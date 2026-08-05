@@ -823,6 +823,7 @@
     const side = document.getElementById("dSide");
     if (!side) return;
     const statusOpts = Object.keys(STATUS_LABEL).map((s) => `<option value="${s}" ${s === t.status ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("");
+    const agentOpts = `<option value="">\u4E0D\u6307\u6D3E</option>` + state.agents.filter((a) => a.enabled || a.id === t.agent_id).map((a) => `<option value="${a.id}" ${a.id === t.agent_id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
     const pOpts = `<option value="">\u65E0\u9879\u76EE</option>` + state.projects.map((p) => `<option value="${p.id}" ${t.project_id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
     let actions = "";
     if (["queued", "claimed", "running"].includes(t.status)) {
@@ -849,7 +850,8 @@
       <span class="v"><select onchange="patchTask(${t.id},{status:this.value})">${statusOpts}</select></span></div>
     <div class="prop-row"><span class="k">\u9879\u76EE</span>
       <span class="v"><select onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
-    <div class="prop-row"><span class="k">\u89D2\u8272</span><span class="v">${esc(t.agent_name || "\u672A\u6307\u6D3E")}</span></div>
+    <div class="prop-row"><span class="k">\u89D2\u8272</span>
+      <span class="v"><select aria-label="\u4EFB\u52A1\u89D2\u8272" onchange="patchTask(${t.id},{agent_id:Number(this.value)||null})">${agentOpts}</select></span></div>
     <div class="prop-row"><span class="k">\u6743\u9650</span><span class="v">${PERM_LABEL[t.perm] || t.perm}</span></div>
     <div class="prop-row"><span class="k">\u65B9\u5F0F</span><span class="v">${t.run_mode === "interactive" ? "\u4EA4\u4E92\u5F0F Pi" : "\u6279\u5904\u7406 \xB7 -p"}</span></div>
     <div class="prop-row"><span class="k">\u5E76\u53D1</span>
@@ -867,7 +869,20 @@
   }
   async function patchTask(id, set) {
     try {
-      await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(set) });
+      const task = await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(set) });
+      const i = state.tasks.findIndex((t) => t.id === task.id);
+      if (i >= 0) state.tasks[i] = task;
+      else state.tasks.unshift(task);
+      if (state.selected === id) renderDetail(task);
+      if (location.pathname === "/board") {
+        state.view === "list" ? renderList() : renderBoard();
+      } else if (location.pathname === "/") {
+        loadDashboard();
+      } else if (location.pathname === "/history") {
+        loadHistory();
+      } else if (location.pathname === "/projects" && state.projectView) {
+        refreshProjectDetail();
+      }
       toast("\u5DF2\u66F4\u65B0");
     } catch (e) {
       toast(e.message, true);

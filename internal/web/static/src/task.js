@@ -284,6 +284,12 @@ export function renderSide(t) {
   if (!side) return;
   const statusOpts = Object.keys(STATUS_LABEL).map(s =>
     `<option value="${s}" ${s === t.status ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("");
+  // 和新建任务保持一致：只能新指派启用中的角色；但若当前角色后来被
+  // 停用，仍保留该选项，避免详情页显示为空、也方便改派到其他角色。
+  const agentOpts = `<option value="">不指派</option>` + state.agents
+    .filter(a => a.enabled || a.id === t.agent_id)
+    .map(a => `<option value="${a.id}" ${a.id === t.agent_id ? "selected" : ""}>${esc(a.name)}</option>`)
+    .join("");
   const pOpts = `<option value="">无项目</option>` + state.projects.map(p =>
     `<option value="${p.id}" ${t.project_id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
   let actions = "";
@@ -312,7 +318,8 @@ export function renderSide(t) {
       <span class="v"><select onchange="patchTask(${t.id},{status:this.value})">${statusOpts}</select></span></div>
     <div class="prop-row"><span class="k">项目</span>
       <span class="v"><select onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
-    <div class="prop-row"><span class="k">角色</span><span class="v">${esc(t.agent_name || "未指派")}</span></div>
+    <div class="prop-row"><span class="k">角色</span>
+      <span class="v"><select aria-label="任务角色" onchange="patchTask(${t.id},{agent_id:Number(this.value)||null})">${agentOpts}</select></span></div>
     <div class="prop-row"><span class="k">权限</span><span class="v">${PERM_LABEL[t.perm] || t.perm}</span></div>
     <div class="prop-row"><span class="k">方式</span><span class="v">${t.run_mode === "interactive" ? "交互式 Pi" : "批处理 · -p"}</span></div>
     <div class="prop-row"><span class="k">并发</span>
@@ -331,7 +338,19 @@ export function renderSide(t) {
 
 export async function patchTask(id, set) {
   try {
-    await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(set) });
+    const task = await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(set) });
+    const i = state.tasks.findIndex(t => t.id === task.id);
+    if (i >= 0) state.tasks[i] = task; else state.tasks.unshift(task);
+    if (state.selected === id) renderDetail(task);
+    if (location.pathname === "/board") {
+      state.view === "list" ? renderList() : renderBoard();
+    } else if (location.pathname === "/") {
+      loadDashboard();
+    } else if (location.pathname === "/history") {
+      loadHistory();
+    } else if (location.pathname === "/projects" && state.projectView) {
+      refreshProjectDetail();
+    }
     toast("已更新");
   } catch (e) { toast(e.message, true); }
 }

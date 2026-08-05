@@ -75,6 +75,101 @@ func TestCreateInteractiveTaskRequiresPiAndDefaultsRemainBatch(t *testing.T) {
 	}
 }
 
+// 普通任务在创建后仍可改派到另一个角色，详情页的角色下拉框依赖该接口
+// 同时返回最新角色信息以便立即刷新界面。
+func TestPatchTaskChangesAssignedAgent(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	hub := events.NewHub()
+	executor := exec.New(st, hub, t.TempDir(), "server-task-agent-patch-test.db")
+	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
+
+	fromID, err := st.CreateAgent(store.Agent{Name: "from", CLI: "pi", Enabled: true, ProjectDir: "/from"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	toID, err := st.CreateAgent(store.Agent{Name: "to", CLI: "codex", Enabled: true, ProjectDir: "/to"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID, err := st.CreateTask(store.Task{
+		Title: "reassignable", Status: store.StatusQueued, RunMode: store.RunModeBatch,
+		AgentID: &fromID, ProjectDir: "/from",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(taskID), strings.NewReader(`{"agent_id":`+itoa(toID)+`}`))
+	req.SetPathValue("id", itoa(taskID))
+	resp := httptest.NewRecorder()
+	s.patchTask(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("改派角色失败: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var patched store.Task
+	if err := json.Unmarshal(resp.Body.Bytes(), &patched); err != nil {
+		t.Fatal(err)
+	}
+	if patched.AgentID == nil || *patched.AgentID != toID || patched.AgentName != "to" || patched.ProjectDir != "/to" {
+		t.Fatalf("改派响应错误: %+v", patched)
+	}
+
+	persisted, err := st.GetTask(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.AgentID == nil || *persisted.AgentID != toID {
+		t.Fatalf("改派未持久化: %+v", persisted)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(taskID), strings.NewReader(`{"agent_id":null}`))
+	req.SetPathValue("id", itoa(taskID))
+	resp = httptest.NewRecorder()
+	s.patchTask(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("取消指派失败: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	// agent_name 在未指派时会因 omitempty 缺席；复用上一次的接收对象会把
+	// 旧角色名误当成接口返回值，必须清零后再解码。
+	patched = store.Task{}
+	if err := json.Unmarshal(resp.Body.Bytes(), &patched); err != nil {
+		t.Fatal(err)
+	}
+	if patched.AgentID != nil || patched.AgentName != "" || patched.ProjectDir != "" {
+		t.Fatalf("取消指派响应错误: %+v", patched)
+	}
+
+	projectID, err := st.CreateProject(store.Project{Name: "project", Status: "active", ProjectDir: "/project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectTaskID, err := st.CreateTask(store.Task{
+		Title: "project task", Status: store.StatusQueued, RunMode: store.RunModeBatch,
+		AgentID: &fromID, ProjectID: &projectID, ProjectDir: "/project",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(projectTaskID), strings.NewReader(`{"agent_id":`+itoa(toID)+`}`))
+	req.SetPathValue("id", itoa(projectTaskID))
+	resp = httptest.NewRecorder()
+	s.patchTask(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("项目任务改派失败: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	patched = store.Task{}
+	if err := json.Unmarshal(resp.Body.Bytes(), &patched); err != nil {
+		t.Fatal(err)
+	}
+	if patched.AgentID == nil || *patched.AgentID != toID || patched.ProjectDir != "/project" {
+		t.Fatalf("改派不应覆盖项目目录: %+v", patched)
+	}
+}
+
 func TestResumeTaskRequeuesOriginalTask(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
