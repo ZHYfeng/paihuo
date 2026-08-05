@@ -1551,12 +1551,12 @@
     if (!body) return;
     body.innerHTML = state.schedules.map((sc) => `
     <tr>
-      <td><b>${esc(sc.name)}</b></td>
-      <td><code style="font-family:var(--font-mono);font-size:12px">${esc(sc.cron)}</code></td>
+      <td class="t-name"><b>${esc(sc.name)}</b></td>
+      <td><span class="cron-chip">${icon("clock")}${esc(sc.cron)}</span></td>
       <td>${esc(sc.agent_name || "-")}</td>
-      <td style="font-size:12px;color:var(--fg-muted)">${esc(sc.title_template || "")}</td>
+      <td class="t-tpl">${esc(sc.title_template || "-")}</td>
       <td class="num">${esc((sc.last_run_at || "-").slice(0, 16).replace("T", " "))}</td>
-      <td><input type="checkbox" ${sc.enabled ? "checked" : ""} onclick="toggleSchedule(${sc.id})"></td>
+      <td><label class="sw" title="${sc.enabled ? "\u505C\u7528" : "\u542F\u7528"}"><input type="checkbox" ${sc.enabled ? "checked" : ""} onchange="toggleSchedule(${sc.id})"><span class="sw-slider"></span></label></td>
       <td>
         <span class="ops">
           <button class="btn xs" onclick="openScheduleModal(${sc.id})">\u7F16\u8F91</button>

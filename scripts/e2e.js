@@ -100,6 +100,14 @@ function findChrome() {
   const prov = await page.evaluate(() => document.querySelectorAll(".prov-card").length);
   prov > 0 ? ok(`安装面板（${prov} 张卡片）`) : fail("安装面板未渲染");
 
+  await page.goto(URL + "/autopilots");
+  await page.waitForTimeout(700);
+  await page.evaluate(() => openScheduleModal());
+  await page.waitForTimeout(300);
+  const sched = await page.evaluate(() => !document.getElementById("scheduleModal").classList.contains("hidden"));
+  sched ? ok("定时任务弹窗") : fail("定时任务弹窗未打开");
+  await page.evaluate(() => closeModal("scheduleModal"));
+
   await page.goto(URL + "/skills");
   await page.waitForTimeout(600);
   await page.evaluate(() => setSkillTab("ext"));
