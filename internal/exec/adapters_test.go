@@ -101,3 +101,72 @@ func TestOmpSchemaAndPerm(t *testing.T) {
 		t.Fatal("review 权限不应带 --auto-approve")
 	}
 }
+
+// pi（pi.dev 官方文档 0.83+）：thinking→--thinking、skills→--skill 逐目录、
+// provider/tools/exclude_tools/models_cycle→官方参数。
+func TestPiAdapterBuild(t *testing.T) {
+	a := &piAdapter{baseAdapter{id: "pi", name: "Pi Agent", bin: "pi"}}
+	o := RunOptions{
+		Prompt:     "hi",
+		SessionDir: "/s/x",
+		Role: store.RoleConfig{
+			Model:        "anthropic/claude-sonnet-4",
+			SystemPrompt: "sys",
+			Thinking:     "high",
+			Skills:       []string{"/sk/a", "/sk/b"},
+			ExtraArgs:    []string{"--offline"},
+			Custom: map[string]string{
+				"provider":      "anthropic",
+				"tools":         "read,write,bash",
+				"exclude_tools": "browser",
+				"models_cycle":  "anthropic/*,*sonnet*",
+			},
+		},
+	}
+	_, args, _, err := a.Build(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		"-p hi", "--session-dir /s/x", "--model anthropic/claude-sonnet-4",
+		"--append-system-prompt sys", "--provider anthropic", "--tools read,write,bash",
+		"--exclude-tools browser", "--models anthropic/*,*sonnet*",
+		"--thinking high", "--skill /sk/a", "--skill /sk/b", "--offline",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("缺少参数 %q（完整: %s）", want, joined)
+		}
+	}
+}
+
+// pi schema：thinking 8 档官方选项、skills 保留、plugins 移除、新增 4 字段。
+func TestPiSchema(t *testing.T) {
+	a := &piAdapter{baseAdapter{id: "pi", name: "Pi Agent", bin: "pi"}}
+	fs := a.Schema()
+	keys := map[string]*Field{}
+	for i := range fs {
+		keys[fs[i].Key] = &fs[i]
+	}
+	for _, want := range []string{"model", "system_prompt", "instructions", "thinking", "skills", "provider", "tools", "exclude_tools", "models_cycle", "extra_args", "env"} {
+		if keys[want] == nil {
+			t.Fatalf("schema 缺少 %s", want)
+		}
+	}
+	if keys["plugins"] != nil {
+		t.Fatal("pi schema 不应有 plugins")
+	}
+	if got := keys["thinking"].Options; len(got) != 8 || got[1] != "off" || got[7] != "max" {
+		t.Fatalf("thinking 选项应为 8 档官方值，得到 %v", got)
+	}
+	if got := a.Docs(); got != "https://pi.dev/docs" {
+		t.Fatalf("Docs=%q", got)
+	}
+	// Warnings：skills/thinking 不再告警（已支持），plugins 仍告警
+	if ws := a.Warnings(RunOptions{Role: store.RoleConfig{Skills: []string{"/s"}}}); len(ws) != 0 {
+		t.Fatalf("skills 应受支持，不应有警告: %v", ws)
+	}
+	if ws := a.Warnings(RunOptions{Role: store.RoleConfig{Plugins: []string{"/p"}}}); len(ws) != 1 {
+		t.Fatalf("plugins 应有一条警告，得到 %v", ws)
+	}
+}

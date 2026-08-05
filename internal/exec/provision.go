@@ -30,7 +30,7 @@ var InstallCommands = map[string]string{
 	"claude":   "curl -fsSL https://claude.ai/install.sh | bash",
 	"codex":    "npm install -g @openai/codex",
 	"opencode": "npm install -g opencode-ai",
-	"pi":       "npm install -g @earendil-works/pi-coding-agent",
+	"pi":       "curl -fsSL https://pi.dev/install.sh | sh",
 	"omp":      "curl -fsSL https://omp.sh/install | sh",
 }
 
@@ -39,7 +39,7 @@ var LoginHints = map[string]string{
 	"claude":   "在服务器终端执行 claude 并完成登录（或访问 console.anthropic.com 获取凭据）",
 	"codex":    "在服务器终端执行 codex login（浏览器授权一次即可）",
 	"opencode": "在服务器终端执行 opencode auth login（浏览器授权）",
-	"pi":       "在服务器终端执行 pi auth login，或运行 pi 后输入 /account",
+	"pi":       "运行 pi 后用 /login 选择提供商（订阅登录或 API key）；也可 export ANTHROPIC_API_KEY=... 后直接使用",
 	"omp":      "运行 omp 后用 /login 选择提供商登录（如 /login claude）；模型切换用 /model，也可先 omp setup 配置默认模型",
 }
 

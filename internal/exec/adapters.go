@@ -292,46 +292,71 @@ func (a *piAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	if s := o.Role.SystemPrompt; s != "" {
 		args = append(args, "--append-system-prompt", s)
 	}
+	if v := o.Role.Custom["provider"]; v != "" {
+		args = append(args, "--provider", v)
+	}
+	if v := o.Role.Custom["tools"]; v != "" {
+		args = append(args, "--tools", v)
+	}
+	if v := o.Role.Custom["exclude_tools"]; v != "" {
+		args = append(args, "--exclude-tools", v)
+	}
+	if v := o.Role.Custom["models_cycle"]; v != "" {
+		args = append(args, "--models", v)
+	}
+	if o.Role.Thinking != "" {
+		args = append(args, "--thinking", o.Role.Thinking)
+	}
+	for _, s := range o.Role.Skills {
+		args = append(args, "--skill", s)
+	}
 	args = append(args, o.Role.ExtraArgs...)
 	return a.bin, args, mergeEnv(o.Role.Env), nil
 }
 
 func (a *piAdapter) Warnings(o RunOptions) []string {
 	var ws []string
-	if len(o.Role.Skills) > 0 {
-		ws = append(ws, "pi 无 --add-dir 参数，skills 字段不生效（可用 ExtraArgs 传入）")
-	}
 	if len(o.Role.Plugins) > 0 {
-		ws = append(ws, "pi 插件通过 pi install 全局管理，角色 plugins 字段不生效")
-	}
-	if o.Role.Thinking != "" {
-		ws = append(ws, "pi 无思考级别参数，thinking 字段不生效（改用 --model 或 ExtraArgs）")
+		ws = append(ws, "pi 插件/扩展通过 pi install 全局管理（Skills 页扩展 tab），角色 plugins 字段不生效")
 	}
 	return ws
 }
 
-// pi 仅支持模型/系统提示词/额外参数/环境变量；skills、plugins、thinking 不展示。
 func (a *piAdapter) Schema() []Field {
-	return []Field{
-		{Key: "model", Label: "模型", Type: "text", Group: "模型与指令",
-			Placeholder: "留空用默认（探测本机实例实际配置）",
-			Help:        "--model；候选取自 `opencode models` 与本机配置"},
-		{Key: "system_prompt", Label: "系统提示词", Type: "textarea", Group: "模型与指令",
-			Placeholder: "角色定位、行为规范",
-			Help:        "追加到 pi 默认系统提示词之后（--append-system-prompt）"},
-		{Key: "instructions", Label: "指令", Type: "textarea", Group: "模型与指令",
-			Placeholder: "任务指令模板：每次执行前固定追加的指示",
-			Help:        "每次任务的固定指令前缀（代码规范、输出格式、禁止事项），在任务提示词之前注入"},
-		{Key: "extra_args", Label: "额外参数", Type: "text", Group: "执行",
-			Placeholder: "--read --mode code",
-			Help:        "原样追加到 pi -p 命令；pi 的所有能力开关都从这里进"},
-		{Key: "env", Label: "环境变量", Type: "env", Group: "执行",
-			Placeholder: "KEY=VALUE（每行一个）",
-			Help:        "注入执行环境"},
+	fs := commonFields()
+	if f := byKey(fs, "thinking"); f != nil {
+		f.Options = []string{"", "off", "minimal", "low", "medium", "high", "xhigh", "max"}
+		f.Help = "官方 --thinking：off / minimal / low / medium / high / xhigh / max"
 	}
+	if f := byKey(fs, "skills"); f != nil {
+		f.Help = "官方 --skill 逐目录注入（可多个）；在 Skills 页把技能添加到 paihuo 工作目录后，这里按名称勾选"
+	}
+	// pi 无 plugins 字段：扩展用 pi install 全局管理（见 Skills 页扩展 tab）
+	out := fs[:0]
+	for _, f := range fs {
+		if f.Key != "plugins" {
+			out = append(out, f)
+		}
+	}
+	fs = out
+	fs = append(fs,
+		Field{Key: "provider", Label: "提供商", Type: "text", Group: "模型与指令",
+			Placeholder: "留空用默认（pi 默认 google，支持 anthropic/openai/gemini 等）",
+			Help:        "官方 --provider：强制指定提供商；登录见 pi 内 /login（凭据存 ~/.pi/agent/auth.json）"},
+		Field{Key: "tools", Label: "工具白名单", Type: "list", Group: "执行",
+			Placeholder: "read,write,bash,edit",
+			Help:        "官方 --tools：逗号分隔的启用白名单（内置/扩展/自定义工具均适用）；留空=全部"},
+		Field{Key: "exclude_tools", Label: "工具黑名单", Type: "list", Group: "执行",
+			Placeholder: "browser,tts",
+			Help:        "官方 --exclude-tools：逗号分隔的禁用名单"},
+		Field{Key: "models_cycle", Label: "模型循环候选", Type: "text", Group: "模型与指令",
+			Placeholder: "anthropic/*,*sonnet*",
+			Help:        "官方 --models：Ctrl+P 循环切换的模型 patterns（支持通配符与模糊匹配）"},
+	)
+	return fs
 }
 
-func (a *piAdapter) Docs() string { return "https://github.com/askpi/pi" }
+func (a *piAdapter) Docs() string { return "https://pi.dev/docs" }
 
 // ---------------------------------------------------------------------------
 // claude：claude -p "提示词"
