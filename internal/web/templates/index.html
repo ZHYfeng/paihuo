@@ -1,11 +1,11 @@
 {{define "content"}}
 <header class="page-header">
-  <span class="crumb">派活 / <b>Dashboard</b></span>
+  <span class="crumb">派活 / <b>工作台</b></span>
   <span class="spacer"></span>
   <span class="kbd-hint"><kbd>N</kbd></span>
   <button class="btn brand sm" onclick="openNewTask()">
     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-    New Task
+    新建任务
   </button>
 </header>
 
@@ -43,21 +43,21 @@
       <div class="dash-sec-head">
         <span class="dash-sec-title">项目</span>
         <span class="spacer"></span>
-        <button class="btn xs" onclick="openProjectModal()">New</button>
+        <button class="btn xs" onclick="openProjectModal()">新建</button>
       </div>
       <div class="dash-projects" id="dashProjects"></div>
 
       <div class="dash-sec-head dash-sec-gap">
-        <span class="dash-sec-title">Agents</span>
+        <span class="dash-sec-title">智能体</span>
         <span class="spacer"></span>
         <a class="t-link" href="/agents">管理 →</a>
       </div>
       <div id="dashAgents" class="dash-agents"></div>
       <div class="dash-links">
-        <a class="t-link" href="/roles">Roles</a>
-        <a class="t-link" href="/skills">Skills</a>
-        <a class="t-link" href="/history">History</a>
-        <a class="t-link" href="/autopilots">Schedules</a>
+        <a class="t-link" href="/roles">角色</a>
+        <a class="t-link" href="/skills">技能</a>
+        <a class="t-link" href="/history">历史</a>
+        <a class="t-link" href="/autopilots">定时任务</a>
       </div>
     </aside>
   </div>

@@ -848,17 +848,17 @@ function renderProjectList() {
     return `<div class="project-card" onclick="openProject(${p.id})">
       <div class="pc-top">
         <b>${esc(p.name)}</b>
-        ${p.is_git ? `<span class="chip git-chip" title="git 仓库，任务将获得独立 worktree">git</span>` : `<span class="chip" title="非 git 仓库，任务直接在项目目录执行">no git</span>`}
-        <span class="badge ${p.status === "active" ? "running" : "cancelled"}">${p.status === "active" ? "Active" : "Archived"}</span>
+        ${p.is_git ? `<span class="chip git-chip" title="git 仓库，任务将获得独立 worktree">git</span>` : `<span class="chip" title="非 git 仓库，任务直接在项目目录执行">非 git</span>`}
+        <span class="badge ${p.status === "active" ? "running" : "cancelled"}">${p.status === "active" ? "进行中" : "已归档"}</span>
       </div>
       ${p.description ? `<div class="pc-desc">${esc(p.description)}</div>` : ""}
       <div class="pc-progress"><div class="pp-bar"><div style="width:${pct}%"></div></div>
         <span class="pc-pct">${fmtPct(pct)}</span></div>
       <div class="pc-meta">
         ${p.project_dir ? `<span class="pc-dir" title="${esc(p.project_dir)}">${esc(p.project_dir)}</span>` : ""}
-        <span>${ts.length} tasks</span>
-        <span>${done} done</span>
-        <span>${agents.size} agents</span>
+        <span>${ts.length} 任务</span>
+        <span>${done} 完成</span>
+        <span>${agents.size} 角色</span>
         <span class="spacer"></span>
         <span class="pc-date">${(p.updated_at || p.created_at || "").slice(5, 16).replace("T", " ")}</span>
       </div>
@@ -867,7 +867,7 @@ function renderProjectList() {
   const empty = document.getElementById("projectEmpty");
   if (empty) empty.classList.toggle("hidden", list.length > 0);
   const cnt = document.getElementById("projectCount");
-  if (cnt) cnt.textContent = `${list.length} projects`;
+  if (cnt) cnt.textContent = `${list.length} 个项目`;
 }
 
 function openProject(id) { location.hash = "#/project/" + id; }
@@ -970,22 +970,22 @@ function renderProjectDetail(p, s, tasks) {
     <div class="sec-title">属性</div>
     <div class="prop-row"><span class="k">状态</span>
       <span class="v"><select onchange="patchProject(${p.id},{status:this.value})">
-        <option value="active" ${p.status === "active" ? "selected" : ""}>Active</option>
-        <option value="archived" ${p.status === "archived" ? "selected" : ""}>Archived</option>
+        <option value="active" ${p.status === "active" ? "selected" : ""}>进行中</option>
+        <option value="archived" ${p.status === "archived" ? "selected" : ""}>已归档</option>
       </select></span></div>
     <div class="prop-row"><span class="k">工作目录</span><span class="v" style="font-size:12px;word-break:break-all">${esc(p.project_dir || "-")}</span></div>
     <div class="prop-row"><span class="k">描述</span><span class="v" style="font-size:12px;white-space:pre-wrap">${esc(p.description || "-")}</span></div>
     <div class="prop-row"><span class="k">创建</span><span class="v">${esc((p.created_at || "").slice(0, 16).replace("T", " "))}</span></div>
     <div class="sec-title">操作</div>
     <div class="detail-actions">
-      <button class="btn sm" onclick="openProjectModal(${p.id})">Edit</button>
-      <button class="btn sm danger" onclick="deleteProject(${p.id})">Delete</button>
+      <button class="btn sm" onclick="openProjectModal(${p.id})">编辑</button>
+      <button class="btn sm danger" onclick="deleteProject(${p.id})">删除</button>
     </div>`;
 }
 
 function openProjectModal(id) {
   const p = id ? state.projects.find(x => x.id === id) : null;
-  document.getElementById("projectModalTitle").textContent = p ? "Edit Project" : "New Project";
+  document.getElementById("projectModalTitle").textContent = p ? "编辑项目" : "新建项目";
   document.getElementById("pId").value = p ? p.id : "";
   document.getElementById("pName").value = p ? p.name : "";
   document.getElementById("pDesc").value = p ? (p.description || "") : "";
@@ -1125,11 +1125,11 @@ function renderAgentGrid() {
           <div class="ac-name">${esc(a.name)}</div>
           <div class="ac-sub">${esc(a.description || "未设置描述")}</div>
         </div>
-        <span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "Enabled" : "Disabled"}</span>
+        <span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "启用" : "停用"}</span>
       </div>
       <div class="ac-meta">
         <span class="chip">${esc(a.cli)}</span>
-        <span class="chip" title="${esc(rc.model || "默认模型")}">${esc(rc.model || "default model")}</span>
+        <span class="chip" title="${esc(rc.model || "默认模型")}">${esc(rc.model || "默认模型")}</span>
       </div>
       <div class="ac-stats">
         <span><b>${st.total}</b> 任务</span>
@@ -1161,12 +1161,12 @@ function renderAgentTable() {
         <span style="font-size:11px;color:var(--fg-faint)">${esc(a.description || "")}</span>
       </span></td>
       <td><span class="badge">${esc(a.cli)}</span></td>
-      <td>${esc(rc.model || "default")}</td>
-      <td><span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "Enabled" : "Disabled"}</span></td>
+      <td>${esc(rc.model || "默认")}</td>
+      <td><span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "启用" : "停用"}</span></td>
       <td>
         <span class="ops">
           <button class="btn xs" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "停用" : "启用"}</button>
-          <button class="btn xs danger" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}Delete</button>
+          <button class="btn xs danger" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}删除</button>
         </span>
       </td>
     </tr>`;
@@ -1174,7 +1174,7 @@ function renderAgentTable() {
   const empty = document.getElementById("agentEmpty");
   if (empty) empty.classList.toggle("hidden", list.length > 0);
   const cnt = document.getElementById("agentCount");
-  if (cnt) cnt.textContent = `${list.length} agents`;
+  if (cnt) cnt.textContent = `${list.length} 个角色`;
 }
 
 function renderAgentList() {
@@ -1334,7 +1334,7 @@ async function renderAgentOverview(a) {
       <span class="avatar lg av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
       <div>
         <div class="ah-name">${esc(a.name)} <span class="badge">${esc(a.cli)}</span>
-          <span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "Enabled" : "Disabled"}</span></div>
+          <span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "启用" : "停用"}</span></div>
         ${a.description ? `<div class="ah-desc">${esc(a.description)}</div>` : ""}
       </div>
     </div>
@@ -1599,7 +1599,7 @@ async function renderAgentConfig(a) {
       ${schema.docs ? `<a class="t-link" target="_blank" rel="noreferrer" href="${esc(schema.docs)}">查看文档 ↗</a>` : ""}。
       每个 CLI 的字段不同——这是按角色深度定制，不是统一定制。</div>
     <div id="configForm">${schemaFormHTML(schema, a.role_config || {})}</div>
-    <div style="margin-top:16px"><button class="btn primary" onclick="saveAgentConfig()">Save</button></div>`;
+    <div style="margin-top:16px"><button class="btn primary" onclick="saveAgentConfig()">保存</button></div>`;
 }
 
 async function saveAgentConfig() {
@@ -1647,7 +1647,7 @@ async function saveAgentEnv() {
 
 async function openAgentModal(id) {
   const a = id ? state.agents.find(x => x.id === id) : null;
-  document.getElementById("agentModalTitle").textContent = a ? "Edit Agent" : "New Agent";
+  document.getElementById("agentModalTitle").textContent = a ? "编辑角色" : "新建角色";
   document.getElementById("aId").value = a ? a.id : "";
   document.getElementById("aName").value = a ? a.name : "";
   document.getElementById("aDesc").value = a ? (a.description || "") : "";
@@ -1868,16 +1868,16 @@ function renderSkillLib() {
         <span class="chip" title="${esc(s.dir)}">${esc(s.dir)}</span>
       </div>
       <div class="sk-foot">
-        <span class="count-info">source: ${esc(s.source_path || "-")} · ${(s.created_at || "").slice(0, 10)}</span>
+        <span class="count-info">来源：${esc(s.source_path || "-")} · ${(s.created_at || "").slice(0, 10)}</span>
         <span class="ac-ops">
-          <button class="btn xs danger" onclick="deleteSkill(${s.id})">${icon("trash")}Delete</button>
+          <button class="btn xs danger" onclick="deleteSkill(${s.id})">${icon("trash")}删除</button>
         </span>
       </div>
     </div>`).join("");
   const empty = document.getElementById("skillEmpty");
   if (empty) empty.classList.toggle("hidden", lib.length > 0);
   const cnt = document.getElementById("skillCount");
-  if (cnt) cnt.textContent = `${lib.length} skills`;
+  if (cnt) cnt.textContent = `${lib.length} 个技能`;
 }
 
 function openSkillModal() {
@@ -2076,10 +2076,10 @@ async function loadDashAgents() {
         ${prov.map(p => `<span class="prov-chip ${p.installed ? "ok" : ""} ${p.login ? "login" : ""}" title="${esc(p.name)}${p.installed ? " " + esc(p.version) : " — 未安装"}${p.installed && !p.login ? "（未登录）" : ""}">${esc(p.name)}${p.installed ? (p.login ? " ✓" : " ⚠") : " ✗"}</span>`).join("")}
       </div>
       <div class="dash-prov-meta">
-        <span><b>${installed.length}/${prov.length}</b> installed</span>
-        <span><b>${agents.filter(a => a.enabled).length}</b> roles enabled</span>
-        <span><b style="color:var(--st-running)">${running}</b> running</span>
-        <span><b style="color:var(--st-review)">${review}</b> review</span>
+        <span><b>${installed.length}/${prov.length}</b> 已安装</span>
+        <span><b>${agents.filter(a => a.enabled).length}</b> 角色启用</span>
+        <span><b style="color:var(--st-running)">${running}</b> 运行中</span>
+        <span><b style="color:var(--st-review)">${review}</b> 待审批</span>
       </div>`;
   } catch (_) {}
 }
@@ -2107,8 +2107,8 @@ function renderProvGrid() {
         <div class="ac-id">
           <div class="ac-name">${esc(p.name)}</div>
           <div class="ac-sub">
-            ${p.installed ? `<span class="badge succeeded">installed</span>` : `<span class="badge cancelled">not installed</span>`}
-            ${p.installed ? `<span class="badge ${p.login ? "succeeded" : "awaiting_review"}">${p.login ? "logged in" : "not logged in"}</span>` : ""}
+            ${p.installed ? `<span class="badge succeeded">已安装</span>` : `<span class="badge cancelled">未安装</span>`}
+            ${p.installed ? `<span class="badge ${p.login ? "succeeded" : "awaiting_review"}">${p.login ? "已登录" : "未登录"}</span>` : ""}
           </div>
         </div>
         ${p.installed ? `<span class="prov-ver">${esc(p.version)}</span>` : ""}
@@ -2124,11 +2124,11 @@ function renderProvGrid() {
           : `<button class="btn sm" onclick="installProvision('${p.id}')">重装/更新</button>`}
         <a class="btn sm ghost" href="${esc(p.docs)}" target="_blank" rel="noreferrer">官方文档 ↗</a>
         ${p.installed ? `<button class="btn sm" onclick="copyText('${esc(p.login_hint || "")}')">复制登录指引</button>` : ""}
-        ${p.installed ? `<button class="btn sm" onclick="createDefaultRole('${p.id}')">建默认 Role</button>` : ""}
+        ${p.installed ? `<button class="btn sm" onclick="createDefaultRole('${p.id}')">创建默认角色</button>` : ""}
       </div>
     </div>`).join("");
   const cnt = document.getElementById("provCount");
-  if (cnt) cnt.textContent = `${provState.prov.filter(p => p.installed).length}/${provState.prov.length} installed`;
+  if (cnt) cnt.textContent = `已安装 ${provState.prov.filter(p => p.installed).length}/${provState.prov.length}`;
 }
 
 async function installProvision(cli) {
@@ -2165,11 +2165,11 @@ function copyText(t) {
 }
 
 async function createDefaultRole(cli) {
-  const name = prompt(`创建基于 ${cli} 的默认 Role 名称`, cli);
+  const name = prompt(`创建基于 ${cli} 的默认角色名称`, cli);
   if (!name) return;
   try {
     await api("/api/agents", { method: "POST", body: JSON.stringify({ name, cli, enabled: true }) });
-    toast("已创建 Role，可在 Roles 页继续定制");
+    toast("已创建角色，可在角色页继续定制");
   } catch (e) { toast(e.message, true); }
 }
 

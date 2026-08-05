@@ -1,21 +1,21 @@
 {{define "content"}}
 <header class="page-header">
-  <span class="crumb">派活 / <b>Skills</b></span>
+  <span class="crumb">派活 / <b>技能</b></span>
   <span class="spacer"></span>
   <button class="btn brand sm" id="btnAddSkill" onclick="openSkillModal()">
     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-    Add Skill
+    添加技能
   </button>
   <button class="btn brand sm hidden" id="btnAddExt" onclick="openExtModal()">
     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-    Add Extension
+    添加扩展
   </button>
 </header>
 <div class="page-content">
   <div class="toolbar">
     <div class="seg" id="skillViewSeg">
-      <button id="segSkillLib" class="active" onclick="setSkillTab('skills')">Skills</button>
-      <button id="segExt" onclick="setSkillTab('ext')">Extensions (pi)</button>
+      <button id="segSkillLib" class="active" onclick="setSkillTab('skills')">技能</button>
+      <button id="segExt" onclick="setSkillTab('ext')">扩展（pi）</button>
     </div>
     <span class="spacer"></span>
     <span id="skillCount" class="count-info"></span>
@@ -24,17 +24,17 @@
   <!-- Skills 库 -->
   <div id="skillShell">
     <div class="skill-grid" id="skillGrid"></div>
-    <div id="skillEmpty" class="empty hidden">技能库为空。点击右上角「Add Skill」，指定一个本地技能目录（含 SKILL.md）导入。</div>
+    <div id="skillEmpty" class="empty hidden">技能库为空。点击右上角「添加技能」，指定一个本地技能目录（含 SKILL.md）导入。</div>
   </div>
 
   <!-- Pi Extensions -->
   <div id="extShell" class="hidden">
     <div class="ext-wrap">
-      <div class="ext-note">Pi extensions 通过官方 <code>pi install</code> 管理：来源可以是本地目录或远程仓库。安装后对所有 pi/omp 角色生效。</div>
+      <div class="ext-note">Pi 扩展通过官方 <code>pi install</code> 管理：来源可以是本地目录或远程仓库。安装后对所有 pi/omp 角色生效。</div>
       <pre class="ext-raw" id="extRaw">加载中...</pre>
       <div class="ext-actions">
         <span class="count-info">管理操作</span>
-        <button class="btn sm danger" onclick="removeExt()">移除 extension（输入名称）</button>
+        <button class="btn sm danger" onclick="removeExt()">移除扩展（输入名称）</button>
       </div>
     </div>
   </div>
@@ -43,9 +43,9 @@
 <!-- 添加技能弹窗 -->
 <div class="modal hidden" id="skillModal">
   <div class="modal-box">
-    <h3>Add Skill</h3>
+    <h3>添加技能</h3>
     <div class="sub">指定源目录（含 SKILL.md），paihuo 会把它复制到自己的工作目录登记入库</div>
-    <label class="field">Source directory
+    <label class="field">来源目录
       <span class="dir-input-row">
         <input id="sSkillPath" placeholder="/path/to/skill-dir" list="dlistSkill">
         <datalist id="dlistSkill"></datalist>
@@ -56,8 +56,8 @@
       </span>
     </label>
     <div class="modal-actions">
-      <button class="btn" onclick="closeModal('skillModal')">Cancel</button>
-      <button class="btn primary" onclick="submitSkill()">Import</button>
+      <button class="btn" onclick="closeModal('skillModal')">取消</button>
+      <button class="btn primary" onclick="submitSkill()">导入</button>
     </div>
   </div>
 </div>
@@ -65,14 +65,14 @@
 <!-- 添加 extension 弹窗 -->
 <div class="modal hidden" id="extModal">
   <div class="modal-box">
-    <h3>Add Extension</h3>
+    <h3>添加扩展</h3>
     <div class="sub">pi install 官方命令：来源可以是本地目录或远程仓库</div>
-    <label class="field">Source
+    <label class="field">来源
       <input id="extSource" placeholder="/path/to/extension 或 git 仓库地址">
     </label>
     <div class="modal-actions">
-      <button class="btn" onclick="closeModal('extModal')">Cancel</button>
-      <button class="btn primary" onclick="submitExt()">Install</button>
+      <button class="btn" onclick="closeModal('extModal')">取消</button>
+      <button class="btn primary" onclick="submitExt()">安装</button>
     </div>
   </div>
 </div>

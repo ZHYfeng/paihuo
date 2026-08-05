@@ -69,19 +69,19 @@ func (a *baseAdapter) Docs() string    { return "" }
 // 各适配器可裁剪不支持的字段、追加自己特有的字段（存于 RoleConfig.Custom）。
 func commonFields() []Field {
 	return []Field{
-		{Key: "model", Label: "Model", Type: "text", Group: "模型与指令",
+		{Key: "model", Label: "模型", Type: "text", Group: "模型与指令",
 			Placeholder: "留空用 CLI 默认（探测本机实例实际配置）",
 			Help:        "覆盖默认模型；候选取自该 CLI 在本机实例的实际配置，也可直接输入"},
 		{Key: "system_prompt", Label: "系统提示词", Type: "textarea", Group: "模型与指令",
 			Placeholder: "角色定位、行为规范",
 			Help:        "追加到 CLI 默认系统提示词之后，用于定义角色身份"},
-		{Key: "instructions", Label: "Instructions", Type: "textarea", Group: "模型与指令",
+		{Key: "instructions", Label: "指令", Type: "textarea", Group: "模型与指令",
 			Placeholder: "任务指令模板：每次执行前固定追加的指示",
 			Help:        "与系统提示词不同：这是每次任务的固定指令前缀（如代码规范、输出格式、禁止事项），在任务提示词之前注入"},
 		{Key: "thinking", Label: "思考级别", Type: "select", Group: "模型与指令",
 			Options: []string{"", "low", "medium", "high"},
 			Help:    "low 更快更省、high 深度推理；medium 为默认"},
-		{Key: "skills", Label: "Skills", Type: "list", Group: "技能", Source: "skills",
+		{Key: "skills", Label: "技能", Type: "list", Group: "技能", Source: "skills",
 			Placeholder: "勾选已注册到 paihuo 工作目录的技能",
 			Help:        "启动时注入的技能目录（--add-dir）；在 Skills 页把技能添加到 paihuo 工作目录后，这里按名称勾选"},
 		{Key: "plugins", Label: "插件 / 配置叠加", Type: "list", Group: "技能",

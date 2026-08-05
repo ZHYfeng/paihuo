@@ -214,13 +214,13 @@ func (a *openCodeAdapter) Warnings(o RunOptions) []string {
 // 目录，故不展示；特有字段：agent（opencode agent 定义）、config（配置文件）。
 func (a *openCodeAdapter) Schema() []Field {
 	return []Field{
-		{Key: "model", Label: "Model", Type: "text", Group: "模型与指令",
+		{Key: "model", Label: "模型", Type: "text", Group: "模型与指令",
 			Placeholder: "留空用默认（探测本机实例实际配置）",
 			Help:        "--model；候选取自 `opencode models` 与本机配置"},
 		{Key: "thinking", Label: "思考级别", Type: "select", Group: "模型与指令",
 			Options: []string{"", "low", "medium", "high"},
 			Help:    "low→--variant minimal（省 token）、high→--variant high"},
-		{Key: "instructions", Label: "Instructions", Type: "textarea", Group: "模型与指令",
+		{Key: "instructions", Label: "指令", Type: "textarea", Group: "模型与指令",
 			Placeholder: "任务指令模板：每次执行前固定追加的指示",
 			Help:        "每次任务的固定指令前缀，注入到任务提示词之前（opencode 无官方 system prompt 参数，以提示词前缀方式生效）"},
 		{Key: "agent", Label: "Agent 定义", Type: "text", Group: "模型与指令",
@@ -279,13 +279,13 @@ func (a *piAdapter) Warnings(o RunOptions) []string {
 // pi 仅支持模型/系统提示词/额外参数/环境变量；skills、plugins、thinking 不展示。
 func (a *piAdapter) Schema() []Field {
 	return []Field{
-		{Key: "model", Label: "Model", Type: "text", Group: "模型与指令",
+		{Key: "model", Label: "模型", Type: "text", Group: "模型与指令",
 			Placeholder: "留空用默认（探测本机实例实际配置）",
 			Help:        "--model；候选取自 `opencode models` 与本机配置"},
 		{Key: "system_prompt", Label: "系统提示词", Type: "textarea", Group: "模型与指令",
 			Placeholder: "角色定位、行为规范",
 			Help:        "追加到 pi 默认系统提示词之后（--append-system-prompt）"},
-		{Key: "instructions", Label: "Instructions", Type: "textarea", Group: "模型与指令",
+		{Key: "instructions", Label: "指令", Type: "textarea", Group: "模型与指令",
 			Placeholder: "任务指令模板：每次执行前固定追加的指示",
 			Help:        "每次任务的固定指令前缀（代码规范、输出格式、禁止事项），在任务提示词之前注入"},
 		{Key: "extra_args", Label: "额外参数", Type: "text", Group: "执行",

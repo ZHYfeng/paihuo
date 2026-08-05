@@ -1,10 +1,10 @@
 {{define "content"}}
 <header class="page-header">
-  <span class="crumb">派活 / <b>Projects</b></span>
+  <span class="crumb">派活 / <b>项目</b></span>
   <span class="spacer"></span>
   <button class="btn brand sm" onclick="openProjectModal()">
     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-    New Project
+    新建项目
   </button>
 </header>
 <div class="page-content">
@@ -12,7 +12,7 @@
   <!-- 项目列表 -->
   <div id="projectListShell">
     <div class="toolbar">
-      <input id="pSearch" class="inp" placeholder="Search projects…" oninput="renderProjectList()">
+      <input id="pSearch" class="inp" placeholder="搜索项目…" oninput="renderProjectList()">
       <span class="spacer"></span>
       <span id="projectCount" class="count-info"></span>
     </div>
@@ -25,12 +25,12 @@
     <header class="page-header">
       <button class="btn ghost sm" onclick="closeProjectDetail()">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        Back
+        返回
       </button>
       <span class="crumb" id="pdCrumb"></span>
       <span class="spacer"></span>
       <span id="pdBadge"></span>
-      <button class="btn sm danger" onclick="deleteProject()">Delete</button>
+      <button class="btn sm danger" onclick="deleteProject()">删除</button>
     </header>
     <div class="project-detail">
       <div class="detail-main" id="pdMain"></div>
