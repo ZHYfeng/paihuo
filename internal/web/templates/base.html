@@ -20,32 +20,36 @@
     </div>
     <nav class="sidebar-nav">
       <div class="sidebar-group-label">工作区</div>
-      <a class="sidebar-link {{if eq .Active "board"}}active{{end}}" href="/">
-        <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h7v8H3zM14 3h7v5h-7zM14 11h7v10h-7zM3 14h7v7H3z"/></svg>
-        <span>Board</span><span class="s-count" id="sbBoardCount"></span>
+      <a class="sidebar-link {{if eq .Active "dashboard"}}active{{end}}" href="/">
+        <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h8v8H3zM13 3h8v5h-8zM13 11h8v10h-8zM3 14h8v7H3z"/></svg>
+        <span>Dashboard</span>
       </a>
-      <a class="sidebar-link {{if eq .Active "projects"}}active{{end}}" href="/projects">
-        <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
-        <span>Projects</span><span class="s-count" id="sbProjectCount"></span>
+      <a class="sidebar-link {{if eq .Active "board"}}active{{end}}" href="/board">
+        <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Zm5 2v10m4-10v6m4-6v10"/></svg>
+        <span>Board</span>
       </a>
       <a class="sidebar-link {{if eq .Active "history"}}active{{end}}" href="/history">
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 3"/></svg>
         <span>History</span>
       </a>
-      <div class="sidebar-group-label">智能体</div>
+      <div class="sidebar-group-label">管理</div>
       <a class="sidebar-link {{if eq .Active "agents"}}active{{end}}" href="/agents">
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8Zm5-2V6a3 3 0 0 1 6 0v2M9 15h.01M15 15h.01"/></svg>
         <span>Agents</span>
       </a>
-      <a class="sidebar-link {{if eq .Active "autopilots"}}active{{end}}" href="/autopilots">
-        <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg>
-        <span>Schedules</span>
+      <a class="sidebar-link {{if eq .Active "roles"}}active{{end}}" href="/roles">
+        <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 21a8 8 0 0 1 16 0"/></svg>
+        <span>Roles</span>
       </a>
       <a class="sidebar-link {{if eq .Active "skills"}}active{{end}}" href="/skills">
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.4L19 10l-5.2 1.6L12 17l-1.8-5.4L5 10l5.2-1.6L12 3Z"/></svg>
         <span>Skills</span>
       </a>
-      <div class="sidebar-group-label">配置</div>
+      <a class="sidebar-link {{if eq .Active "autopilots"}}active{{end}}" href="/autopilots">
+        <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg>
+        <span>Schedules</span>
+      </a>
+      <div class="sidebar-group-label">系统</div>
       <a class="sidebar-link {{if eq .Active "settings"}}active{{end}}" href="/settings">
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9l2.1 2.1m10 10 2.1 2.1m0-14.2-2.1 2.1m-10 10-2.1 2.1"/></svg>
         <span>Settings</span>
@@ -64,7 +68,85 @@
 </div>
 <div id="toast" class="toast hidden"></div>
 
-<!-- 目录选择器（项目目录 / 技能来源，所有页面共享） -->
+<!-- 任务详情（两栏，Dashboard / Board 共享） -->
+<div id="detailShell" class="hidden">
+  <header class="page-header">
+    <button class="btn ghost sm" onclick="closeDetail()">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      Back
+    </button>
+    <span class="crumb" id="dCrumb"></span>
+    <span class="spacer"></span>
+    <span id="dBadge"></span>
+  </header>
+  <div class="detail-view">
+    <div class="detail-main" id="dMain"></div>
+    <aside class="detail-side" id="dSide"></aside>
+  </div>
+</div>
+
+<!-- 新建任务弹窗（全站共享） -->
+<div class="modal hidden" id="taskModal">
+  <div class="modal-box">
+    <h3 id="taskModalTitle">New Task</h3>
+    <div class="sub">指派给角色执行，可选用模板填充提示词</div>
+    <input type="hidden" id="tParentId">
+    <label class="field">从模板填充
+      <select id="tTemplate" onchange="applyTemplate()"><option value="">—</option></select>
+    </label>
+    <label class="field">标题 <input id="tTitle" placeholder="要做什么"></label>
+    <label class="field">提示词
+      <textarea id="tBody" rows="5" placeholder="给 agent 的详细指令。留空则由标题生成。"></textarea>
+    </label>
+    <div class="row">
+      <label class="field">角色 <select id="tAgent"></select></label>
+      <label class="field">项目 <select id="tProject"></select></label>
+    </div>
+    <label class="field">权限
+      <select id="tPerm">
+        <option value="full">Full（直接执行）</option>
+        <option value="review">Review（完成后审批）</option>
+      </select>
+    </label>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('taskModal')">Cancel</button>
+      <button class="btn primary" onclick="submitTask()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- 新建/编辑项目弹窗（全站共享） -->
+<div class="modal hidden" id="projectModal">
+  <div class="modal-box">
+    <h3 id="projectModalTitle">New Project</h3>
+    <div class="sub">项目是任务管理的维度：工作目录 + 聚合任务进度与 agent 统计</div>
+    <input type="hidden" id="pId">
+    <label class="field">Name <input id="pName" placeholder="如：公司官网重构"></label>
+    <label class="field">工作目录
+      <span class="dir-input-row">
+        <input id="pProjectDir" placeholder="/path/to/project" list="dlistProj">
+        <datalist id="dlistProj"></datalist>
+        <button type="button" class="btn sm" onclick="openDirPicker('pProjectDir')">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+          Browse…
+        </button>
+      </span>
+    </label>
+    <label class="field">Description <textarea id="pDesc" rows="3" placeholder="这个项目要交付什么"></textarea></label>
+    <label class="field">Status
+      <select id="pStatus">
+        <option value="active">Active</option>
+        <option value="archived">Archived</option>
+      </select>
+    </label>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('projectModal')">Cancel</button>
+      <button class="btn primary" onclick="submitProject()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- 目录选择器（全站共享） -->
 <div class="modal hidden" id="dirModal">
   <div class="modal-box">
     <h3>Choose directory</h3>
@@ -82,8 +164,22 @@
   </div>
 </div>
 
+<!-- 安装输出终端（Agents 页安装向导） -->
+<div class="modal hidden" id="instModal">
+  <div class="modal-box term-modal">
+    <div class="term" style="margin:0;border-radius:0;border:none;flex:1;display:flex;flex-direction:column">
+      <div class="term-head">
+        <span class="t-title" id="instTitle"></span>
+        <button class="btn ghost xs" onclick="closeInstTerminal()">关闭</button>
+      </div>
+      <div class="term-body term-full" id="instBox"></div>
+    </div>
+  </div>
+</div>
+
 <!-- 全屏终端（所有页面共享） -->
-<div class="modal hidden" id="termModal">  <div class="modal-box term-modal">
+<div class="modal hidden" id="termModal">
+  <div class="modal-box term-modal">
     <div class="term" style="margin:0;border-radius:0;border:none;flex:1;display:flex;flex-direction:column">
       <div class="term-head">
         <span class="term-dots"><i></i><i></i><i></i></span>

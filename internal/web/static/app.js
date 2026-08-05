@@ -317,7 +317,8 @@ function closeDetail() {
 
 function showDetail(id) {
   state.selected = id;
-  document.getElementById("boardShell").classList.add("hidden");
+  const shell = document.getElementById("boardShell") || document.getElementById("dashShell");
+  if (shell) shell.classList.add("hidden");
   document.getElementById("detailShell").classList.remove("hidden");
   const t = state.tasks.find(x => x.id === id);
   if (t) {
@@ -330,7 +331,8 @@ function showDetail(id) {
 
 function hideDetail() {
   document.getElementById("detailShell").classList.add("hidden");
-  document.getElementById("boardShell").classList.remove("hidden");
+  const shell = document.getElementById("boardShell") || document.getElementById("dashShell");
+  if (shell) shell.classList.remove("hidden");
   state.selected = null;
 }
 
@@ -425,8 +427,9 @@ async function setTaskStatus(id, status) {
     if (status === "queued" && location.pathname === "/history") { location.href = "/"; return; }
     await loadAll();
     const p = location.pathname;
-    if (p === "/" ) {
+    if (p === "/" || p === "/board") {
       if (state.selected === id && location.hash.startsWith("#/issue/")) showDetail(id);
+      if (p === "/") loadDashboard();
     } else if (p === "/history") {
       loadHistory();
     } else if (p === "/projects" && state.projectView) {
@@ -458,6 +461,8 @@ async function deleteTask(id) {
     if (state.selected === id) { closeDetail(); location.hash = "#/"; }
     if (p === "/history") loadHistory();
     if (p === "/projects" && state.projectView) refreshProjectDetail();
+    if (p === "/") loadDashboard();
+    if (p === "/board") { renderBoard(); renderList(); }
   } catch (e) { toast(e.message, true); }
 }
 
@@ -810,7 +815,7 @@ function renderProjectDetail(p, s, tasks) {
   const agentsHTML = (s.agents || []).map(a => `
     <tr>
       <td class="t-title"><span class="avatar sm">${esc((a.agent_name || "?").slice(0, 1))}</span>
-        <a class="t-link" href="/agents#/agent/${a.agent_id}">${esc(a.agent_name || "未指派")}</a></td>
+        <a class="t-link" href="/roles#/agent/${a.agent_id}">${esc(a.agent_name || "未指派")}</a></td>
       <td class="num">${a.total}</td>
       <td class="num" style="color:var(--success)">${a.succeeded}</td>
       <td class="num" style="color:var(--danger)">${a.failed}</td>
@@ -1814,6 +1819,183 @@ async function runCleanup() {
 }
 
 /* ============================================================
+   Dashboard（默认首页）：统计条 + 任务执行区 + 项目区 + Agent 区
+   ============================================================ */
+
+function dashCardHTML(t, actions) {
+  return `<div class="card dash-card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
+    <div class="c-top">
+      <span class="st-dot"></span><span>#${t.id}</span>
+      <span>${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
+      ${t.perm === "review" ? `<span class="chip review">审批</span>` : ""}
+    </div>
+    <div class="c-title">${esc(t.title)}</div>
+    <div class="c-meta">
+      ${t.project_name ? `<span class="chip">${esc(t.project_name)}</span>` : ""}
+      <span class="c-foot">
+        ${t.agent_name ? `<span class="c-agent"><span class="avatar sm av-${esc(t.agent_name)}">${esc((t.agent_name || "?").slice(0, 1))}</span>${esc(t.agent_name)}</span>` : `<span class="c-agent" style="color:var(--fg-faint)">未指派</span>`}
+      </span>
+    </div>
+    ${actions ? `<div class="dash-actions" onclick="event.stopPropagation()">${actions}</div>` : ""}
+  </div>`;
+}
+
+function loadDashboard() {
+  refreshOverview();
+  renderDashTasks();
+  renderDashProjects();
+  loadDashAgents();
+}
+
+function renderDashTasks() {
+  const run = document.getElementById("dashRunning");
+  const rev = document.getElementById("dashReview");
+  if (!run || !rev) return;
+  const running = state.tasks.filter(t => ["queued", "claimed", "running"].includes(t.status))
+    .sort((a, b) => (a.created_at || "") < (b.created_at || "") ? 1 : -1).slice(0, 12);
+  const review = state.tasks.filter(t => t.status === "awaiting_review")
+    .sort((a, b) => (a.created_at || "") < (b.created_at || "") ? 1 : -1).slice(0, 12);
+  run.innerHTML = running.map(t => dashCardHTML(t)).join("") || `<div class="empty">暂无进行中任务</div>`;
+  rev.innerHTML = review.map(t => dashCardHTML(t,
+    `<button class="btn xs brand" onclick="setTaskStatus(${t.id},'succeeded')">通过</button>` +
+    `<button class="btn xs" onclick="rejectTask(${t.id})">驳回</button>` +
+    `<button class="btn xs" onclick="openTerminal(${t.id})">看对话</button>`)).join("") || `<div class="empty">无待审批任务</div>`;
+  const rc = document.getElementById("dashRunningCount");
+  if (rc) rc.textContent = running.length;
+  const vc = document.getElementById("dashReviewCount");
+  if (vc) vc.textContent = review.length;
+}
+
+function renderDashProjects() {
+  const box = document.getElementById("dashProjects");
+  if (!box) return;
+  const active = state.projects.filter(p => p.status === "active");
+  box.innerHTML = active.map(p => {
+    const ts = state.tasks.filter(t => t.project_id === p.id);
+    const done = ts.filter(t => t.status === "succeeded").length;
+    const pct = ts.length ? Math.round(done / ts.length * 100) : 0;
+    const inflight = ts.filter(t => ["queued", "claimed", "running", "awaiting_review"].includes(t.status)).length;
+    return `<div class="dash-proj" onclick="location.href='/projects#/project/${p.id}'">
+      <div class="dp-top"><b title="${esc(p.name)}">${esc(p.name)}</b>
+        ${inflight ? `<span class="badge running">${inflight} 活跃</span>` : `<span class="badge">${ts.length} 任务</span>`}</div>
+      <div class="pc-progress"><div class="pp-bar"><div style="width:${pct}%"></div></div>
+        <span class="pc-pct">${pct}%</span></div>
+    </div>`;
+  }).join("") || `<div class="empty">暂无活跃项目</div>`;
+}
+
+async function loadDashAgents() {
+  try {
+    const prov = await api("/api/provision");
+    const box = document.getElementById("dashAgents");
+    if (!box) return;
+    const installed = prov.filter(p => p.installed);
+    const agents = state.agents || [];
+    const running = state.tasks.filter(t => t.status === "running").length;
+    const review = state.tasks.filter(t => t.status === "awaiting_review").length;
+    box.innerHTML = `
+      <div class="dash-prov">
+        ${prov.map(p => `<span class="prov-chip ${p.installed ? "ok" : ""} ${p.login ? "login" : ""}" title="${esc(p.name)}${p.installed ? " " + esc(p.version) : " — 未安装"}${p.installed && !p.login ? "（未登录）" : ""}">${esc(p.name)}${p.installed ? (p.login ? " ✓" : " ⚠") : " ✗"}</span>`).join("")}
+      </div>
+      <div class="dash-prov-meta">
+        <span><b>${installed.length}/${prov.length}</b> installed</span>
+        <span><b>${agents.filter(a => a.enabled).length}</b> roles enabled</span>
+        <span><b style="color:var(--st-running)">${running}</b> running</span>
+        <span><b style="color:var(--st-review)">${review}</b> review</span>
+      </div>`;
+  } catch (_) {}
+}
+
+/* ============================================================
+   Agents 页：安装/登录管理
+   ============================================================ */
+
+let provState = { prov: [], instCli: null };
+
+async function loadProvision() {
+  try { provState.prov = await api("/api/provision"); } catch (_) { provState.prov = []; }
+  renderProvGrid();
+}
+
+function renderProvGrid() {
+  const grid = document.getElementById("provGrid");
+  if (!grid) return;
+  const empty = document.getElementById("provEmpty");
+  if (empty) empty.classList.add("hidden");
+  grid.innerHTML = provState.prov.map(p => `
+    <div class="prov-card ${p.installed ? "" : "not-installed"}">
+      <div class="pc-top">
+        <span class="avatar lg av-${esc(p.id)}">${esc((p.name || "?").slice(0, 1))}</span>
+        <div class="ac-id">
+          <div class="ac-name">${esc(p.name)}</div>
+          <div class="ac-sub">
+            ${p.installed ? `<span class="badge succeeded">installed</span>` : `<span class="badge cancelled">not installed</span>`}
+            ${p.installed ? `<span class="badge ${p.login ? "succeeded" : "awaiting_review"}">${p.login ? "logged in" : "not logged in"}</span>` : ""}
+          </div>
+        </div>
+        ${p.installed ? `<span class="prov-ver">${esc(p.version)}</span>` : ""}
+      </div>
+      <div class="prov-body">
+        ${!p.installed ? `<div class="prov-cmd" title="官方安装命令">$ ${esc(p.install_cmd || "（请参考官方文档）")}</div>`
+          : p.login ? `<div class="prov-login-ok">已检测到登录凭据 ✓</div>`
+          : `<div class="prov-login-hint">${esc(p.login_hint || "请在服务器终端完成登录")}</div>`}
+      </div>
+      <div class="ac-stats prov-actions">
+        ${!p.installed
+          ? `<button class="btn sm brand" onclick="installProvision('${p.id}')">安装</button>`
+          : `<button class="btn sm" onclick="installProvision('${p.id}')">重装/更新</button>`}
+        <a class="btn sm ghost" href="${esc(p.docs)}" target="_blank" rel="noreferrer">官方文档 ↗</a>
+        ${p.installed ? `<button class="btn sm" onclick="copyText('${esc(p.login_hint || "")}')">复制登录指引</button>` : ""}
+        ${p.installed ? `<button class="btn sm" onclick="createDefaultRole('${p.id}')">建默认 Role</button>` : ""}
+      </div>
+    </div>`).join("");
+  const cnt = document.getElementById("provCount");
+  if (cnt) cnt.textContent = `${provState.prov.filter(p => p.installed).length}/${provState.prov.length} installed`;
+}
+
+async function installProvision(cli) {
+  provState.instCli = cli;
+  const box = document.getElementById("instBox");
+  const title = document.getElementById("instTitle");
+  box.innerHTML = `<div class="empty">正在启动安装...</div>`;
+  title.textContent = `安装 ${cli}`;
+  openModal("instModal");
+  try {
+    const r = await api("/api/provision/install", { method: "POST", body: JSON.stringify({ cli }) });
+    appendInstLine("$ " + r.cmd);
+    setTimeout(loadProvision, 3000);
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    provState.instCli = null;
+  }
+}
+
+function appendInstLine(line) {
+  const box = document.getElementById("instBox");
+  if (!box) return;
+  const c = line.startsWith("$") ? "sys" : "out";
+  box.insertAdjacentHTML("beforeend", `<div class="line"><span class="c ${c}">${esc(line)}</span></div>`);
+  box.scrollTop = box.scrollHeight;
+}
+
+function closeInstTerminal() { provState.instCli = null; closeModal("instModal"); }
+
+function refreshProvision() { loadProvision(); }
+
+function copyText(t) {
+  navigator.clipboard.writeText(t).then(() => toast("已复制")).catch(() => toast("复制失败", true));
+}
+
+async function createDefaultRole(cli) {
+  const name = prompt(`创建基于 ${cli} 的默认 Role 名称`, cli);
+  if (!name) return;
+  try {
+    await api("/api/agents", { method: "POST", body: JSON.stringify({ name, cli, enabled: true }) });
+    toast("已创建 Role，可在 Roles 页继续定制");
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ============================================================
    hash 路由 + SSE
    ============================================================ */
 
@@ -1890,7 +2072,7 @@ function route() {
     else if (state.projectView !== null) hideProjectDetail();
     return;
   }
-  if (path === "/agents") {
+  if (path === "/roles") {
     const m = /^#\/agent\/(\d+)/.exec(h);
     if (m) {
       const id = Number(m[1]);
@@ -1929,13 +2111,16 @@ function sse() {
       const i = state.tasks.findIndex(x => x.id === t.id);
       if (i >= 0) state.tasks[i] = t; else state.tasks.unshift(t);
       const path = location.pathname;
-      if (path === "/") {
+      if (path === "/board") {
         state.view === "list" ? renderList() : renderBoard();
         if (state.selected === t.id) refreshDetail();
         refreshOverviewSoon();
+      } else if (path === "/") {
+        loadDashboard();
+        if (state.selected === t.id) refreshDetail();
       } else if (path === "/history") {
         loadHistory();
-      } else if (path === "/agents") {
+      } else if (path === "/roles") {
         if (state.agentTab === "overview") renderAgentOverview(state.agentEditing);
       } else if (path === "/projects") {
         renderProjectList();
@@ -1946,6 +2131,15 @@ function sse() {
   });
   es.addEventListener("log", ev => {
     try { appendLog(JSON.parse(ev.data).payload); } catch (_) {}
+  });
+  es.addEventListener("provision", ev => {
+    try {
+      const d = JSON.parse(ev.data).payload;
+      if (provState.instCli && d.cli === provState.instCli) appendInstLine(d.line || "");
+      if (d.line && d.line.includes("[install] 完成")) {
+        setTimeout(loadProvision, 1500);
+      }
+    } catch (_) {}
   });
   es.addEventListener("error", () => {
     // EventSource 自动重连；只有 es.close() 后不再重连
@@ -1963,12 +2157,14 @@ document.addEventListener("visibilitychange", () => {
     sse();
     loadAll().then(() => {
       const path = location.pathname;
-      if (path === "/") { renderBoard(); renderList(); refreshOverview(); }
+      if (path === "/") loadDashboard();
+      else if (path === "/board") { renderBoard(); renderList(); refreshOverview(); }
       else if (path === "/history") loadHistory();
-      else if (path === "/agents") renderAgentList();
+      else if (path === "/roles") renderAgentList();
+      else if (path === "/agents") loadProvision();
       else if (path === "/projects") renderProjectList();
       else if (path === "/autopilots") renderScheduleList();
-      else if (path === "/skills") loadTemplates();
+      else if (path === "/skills") loadSkillLib().then(renderSkillLib);
       else if (path === "/settings") loadSettings();
     }).catch(() => {});
   }
@@ -1986,6 +2182,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   try { await loadAll(); } catch (e) { toast("加载失败: " + e.message, true); }
   const path = location.pathname;
   if (path === "/") {
+    loadDashboard();
+    loadTemplates();
+    route();
+    window.addEventListener("hashchange", route);
+  } else if (path === "/board") {
     renderBoard();
     loadTemplates();
     refreshOverview();
@@ -1993,12 +2194,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     window.addEventListener("hashchange", route);
   } else if (path === "/history") {
     loadHistory();
-  } else if (path === "/agents") {
+  } else if (path === "/roles") {
     let av = "grid";
     try { av = localStorage.getItem("paihuo.agentView") || "grid"; } catch (_) {}
     setAgentView(av === "table" ? "table" : "grid");
     route();
     window.addEventListener("hashchange", route);
+  } else if (path === "/agents") {
+    loadProvision();
   } else if (path === "/projects") {
     renderProjectList();
     route();

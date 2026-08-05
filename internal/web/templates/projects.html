@@ -39,34 +39,4 @@
   </div>
 </div>
 
-<!-- 新建/编辑项目弹窗 -->
-<div class="modal hidden" id="projectModal">
-  <div class="modal-box">
-    <h3 id="projectModalTitle">New Project</h3>
-    <div class="sub">项目是任务管理的维度：工作目录 + 聚合任务进度与 agent 统计</div>
-    <input type="hidden" id="pId">
-    <label class="field">Name <input id="pName" placeholder="如：公司官网重构"></label>
-    <label class="field">工作目录
-      <span class="dir-input-row">
-        <input id="pProjectDir" placeholder="/path/to/project" list="dlistProj">
-        <datalist id="dlistProj"></datalist>
-        <button type="button" class="btn sm" onclick="openDirPicker('pProjectDir')">
-          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
-          Browse…
-        </button>
-      </span>
-    </label>
-    <label class="field">Description <textarea id="pDesc" rows="3" placeholder="这个项目要交付什么"></textarea></label>
-    <label class="field">Status
-      <select id="pStatus">
-        <option value="active">Active</option>
-        <option value="archived">Archived</option>
-      </select>
-    </label>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeModal('projectModal')">Cancel</button>
-      <button class="btn primary" onclick="submitProject()">Save</button>
-    </div>
-  </div>
-</div>
 {{end}}

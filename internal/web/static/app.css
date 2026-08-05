@@ -793,6 +793,116 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 .av-codex { background: linear-gradient(135deg, #f87171, #e11d48); }
 
 /* ============================================================
+   Dashboard（默认首页：统计条 + 任务执行区 + 项目区 + Agent 区）
+   ============================================================ */
+.dash-grid {
+  flex: 1; min-height: 0; display: flex; gap: 14px;
+  padding: 10px 16px 16px;
+}
+.dash-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.dash-side { width: 300px; flex-shrink: 0; overflow-y: auto; }
+.dash-sec-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 8px; flex-shrink: 0;
+}
+.dash-sec-gap { margin-top: 18px; }
+.dash-sec-title {
+  font-size: 12.5px; font-weight: 700; color: var(--fg);
+  display: flex; align-items: center; gap: 7px;
+}
+.dash-sec-title::before {
+  content: ""; width: 3px; height: 13px; border-radius: 2px;
+  background: var(--brand-grad);
+}
+.dash-cols {
+  flex: 1; min-height: 0; display: grid;
+  grid-template-columns: 1fr 1fr; gap: 12px;
+}
+.dash-col {
+  display: flex; flex-direction: column; min-height: 0;
+  border: 1px solid var(--border); border-radius: var(--r-xl);
+  background: rgba(15, 21, 34, .55);
+}
+.dash-col-head {
+  display: flex; align-items: center; gap: 7px;
+  padding: 9px 12px 7px; font-size: 12px; font-weight: 650;
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.dash-col-head .count {
+  color: var(--fg-faint); font-size: 11px; font-weight: 500;
+  background: rgba(148, 163, 184, .09); border-radius: 20px;
+  padding: 0 7px; line-height: 16px;
+}
+.dash-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 7px; }
+.dash-list .empty { padding: 14px; font-size: 11.5px; }
+.dash-card .dash-actions {
+  display: flex; gap: 5px; margin-top: 8px;
+  border-top: 1px dashed var(--border); padding-top: 7px;
+}
+.dash-projects { display: flex; flex-direction: column; gap: 8px; }
+.dash-proj {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  padding: 10px 12px; cursor: pointer;
+  transition: border-color var(--t-fast), background var(--t-fast), transform var(--t-fast);
+}
+.dash-proj:hover { border-color: var(--border-strong); background: var(--raised); transform: translateY(-1px); }
+.dp-top { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.dp-top b { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-agents { display: flex; flex-direction: column; gap: 8px; }
+.dash-prov { display: flex; flex-wrap: wrap; gap: 6px; }
+.prov-chip {
+  font-size: 11px; padding: 2px 9px; border-radius: 20px;
+  color: var(--fg-faint); border: 1px solid var(--border); background: var(--raised);
+}
+.prov-chip.ok { color: var(--success); border-color: rgba(52, 211, 153, .35); background: rgba(52, 211, 153, .08); }
+.prov-chip.ok.login { color: var(--brand); border-color: rgba(56, 189, 248, .35); background: rgba(56, 189, 248, .08); }
+.dash-prov-meta {
+  display: flex; flex-wrap: wrap; gap: 12px;
+  font-size: 11.5px; color: var(--fg-faint); font-variant-numeric: tabular-nums;
+}
+.dash-prov-meta b { color: var(--fg); font-weight: 700; }
+.dash-links {
+  display: flex; gap: 14px; margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid var(--border); flex-wrap: wrap;
+  font-size: 12px;
+}
+
+/* ============================================================
+   Agents 页（安装/登录管理）
+   ============================================================ */
+.prov-grid {
+  flex: 1; overflow-y: auto; padding: 14px 16px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px;
+  align-content: start;
+}
+.prov-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl);
+  padding: 15px 16px; box-shadow: var(--sh-surface);
+  transition: border-color var(--t-fast), background var(--t-fast);
+}
+.prov-card:hover { border-color: var(--border-strong); background: var(--raised); }
+.prov-card.not-installed { border-style: dashed; }
+.prov-ver {
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-faint);
+  background: var(--inset); border: 1px solid var(--border); border-radius: 6px;
+  padding: 2px 7px;
+}
+.prov-body { margin: 12px 0; }
+.prov-cmd {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--brand);
+  background: var(--inset); border: 1px solid rgba(56, 189, 248, .25);
+  border-radius: var(--r-md); padding: 8px 10px; word-break: break-all;
+  line-height: 17px;
+}
+.prov-login-ok { font-size: 12px; color: var(--success); }
+.prov-login-hint {
+  font-size: 12px; color: var(--fg-muted); background: var(--brand-dim);
+  border: 1px solid rgba(56, 189, 248, .22); border-radius: var(--r-md);
+  padding: 8px 10px; line-height: 18px;
+}
+.prov-actions { margin-top: 10px; }
+
+/* ============================================================
    技能库（Skills 页）
    ============================================================ */
 .skill-grid {

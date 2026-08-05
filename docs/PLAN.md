@@ -65,67 +65,47 @@
 
 ---
 
-## 4. 信息架构（重新设计的功能分区）
+## 4. 信息架构（按功能逻辑划分）
 
-导航按**工作流逻辑顺序**重排，新增 Dashboard 作为入口：
+**原则：高频工作在前台，低频管理收纳为次级入口。**
+
+默认首页 = **Dashboard 工作台**，一屏内按功能逻辑分区完成高频操作
+（看任务/派活/审批/观察执行/看项目进度）；安装 Agent、创建角色、管理
+Skills 等低频管理任务收纳到侧边栏次级分组。
 
 ```
-Dashboard  仪表盘：安装状态卡片 + 活跃任务 + 待审批 + 今日完成 + 系统健康
-│
-├─ Agents      Agent 中心：安装向导 / 已装 CLI 管理（登录·版本·更新）
-├─ Roles       角色中心：卡片网格 + 详情（Overview/Config/Skills/Stats）
-├─ Skills      Skills + Extensions 资产库
-├─ Projects    项目中心：项目卡片 + 项目详情（含项目任务列表）
-├─ Board       任务看板（全部项目的任务流）
-├─ History     任务历史（筛选/批量/重试）
-├─ Schedules   定时任务
-└─ Settings    数据/会话/工作空间策略
+Dashboard（默认首页 /）—— 按功能逻辑四分区：
+  ① 统计条   今日完成 / 进行中 / 待审批 / 成功率 / 平均耗时 / 项目数
+  ② 任务执行区  进行中列 + 待审批列（实时，卡片带快捷审批/驳回）+ 新建任务
+  ③ 项目区    活跃项目进度卡片 + 新建项目（链接完整看板 /board）
+  ④ Agent 区  各 CLI 安装/登录状态徽标 + 角色健康（启用/运行中/待审批）
+               + 技能库计数 + 低频管理快捷入口（Agents / Roles / Skills）
+
+侧边栏（按使用频率分组）：
+  工作区   Dashboard（工作台） / Board（完整看板+列表） / History
+  管理     Agents（安装/登录/更新） / Roles（角色定制） / Skills（资产库） / Schedules
+  系统     Settings
 ```
 
 ### 工作流逻辑顺序（onboarding）
 ```
-1. Agents    → 发现未安装 CLI → 安装向导（官方脚本流式执行）→ 登录引导（自动检测状态）
-2. Agents    → 安装完成 → 一键生成「默认角色」（按 CLI 官方推荐配置）
-3. Roles     → 自定义角色：选 agent/模型/skills/system prompt/instructions
-4. Projects  → 新建项目：选本地目录（自动识别 git 仓库）
-5. Board     → 派任务：选项目+角色+权限 → 自动创建 git worktree 独立空间
-6. 详情      → 实时终端观察（ANSI 渲染）→ 审批（看 diff）→ 合并/丢弃分支 → 归档
+1. Dashboard Agent 区 → 发现未装 CLI → 安装向导（官方脚本流式执行）→ 登录引导
+2. 安装完成 → 一键生成「默认角色」（按 CLI 官方推荐配置）
+3. Roles 页 → 自定义角色：选 agent/模型/skills/system prompt/instructions
+4. Projects 页 → 新建项目：选本地目录（自动识别 git 仓库）
+5. Dashboard / Board → 派任务：选项目+角色+权限 → 自动创建 git worktree 独立空间
+6. Dashboard 待审批列 / 任务详情 → 实时终端观察（ANSI 渲染）→ 审批（看 diff）→ 合并/丢弃分支
 ```
 
 ### 各页面功能分区设计
 
-**Dashboard（新增）**
-- 上：安装状态条（每个 CLI：已装/未装/登录态，一键跳转安装）
-- 中：进行中任务（实时）、待审批队列（快速审批入口）
-- 下：今日完成图、最近项目动态
+**Dashboard（默认首页，主工作台）**
+- ① 统计条：今日完成 / 进行中 / 待审批 / 成功率 / 平均耗时 / 项目数
+- ② 任务执行区（左主区）：进行中 + 待审批两列实时卡片；待审批卡片带「通过/驳回」快捷操作；顶部新建任务 + 查看完整看板
+- ③ 项目区（右栏）：活跃项目卡片（进度条、任务数、进行中），新建项目入口
+- ④ Agent 区（底栏）：CLI 安装/登录状态徽标（未装可点击跳安装）、角色健康计数、技能库计数、低频管理入口
 
-**Agents 页（重构）**
-- Tab 1 已安装：CLI 卡片（版本/路径/登录状态/默认模型/启用角色数）+ 操作（更新/查看登录方式/卸载）
-- Tab 2 安装向导：可安装 CLI 列表（官方说明+安装命令预览）→ 点击安装 → 内嵌终端流式输出 → 完成检测
-- Tab 3 登录引导：每个 CLI 的登录方式（自动打开授权/复制命令/手动终端），完成后一键检测
-
-**Roles 页（增强）**
-- 卡片网格 + 表格（保留）
-- 详情 tab 扩展：Overview / Config / Skills & Extensions / Stats
-  - Config：model（实例探测候选）、system prompt、**instructions（新增）**、thinking、extra_args、env
-  - Skills & Extensions：按名称勾选技能库 + pi extensions 列表（`pi list` 接入，可安装/移除）
-
-**Skills 页（增强）**
-- 资产库两个分组：Skills（已有）+ Extensions（pi list/install/remove 包装为 Web 操作）
-- 每个资产显示：名称/描述/来源/被哪些角色引用（引用计数）
-
-**Projects 页（增强）**
-- 卡片网格（目录 chip 已有）
-- 项目详情重构：
-  - 概览区：进度环 + 统计 + **git 信息（分支/是否仓库）**
-  - 任务区：项目任务列表 + 新建任务（默认带该项目）
-  - 工作空间区：worktree 使用情况（活跃/可清理）、清理按钮
-
-**Board / 任务详情（升级）**
-- 卡片/列表保留；详情主区升级为**终端式视图**：
-  - xterm.js 渲染（ANSI 颜色、滚动、样式保留）
-  - 顶部：分支/commit 信息 + 操作（全屏/复制/resume）
-  - 侧栏新增：工作空间（分支名、commit、合并/丢弃/清理按钮）、执行记录
+**Board（完整看板，保留）**：三列看板 + 列表视图 + 筛选 + 任务详情两栏
 
 ---
 
@@ -244,14 +224,15 @@ POST   /api/tasks/{id}/resume            # 续跑（新任务，带会话）
 ### Phase 0 — 规划定稿（本文档）
 - 产出：PLAN.md；与用户确认信息架构与优先级
 
-### Phase 1 — Agent 安装与管理（`internal/provision`）
-- [ ] 探测扩展：版本号、登录态（各 CLI 凭据文件）
+### Phase 1 — Dashboard 主工作台 + Agent 安装与管理（`internal/provision`）
+- [ ] **Dashboard 成为默认首页**：统计条 + 任务执行区（进行中/待审批 + 快捷审批/驳回/新建）+ 项目区 + Agent 区（CLI 安装/登录徽标、角色健康、技能库计数、管理入口）
+- [ ] 原看板迁移到 /board（三列看板 + 列表 + 详情，功能不变）
+- [ ] 探测扩展：版本号（--version）、登录态（各 CLI 凭据文件），GET /api/provision
 - [ ] 安装向导：官方命令收集与预览、流式执行（复用 executor 的进程+SSE 模式）
 - [ ] 登录引导：授权方式展示、复制命令、检测按钮
 - [ ] Agents 页重构：已安装 / 安装向导 / 登录 三 tab
-- [ ] Dashboard 安装状态卡片
 - [ ] 安装完成 → 一键创建默认角色
-- 验收：Web 上完成 claude/codex/pi 安装全流程（登录手动）
+- 验收：Dashboard 一屏完成日常任务流；Web 上完成 claude/codex/pi 安装全流程（登录手动）
 
 ### Phase 2 — git worktree 任务空间（`internal/workspace`）
 - [ ] workspace 包：Ensure/Create/Snapshot/Merge/Discard/Cleanup

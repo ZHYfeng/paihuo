@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"paihuo/internal/events"
 	"paihuo/internal/exec"
 	"paihuo/internal/store"
 )
@@ -740,6 +742,67 @@ func (s *Server) listAgentSchemas(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
+// CLI 安装/登录状态（Dashboard Agent 区 + Agents 页共用）
+
+func (s *Server) provisionStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, exec.ProvisionStatus())
+}
+
+// provisionInstall 按官方命令流式安装 CLI：输出经 SSE（provision 事件）推送，
+// 前端内嵌终端实时显示；同一 CLI 并发安装互斥。
+func (s *Server) provisionInstall(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		CLI string `json:"cli"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if _, ok := exec.GetAdapter(in.CLI); !ok {
+		writeErr(w, http.StatusBadRequest, "未知 CLI: "+in.CLI)
+		return
+	}
+	cmd := exec.InstallCommands[in.CLI]
+	if cmd == "" {
+		writeErr(w, http.StatusBadRequest, "该 CLI 暂无内置安装命令，请参考官方文档手动安装")
+		return
+	}
+	if !s.provTryLock(in.CLI) {
+		writeErr(w, http.StatusConflict, in.CLI+" 正在安装中")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"started": true, "cli": in.CLI, "cmd": cmd})
+	go func() {
+		defer s.provUnlock(in.CLI)
+		push := func(line string) {
+			s.hub.Publish(events.Event{Type: "provision", Payload: map[string]any{"cli": in.CLI, "line": line}})
+		}
+		push("$ " + cmd)
+		c := osexec.Command("bash", "-c", cmd)
+		c.Env = os.Environ()
+		out, err := c.StdoutPipe()
+		if err != nil {
+			push("执行失败: " + err.Error())
+			return
+		}
+		c.Stderr = c.Stdout // 合并输出
+		if err := c.Start(); err != nil {
+			push("启动失败: " + err.Error())
+			return
+		}
+		sc := bufio.NewScanner(out)
+		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for sc.Scan() {
+			push(sc.Text())
+		}
+		if err := c.Wait(); err != nil {
+			push("[install] 退出码非零: " + err.Error())
+		} else {
+			push("[install] 完成 ✓")
+		}
+	}()
+}
+
+// ---------------------------------------------------------------------------
 // 技能库（注册到 paihuo 工作目录；角色配置按名称勾选，执行注入实际目录）
 
 func (s *Server) listSkills(w http.ResponseWriter, r *http.Request) {
@@ -1005,4 +1068,21 @@ func (s *Server) projectStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, st)
+}
+
+// provTryLock / provUnlock：同一 CLI 并发安装互斥。
+func (s *Server) provTryLock(cli string) bool {
+	s.provMu.Lock()
+	defer s.provMu.Unlock()
+	if s.provBusy[cli] {
+		return false
+	}
+	s.provBusy[cli] = true
+	return true
+}
+
+func (s *Server) provUnlock(cli string) {
+	s.provMu.Lock()
+	defer s.provMu.Unlock()
+	delete(s.provBusy, cli)
 }

@@ -2,82 +2,18 @@
 <header class="page-header">
   <span class="crumb">派活 / <b>Agents</b></span>
   <span class="spacer"></span>
-  <button class="btn brand sm" onclick="openAgentModal()">
-    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-    New Agent
+  <button class="btn sm" onclick="refreshProvision()">
+    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 8H5M9 12l-4-4 4-4M5 8v5a9 9 0 0 0 14 5"/></svg>
+    刷新检测
   </button>
 </header>
 <div class="page-content">
-
-  <!-- 角色列表 -->
-  <div id="agentListShell">
-    <div class="toolbar">
-      <div class="seg" id="agentViewSeg">
-        <button id="segGrid" class="active" onclick="setAgentView('grid')">Cards</button>
-        <button id="segTable" onclick="setAgentView('table')">Table</button>
-      </div>
-      <input id="aSearch" class="inp" placeholder="Search agents…" oninput="renderAgentList()">
-      <span class="spacer"></span>
-      <span id="agentCount" class="count-info"></span>
-    </div>
-    <div id="agentGrid" class="agent-grid"></div>
-    <div id="agentTableWrap" class="list-wrap hidden">
-      <table class="list-grid">
-        <thead><tr><th>Agent</th><th>CLI</th><th>Model</th><th>Status</th><th style="width:130px">Actions</th></tr></thead>
-        <tbody id="agentList"></tbody>
-      </table>
-      <div id="agentEmpty" class="empty hidden">No agents yet. Each agent binds a CLI; its config form is tailored to that CLI's official docs.</div>
-    </div>
+  <div class="toolbar">
+    <span class="toolbar-note">本机 coding agent 安装管理：按官方方案安装 / 登录引导 / 版本查看。安装输出实时显示，完成后可一键创建默认 Role。</span>
+    <span class="spacer"></span>
+    <span id="provCount" class="count-info"></span>
   </div>
-
-  <!-- 角色详情 -->
-  <div id="agentDetailShell" class="hidden detail-shell">
-    <header class="page-header">
-      <button class="btn ghost sm" onclick="closeAgentDetail()">
-        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        Back
-      </button>
-      <span class="crumb" id="adCrumb"></span>
-      <span class="spacer"></span>
-      <span id="adCliDocs" class="count-info"></span>
-      <button class="btn sm danger" onclick="deleteAgent(state.agentEditing ? state.agentEditing.id : null)">Delete</button>
-    </header>
-    <div class="tab-bar" id="agentTabs">
-      <button class="active" data-tab="overview" onclick="agentTab('overview')">Overview</button>
-      <button data-tab="config" onclick="agentTab('config')">Config</button>
-      <button data-tab="env" onclick="agentTab('env')">Environment</button>
-      <button data-tab="stats" onclick="agentTab('stats')">Stats</button>
-    </div>
-    <div id="agentForm" class="tab-panel"></div>
-  </div>
-</div>
-
-<!-- 新建/编辑角色弹窗（配置区按所选 CLI 的 schema 渲染） -->
-<div class="modal hidden" id="agentModal">
-  <div class="modal-box wide">
-    <h3 id="agentModalTitle">New Agent</h3>
-    <div class="sub" id="agentModalSub">Each CLI has its own official config params; the form adapts to the selected CLI</div>
-    <input type="hidden" id="aId">
-    <div class="row">
-      <label class="field">Name <input id="aName" placeholder="如：编码工"></label>
-      <label class="field">CLI
-        <select id="aCli" onchange="renderAgentModalSchema()"></select>
-      </label>
-    </div>
-    <label class="field">Description <input id="aDesc" placeholder="这个角色负责什么"></label>
-    <div class="row">
-      <label class="field">Default permission
-        <select id="aPerm"><option value="full">Full（直接执行）</option><option value="review">Review（完成后审批）</option></select>
-      </label>
-      <label class="field" style="display:flex;align-items:center;gap:8px;margin-top:26px">
-        <input type="checkbox" id="aEnabled" checked style="width:auto"> Enabled
-      </label>
-    </div>
-    <div id="agentModalSchema"></div>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeModal('agentModal')">Cancel</button>
-      <button class="btn primary" onclick="submitAgent()">Save</button>
-    </div>
-  </div>
+  <div class="prov-grid" id="provGrid"></div>
+  <div id="provEmpty" class="empty hidden">加载中...</div>
 </div>
 {{end}}

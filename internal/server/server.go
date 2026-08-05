@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"paihuo/internal/events"
@@ -33,6 +34,8 @@ type Server struct {
 	skillsDir string                        // 技能库工作目录（<db目录>/skills，定向添加的技能复制到这里）
 	pages     map[string]*template.Template // 每页一个模板集（base + 页面，避免 content 冲突）
 	mux       *http.ServeMux
+	provMu    sync.Mutex      // 安装互斥锁
+	provBusy  map[string]bool // 正在安装的 CLI
 }
 
 const (
@@ -84,20 +87,25 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 		skillsDir: skillsDir,
 		pages: map[string]*template.Template{
 			"index":      template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/index.html")),
+			"board":      template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/board.html")),
 			"history":    template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/history.html")),
 			"agents":     template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/agents.html")),
+			"roles":      template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/roles.html")),
 			"projects":   template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/projects.html")),
 			"autopilots": template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/autopilots.html")),
 			"skills":     template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/skills.html")),
 			"settings":   template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/settings.html")),
 			"login":      template.Must(template.ParseFS(web.FS, "templates/login.html")),
 		},
-		mux: http.NewServeMux(),
+		mux:      http.NewServeMux(),
+		provBusy: map[string]bool{},
 	}
 
 	m := s.mux
 	m.HandleFunc("GET /", s.pageIndex)
+	m.HandleFunc("GET /board", s.pageBoard)
 	m.HandleFunc("GET /history", s.pageHistory)
+	m.HandleFunc("GET /roles", s.pageRoles)
 	m.HandleFunc("GET /agents", s.pageAgents)
 	m.HandleFunc("GET /projects", s.pageProjects)
 	m.HandleFunc("GET /autopilots", s.pageAutopilots)
@@ -156,6 +164,8 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("PATCH /api/agents/{id}", s.patchAgent)
 	m.HandleFunc("DELETE /api/agents/{id}", s.deleteAgent)
 	m.HandleFunc("GET /api/agents/schema", s.listAgentSchemas)
+	m.HandleFunc("POST /api/provision/install", s.provisionInstall)
+	m.HandleFunc("GET /api/provision", s.provisionStatus)
 	m.HandleFunc("GET /api/skills", s.listSkills)
 	m.HandleFunc("POST /api/skills", s.createSkill)
 	m.HandleFunc("DELETE /api/skills/{id}", s.deleteSkill)
@@ -215,7 +225,11 @@ type pageData struct {
 }
 
 func (s *Server) pageIndex(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "index", pageData{Active: "board"})
+	s.render(w, "index", pageData{Active: "dashboard"})
+}
+
+func (s *Server) pageBoard(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "board", pageData{Active: "board"})
 }
 
 func (s *Server) pageHistory(w http.ResponseWriter, r *http.Request) {
@@ -224,6 +238,10 @@ func (s *Server) pageHistory(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) pageAgents(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "agents", pageData{Active: "agents"})
+}
+
+func (s *Server) pageRoles(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "roles", pageData{Active: "roles"})
 }
 
 func (s *Server) pageProjects(w http.ResponseWriter, r *http.Request) {
