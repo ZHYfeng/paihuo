@@ -216,12 +216,20 @@ func TestTmuxRunnerDetachesCodexBatchTerminal(t *testing.T) {
 	_ = r.command("kill-server")
 	t.Cleanup(func() { _ = r.command("kill-server") })
 	workdir := t.TempDir()
+	probe := `test ! -t 0 && test ! -t 1 && test ! -t 2 || exit 1
+test "$PAIHUO_TMUX_ENV_TEST" = ok || exit 2
+test "$` + taskNestedTmuxSkipEnv + `" = 1 || exit 3
+test "$BASH_ENV" = ` + shQuote(r.shellInitPath(42)) + ` || exit 4
+test "$(command -v tmux)" = ` + shQuote(r.tmuxWrapperPath(42)) + ` || exit 5
+printf 'detached agent output\n'
+printf 'pwd=%s\n' "$PWD"
+cat /proc/self/cgroup`
 
 	// 这个断言正好覆盖 Codex 的故障边界：agent 的 stdin/stdout/stderr 都不能
 	// 指向 paihuo task pane 的 pty，但输出仍必须实时回到 terminal.log。
 	if err := r.Start(42, workdir, "/bin/sh", []string{
-		"-c", `test ! -t 0 && test ! -t 1 && test ! -t 2 || exit 1; printf 'detached agent output\n'; printf 'pwd=%s\n' "$PWD"; cat /proc/self/cgroup`,
-	}, os.Environ(), tmuxStartOptions{IsolateProcessGroup: true, DetachTerminal: true, IsolateCgroup: true}); err != nil {
+		"-c", probe,
+	}, []string{"PAIHUO_TMUX_ENV_TEST=ok"}, tmuxStartOptions{IsolateProcessGroup: true, DetachTerminal: true, IsolateCgroup: true}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -296,7 +304,7 @@ func TestTmuxRunnerStopTerminatesIsolatedAgentService(t *testing.T) {
 	})
 	if err := r.Start(42, t.TempDir(), "/bin/sh", []string{
 		"-c", "sleep 2147483647",
-	}, os.Environ(), tmuxStartOptions{IsolateProcessGroup: true, DetachTerminal: true, IsolateCgroup: true}); err != nil {
+	}, nil, tmuxStartOptions{IsolateProcessGroup: true, DetachTerminal: true, IsolateCgroup: true}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 

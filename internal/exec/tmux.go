@@ -109,6 +109,14 @@ func (r *tmuxRunner) agentUnitPath(taskID int64) string {
 	return filepath.Join(r.taskDir(taskID), "agent-unit")
 }
 
+func (r *tmuxRunner) agentEnvPath(taskID int64) string {
+	return filepath.Join(r.taskDir(taskID), "agent.env")
+}
+
+func (r *tmuxRunner) agentLaunchPath(taskID int64) string {
+	return filepath.Join(r.taskDir(taskID), "agent-launch.sh")
+}
+
 // agentUnitName 是按运行根目录和 task ID 推导的稳定 unit 名。稳定名称让取消、
 // 重试与服务恢复都能精确停止对应的 transient service，又避免不同 paihuo 实例
 // 的 task ID 相撞。
@@ -190,7 +198,7 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, op
 	if err := os.Chmod(taskDir, 0o700); err != nil {
 		return fmt.Errorf("设置任务 tmux 目录权限失败: %w", err)
 	}
-	for _, path := range []string{r.exitPath(taskID), r.gatePath(taskID), r.agentOutputPath(taskID), r.runnerCgroupPath(taskID), r.agentUnitPath(taskID)} {
+	for _, path := range []string{r.exitPath(taskID), r.gatePath(taskID), r.agentOutputPath(taskID), r.runnerCgroupPath(taskID), r.agentUnitPath(taskID), r.agentEnvPath(taskID), r.agentLaunchPath(taskID)} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("重置 tmux 任务状态失败: %w", err)
 		}
@@ -206,7 +214,8 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, op
 	if _, err := r.writeTmuxWrapper(taskID); err != nil {
 		return err
 	}
-	if err := r.writeScript(taskID, dir, bin, args, options); err != nil {
+	taskEnv := r.taskShellEnvironment(taskID, env)
+	if err := r.writeScript(taskID, dir, bin, args, taskEnv, options); err != nil {
 		return err
 	}
 	if options.IsolateCgroup {
@@ -214,8 +223,6 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, op
 			return fmt.Errorf("记录 Codex agent service 失败: %w", err)
 		}
 	}
-	taskEnv := r.taskShellEnvironment(taskID, env)
-
 	// tmux 的 -e 给 window 注入角色执行环境，避免把密钥写入 run.sh。
 	cmdArgs := []string{"new-window", "-d", "-t", r.session, "-n", r.taskName(taskID), "-c", dir}
 	for _, item := range taskEnv {
@@ -295,7 +302,57 @@ func isTmuxInternalEnv(key string) bool {
 	return key == "TMUX" || key == "TMUX_PANE"
 }
 
-func (r *tmuxRunner) writeScript(taskID int64, dir, bin string, args []string, options tmuxStartOptions) error {
+func isShellEnvKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i := 0; i < len(key); i++ {
+		ch := key[i]
+		if ch == '_' || ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || i > 0 && ch >= '0' && ch <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// writeAgentLaunchFiles 把 task 专属环境放在 0600 文件中，而不是 systemd-run
+// 的 argv。后者会暴露在同用户的进程列表里，不能承载角色配置中的密钥。
+func (r *tmuxRunner) writeAgentLaunchFiles(taskID int64, invocation string, env []string) error {
+	var source strings.Builder
+	source.WriteString("# 仅供本 task 的 systemd agent service 读取。\n")
+	for _, item := range env {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok || isTmuxInternalEnv(key) {
+			continue
+		}
+		if !isShellEnvKey(key) {
+			return fmt.Errorf("环境变量名无法安全传给 Codex service: %q", key)
+		}
+		source.WriteString("export ")
+		source.WriteString(key)
+		source.WriteString("=")
+		source.WriteString(shQuote(value))
+		source.WriteString("\n")
+	}
+	// systemd service 不继承 tmux pane 的 PATH/TMUX。这里重建 task wrapper
+	// PATH，令 Codex 的 bash -lc 继续使用 BASH_ENV 中的干净 tmux 包装器。
+	source.WriteString("unset TMUX TMUX_PANE\n")
+	source.WriteString("export PATH=")
+	source.WriteString(shQuote(r.taskBinDir(taskID)))
+	source.WriteString(":\"$PATH\"\n")
+	if err := os.WriteFile(r.agentEnvPath(taskID), []byte(source.String()), 0o600); err != nil {
+		return fmt.Errorf("写入 Codex agent 环境失败: %w", err)
+	}
+	launch := "#!/bin/sh\n. " + shQuote(r.agentEnvPath(taskID)) + "\nexec " + invocation + "\n"
+	if err := os.WriteFile(r.agentLaunchPath(taskID), []byte(launch), 0o700); err != nil {
+		_ = os.Remove(r.agentEnvPath(taskID))
+		return fmt.Errorf("写入 Codex agent 启动脚本失败: %w", err)
+	}
+	return nil
+}
+
+func (r *tmuxRunner) writeScript(taskID int64, dir, bin string, args, taskEnv []string, options tmuxStartOptions) error {
 	if options.IsolateCgroup && !options.DetachTerminal {
 		return errors.New("cgroup 隔离需要同时脱离终端，以便可靠保存 agent 输出")
 	}
@@ -319,6 +376,9 @@ func (r *tmuxRunner) writeScript(taskID int64, dir, bin string, args []string, o
 		if err != nil {
 			return fmt.Errorf("未找到 systemd-run；Codex batch 任务需要独立 cgroup: %w", err)
 		}
+		if err := r.writeAgentLaunchFiles(taskID, invocation, taskEnv); err != nil {
+			return err
+		}
 		output := r.agentOutputPath(taskID)
 		// systemd-run service 是 tmux pane scope 的同级 cgroup。即使 Codex 的
 		// unified exec 终止自己的 cgroup，run.sh 和 pipe-pane 也不会被波及。
@@ -329,7 +389,7 @@ func (r *tmuxRunner) writeScript(taskID int64, dir, bin string, args []string, o
 			" --property=" + shQuote("StandardInput=null") +
 			" --property=" + shQuote("StandardOutput=append:"+output) +
 			" --property=" + shQuote("StandardError=append:"+output) +
-			" -- " + invocation
+			" -- " + shQuote(r.agentLaunchPath(taskID))
 	}
 	execution := invocation + "\n" +
 		"status=$?\n"
@@ -507,8 +567,10 @@ func (r *tmuxRunner) stopAgentService(taskID int64) error {
 			return fmt.Errorf("停止 Codex agent service %s 失败: %w: %s", unit, stopErr, msg)
 		}
 	}
-	if err := os.Remove(r.agentUnitPath(taskID)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("清理 Codex agent service 记录失败: %w", err)
+	for _, path := range []string{r.agentUnitPath(taskID), r.agentEnvPath(taskID), r.agentLaunchPath(taskID)} {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("清理 Codex agent 运行文件失败: %w", err)
+		}
 	}
 	return nil
 }
