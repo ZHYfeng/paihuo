@@ -230,6 +230,49 @@ func TestApproveReviewTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 	}
 }
 
+// 并发开关：默认不并发（串行），显式勾选则完整往返保存。
+func TestTaskConcurrentDefaultsFalseAndRoundTrips(t *testing.T) {
+	s := openTest(t)
+	defaultID, err := s.CreateTask(Task{Title: "serial", Status: StatusQueued})
+	if err != nil {
+		t.Fatal(err)
+	}
+	def, err := s.GetTask(defaultID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def.Concurrent {
+		t.Fatal("新任务默认不应并发")
+	}
+
+	concurrentID, err := s.CreateTask(Task{Title: "parallel", Status: StatusQueued, Concurrent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conc, err := s.GetTask(concurrentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !conc.Concurrent {
+		t.Fatal("显式勾选并发的任务应保存为并发")
+	}
+	// 列表接口同样返回并发标记（最新在前，按标题定位）
+	tasks, err := s.ListTasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("应有 2 个任务，得到 %d", len(tasks))
+	}
+	marks := map[string]bool{}
+	for _, tk := range tasks {
+		marks[tk.Title] = tk.Concurrent
+	}
+	if marks["serial"] || !marks["parallel"] {
+		t.Fatalf("列表并发标记异常: %+v", tasks)
+	}
+}
+
 // CleanupTasks 只删终态任务。
 func TestCleanupTasksOnlyTerminal(t *testing.T) {
 	s := openTest(t)
@@ -255,7 +298,7 @@ func TestMigrateAddsNewColumns(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	// 模拟老库：删掉新列后再打开，migrate 应补齐
-	for _, col := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "tmux_log_offset", "run_mode"} {
+	for _, col := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "tmux_log_offset", "run_mode", "concurrent"} {
 		if _, err := s.db.Exec("ALTER TABLE tasks DROP COLUMN " + col); err != nil {
 			s.Close()
 			t.Fatalf("drop %s: %v", col, err)
@@ -276,7 +319,7 @@ func TestMigrateAddsNewColumns(t *testing.T) {
 	for _, r := range mustRows(t, s2, "PRAGMA table_info(tasks)") {
 		cols[r[1]] = true
 	}
-	for _, want := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "project_dir", "tmux_log_offset", "run_mode"} {
+	for _, want := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "project_dir", "tmux_log_offset", "run_mode", "concurrent"} {
 		if !cols[want] {
 			t.Fatalf("迁移后缺少列 %s（现有列: %v）", want, cols)
 		}
