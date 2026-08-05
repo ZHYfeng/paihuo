@@ -163,6 +163,10 @@ func cliOutput(timeout time.Duration, name string, args ...string) (string, bool
 // pi：`pi --list-models`（权威：按 auth.json 凭据只列实际可用模型，表格式
 // provider model ...）；失败回退 settings.json（defaultProvider/defaultModel）
 // + models-store.json（只取有凭据的 provider）。
+// 候选一律 provider/model 限定形式：裸 id 在多个 provider 存在同名模型时
+// 有歧义（如本机 deepseek 与 opencode-go 都有 deepseek-v4-flash），pi 对
+// `--model 裸id` 的解析取决于其模型文件里的 provider 顺序，用户从候选里
+// 选出来的模型可能与实际解析到的 provider 不一致。
 
 func (a *piAdapter) Models() []string {
 	return cachedModels("pi", func() []string {
@@ -182,22 +186,10 @@ func (a *piAdapter) Models() []string {
 				out = append(out, s)
 			}
 		}
-		add(st.DefaultModel)
-		add(st.DefaultProvider + "/" + st.DefaultModel)
 
 		// 权威来源：pi --list-models 按实际凭据过滤（无凭据的 provider 不会出现）。
 		if raw, ok := cliOutput(probeTimeout, "pi", "--list-models"); ok {
-			for _, line := range strings.Split(raw, "\n") {
-				fs := strings.Fields(line)
-				if len(fs) < 2 || fs[0] == "provider" && fs[1] == "model" {
-					continue // 表头行
-				}
-				prov, model := fs[0], fs[1]
-				if prov == st.DefaultProvider {
-					add(model) // 默认 provider：裸 id 即可
-				}
-				add(prov + "/" + model)
-			}
+			out = piModelCandidates(st.DefaultProvider, st.DefaultModel, piListModelsRows(raw))
 			if len(out) > 0 {
 				saveModelsDisk("pi", out)
 				return capModels(out, 60)
@@ -242,20 +234,68 @@ func (a *piAdapter) Models() []string {
 		for p := range provMap {
 			provs = append(provs, p)
 		}
-		sort.Strings(provs)
+		// 默认 provider 排最前，其余按字母序
+		sort.Slice(provs, func(i, j int) bool {
+			if provs[i] == st.DefaultProvider {
+				return true
+			}
+			if provs[j] == st.DefaultProvider {
+				return false
+			}
+			return provs[i] < provs[j]
+		})
 		for _, prov := range provs {
 			if !cred[prov] {
 				continue
 			}
 			for _, id := range provMap[prov] {
-				if prov == st.DefaultProvider {
-					add(id) // 默认 provider：裸 id 即可
-				}
-				add(prov + "/" + id)
+				add(prov + "/" + id) // 一律限定形式：裸 id 跨 provider 有歧义
 			}
 		}
 		return capModels(out, 60)
 	})
+}
+
+// piListModelsRows 解析 `pi --list-models` 的表格式输出（跳过表头行），
+// 返回 (provider, model) 对。
+func piListModelsRows(raw string) [][2]string {
+	var rows [][2]string
+	for _, line := range strings.Split(raw, "\n") {
+		fs := strings.Fields(line)
+		if len(fs) < 2 || fs[0] == "provider" && fs[1] == "model" {
+			continue // 表头行
+		}
+		rows = append(rows, [2]string{fs[0], fs[1]})
+	}
+	return rows
+}
+
+// piModelCandidates 从 (provider, model) 行构建 pi 模型候选：
+// 全部用 provider/model 限定形式（裸 id 跨 provider 有歧义，见 piAdapter.Models
+// 注释）；默认 provider 的模型排最前，默认模型永远是第一条候选。
+func piModelCandidates(defaultProvider, defaultModel string, rows [][2]string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(s string) {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	if defaultProvider != "" && defaultModel != "" {
+		add(defaultProvider + "/" + defaultModel)
+	}
+	for _, r := range rows {
+		if r[0] == defaultProvider {
+			add(r[0] + "/" + r[1])
+		}
+	}
+	for _, r := range rows {
+		if r[0] != defaultProvider {
+			add(r[0] + "/" + r[1])
+		}
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------

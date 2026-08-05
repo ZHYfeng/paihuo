@@ -101,6 +101,50 @@ func TestOmpActiveProvidersSkipsDisabled(t *testing.T) {
 	}
 }
 
+// pi 模型候选必须全部是 provider/model 限定形式。裸 id（如 deepseek-v4-flash、
+// glm-5.1）在多个 provider 存在同名模型时是歧义的（本机 deepseek 与
+// opencode-go 都有 deepseek-v4-flash / deepseek-v4-pro）：pi 对 --model 裸 id
+// 的解析取决于其模型文件里的 provider 顺序，用户从候选里选出来的模型可能与
+// 实际解析到的 provider 不一致——即「模型选择不对」。
+func TestPiModelCandidatesQualifiedOnly(t *testing.T) {
+	rows := piListModelsRows(`provider     model              context  max-out  thinking  images
+deepseek     deepseek-v4-flash  1M       384K     yes       no
+deepseek     deepseek-v4-pro    1M       384K     yes       no
+opencode-go  deepseek-v4-flash  1M       384K     yes       no
+opencode-go  deepseek-v4-pro    1M       384K     yes       no
+opencode-go  glm-5.1            202.8K   32.8K    yes       no`)
+	if len(rows) != 5 {
+		t.Fatalf("应解析出 5 行（跳过表头行），得到 %d: %v", len(rows), rows)
+	}
+
+	got := piModelCandidates("opencode-go", "deepseek-v4-flash", rows)
+	// 不允许出现裸 id：每个候选都必须是 provider/model
+	for _, m := range got {
+		if !strings.Contains(m, "/") {
+			t.Fatalf("候选不应出现裸 id: %q（全部候选 %v）", m, got)
+		}
+	}
+	// 默认 provider 排最前，默认模型是第一条候选
+	if len(got) == 0 || got[0] != "opencode-go/deepseek-v4-flash" {
+		t.Fatalf("第一条候选应为默认模型的限定形式，得到 %v", got)
+	}
+	// 无重复
+	seen := map[string]bool{}
+	for _, m := range got {
+		if seen[m] {
+			t.Fatalf("候选重复: %q", m)
+		}
+		seen[m] = true
+	}
+	// 同名模型在不同 provider 下各自保留（deepseek 与 opencode-go 的 deepseek-v4-flash）
+	joined := strings.Join(got, " ")
+	for _, want := range []string{"deepseek/deepseek-v4-flash", "opencode-go/deepseek-v4-flash"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("应包含 %s，得到 %v", want, got)
+		}
+	}
+}
+
 // 磁盘缓存回退：权威命令偶发超时（opencode 目录刷新 20~30s+）时，
 // 回退应复用最近一次成功结果而不是缩水到配置文件里的 1~2 个模型。
 func TestModelsDiskCacheRoundTrip(t *testing.T) {
