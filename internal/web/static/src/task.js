@@ -56,7 +56,7 @@ export function cardHTML(t) {
     <div class="c-title">${esc(t.title)}</div>
     ${t.body ? `<div class="c-desc">${esc(t.body)}</div>` : ""}
     <div class="c-meta">
-      ${t.project_name ? `<span class="chip">${esc(t.project_name)}</span>` : ""}
+      ${t.project_id && t.project_name ? `<a class="chip chip-link" href="/projects#/project/${t.project_id}" title="打开项目页" onclick="event.stopPropagation()">${esc(t.project_name)}</a>` : ""}
       <span class="c-foot">
         ${t.agent_name ? `<span class="c-agent"><span class="avatar sm">${esc((t.agent_name || "?").slice(0, 1))}</span>${esc(t.agent_name)}</span>` : `<span class="c-agent" style="color:var(--fg-faint)">未指派</span>`}
         ${t.error ? `<span style="color:var(--danger)">✗</span>` : ""}
@@ -74,7 +74,7 @@ export function renderList() {
       <td class="num">#${t.id}</td>
       <td class="t-title">${esc(t.title)}</td>
       <td>${esc(t.agent_name || "-")}</td>
-      <td>${esc(t.project_name || "-")}</td>
+      <td>${t.project_id ? `<a class="t-link" href="/projects#/project/${t.project_id}" onclick="event.stopPropagation()">${esc(t.project_name || "-")}</a>` : esc(t.project_name || "-")}</td>
       <td><span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span></td>
       <td>${t.review_rounds || ""}</td>
       <td class="num">${(t.created_at || "").slice(5, 16).replace("T", " ")}</td>
@@ -103,7 +103,15 @@ export function setView(v) {
   if (v === "list") renderList(); else renderBoard();
 }
 
-export function applyFilters() { state.view === "list" ? renderList() : renderBoard(); }
+export function applyFilters() {
+  const pl = document.getElementById("fProjectLink");
+  const pv = Number(document.getElementById("fProject")?.value) || null;
+  if (pl) {
+    if (pv) { pl.href = `/projects#/project/${pv}`; pl.style.display = ""; }
+    else pl.style.display = "none";
+  }
+  state.view === "list" ? renderList() : renderBoard();
+}
 
 /* ============================================================
    任务详情（两栏）
@@ -271,6 +279,7 @@ export function renderSide(t) {
       <span class="v"><select onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
     <div class="prop-row"><span class="k">角色</span><span class="v">${esc(t.agent_name || "未指派")}</span></div>
     <div class="prop-row"><span class="k">权限</span><span class="v">${PERM_LABEL[t.perm] || t.perm}</span></div>
+    <div class="prop-row"><span class="k">执行器</span><span class="v">tmux · ${["claimed", "running"].includes(t.status) ? `paihuo:task-${t.id}` : "日志已归档"}</span></div>
     <div class="prop-row"><span class="k">目录</span><span class="v" style="font-size:12px;word-break:break-all">${esc(t.project_dir || "-")}</span></div>
     <div class="prop-row"><span class="k">轮次</span><span class="v">${t.review_rounds || "-"}</span></div>
     <div class="prop-row"><span class="k">开始</span><span class="v">${esc((t.started_at || "-").slice(0, 16).replace("T", " "))}</span></div>

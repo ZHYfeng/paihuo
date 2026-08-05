@@ -31,9 +31,9 @@ type RoleConfig struct {
 	Model        string            `json:"model"`
 	SystemPrompt string            `json:"system_prompt"`
 	Instructions string            `json:"instructions"` // 任务指令模板（追加在 system prompt 之后）
-	Skills       []string          `json:"skills"`   // 技能目录
-	Thinking     string            `json:"thinking"` // "" | low | medium | high
-	Plugins      []string          `json:"plugins"`  // 插件/配置文件
+	Skills       []string          `json:"skills"`       // 技能目录
+	Thinking     string            `json:"thinking"`     // "" | low | medium | high
+	Plugins      []string          `json:"plugins"`      // 插件/配置文件
 	ExtraArgs    []string          `json:"extra_args"`
 	Env          map[string]string `json:"env"`
 	Custom       map[string]string `json:"custom,omitempty"` // CLI 特有参数（如 opencode 的 agent、claude 的 permission_mode）
@@ -46,36 +46,36 @@ type Agent struct {
 	CLI         string     `json:"cli"` // 适配器 id：omp | opencode | pi | claude | codex
 	RoleConfig  RoleConfig `json:"role_config"`
 	ProjectDir  string     `json:"project_dir"` // 绑定的项目目录
-	DefaultPerm string     `json:"default_perm"`
 	Enabled     bool       `json:"enabled"`
 	CreatedAt   string     `json:"created_at"`
 	UpdatedAt   string     `json:"updated_at"`
 }
 
 type Task struct {
-	ID           int64   `json:"id"`
-	Title        string  `json:"title"`
-	Body         string  `json:"body"`
-	Status       string  `json:"status"`
-	Perm         string  `json:"perm"`
-	AgentID      *int64  `json:"agent_id"`
-	AgentName    string  `json:"agent_name,omitempty"`
-	ProjectID    *int64  `json:"project_id"`
-	ProjectName  string  `json:"project_name,omitempty"`
-	ProjectDir   string  `json:"project_dir"`
-	ParentID     *int64  `json:"parent_id"`
-	ScheduleID   *int64  `json:"schedule_id"`
-	Error        string  `json:"error"`
-	ExitCode     *int    `json:"exit_code"`
-	ReviewNote   string  `json:"review_note"`
-	ReviewRounds int     `json:"review_rounds"`
-	WorktreeBranch string `json:"worktree_branch"` // 任务隔离 worktree 分支（paihuo/task-<id>）
-	BaseCommit     string `json:"base_commit"`     // 创建 worktree 时主分支 HEAD
-	ResumeOf       *int64  `json:"resume_of"`      // 续跑自哪个任务（复用其会话目录）
-	CreatedAt    string  `json:"created_at"`
-	StartedAt    *string `json:"started_at"`
-	FinishedAt   *string `json:"finished_at"`
-	UpdatedAt    string  `json:"updated_at"`
+	ID             int64   `json:"id"`
+	Title          string  `json:"title"`
+	Body           string  `json:"body"`
+	Status         string  `json:"status"`
+	Perm           string  `json:"perm"`
+	AgentID        *int64  `json:"agent_id"`
+	AgentName      string  `json:"agent_name,omitempty"`
+	ProjectID      *int64  `json:"project_id"`
+	ProjectName    string  `json:"project_name,omitempty"`
+	ProjectDir     string  `json:"project_dir"`
+	ParentID       *int64  `json:"parent_id"`
+	ScheduleID     *int64  `json:"schedule_id"`
+	Error          string  `json:"error"`
+	ExitCode       *int    `json:"exit_code"`
+	ReviewNote     string  `json:"review_note"`
+	ReviewRounds   int     `json:"review_rounds"`
+	TmuxLogOffset  int64   `json:"-"`               // 已从专用 tmux 原始日志同步到 SQLite 的字节偏移
+	WorktreeBranch string  `json:"worktree_branch"` // 任务隔离 worktree 分支（paihuo/task-<id>）
+	BaseCommit     string  `json:"base_commit"`     // 创建 worktree 时主分支 HEAD
+	ResumeOf       *int64  `json:"resume_of"`       // 续跑自哪个任务（复用其会话目录）
+	CreatedAt      string  `json:"created_at"`
+	StartedAt      *string `json:"started_at"`
+	FinishedAt     *string `json:"finished_at"`
+	UpdatedAt      string  `json:"updated_at"`
 }
 
 // Duration 返回任务耗时（秒）：终态且 started/finished 齐全时有效。
@@ -206,6 +206,7 @@ type Schedule struct {
 	BodyTemplate  string  `json:"body_template"`
 	AgentID       int64   `json:"agent_id"`
 	AgentName     string  `json:"agent_name,omitempty"`
+	Perm          string  `json:"perm"` // 每次触发时写入新建任务的权限模式
 	Enabled       bool    `json:"enabled"`
 	LastRunAt     *string `json:"last_run_at"`
 	NextRunAt     *string `json:"next_run_at"`

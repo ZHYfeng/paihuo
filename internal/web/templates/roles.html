@@ -65,14 +65,9 @@
       </label>
     </div>
     <label class="field">描述 <input id="aDesc" placeholder="这个角色负责什么"></label>
-    <div class="row">
-      <label class="field">默认权限
-        <select id="aPerm"><option value="full">Full（直接执行）</option><option value="review">Review（完成后审批）</option></select>
-      </label>
-      <label class="field" style="display:flex;align-items:center;gap:8px;margin-top:26px">
-        <input type="checkbox" id="aEnabled" checked style="width:auto"> 启用
-      </label>
-    </div>
+    <label class="field" style="display:flex;align-items:center;gap:8px;margin-top:12px">
+      <input type="checkbox" id="aEnabled" checked style="width:auto"> 启用
+    </label>
     <div id="agentModalSchema"></div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal('agentModal')">取消</button>

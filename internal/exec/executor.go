@@ -1,17 +1,13 @@
 package exec
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"log"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"paihuo/internal/events"
@@ -26,6 +22,8 @@ type Executor struct {
 	st           *store.Store
 	hub          *events.Hub
 	sessionsRoot string // 任务工作空间根目录（<db目录>/sessions）
+	taskSessions *taskSessionStore
+	runner       *tmuxRunner
 	mu           sync.Mutex
 	busy         map[int64]struct{} // 正在执行任务的 agent id
 	// cancels 是任务级取消句柄
@@ -33,11 +31,17 @@ type Executor struct {
 	wake    chan struct{}
 }
 
-func New(st *store.Store, hub *events.Hub, sessionsRoot string) *Executor {
+var errExecutorStopping = errors.New("paihuo 正在停止")
+
+// New 创建执行器。instanceID 必须稳定标识当前派活数据库，用于把 agent
+// CLI 的会话文件和同机其他 paihuo 实例隔离开。
+func New(st *store.Store, hub *events.Hub, sessionsRoot, instanceID string) *Executor {
 	return &Executor{
 		st:           st,
 		hub:          hub,
 		sessionsRoot: sessionsRoot,
+		taskSessions: newTaskSessionStore(sessionsRoot, instanceID),
+		runner:       newTmuxRunner(sessionsRoot),
 		busy:         make(map[int64]struct{}),
 		cancels:      make(map[int64]context.CancelFunc),
 		wake:         make(chan struct{}, 1),
@@ -45,24 +49,60 @@ func New(st *store.Store, hub *events.Hub, sessionsRoot string) *Executor {
 }
 
 func (e *Executor) Start(ctx context.Context) {
-	e.resetInterrupted()
+	// 启动时就建立唯一的专用 session。即使暂时没有任务，运维也可直接
+	// attach 观察；实际任务只会增减各自的 task-<id> window。
+	if err := e.runner.ensureSession(); err != nil {
+		log.Printf("⚠ 专用 tmux 执行器未就绪: %v", err)
+	}
+	e.recoverInterrupted(ctx)
 	go e.loop(ctx)
 }
 
-// resetInterrupted 服务重启时，把卡在运行态的任务标记为失败（进程已死）。
-func (e *Executor) resetInterrupted() {
+// recoverInterrupted 服务重启时重新接管仍存在的专用 tmux window；只有找不到
+// window 且没有退出码的任务才判定为中断。这样 Web/调度器重启不会杀掉长任务。
+func (e *Executor) recoverInterrupted(ctx context.Context) {
 	tasks, err := e.st.ListRunningTasks()
 	if err != nil {
 		return
 	}
 	for _, tk := range tasks {
-		msg := "服务重启，任务中断"
-		_ = e.st.UpdateTask(tk.ID, map[string]any{
-			"status": store.StatusFailed, "finished_at": store.Now(), "error": msg,
-		})
-		e.log(tk.ID, "sys", "✗ "+msg)
-		e.publishTask(tk.ID)
+		obs, err := e.runner.Poll(tk.ID, tk.TmuxLogOffset)
+		if err != nil {
+			e.markInterrupted(tk, "服务重启，未找到可恢复的 tmux 任务")
+			continue
+		}
+		if err := e.syncTmuxOutput(&tk, obs); err != nil {
+			e.markInterrupted(tk, "服务重启，恢复 tmux 日志失败: "+err.Error())
+			continue
+		}
+		if obs.Done {
+			e.log(tk.ID, "sys", "↻ 服务恢复：tmux 任务已退出，补收日志后结算")
+			e.finishRun(tk, obs.ExitCode, exitError(obs.ExitCode), false)
+			continue
+		}
+		if !obs.Alive {
+			e.markInterrupted(tk, "服务重启，未找到可恢复的 tmux window")
+			continue
+		}
+		if tk.AgentID == nil {
+			e.markInterrupted(tk, "服务重启，任务未指派角色")
+			continue
+		}
+		e.mu.Lock()
+		e.busy[*tk.AgentID] = struct{}{}
+		e.mu.Unlock()
+		e.log(tk.ID, "sys", "↻ 服务恢复：重新接管专用 tmux window")
+		go e.monitorRecovered(ctx, tk)
 	}
+}
+
+func (e *Executor) markInterrupted(tk store.Task, msg string) {
+	e.runner.Cleanup(tk.ID)
+	_ = e.st.UpdateTask(tk.ID, map[string]any{
+		"status": store.StatusFailed, "finished_at": store.Now(), "error": msg,
+	})
+	e.log(tk.ID, "sys", "✗ "+msg)
+	e.publishTask(tk.ID)
 }
 
 // Wake 触发一次立即派发（创建/重试任务后调用）。
@@ -81,6 +121,27 @@ func (e *Executor) CancelTask(id int64) {
 	if ok {
 		c()
 	}
+	// 任务可能正处于服务刚恢复、尚未来得及登记 cancel 的窗口；直接终止其
+	// 专用 tmux window 作为兜底。
+	_ = e.runner.Stop(id)
+}
+
+// RemoveTask 在删除任务前停止 tmux window 并清理其运行时文件。
+func (e *Executor) RemoveTask(id int64) {
+	e.CancelTask(id)
+	e.runner.Cleanup(id)
+	_ = e.taskSessions.Remove(id)
+}
+
+// ResetTaskSession 让驳回重做等全新执行不复用旧会话。
+func (e *Executor) ResetTaskSession(id int64) {
+	_ = e.taskSessions.Remove(id)
+}
+
+// CleanupOrphanTaskSessions 清理当前 paihuo 实例自己的孤儿 agent 会话；
+// 不会读取或删除其他数据库/实例的目录。
+func (e *Executor) CleanupOrphanTaskSessions() (int, error) {
+	return e.taskSessions.CleanupOrphans(e.st.HasTask)
 }
 
 func (e *Executor) loop(ctx context.Context) {
@@ -146,6 +207,7 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	e.publishTask(tk.ID)
 
 	fail := func(msg string) {
+		e.runner.Cleanup(tk.ID)
 		e.log(tk.ID, "sys", "✗ "+msg)
 		_ = e.st.UpdateTask(tk.ID, map[string]any{
 			"status": store.StatusFailed, "finished_at": store.Now(), "error": msg,
@@ -177,17 +239,10 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		return
 	}
 
-	// 执行上下文：任务取消或进程退出时终止。
-	rctx, cancel := context.WithCancel(ctx)
-	e.mu.Lock()
-	e.cancels[tk.ID] = cancel
-	e.mu.Unlock()
-	defer func() {
-		e.mu.Lock()
-		delete(e.cancels, tk.ID)
-		e.mu.Unlock()
-		cancel()
-	}()
+	// 任务取消上下文独立于服务生命周期：服务重启时 tmux 任务继续运行，
+	// 下次启动再重新接管；只有用户取消才会终止 task window。
+	rctx, release := e.taskContext(tk.ID)
+	defer release()
 
 	e.log(tk.ID, "sys", fmt.Sprintf("▶ 开始执行：角色=%s CLI=%s 权限=%s", agent.Name, agent.CLI, tk.Perm))
 	// 任务隔离工作空间：git worktree（独立分支+目录）；非 git 项目直接执行
@@ -202,7 +257,7 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		e.log(tk.ID, "sys", "📁 在项目目录直接执行（非 git 仓库，无隔离）")
 	}
 
-	ro := RunOptions{Dir: dir, Prompt: tk.Body, Role: agent.RoleConfig, Perm: tk.Perm}
+	ro := RunOptions{Dir: dir, Prompt: taskPrompt(tk), Role: agent.RoleConfig, Perm: tk.Perm}
 	// instructions：任务指令模板，追加在提示词之前（适配器可按 CLI 映射为官方参数）
 	if instr := strings.TrimSpace(agent.RoleConfig.Instructions); instr != "" {
 		ro.Prompt = instr + "\n\n" + ro.Prompt
@@ -213,11 +268,11 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		sessID = *tk.ResumeOf
 		e.log(tk.ID, "sys", fmt.Sprintf("↻ 续跑任务 #%d 的会话（attach 回上次对话）", sessID))
 	}
-	sessDir := filepath.Join(os.TempDir(), "paihuo-sessions", fmt.Sprintf("task-%d", sessID))
-	if err := os.MkdirAll(sessDir, 0o755); err == nil {
+	sessDir, sessErr := e.taskSessions.Ensure(sessID)
+	if sessErr == nil {
 		ro.SessionDir = sessDir
 	} else {
-		e.log(tk.ID, "sys", "⚠ 会话目录创建失败，任务会话可能互相干扰: "+err.Error())
+		e.log(tk.ID, "sys", "⚠ 会话目录创建失败，任务会话可能互相干扰: "+sessErr.Error())
 	}
 	for _, w := range adapter.Warnings(ro) {
 		e.log(tk.ID, "sys", "⚠ "+w)
@@ -229,18 +284,127 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		return
 	}
 	e.log(tk.ID, "sys", "$ "+shellJoin(append([]string{bin}, args...)))
+	if err := e.st.UpdateTmuxLogOffset(tk.ID, 0); err != nil {
+		fail("重置 tmux 日志位置失败: " + err.Error())
+		return
+	}
+	tk.TmuxLogOffset = 0
+	e.log(tk.ID, "sys", fmt.Sprintf("▣ 专用 tmux：server=paihuo window=task-%d", tk.ID))
+	if err := e.runner.Start(tk.ID, dir, bin, args, env); err != nil {
+		fail(err.Error())
+		return
+	}
+	code, runErr := e.waitTmux(ctx, rctx, &tk)
+	e.finishRun(tk, code, runErr, rctx.Err() != nil)
+}
 
-	onLine := func(stream, text string) { e.log(tk.ID, stream, text) }
-	code, runErr := e.runLocal(rctx, tk, dir, bin, args, env, onLine)
+func (e *Executor) monitorRecovered(ctx context.Context, tk store.Task) {
+	if tk.AgentID == nil {
+		return
+	}
+	defer func() {
+		e.mu.Lock()
+		delete(e.busy, *tk.AgentID)
+		e.mu.Unlock()
+		e.Wake()
+	}()
+	rctx, release := e.taskContext(tk.ID)
+	defer release()
+	code, runErr := e.waitTmux(ctx, rctx, &tk)
+	e.finishRun(tk, code, runErr, rctx.Err() != nil)
+}
 
-	// 终态判定：取消优先于失败。
+func (e *Executor) taskContext(taskID int64) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	e.mu.Lock()
+	e.cancels[taskID] = cancel
+	e.mu.Unlock()
+	return ctx, func() {
+		e.mu.Lock()
+		delete(e.cancels, taskID)
+		e.mu.Unlock()
+		cancel()
+	}
+}
+
+// waitTmux 将 tmux pipe-pane 文件增量同步到 SQLite，并等待 window 内命令退出。
+// serviceCtx 取消表示 paihuo 自身退出，此时保留 task window；taskCtx 取消才终止任务。
+func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task) (int, error) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := taskCtx.Err(); err != nil {
+			_ = e.runner.Stop(tk.ID)
+			if obs, pollErr := e.runner.Poll(tk.ID, tk.TmuxLogOffset); pollErr == nil {
+				_ = e.syncTmuxOutput(tk, obs)
+			}
+			return -1, err
+		}
+		if serviceCtx.Err() != nil {
+			if obs, pollErr := e.runner.Poll(tk.ID, tk.TmuxLogOffset); pollErr == nil {
+				_ = e.syncTmuxOutput(tk, obs)
+			}
+			return -1, errExecutorStopping
+		}
+		obs, err := e.runner.Poll(tk.ID, tk.TmuxLogOffset)
+		if err != nil {
+			return -1, err
+		}
+		if err := e.syncTmuxOutput(tk, obs); err != nil {
+			return -1, err
+		}
+		if obs.Done {
+			return obs.ExitCode, exitError(obs.ExitCode)
+		}
+		if !obs.Alive {
+			return -1, fmt.Errorf("专用 tmux window task-%d 已消失，且未留下退出码", tk.ID)
+		}
+		select {
+		case <-serviceCtx.Done():
+		case <-taskCtx.Done():
+		case <-ticker.C:
+		}
+	}
+}
+
+func (e *Executor) syncTmuxOutput(tk *store.Task, obs tmuxObservation) error {
+	for _, line := range obs.Lines {
+		l, err := e.st.AppendLog(store.TaskLog{TaskID: tk.ID, Stream: "out", Content: line})
+		if err != nil {
+			return err
+		}
+		e.hub.Publish(events.Event{Type: "log", TaskID: tk.ID, Payload: l})
+	}
+	if obs.Offset != tk.TmuxLogOffset {
+		if err := e.st.UpdateTmuxLogOffset(tk.ID, obs.Offset); err != nil {
+			return err
+		}
+		tk.TmuxLogOffset = obs.Offset
+	}
+	return nil
+}
+
+func exitError(code int) error {
+	if code == 0 {
+		return nil
+	}
+	return fmt.Errorf("tmux 中的命令退出，exit=%d", code)
+}
+
+// finishRun 统一结算正常执行与服务重启后重新接管的 tmux 任务。
+func (e *Executor) finishRun(tk store.Task, code int, runErr error, canceled bool) {
+	if errors.Is(runErr, errExecutorStopping) {
+		e.log(tk.ID, "sys", "⏸ paihuo 正在停止，专用 tmux 任务将继续运行并在下次启动后接管")
+		return
+	}
+	defer e.runner.Cleanup(tk.ID)
 	cur, _ := e.st.GetTask(tk.ID)
 	if cur != nil && cur.Status == store.StatusCancelled {
 		e.log(tk.ID, "sys", "■ 已取消")
 		return
 	}
 	if runErr != nil {
-		if rctx.Err() != nil || errors.Is(runErr, context.Canceled) {
+		if canceled || errors.Is(runErr, context.Canceled) {
 			_ = e.st.UpdateTask(tk.ID, map[string]any{
 				"status": store.StatusCancelled, "finished_at": store.Now(), "error": "已终止",
 			})
@@ -269,67 +433,6 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	})
 	e.log(tk.ID, "sys", "✓ 完成")
 	e.publishTask(tk.ID)
-}
-
-// runLocal 在本地执行 CLI；取消时杀掉整个进程组。
-func (e *Executor) runLocal(ctx context.Context, tk store.Task, dir string, bin string, args []string, env []string, onLine func(stream, line string)) (int, error) {
-	cmd := exec.Command(bin, args...)
-	cmd.Dir = dir
-	cmd.Env = env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // 独立进程组，便于整组终止
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return -1, err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return -1, err
-	}
-	if err := cmd.Start(); err != nil {
-		return -1, err
-	}
-
-	doneCh := make(chan struct{})
-	defer close(doneCh) // 覆盖所有返回路径，避免 Start 失败/提前返回时 watcher goroutine 泄漏
-	go func() {
-		select {
-		case <-doneCh:
-		case <-ctx.Done():
-			if cmd.Process != nil {
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			}
-		}
-	}()
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go scanLines(tk.ID, "out", stdout, onLine, &wg)
-	go scanLines(tk.ID, "err", stderr, onLine, &wg)
-	wg.Wait()
-	runErr := cmd.Wait()
-
-	if ctx.Err() != nil {
-		return -1, ctx.Err()
-	}
-	if runErr != nil {
-		code := -1
-		var ee *exec.ExitError
-		if errors.As(runErr, &ee) {
-			code = ee.ExitCode()
-		}
-		return code, runErr
-	}
-	return 0, nil
-}
-
-func scanLines(taskID int64, stream string, r io.Reader, onLine func(stream, line string), wg *sync.WaitGroup) {
-	defer wg.Done()
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
-	for sc.Scan() {
-		onLine(stream, sc.Text())
-	}
 }
 
 func (e *Executor) log(taskID int64, stream, content string) {

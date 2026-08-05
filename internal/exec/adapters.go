@@ -430,6 +430,12 @@ type codexAdapter struct{ baseAdapter }
 
 func (a *codexAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	args := []string{"exec"}
+	// YOLO 对应本机 Codex CLI 的完整绕过模式：不等待批准、不启用 sandbox，
+	// 并允许在非 Git 目录执行。它必须由角色配置显式开启，普通 Codex 仍保留
+	// 官方默认保护。
+	if o.Role.Custom["execution_mode"] == "yolo" {
+		args = append(args, "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check")
+	}
 	if m := o.Role.Model; m != "" {
 		args = append(args, "-c", "model="+tomlQuote(m))
 	}
@@ -464,13 +470,16 @@ func (a *codexAdapter) Warnings(o RunOptions) []string {
 	return ws
 }
 
-// codex 特有字段：temperature、mcp_config_file（写入 codex 配置 TOML）。
+// codex 特有字段：执行模式、temperature、mcp_config_file（写入 codex 配置 TOML）。
 func (a *codexAdapter) Schema() []Field {
 	fs := commonFields()
 	if f := byKey(fs, "thinking"); f != nil {
 		f.Help = "映射为 codex 配置 reasoning_effort（minimal / low / medium / high）"
 	}
 	return append(fs,
+		Field{Key: "execution_mode", Label: "执行模式", Type: "select", Group: "执行",
+			Options: []string{"safe", "yolo"}, Default: "safe",
+			Help: "yolo 会跳过 Codex 的批准、sandbox 与 Git 目录检查；仅用于你明确授权的本机任务。"},
 		Field{Key: "temperature", Label: "Temperature", Type: "select", Group: "模型与指令",
 			Options: []string{"", "0.0", "0.2", "0.4", "0.6", "0.8", "1.0"},
 			Help:    "codex 配置 temperature（默认 0.2），越高越发散"},

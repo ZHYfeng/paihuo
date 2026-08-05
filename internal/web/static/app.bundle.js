@@ -584,7 +584,7 @@
     <div class="c-title">${esc(t.title)}</div>
     ${t.body ? `<div class="c-desc">${esc(t.body)}</div>` : ""}
     <div class="c-meta">
-      ${t.project_name ? `<span class="chip">${esc(t.project_name)}</span>` : ""}
+      ${t.project_id && t.project_name ? `<a class="chip chip-link" href="/projects#/project/${t.project_id}" title="\u6253\u5F00\u9879\u76EE\u9875" onclick="event.stopPropagation()">${esc(t.project_name)}</a>` : ""}
       <span class="c-foot">
         ${t.agent_name ? `<span class="c-agent"><span class="avatar sm">${esc((t.agent_name || "?").slice(0, 1))}</span>${esc(t.agent_name)}</span>` : `<span class="c-agent" style="color:var(--fg-faint)">\u672A\u6307\u6D3E</span>`}
         ${t.error ? `<span style="color:var(--danger)">\u2717</span>` : ""}
@@ -601,7 +601,7 @@
       <td class="num">#${t.id}</td>
       <td class="t-title">${esc(t.title)}</td>
       <td>${esc(t.agent_name || "-")}</td>
-      <td>${esc(t.project_name || "-")}</td>
+      <td>${t.project_id ? `<a class="t-link" href="/projects#/project/${t.project_id}" onclick="event.stopPropagation()">${esc(t.project_name || "-")}</a>` : esc(t.project_name || "-")}</td>
       <td><span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span></td>
       <td>${t.review_rounds || ""}</td>
       <td class="num">${(t.created_at || "").slice(5, 16).replace("T", " ")}</td>
@@ -629,6 +629,14 @@
     else renderBoard();
   }
   function applyFilters() {
+    const pl = document.getElementById("fProjectLink");
+    const pv = Number(document.getElementById("fProject")?.value) || null;
+    if (pl) {
+      if (pv) {
+        pl.href = `/projects#/project/${pv}`;
+        pl.style.display = "";
+      } else pl.style.display = "none";
+    }
     state.view === "list" ? renderList() : renderBoard();
   }
   function openTask(id) {
@@ -785,6 +793,7 @@
       <span class="v"><select onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
     <div class="prop-row"><span class="k">\u89D2\u8272</span><span class="v">${esc(t.agent_name || "\u672A\u6307\u6D3E")}</span></div>
     <div class="prop-row"><span class="k">\u6743\u9650</span><span class="v">${PERM_LABEL[t.perm] || t.perm}</span></div>
+    <div class="prop-row"><span class="k">\u6267\u884C\u5668</span><span class="v">tmux \xB7 ${["claimed", "running"].includes(t.status) ? `paihuo:task-${t.id}` : "\u65E5\u5FD7\u5DF2\u5F52\u6863"}</span></div>
     <div class="prop-row"><span class="k">\u76EE\u5F55</span><span class="v" style="font-size:12px;word-break:break-all">${esc(t.project_dir || "-")}</span></div>
     <div class="prop-row"><span class="k">\u8F6E\u6B21</span><span class="v">${t.review_rounds || "-"}</span></div>
     <div class="prop-row"><span class="k">\u5F00\u59CB</span><span class="v">${esc((t.started_at || "-").slice(0, 16).replace("T", " "))}</span></div>
@@ -1773,7 +1782,6 @@
     document.getElementById("aId").value = a ? a.id : "";
     document.getElementById("aName").value = a ? a.name : "";
     document.getElementById("aDesc").value = a ? a.description || "" : "";
-    document.getElementById("aPerm").value = a ? a.default_perm || "full" : "full";
     document.getElementById("aEnabled").checked = a ? a.enabled : true;
     state.agentModalRC = a ? JSON.parse(JSON.stringify(a.role_config || {})) : {};
     await loadSchema();
@@ -1803,7 +1811,6 @@
       name: document.getElementById("aName").value.trim(),
       description: document.getElementById("aDesc").value.trim(),
       cli,
-      default_perm: document.getElementById("aPerm").value,
       enabled: document.getElementById("aEnabled").checked,
       role_config: schema ? readConfigFrom(schema, document.getElementById("agentModalSchema")) : {}
     };
@@ -1963,6 +1970,7 @@
     document.getElementById("sCron").value = sc ? sc.cron : "0 9 * * *";
     document.getElementById("sTitle").value = sc ? sc.title_template : "";
     document.getElementById("sBody").value = sc ? sc.body_template : "";
+    document.getElementById("sPerm").value = sc ? sc.perm || "full" : "full";
     document.getElementById("sEnabled").checked = sc ? sc.enabled : true;
     if (sc) document.getElementById("sAgent").value = sc.agent_id;
     openModal("scheduleModal");
@@ -1975,6 +1983,7 @@
       title_template: document.getElementById("sTitle").value.trim(),
       body_template: document.getElementById("sBody").value,
       agent_id: Number(document.getElementById("sAgent").value),
+      perm: document.getElementById("sPerm").value,
       enabled: document.getElementById("sEnabled").checked
     };
     try {

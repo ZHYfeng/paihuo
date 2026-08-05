@@ -490,7 +490,6 @@ export async function openAgentModal(id) {
   document.getElementById("aId").value = a ? a.id : "";
   document.getElementById("aName").value = a ? a.name : "";
   document.getElementById("aDesc").value = a ? (a.description || "") : "";
-  document.getElementById("aPerm").value = a ? (a.default_perm || "full") : "full";
   document.getElementById("aEnabled").checked = a ? a.enabled : true;
   state.agentModalRC = a ? JSON.parse(JSON.stringify(a.role_config || {})) : {};
   await loadSchema();
@@ -522,7 +521,6 @@ export async function submitAgent() {
     name: document.getElementById("aName").value.trim(),
     description: document.getElementById("aDesc").value.trim(),
     cli,
-    default_perm: document.getElementById("aPerm").value,
     enabled: document.getElementById("aEnabled").checked,
     role_config: schema ? readConfigFrom(schema, document.getElementById("agentModalSchema")) : {},
   };

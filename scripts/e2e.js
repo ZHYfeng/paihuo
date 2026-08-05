@@ -69,7 +69,8 @@ function findChrome() {
   await page.evaluate(() => setAgentView("table"));
   await page.evaluate(() => openAgentModal());
   await page.waitForTimeout(350);
-  const agentModal = await page.evaluate(() => !document.getElementById("agentModal").classList.contains("hidden"));
+  const agentModal = await page.evaluate(() =>
+    !document.getElementById("agentModal").classList.contains("hidden") && !document.getElementById("aPerm"));
   agentModal ? ok("角色弹窗") : fail("角色弹窗未打开");
   await page.evaluate(() => closeModal("agentModal"));
 
@@ -117,7 +118,8 @@ function findChrome() {
   await page.waitForTimeout(700);
   await page.evaluate(() => openScheduleModal());
   await page.waitForTimeout(300);
-  const sched = await page.evaluate(() => !document.getElementById("scheduleModal").classList.contains("hidden"));
+  const sched = await page.evaluate(() =>
+    !document.getElementById("scheduleModal").classList.contains("hidden") && document.getElementById("sPerm")?.value === "full");
   sched ? ok("定时任务弹窗") : fail("定时任务弹窗未打开");
   await page.evaluate(() => closeModal("scheduleModal"));
 

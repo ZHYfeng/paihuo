@@ -18,7 +18,7 @@ func openTest(t *testing.T) *Store {
 
 func mustAgent(t *testing.T, s *Store, name string, enabled bool) int64 {
 	t.Helper()
-	id, err := s.CreateAgent(Agent{Name: name, CLI: "pi", Enabled: enabled, DefaultPerm: "full"})
+	id, err := s.CreateAgent(Agent{Name: name, CLI: "pi", Enabled: enabled})
 	if err != nil {
 		t.Fatalf("CreateAgent(%s): %v", name, err)
 	}
@@ -150,7 +150,7 @@ func TestMigrateAddsNewColumns(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	// 模拟老库：删掉新列后再打开，migrate 应补齐
-	for _, col := range []string{"resume_of", "worktree_branch", "base_commit"} {
+	for _, col := range []string{"resume_of", "worktree_branch", "base_commit", "tmux_log_offset"} {
 		if _, err := s.db.Exec("ALTER TABLE tasks DROP COLUMN " + col); err != nil {
 			s.Close()
 			t.Fatalf("drop %s: %v", col, err)
@@ -167,7 +167,7 @@ func TestMigrateAddsNewColumns(t *testing.T) {
 	for _, r := range mustRows(t, s2, "PRAGMA table_info(tasks)") {
 		cols[r[1]] = true
 	}
-	for _, want := range []string{"resume_of", "worktree_branch", "base_commit", "project_dir"} {
+	for _, want := range []string{"resume_of", "worktree_branch", "base_commit", "project_dir", "tmux_log_offset"} {
 		if !cols[want] {
 			t.Fatalf("迁移后缺少列 %s（现有列: %v）", want, cols)
 		}
@@ -179,6 +179,55 @@ func TestMigrateAddsNewColumns(t *testing.T) {
 	}
 	if _, err := s2.GetTask(id); err != nil {
 		t.Fatalf("GetTask: %v", err)
+	}
+}
+
+// 旧版把默认权限挂在角色上；迁移后应固化到定时任务模板，角色表不再保留该字段。
+func TestMigrateMovesRoleDefaultPermToSchedule(t *testing.T) {
+	path := t.TempDir() + "/perm-mig.db"
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	aid := mustAgent(t, s, "a", true)
+	sid, err := s.CreateSchedule(Schedule{
+		Name: "daily", Cron: "0 9 * * *", TitleTemplate: "daily", AgentID: aid, Enabled: true,
+	})
+	if err != nil {
+		s.Close()
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	// 模拟旧版数据库：权限列仍在 agents，schedules 尚未拥有自己的权限列。
+	if _, err := s.db.Exec("ALTER TABLE agents ADD COLUMN default_perm TEXT NOT NULL DEFAULT 'full'"); err != nil {
+		s.Close()
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec("UPDATE agents SET default_perm='review' WHERE id=?", aid); err != nil {
+		s.Close()
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec("ALTER TABLE schedules DROP COLUMN perm"); err != nil {
+		s.Close()
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s2.Close()
+	sc, err := s2.GetSchedule(sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc.Perm != PermReview {
+		t.Fatalf("迁移后定时任务权限应为 review，得到 %q", sc.Perm)
+	}
+	for _, r := range mustRows(t, s2, "PRAGMA table_info(agents)") {
+		if r[1] == "default_perm" {
+			t.Fatal("迁移后 agents 不应保留 default_perm")
+		}
 	}
 }
 

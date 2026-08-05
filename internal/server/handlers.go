@@ -206,7 +206,7 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			delete(set, "review_note")
-			_ = os.RemoveAll(filepath.Join(os.TempDir(), "paihuo-sessions", fmt.Sprintf("task-%d", id)))
+			s.ex.ResetTaskSession(id)
 		}
 		if to == store.StatusCancelled {
 			s.ex.CancelTask(id)
@@ -284,16 +284,14 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 	// 先取消还在运行的子任务进程，再删库（否则进程继续在项目目录里跑）
 	if kids, err := s.st.ListChildren(id); err == nil {
 		for _, k := range kids {
-			s.ex.CancelTask(k.ID)
+			s.ex.RemoveTask(k.ID)
 		}
 	}
-	s.ex.CancelTask(id)
+	s.ex.RemoveTask(id)
 	if err := s.st.DeleteTask(id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// 清理任务专属会话目录（隐私：删除执行痕迹）
-	_ = os.RemoveAll(filepath.Join(os.TempDir(), "paihuo-sessions", fmt.Sprintf("task-%d", id)))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -462,7 +460,6 @@ type agentIn struct {
 	CLI         string           `json:"cli"`
 	RoleConfig  store.RoleConfig `json:"role_config"`
 	ProjectDir  string           `json:"project_dir"`
-	DefaultPerm string           `json:"default_perm"`
 	Enabled     *bool            `json:"enabled"`
 }
 
@@ -482,7 +479,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	id, err := s.st.CreateAgent(store.Agent{
 		Name: in.Name, Description: in.Description, CLI: in.CLI,
 		RoleConfig: in.RoleConfig, ProjectDir: in.ProjectDir,
-		DefaultPerm: in.DefaultPerm, Enabled: enabled,
+		Enabled: enabled,
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -509,12 +506,6 @@ func (s *Server) validateAgent(in *agentIn) error {
 			return errMsg("项目目录不存在: " + in.ProjectDir)
 		}
 	}
-	if in.DefaultPerm == "" {
-		in.DefaultPerm = store.PermFull
-	}
-	if !validPerms[in.DefaultPerm] {
-		return errMsg("非法权限模式: " + in.DefaultPerm)
-	}
 	return nil
 }
 
@@ -527,7 +518,7 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "name", "description", "cli", "role_config", "project_dir", "default_perm", "enabled")
+	set, ok := patchMap(w, r, "name", "description", "cli", "role_config", "project_dir", "enabled")
 	if !ok {
 		return
 	}
@@ -694,6 +685,13 @@ func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "角色不存在")
 		return
 	}
+	if in.Perm == "" {
+		in.Perm = store.PermFull
+	}
+	if !validPerms[in.Perm] {
+		writeErr(w, http.StatusBadRequest, "非法权限模式: "+in.Perm)
+		return
+	}
 	id, err := s.st.CreateSchedule(in)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -713,7 +711,7 @@ func (s *Server) patchSchedule(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "name", "cron", "title_template", "body_template", "agent_id", "enabled", "next_run_at", "last_run_at")
+	set, ok := patchMap(w, r, "name", "cron", "title_template", "body_template", "agent_id", "perm", "enabled", "next_run_at", "last_run_at")
 	if !ok {
 		return
 	}
@@ -726,6 +724,13 @@ func (s *Server) patchSchedule(w http.ResponseWriter, r *http.Request) {
 			set["agent_id"] = int64(aid)
 		} else {
 			writeErr(w, http.StatusBadRequest, "agent_id 非法")
+			return
+		}
+	}
+	if v, ok := set["perm"]; ok {
+		perm, isString := v.(string)
+		if !isString || !validPerms[perm] {
+			writeErr(w, http.StatusBadRequest, "非法权限模式")
 			return
 		}
 	}

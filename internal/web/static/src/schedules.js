@@ -42,6 +42,7 @@ export function openScheduleModal(id) {
   document.getElementById("sCron").value = sc ? sc.cron : "0 9 * * *";
   document.getElementById("sTitle").value = sc ? sc.title_template : "";
   document.getElementById("sBody").value = sc ? sc.body_template : "";
+  document.getElementById("sPerm").value = sc ? (sc.perm || "full") : "full";
   document.getElementById("sEnabled").checked = sc ? sc.enabled : true;
   if (sc) document.getElementById("sAgent").value = sc.agent_id;
   openModal("scheduleModal");
@@ -55,6 +56,7 @@ export async function submitSchedule() {
     title_template: document.getElementById("sTitle").value.trim(),
     body_template: document.getElementById("sBody").value,
     agent_id: Number(document.getElementById("sAgent").value),
+    perm: document.getElementById("sPerm").value,
     enabled: document.getElementById("sEnabled").checked,
   };
   try {

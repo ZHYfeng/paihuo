@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -45,14 +44,14 @@ func main() {
 
 	hub := events.NewHub()
 	sessionsRoot := filepath.Join(filepath.Dir(db), "sessions")
-	ex := exec.New(st, hub, sessionsRoot)
+	ex := exec.New(st, hub, sessionsRoot, db)
 	sc := sched.New(st, hub, ex)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ex.Start(ctx)
 	sc.Start(ctx)
-	go autoCleanup(ctx, st, sessionsRoot)
+	go autoCleanup(ctx, st, ex, sessionsRoot)
 
 	srv := server.New(st, hub, ex, sc, token, filepath.Join(filepath.Dir(db), "skills"))
 	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
@@ -74,7 +73,7 @@ func main() {
 }
 
 // autoCleanup 每小时执行：清理超期历史、孤儿会话、过期任务 worktree。
-func autoCleanup(ctx context.Context, st *store.Store, sessionsRoot string) {
+func autoCleanup(ctx context.Context, st *store.Store, ex *exec.Executor, sessionsRoot string) {
 	run := func() {
 		days := "0"
 		if v, err := st.GetSetting("retention_days"); err == nil && v != "" {
@@ -98,24 +97,8 @@ func autoCleanup(ctx context.Context, st *store.Store, sessionsRoot string) {
 				log.Printf("自动清理：移除 %d 个过期任务 worktree", n)
 			}
 		}
-		// 清理没有对应任务的会话目录
-		sessRoot := filepath.Join(os.TempDir(), "paihuo-sessions")
-		entries, err := os.ReadDir(sessRoot)
-		if err != nil {
-			return
-		}
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			var id int64
-			if _, err := fmt.Sscanf(e.Name(), "task-%d", &id); err != nil {
-				continue
-			}
-			exists, err := st.HasTask(id)
-			if err == nil && !exists {
-				_ = os.RemoveAll(filepath.Join(sessRoot, e.Name()))
-			}
+		if n, err := ex.CleanupOrphanTaskSessions(); err == nil && n > 0 {
+			log.Printf("自动清理：移除 %d 个孤儿 agent 会话", n)
 		}
 	}
 	run()

@@ -4,6 +4,8 @@
 
 **部署形态**：服务运行在你的常开 Linux 机器（服务器 / NAS / 家里的主机）上，浏览器从任何设备访问操作。任务直接在服务器本地执行，agent 直接操作服务器上**已部署运行的项目目录**——无需重新部署环境。
 
+任务执行依赖 `tmux`（每个任务会在 paihuo 专用 tmux server 中运行；不会复用或修改你的默认 tmux 会话）。
+
 ## 快速开始
 
 ```bash
@@ -30,17 +32,19 @@ go build -o paihuo ./cmd/paihuo
 
 ## 使用流程
 
-**Dashboard 为默认首页**，按功能逻辑分区：统计条 → 任务执行区（进行中 / 待审批，待审批卡片可直接通过/驳回）→ 项目区（活跃项目进度）→ Agent 区（各 CLI 安装/登录状态、角色健康）。低频管理收纳在侧边栏：工作区（Dashboard / Board / History）、管理（Agents / Roles / Skills / Schedules）、系统（Settings）。
+**Dashboard 为默认首页**，按功能逻辑分区：统计条 → 任务执行区（进行中 / 待审批，待审批卡片可直接通过/驳回）→ 项目区（活跃项目进度）→ Agent 区（各 CLI 安装/登录状态、角色健康）。低频管理收纳在侧边栏：工作区（Dashboard / Board / Projects / History）、管理（Agents / Roles / Skills / Schedules）、系统（Settings）。
 
 1. **Dashboard**：一屏完成高频操作——看任务、快捷审批、新建任务（`N` 快捷键）、看项目进度、CLI 状态；空数据时显示快速开始引导
 2. **Board**：任务卡片按排队 / 执行中 / 待审批三列展示（状态色条 + 项目 chip + 审批/轮次标签），可切换**列表视图**；点击卡片进入**详情两栏页**（主区：描述 + 工作空间 + 终端式实时对话；侧栏：属性 + 操作）
 3. **Agents**：本机 coding agent 安装管理——官方命令一键安装/重装（输出实时显示）、登录状态检测与引导、版本查看、一键创建默认 Role
 4. **Roles**：卡片/表格双视图列出所有角色，详情分 tab（Overview / Config / Environment / Stats）——**配置按该 CLI 的官方文档深度定制**；模型候选探测自本机实例实际配置；Skills 按名称勾选技能库；instructions 字段注入任务指令模板
 5. **Skills**：技能库（定向添加含 SKILL.md 的目录，复制到工作目录登记，按名称/描述勾选）+ Pi Extensions 管理（pi install/list/remove 的 Web 封装）
-6. **Projects**：卡片网格（git 徽标标注是否支持隔离）；详情含进度环、统计、任务清单、成员统计
+6. **Projects**：卡片网格（git 徽标标注是否支持隔离）；详情含进度环、统计、任务清单、成员统计；侧边栏常驻入口，看板卡片/筛选条均可直达项目页
 7. **任务工作空间**：git 项目下每个任务自动获得独立 worktree（`paihuo/task-<id>` 分支），审批通过可**一键 squash 合并/丢弃**；非 git 项目可直接 git init；过期 worktree 按设置自动清理
 8. **任务续跑**：终态任务「继续对话」创建续跑任务并复用原会话（pi/omp 真实续对话）；全屏终端 xterm.js 渲染（ANSI 颜色）
-9. **Schedules / History / Settings**：定时任务、历史筛选批量管理、数据/工作空间保留策略
+9. **专用 tmux 执行器**：所有任务统一运行在 `tmux -L paihuo` 的 `paihuo` session 中，活动任务各占 `task-<id>` window。paihuo 重启会重新接管仍在运行的 window；如需在服务器上观察，可执行 `tmux -L paihuo attach -t paihuo`。任务结算后 window 清理，完整日志保留在数据库中。
+10. **隔离的 agent 会话文件**：CLI 会话保存在数据库专属命名空间内；孤儿清理仅处理当前数据库的任务，不会触及同机其他 paihuo 实例或 smoke 测试。
+11. **Schedules / History / Settings**：定时任务、历史筛选批量管理、数据/工作空间保留策略
 
 ## 派活的两个维度
 
@@ -91,6 +95,7 @@ go build -o paihuo ./cmd/paihuo
 设置页配置 cron 表达式（支持秒级，如 `0 9 * * *` 每天 9 点）。标题/提示词支持模板变量：
 
 - `{{.date}}` 今天日期、`{{.time}}` 当前时间、`{{.name}}` 定时任务名
+- 每个定时任务可选择生成任务时的权限模式；该值写入每一条生成的任务，不属于角色配置
 
 ## 多 agent 协作
 
@@ -111,7 +116,7 @@ go build -o paihuo ./cmd/paihuo
 go build -o paihuo ./cmd/paihuo
 ```
 
-架构：Go 单二进制 + SQLite（纯 Go 驱动，无 CGO）+ 内嵌前端（Go 模板 + 原生 JS + SSE 实时推送）。执行器每角色串行、跨角色并行，取消按进程组击杀。
+架构：Go 单二进制 + SQLite（纯 Go 驱动，无 CGO）+ 内嵌前端（Go 模板 + 原生 JS + SSE 实时推送）+ 一个专用 tmux server。执行器每角色串行、跨角色并行；任务取消时只终止对应 tmux window，服务重启不影响仍在运行的任务。
 
 关键模块：
 

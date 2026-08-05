@@ -22,7 +22,6 @@ CREATE TABLE IF NOT EXISTS agents (
   cli           TEXT NOT NULL,
   role_config   TEXT NOT NULL DEFAULT '{}',
   project_dir   TEXT NOT NULL DEFAULT '',
-  default_perm  TEXT NOT NULL DEFAULT 'full',
   enabled       INTEGER NOT NULL DEFAULT 1,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
@@ -53,6 +52,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   exit_code   INTEGER,
   review_note TEXT NOT NULL DEFAULT '',
   review_rounds INTEGER NOT NULL DEFAULT 0,
+  tmux_log_offset INTEGER NOT NULL DEFAULT 0,
   worktree_branch TEXT NOT NULL DEFAULT '',
   base_commit   TEXT NOT NULL DEFAULT '',
   resume_of     INTEGER REFERENCES tasks(id),
@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS schedules (
   title_template TEXT NOT NULL,
   body_template  TEXT NOT NULL DEFAULT '',
   agent_id       INTEGER NOT NULL REFERENCES agents(id),
+  perm           TEXT NOT NULL DEFAULT 'full',
   enabled        INTEGER NOT NULL DEFAULT 1,
   last_run_at    TEXT,
   next_run_at    TEXT,
@@ -134,6 +135,7 @@ func migrate(db *sql.DB) error {
 	}
 	for _, stmt := range []string{
 		"ALTER TABLE tasks ADD COLUMN review_rounds INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE tasks ADD COLUMN tmux_log_offset INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE tasks ADD COLUMN project_id INTEGER REFERENCES projects(id)",
 		"ALTER TABLE projects ADD COLUMN project_dir TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE tasks ADD COLUMN worktree_branch TEXT NOT NULL DEFAULT ''",
@@ -147,6 +149,27 @@ func migrate(db *sql.DB) error {
 			if !strings.Contains(err.Error(), "duplicate column name") {
 				return err
 			}
+		}
+	}
+	// 权限属于任务而非角色。旧版定时任务会从角色默认权限继承，这里把
+	// 旧值固化到定时任务模板，之后每次触发再写入对应 Task.perm。
+	if _, err := db.Exec("ALTER TABLE schedules ADD COLUMN perm TEXT NOT NULL DEFAULT 'full'"); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
+	if have, err := columnExists(db, "agents", "default_perm"); err != nil {
+		return err
+	} else if have {
+		if _, err := db.Exec(`UPDATE schedules
+			SET perm = COALESCE((
+				SELECT CASE WHEN a.default_perm IN ('full', 'review') THEN a.default_perm ELSE 'full' END
+				FROM agents a WHERE a.id = schedules.agent_id
+			), 'full')`); err != nil {
+			return fmt.Errorf("迁移定时任务权限失败: %w", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents DROP COLUMN default_perm"); err != nil {
+			return fmt.Errorf("移除角色默认权限失败: %w", err)
 		}
 	}
 	// 索引在迁移阶段创建：老库先补列再建索引；新库 schema 建表时列已存在
@@ -163,6 +186,26 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	return nil
+}
+
+func columnExists(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, typ string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func tableExists(db *sql.DB, table string) (bool, error) {
@@ -248,13 +291,13 @@ type scanner interface {
 // 角色（agent）
 
 const agentCols = `a.id, a.name, a.description, a.cli, a.role_config,
-	a.project_dir, a.default_perm, a.enabled, a.created_at, a.updated_at`
+	a.project_dir, a.enabled, a.created_at, a.updated_at`
 
 func scanAgent(rows scanner) (Agent, error) {
 	var a Agent
 	var rc string
 	err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.CLI, &rc,
-		&a.ProjectDir, &a.DefaultPerm, &a.Enabled, &a.CreatedAt, &a.UpdatedAt)
+		&a.ProjectDir, &a.Enabled, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		return a, err
 	}
@@ -301,9 +344,9 @@ func (s *Store) CreateAgent(a Agent) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := s.db.Exec(`INSERT INTO agents (name, description, cli, role_config, project_dir, default_perm, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.Name, a.Description, a.CLI, string(rc), a.ProjectDir, a.DefaultPerm, a.Enabled, a.CreatedAt, a.UpdatedAt)
+	res, err := s.db.Exec(`INSERT INTO agents (name, description, cli, role_config, project_dir, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Name, a.Description, a.CLI, string(rc), a.ProjectDir, a.Enabled, a.CreatedAt, a.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -342,13 +385,13 @@ func (s *Store) DeleteAgent(id int64) error {
 // taskCols 完整列（详情页用：含完整 body，驳回重做会追加修改意见）。
 const taskCols = `t.id, t.title, t.body, t.status, t.perm, t.agent_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.worktree_branch, t.base_commit, t.resume_of, t.created_at, t.started_at, t.finished_at, t.updated_at`
+	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.created_at, t.started_at, t.finished_at, t.updated_at`
 
 // taskColsBrief 列表列（看板/历史/项目页用）：body 截断到 400 字符，
 // 避免大提示词把列表接口载荷撑爆。列序与 taskCols 完全一致（scanTask 共用）。
 const taskColsBrief = `t.id, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.agent_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.worktree_branch, t.base_commit, t.resume_of, t.created_at, t.started_at, t.finished_at, t.updated_at`
+	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.created_at, t.started_at, t.finished_at, t.updated_at`
 
 func scanTask(rows scanner) (Task, error) {
 	var tk Task
@@ -358,7 +401,7 @@ func scanTask(rows scanner) (Task, error) {
 	var resumeOf sql.NullInt64
 	err := rows.Scan(&tk.ID, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &agentID, &agentName,
 		&projectID, &projectName, &tk.ProjectDir, &parentID, &scheduleID, &tk.Error, &exitCode,
-		&tk.ReviewNote, &tk.ReviewRounds, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt)
+		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt)
 	if err != nil {
 		return tk, err
 	}
@@ -506,6 +549,13 @@ func (s *Store) UpdateTask(id int64, set map[string]any) error {
 	return updateOne(s.db, "tasks", id, set)
 }
 
+// UpdateTmuxLogOffset 记录已同步到 SQLite 的专用 tmux 原始日志位置。
+// 不更新 updated_at，避免高频终端输出扰动任务的业务更新时间。
+func (s *Store) UpdateTmuxLogOffset(id int64, offset int64) error {
+	_, err := s.db.Exec("UPDATE tasks SET tmux_log_offset=? WHERE id=?", offset, id)
+	return err
+}
+
 // ClaimTask 原子领取：queued -> claimed，返回是否领取成功。
 func (s *Store) ClaimTask(id int64) (bool, error) {
 	res, err := s.db.Exec("UPDATE tasks SET status='claimed', started_at=? WHERE id=? AND status='queued'", Now(), id)
@@ -601,7 +651,7 @@ func (s *Store) ListLogs(taskID int64) ([]TaskLog, error) {
 // ---------------------------------------------------------------------------
 // 定时任务
 
-const schedCols = `s.id, s.name, s.cron, s.title_template, s.body_template, s.agent_id,
+const schedCols = `s.id, s.name, s.cron, s.title_template, s.body_template, s.agent_id, s.perm,
 	s.enabled, s.last_run_at, s.next_run_at, s.created_at, a.name`
 
 func (s *Store) ListSchedules() ([]Schedule, error) {
@@ -615,7 +665,7 @@ func (s *Store) ListSchedules() ([]Schedule, error) {
 		var sc Schedule
 		var lastRun, nextRun sql.NullString
 		if err := rows.Scan(&sc.ID, &sc.Name, &sc.Cron, &sc.TitleTemplate, &sc.BodyTemplate,
-			&sc.AgentID, &sc.Enabled, &lastRun, &nextRun, &sc.CreatedAt, &sc.AgentName); err != nil {
+			&sc.AgentID, &sc.Perm, &sc.Enabled, &lastRun, &nextRun, &sc.CreatedAt, &sc.AgentName); err != nil {
 			return nil, err
 		}
 		sc.LastRunAt = strPtr(lastRun)
@@ -630,7 +680,7 @@ func (s *Store) GetSchedule(id int64) (*Schedule, error) {
 	var sc Schedule
 	var lastRun, nextRun sql.NullString
 	if err := row.Scan(&sc.ID, &sc.Name, &sc.Cron, &sc.TitleTemplate, &sc.BodyTemplate,
-		&sc.AgentID, &sc.Enabled, &lastRun, &nextRun, &sc.CreatedAt, &sc.AgentName); err != nil {
+		&sc.AgentID, &sc.Perm, &sc.Enabled, &lastRun, &nextRun, &sc.CreatedAt, &sc.AgentName); err != nil {
 		return nil, err
 	}
 	sc.LastRunAt = strPtr(lastRun)
@@ -642,9 +692,12 @@ func (s *Store) CreateSchedule(sc Schedule) (int64, error) {
 	if sc.CreatedAt == "" {
 		sc.CreatedAt = Now()
 	}
-	res, err := s.db.Exec(`INSERT INTO schedules (name, cron, title_template, body_template, agent_id, enabled, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		sc.Name, sc.Cron, sc.TitleTemplate, sc.BodyTemplate, sc.AgentID, sc.Enabled, sc.CreatedAt)
+	if sc.Perm == "" {
+		sc.Perm = PermFull
+	}
+	res, err := s.db.Exec(`INSERT INTO schedules (name, cron, title_template, body_template, agent_id, perm, enabled, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		sc.Name, sc.Cron, sc.TitleTemplate, sc.BodyTemplate, sc.AgentID, sc.Perm, sc.Enabled, sc.CreatedAt)
 	if err != nil {
 		return 0, err
 	}
