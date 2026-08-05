@@ -86,6 +86,8 @@ cd paihuo && go build -o paihuo ./cmd/paihuo
 
 ## 开发
 
+产品规划与分阶段实施计划见 [docs/PLAN.md](docs/PLAN.md)（Agent 安装管理 / worktree 任务空间 / 终端式观察）。
+
 ```bash
 go build -o paihuo ./cmd/paihuo
 ```
