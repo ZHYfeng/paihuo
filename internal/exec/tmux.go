@@ -82,6 +82,18 @@ func (r *tmuxRunner) scriptPath(taskID int64) string {
 	return filepath.Join(r.taskDir(taskID), "run.sh")
 }
 
+func (r *tmuxRunner) taskBinDir(taskID int64) string {
+	return filepath.Join(r.taskDir(taskID), "bin")
+}
+
+func (r *tmuxRunner) tmuxWrapperPath(taskID int64) string {
+	return filepath.Join(r.taskBinDir(taskID), "tmux")
+}
+
+func (r *tmuxRunner) shellInitPath(taskID int64) string {
+	return filepath.Join(r.taskBinDir(taskID), "shell-init.sh")
+}
+
 func (r *tmuxRunner) ensureSession() error {
 	if _, err := osexec.LookPath(r.binary); err != nil {
 		return fmt.Errorf("未找到 tmux；专用任务执行器需要安装 tmux: %w", err)
@@ -146,13 +158,17 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string) er
 	if err := os.WriteFile(r.logPath(taskID), nil, 0o600); err != nil {
 		return fmt.Errorf("创建 tmux 终端日志失败: %w", err)
 	}
+	if _, err := r.writeTmuxWrapper(taskID); err != nil {
+		return err
+	}
 	if err := r.writeScript(taskID, bin, args); err != nil {
 		return err
 	}
+	taskEnv := r.taskShellEnvironment(taskID, env)
 
 	// tmux 的 -e 给 window 注入角色执行环境，避免把密钥写入 run.sh。
 	cmdArgs := []string{"new-window", "-d", "-t", r.session, "-n", r.taskName(taskID), "-c", dir}
-	for _, item := range env {
+	for _, item := range taskEnv {
 		if key, _, ok := strings.Cut(item, "="); ok && key != "" && !isTmuxInternalEnv(key) {
 			cmdArgs = append(cmdArgs, "-e", item)
 		}
@@ -179,6 +195,46 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string) er
 	return nil
 }
 
+// taskShellEnvironment 让 Codex 等 agent 通过 `bash -lc` 执行工具时也保留
+// task bin。login shell 会重置 PATH，因此仅在 run.sh 中 export PATH 不够；
+// BASH_ENV 在非交互 bash（包括 bash -lc）读取 profile 后执行。
+func (r *tmuxRunner) taskShellEnvironment(taskID int64, env []string) []string {
+	taskEnv := make([]string, 0, len(env)+1)
+	for _, item := range env {
+		key, _, ok := strings.Cut(item, "=")
+		if ok && key == "BASH_ENV" {
+			continue
+		}
+		taskEnv = append(taskEnv, item)
+	}
+	return append(taskEnv, "BASH_ENV="+r.shellInitPath(taskID))
+}
+
+func (r *tmuxRunner) writeTmuxWrapper(taskID int64) (string, error) {
+	realBinary, err := osexec.LookPath(r.binary)
+	if err != nil {
+		return "", fmt.Errorf("定位 tmux 可执行文件失败: %w", err)
+	}
+	wrapperDir := r.taskBinDir(taskID)
+	if err := os.MkdirAll(wrapperDir, 0o700); err != nil {
+		return "", fmt.Errorf("创建任务 tmux 包装目录失败: %w", err)
+	}
+	if err := os.Chmod(wrapperDir, 0o700); err != nil {
+		return "", fmt.Errorf("设置任务 tmux 包装目录权限失败: %w", err)
+	}
+	// 使用真实二进制的绝对路径，避免包装器通过 PATH 再次解析到自身。PATH
+	// 由 run.sh 和 BASH_ENV 显式导出；tmux 的 new-window -e 不会可靠地覆盖 PATH。
+	script := "#!/bin/sh\nexec " + shQuote(realBinary) + " -f " + shQuote(tmuxConfigFile) + " \"$@\"\n"
+	if err := os.WriteFile(r.tmuxWrapperPath(taskID), []byte(script), 0o700); err != nil {
+		return "", fmt.Errorf("写入任务 tmux 包装器失败: %w", err)
+	}
+	shellInit := "export PATH=" + shQuote(wrapperDir) + ":\"$PATH\"\n"
+	if err := os.WriteFile(r.shellInitPath(taskID), []byte(shellInit), 0o600); err != nil {
+		return "", fmt.Errorf("写入任务 shell 初始化文件失败: %w", err)
+	}
+	return wrapperDir, nil
+}
+
 // isTmuxInternalEnv 排除父 tmux 注入的连接信息。paihuo 可能本身在用户的
 // tmux 中启动，但专用 server 的 pane 必须使用自己的 TMUX/TMUX_PANE，不能继承
 // 父会话的 socket 或 pane ID。
@@ -195,6 +251,7 @@ func (r *tmuxRunner) writeScript(taskID int64, bin string, args []string) error 
 	// POSIX sh 只负责等待 gate、执行精确 argv、写退出码；实际参数均由安全
 	// 单引号编码，支持空格、引号和换行，不依赖用户 shell 的历史或配置。
 	src := "#!/bin/sh\n" +
+		"export PATH=" + shQuote(r.taskBinDir(taskID)) + ":\"$PATH\"\n" +
 		"while [ ! -f " + shQuote(r.gatePath(taskID)) + " ]; do sleep 0.05; done\n" +
 		strings.Join(quoted, " ") + "\n" +
 		"status=$?\n" +

@@ -93,6 +93,58 @@ func TestTmuxRunnerIgnoresUserConfig(t *testing.T) {
 	}
 }
 
+func TestTmuxRunnerTaskTmuxWrapperIgnoresUserConfig(t *testing.T) {
+	bin, err := osexec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux 未安装")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, ".tmux.conf"), []byte("set -g @paihuo_task_wrapper_test loaded\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r := newTmuxRunnerAt(t.TempDir(), fmt.Sprintf("paihuo-wrapper-parent-test-%d", os.Getpid()))
+	r.binary = bin
+	_ = r.command("kill-server")
+	t.Cleanup(func() { _ = r.command("kill-server") })
+	nestedSocket := fmt.Sprintf("paihuo-wrapper-child-test-%d", os.Getpid())
+	t.Cleanup(func() {
+		_ = osexec.Command(bin, "-f", tmuxConfigFile, "-L", nestedSocket, "kill-server").Run()
+	})
+	if err := r.Start(42, t.TempDir(), "/bin/bash", []string{
+		"-lc",
+		`tmux -L "$1" new-session -d -s nested -- sleep 2147483647; created=$?; option="$(tmux -L "$1" show-options -gqv @paihuo_task_wrapper_test)"; shown=$?; tmux -L "$1" kill-server; stopped=$?; test "$created" -eq 0 && test "$shown" -eq 0 && test "$stopped" -eq 0 && test -z "$option" && printf 'nested config clean\n'`,
+		"wrapper-test", nestedSocket,
+	}, os.Environ()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	var offset int64
+	var output []string
+	finished := false
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		obs, err := r.Poll(42, offset)
+		if err != nil {
+			t.Fatalf("Poll: %v", err)
+		}
+		output = append(output, obs.Lines...)
+		offset = obs.Offset
+		if obs.Done {
+			if obs.ExitCode != 0 {
+				t.Fatalf("ExitCode=%d output=%q", obs.ExitCode, output)
+			}
+			finished = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !finished || !strings.Contains(strings.Join(output, "\n"), "nested config clean") {
+		t.Fatalf("任务内 tmux 包装器未隔离用户配置，output=%q", output)
+	}
+}
+
 func TestTmuxRunnerArchivesFailureArtifacts(t *testing.T) {
 	r := newTmuxRunnerAt(t.TempDir(), "paihuo-archive-test")
 	const taskID = int64(42)
