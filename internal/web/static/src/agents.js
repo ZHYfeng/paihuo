@@ -50,6 +50,7 @@ export function renderAgentGrid() {
       <div class="ac-meta">
         <span class="chip">${esc(a.cli)}</span>
         <span class="chip" title="${esc(rc.model || "默认模型")}">${esc(rc.model || "默认模型")}</span>
+        <span class="chip" title="同一角色最多同时运行的任务数">并发 ${esc(String(a.max_concurrency || 1))}</span>
       </div>
       <div class="ac-stats">
         <span><b>${st.total}</b> 任务</span>
@@ -82,6 +83,7 @@ export function renderAgentTable() {
       </span></td>
       <td><span class="badge">${esc(a.cli)}</span></td>
       <td>${esc(rc.model || "默认")}</td>
+      <td class="num">${esc(String(a.max_concurrency || 1))}</td>
       <td><span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "启用" : "停用"}</span></td>
       <td>
         <span class="ops">
@@ -175,6 +177,7 @@ export async function renderAgentOverview(a) {
         <div class="ah-name">${esc(a.name)} <span class="badge">${esc(a.cli)}</span>
           <span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "启用" : "停用"}</span></div>
         ${a.description ? `<div class="ah-desc">${esc(a.description)}</div>` : ""}
+        <div class="ah-sub">执行池：最多同时运行 ${esc(String(a.max_concurrency || 1))} 个任务</div>
       </div>
     </div>
     ${st ? `
@@ -430,6 +433,7 @@ export function readConfigFrom(schema, container) {
 export async function renderAgentConfig(a) {
   const form = document.getElementById("agentForm");
   if (!form) return;
+  if (!state.schema[a.cli]) await loadSchema(); // 容错：首屏 schema 是后台加载的，点得快时现拉一次
   const schema = state.schema[a.cli];
   if (!schema) { form.innerHTML = `<div class="empty">CLI schema 未加载</div>`; return; }
   await loadSkillLib();
@@ -490,6 +494,7 @@ export async function openAgentModal(id) {
   document.getElementById("aId").value = a ? a.id : "";
   document.getElementById("aName").value = a ? a.name : "";
   document.getElementById("aDesc").value = a ? (a.description || "") : "";
+  document.getElementById("aMaxConcurrency").value = a ? (a.max_concurrency || 1) : 1;
   document.getElementById("aEnabled").checked = a ? a.enabled : true;
   state.agentModalRC = a ? JSON.parse(JSON.stringify(a.role_config || {})) : {};
   await loadSchema();
@@ -521,6 +526,7 @@ export async function submitAgent() {
     name: document.getElementById("aName").value.trim(),
     description: document.getElementById("aDesc").value.trim(),
     cli,
+    max_concurrency: Number(document.getElementById("aMaxConcurrency").value),
     enabled: document.getElementById("aEnabled").checked,
     role_config: schema ? readConfigFrom(schema, document.getElementById("agentModalSchema")) : {},
   };

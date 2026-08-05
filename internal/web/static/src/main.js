@@ -8,8 +8,8 @@ import { appendInstLine, closeInstTerminal, copyText, createDefaultRole, install
 import { deleteSchedule, openScheduleModal, renderScheduleList, submitSchedule, toggleSchedule } from "./schedules.js";
 import { loadSettings, runCleanup, saveRetention, saveWtRetention } from "./settings.js";
 import { deleteSkill, deleteTemplate, loadSkillLib, loadTemplates, openExtModal, openSkillModal, removeExt, renderSkillLib, setSkillTab, submitExt, submitSkill } from "./skills.js";
-import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, gitInitProject, hideDetail, openNewTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, wsDiscard, wsMerge } from "./task.js";
-import { closeTerminal, openTerminal } from "./terminal.js";
+import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskRunMode, wsDiscard, wsMerge } from "./task.js";
+import { closeTerminal, openTerminal, sendTaskInput, sendTerminalInput, syncTerminalInput } from "./terminal.js";
 
 export async function loadAll() {
   const [tasks, agents, schedules, projects] = await Promise.all([
@@ -202,6 +202,7 @@ export function sse() {
       const t = JSON.parse(ev.data).payload;
       const i = state.tasks.findIndex(x => x.id === t.id);
       if (i >= 0) state.tasks[i] = t; else state.tasks.unshift(t);
+      if (state.termTask === t.id) syncTerminalInput(t);
       const path = location.pathname;
       if (path === "/board") {
         state.view === "list" ? renderList() : renderBoard();
@@ -270,7 +271,9 @@ window.addEventListener("pagehide", () => {
 document.addEventListener("DOMContentLoaded", async () => {
   restoreSidebar();
   initShortcuts();
-  await loadSchema();
+  // schema（/api/agents/schema）只被角色表单/详情用到，且冷缓存时后端
+  // 要跑各 CLI 的模型探测（秒级）——后台并行加载，不 await，避免首屏白屏。
+  const schemaP = loadSchema();
   try { await loadAll(); } catch (e) { toast("加载失败: " + e.message, true); }
   const path = location.pathname;
   if (path === "/") {
@@ -306,6 +309,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     loadSettings();
   }
   sse();
+  await schemaP; // 首屏渲染不受 schema 拖累；等它落定后角色表单/详情即可直接用
 });
 
 
@@ -331,6 +335,7 @@ window.deleteSelected = deleteSelected;
 window.deleteSkill = deleteSkill;
 window.deleteTask = deleteTask;
 window.deleteTemplate = deleteTemplate;
+window.endInteractiveTask = endInteractiveTask;
 window.gitInitProject = gitInitProject;
 window.installProvision = installProvision;
 window.loadHistory = loadHistory;
@@ -343,6 +348,7 @@ window.openExtModal = openExtModal;
 window.openNewTask = openNewTask;
 window.openProject = openProject;
 window.openProjectModal = openProjectModal;
+window.openProjectTask = openProjectTask;
 window.openScheduleModal = openScheduleModal;
 window.openSkillModal = openSkillModal;
 window.openSubTask = openSubTask;
@@ -365,6 +371,8 @@ window.saveAgentEnv = saveAgentEnv;
 window.saveAsTemplate = saveAsTemplate;
 window.saveRetention = saveRetention;
 window.saveWtRetention = saveWtRetention;
+window.sendTaskInput = sendTaskInput;
+window.sendTerminalInput = sendTerminalInput;
 window.setAgentView = setAgentView;
 window.setSkillTab = setSkillTab;
 window.setTaskStatus = setTaskStatus;
@@ -375,6 +383,7 @@ window.submitProject = submitProject;
 window.submitSchedule = submitSchedule;
 window.submitSkill = submitSkill;
 window.submitTask = submitTask;
+window.syncTaskRunMode = syncTaskRunMode;
 window.toggleAll = toggleAll;
 window.toggleRow = toggleRow;
 window.toggleSchedule = toggleSchedule;
@@ -384,47 +393,3 @@ window.wsDiscard = wsDiscard;
 window.wsMerge = wsMerge;
 
 // ===== 页面生命周期 =====
-window.addEventListener("pagehide", () => {
-  if (state.es) { state.es.close(); state.es = null; }
-});
-
-document.addEventListener("DOMContentLoaded", async () => {
-  restoreSidebar();
-  initShortcuts();
-  await loadSchema();
-  try { await loadAll(); } catch (e) { toast("加载失败: " + e.message, true); }
-  const path = location.pathname;
-  if (path === "/") {
-    loadDashboard();
-    loadTemplates();
-    route();
-    window.addEventListener("hashchange", route);
-  } else if (path === "/board") {
-    renderBoard();
-    loadTemplates();
-    refreshOverview();
-    route();
-    window.addEventListener("hashchange", route);
-  } else if (path === "/history") {
-    loadHistory();
-  } else if (path === "/roles") {
-    let av = "grid";
-    try { av = localStorage.getItem("paihuo.agentView") || "grid"; } catch (_) {}
-    setAgentView(av === "table" ? "table" : "grid");
-    route();
-    window.addEventListener("hashchange", route);
-  } else if (path === "/agents") {
-    loadProvision();
-  } else if (path === "/projects") {
-    renderProjectList();
-    route();
-    window.addEventListener("hashchange", route);
-  } else if (path === "/autopilots") {
-    renderScheduleList();
-  } else if (path === "/skills") {
-    loadSkillLib().then(renderSkillLib);
-  } else if (path === "/settings") {
-    loadSettings();
-  }
-  sse();
-});

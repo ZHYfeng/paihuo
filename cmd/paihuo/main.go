@@ -56,6 +56,14 @@ func main() {
 	srv := server.New(st, hub, ex, sc, token, filepath.Join(filepath.Dir(db), "skills"))
 	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
 
+	// 后台预热模型候选缓存：/api/agents/schema 的冷探测要跑各 CLI 命令
+	// （秒级），启动时预热后，服务重启后的首次页面访问也能秒开。
+	go func() {
+		for _, a := range exec.Adapters() {
+			a.Models()
+		}
+	}()
+
 	go func() {
 		log.Printf("派活已启动: http://%s（数据库 %s%s）", addr, db, map[bool]string{true: "，已开启鉴权", false: ""}[token != ""])
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

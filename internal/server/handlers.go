@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	osexec "os/exec"
@@ -12,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"paihuo/internal/events"
@@ -36,6 +38,10 @@ var manualTransitions = map[string]map[string]bool{
 
 var validPerms = map[string]bool{
 	store.PermFull: true, store.PermReview: true,
+}
+
+var validRunModes = map[string]bool{
+	store.RunModeBatch: true, store.RunModeInteractive: true,
 }
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
@@ -72,12 +78,13 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		AgentID   *int64 `json:"agent_id"`
 		ProjectID *int64 `json:"project_id"`
 		Perm      string `json:"perm"`
+		RunMode   string `json:"run_mode"`
 		ParentID  *int64 `json:"parent_id"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	s.createTaskInner(w, in.Title, in.Body, in.AgentID, in.ProjectID, in.Perm, in.ParentID, nil)
+	s.createTaskInner(w, in.Title, in.Body, in.AgentID, in.ProjectID, in.Perm, in.RunMode, in.ParentID, nil)
 }
 
 // resumeTask 续跑：新任务复用原任务的角色/项目/会话目录（attach 回上次对话）。
@@ -101,10 +108,10 @@ func (s *Server) resumeTask(w http.ResponseWriter, r *http.Request) {
 		body += "\n\n"
 	}
 	body += fmt.Sprintf("（这是任务 #%d 的续跑：请基于之前的进展继续完成目标。若有疑问先检查当前状态。）", id)
-	s.createTaskInner(w, title, body, src.AgentID, src.ProjectID, src.Perm, nil, &id)
+	s.createTaskInner(w, title, body, src.AgentID, src.ProjectID, src.Perm, src.RunMode, nil, &id)
 }
 
-func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agentID, projectID *int64, perm string, parentID, resumeOf *int64) {
+func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agentID, projectID *int64, perm, runMode string, parentID, resumeOf *int64) {
 	if title == "" {
 		writeErr(w, http.StatusBadRequest, "标题不能为空")
 		return
@@ -116,7 +123,14 @@ func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agen
 		writeErr(w, http.StatusBadRequest, "非法权限模式: "+perm)
 		return
 	}
-	tk := store.Task{Title: title, Body: body, Status: store.StatusQueued, Perm: perm, AgentID: agentID, ParentID: parentID, ResumeOf: resumeOf}
+	if runMode == "" {
+		runMode = store.RunModeBatch
+	}
+	if !validRunModes[runMode] {
+		writeErr(w, http.StatusBadRequest, "非法执行方式: "+runMode)
+		return
+	}
+	tk := store.Task{Title: title, Body: body, Status: store.StatusQueued, Perm: perm, RunMode: runMode, AgentID: agentID, ParentID: parentID, ResumeOf: resumeOf}
 	// 工作目录属于项目：快照项目目录（历史记录不随配置漂移）；
 	// 老数据兼容：项目未设目录时回退角色的旧 project_dir。
 	if projectID != nil {
@@ -128,13 +142,22 @@ func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agen
 		tk.ProjectID = projectID
 		tk.ProjectDir = p.ProjectDir
 	}
-	if tk.ProjectDir == "" && agentID != nil {
+	if agentID != nil {
 		a, err := s.st.GetAgent(*agentID)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "角色不存在")
 			return
 		}
-		tk.ProjectDir = a.ProjectDir // 兼容旧数据：角色级目录
+		if runMode == store.RunModeInteractive && a.CLI != "pi" {
+			writeErr(w, http.StatusBadRequest, "交互式执行目前只支持 Pi 角色")
+			return
+		}
+		if tk.ProjectDir == "" {
+			tk.ProjectDir = a.ProjectDir // 兼容旧数据：角色级目录
+		}
+	} else if runMode == store.RunModeInteractive {
+		writeErr(w, http.StatusBadRequest, "交互式任务必须指派 Pi 角色")
+		return
 	}
 	id, err := s.st.CreateTask(tk)
 	if err != nil {
@@ -148,6 +171,29 @@ func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agen
 		return
 	}
 	writeJSON(w, http.StatusCreated, tk2)
+}
+
+// sendTaskInput 把已登录用户的一条人工消息送进运行中的 Pi 交互式 pane。
+func (s *Server) sendTaskInput(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if _, err := s.st.GetTask(id); err != nil {
+		writeErr(w, http.StatusNotFound, "任务不存在")
+		return
+	}
+	var in struct {
+		Message string `json:"message"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := s.ex.SendInput(id, in.Message); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"sent": true})
 }
 
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
@@ -221,9 +267,17 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusBadRequest, "角色不存在")
 				return
 			}
+			if cur.RunMode == store.RunModeInteractive && a.CLI != "pi" {
+				writeErr(w, http.StatusBadRequest, "交互式执行目前只支持 Pi 角色")
+				return
+			}
 			set["agent_id"] = int64(aid)
 			set["project_dir"] = a.ProjectDir
 		} else {
+			if cur.RunMode == store.RunModeInteractive {
+				writeErr(w, http.StatusBadRequest, "交互式任务必须指派 Pi 角色")
+				return
+			}
 			set["agent_id"] = nil
 			set["project_dir"] = ""
 		}
@@ -455,12 +509,13 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 }
 
 type agentIn struct {
-	Name        string           `json:"name"`
-	Description string           `json:"description"`
-	CLI         string           `json:"cli"`
-	RoleConfig  store.RoleConfig `json:"role_config"`
-	ProjectDir  string           `json:"project_dir"`
-	Enabled     *bool            `json:"enabled"`
+	Name           string           `json:"name"`
+	Description    string           `json:"description"`
+	CLI            string           `json:"cli"`
+	RoleConfig     store.RoleConfig `json:"role_config"`
+	ProjectDir     string           `json:"project_dir"`
+	MaxConcurrency int              `json:"max_concurrency"`
+	Enabled        *bool            `json:"enabled"`
 }
 
 func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
@@ -479,7 +534,8 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	id, err := s.st.CreateAgent(store.Agent{
 		Name: in.Name, Description: in.Description, CLI: in.CLI,
 		RoleConfig: in.RoleConfig, ProjectDir: in.ProjectDir,
-		Enabled: enabled,
+		MaxConcurrency: in.MaxConcurrency,
+		Enabled:        enabled,
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -500,6 +556,12 @@ func (s *Server) validateAgent(in *agentIn) error {
 	if _, ok := exec.GetAdapter(in.CLI); !ok {
 		return errMsg("未知 CLI: " + in.CLI)
 	}
+	if in.MaxConcurrency == 0 {
+		in.MaxConcurrency = 1
+	}
+	if in.MaxConcurrency < 1 {
+		return errMsg("最大并发数必须至少为 1")
+	}
 	// 项目目录属于项目，不再属于角色（老数据保留兼容，创建任务时优先用项目目录）
 	if in.ProjectDir != "" {
 		if fi, err := os.Stat(in.ProjectDir); err != nil || !fi.IsDir() {
@@ -518,7 +580,7 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "name", "description", "cli", "role_config", "project_dir", "enabled")
+	set, ok := patchMap(w, r, "name", "description", "cli", "role_config", "project_dir", "max_concurrency", "enabled")
 	if !ok {
 		return
 	}
@@ -544,6 +606,14 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if v, ok := set["max_concurrency"]; ok {
+		n, ok := positiveInt(v)
+		if !ok {
+			writeErr(w, http.StatusBadRequest, "最大并发数必须是至少为 1 的整数")
+			return
+		}
+		set["max_concurrency"] = n
+	}
 	if err := s.st.UpdateAgent(id, set); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -553,7 +623,20 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// 提高并发数或重新启用角色后，不必等下一次一秒轮询才派发队列。
+	s.ex.Wake()
 	writeJSON(w, http.StatusOK, a)
+}
+
+// positiveInt 将 patchMap 的 JSON number（float64）收敛为数据库可存的正整数。
+// 角色并发数没有产品级硬上限，由操作者按机器与模型配额决定；这里只拒绝
+// 非整数、零、负数和超出当前平台 int 范围的值。
+func positiveInt(v any) (int, bool) {
+	n, ok := v.(float64)
+	if !ok || n < 1 || math.Trunc(n) != n || n > float64(^uint(0)>>1) {
+		return 0, false
+	}
+	return int(n), true
 }
 
 func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
@@ -851,17 +934,35 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 // 角色配置 schema（深度定制：按 CLI 文档声明可配置字段）
 
 func (s *Server) listAgentSchemas(w http.ResponseWriter, r *http.Request) {
-	var out []map[string]any
+	type item struct {
+		a      exec.Adapter
+		fields []exec.Field
+	}
+	items := make([]item, 0, len(exec.Adapters()))
 	for _, a := range exec.Adapters() {
-		fields := exec.Enrich(a.Schema())
-		// 模型候选：探测该 CLI 在本机实例的实际配置，而非硬编码常用模型
-		for i := range fields {
-			if fields[i].Key == "model" {
-				fields[i].Suggestions = a.Models()
+		items = append(items, item{a, exec.Enrich(a.Schema())})
+	}
+	// 模型候选：探测该 CLI 在本机实例的实际配置，而非硬编码常用模型。
+	// 各 CLI 的探测命令耗时 1~4s（pi --list-models / omp models --json /
+	// opencode models），串行会把接口拖到十几秒、卡住前端首屏；并行探测
+	// 后总耗时 ≈ 最慢的一个（cachedModels 内部 singleflight 合并并发）。
+	var wg sync.WaitGroup
+	for i := range items {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := range items[i].fields {
+				if items[i].fields[j].Key == "model" {
+					items[i].fields[j].Suggestions = items[i].a.Models()
+				}
 			}
-		}
+		}(i)
+	}
+	wg.Wait()
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
 		out = append(out, map[string]any{
-			"id": a.ID(), "name": a.Name(), "docs": a.Docs(), "fields": fields,
+			"id": it.a.ID(), "name": it.a.Name(), "docs": it.a.Docs(), "fields": it.fields,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

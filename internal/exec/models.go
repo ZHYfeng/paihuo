@@ -1,5 +1,10 @@
 // 模型候选探测：从本机各 CLI 实例的实际配置/目录里枚举可用模型，
 // 而不是硬编码「常用模型」。结果带 60s 内存缓存，磁盘/命令探测失败时优雅降级为空。
+//
+// 权威来源是各 CLI 自带的模型列表命令（pi --list-models / omp models --json /
+// opencode models）：它们只列出本实例「实际可用」的模型（按凭据过滤），
+// 而配置缓存文件（models-store.json / models.db）会包含无凭据 provider 的
+// 全量目录，直接解析会列出不可用的模型。
 package exec
 
 import (
@@ -18,25 +23,53 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// modelsCacheTTL：模型候选缓存时长。探测要跑各 CLI 的命令（秒级），
+// 而模型列表变化极低频（装新 provider / 改配置才变），60s TTL 会让
+// 每次打开页面（距上次超过 1 分钟）都重复付一遍探测开销，直接拖慢
+// /api/agents/schema，进而卡住前端首屏。调成 1 小时。
+const modelsCacheTTL = time.Hour
+
 var modelsCache struct {
 	sync.Mutex
 	at    time.Time
 	items map[string][]string
+	busy  map[string]chan struct{} // 进行中的探测：并发请求合并为一次，共享结果
 }
 
-// cachedModels 按适配器 id 缓存探测结果（60s TTL）。
+// cachedModels 按适配器 id 缓存探测结果（TTL 内复用）。
+// 同一 id 的并发探测合并：后来的请求等先发者完成，避免重复跑 CLI。
 func cachedModels(id string, probe func() []string) []string {
 	modelsCache.Lock()
-	defer modelsCache.Unlock()
-	if modelsCache.items == nil || time.Since(modelsCache.at) > 60*time.Second {
+	if modelsCache.items == nil || time.Since(modelsCache.at) > modelsCacheTTL {
 		modelsCache.items = map[string][]string{}
+		modelsCache.busy = map[string]chan struct{}{}
 		modelsCache.at = time.Now()
 	}
 	if v, ok := modelsCache.items[id]; ok {
+		modelsCache.Unlock()
 		return v
 	}
+	if ch, ok := modelsCache.busy[id]; ok {
+		// 已有请求在探测：等它完成，直接复用结果。
+		// 注意：探测期间不持有全局锁，各 CLI 探测可并行。
+		modelsCache.Unlock()
+		<-ch
+		modelsCache.Lock()
+		v := modelsCache.items[id]
+		modelsCache.Unlock()
+		return v
+	}
+	ch := make(chan struct{})
+	modelsCache.busy[id] = ch
+	modelsCache.Unlock()
+
 	v := probe()
+
+	modelsCache.Lock()
 	modelsCache.items[id] = v
+	delete(modelsCache.busy, id)
+	close(ch)
+	modelsCache.Unlock()
 	return v
 }
 
@@ -54,9 +87,21 @@ func readJSONFile(path string, v any) {
 	}
 }
 
+// cliOutput 运行 CLI 命令并返回 stdout；超时/失败时 ok=false。
+func cliOutput(timeout time.Duration, name string, args ...string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	b, err := osexec.CommandContext(ctx, name, args...).Output()
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
 // ---------------------------------------------------------------------------
-// pi：~/.pi/agent/settings.json（defaultProvider/defaultModel）+ models-store.json
-// （provider → models[].id）。默认 provider 的模型给裸 id，其余给 provider/id。
+// pi：`pi --list-models`（权威：按 auth.json 凭据只列实际可用模型，表格式
+// provider model ...）；失败回退 settings.json（defaultProvider/defaultModel）
+// + models-store.json（只取有凭据的 provider）。
 
 func (a *piAdapter) Models() []string {
 	return cachedModels("pi", func() []string {
@@ -67,6 +112,44 @@ func (a *piAdapter) Models() []string {
 			DefaultModel    string `json:"defaultModel"`
 		}
 		readJSONFile(filepath.Join(dir, "settings.json"), &st)
+
+		var out []string
+		seen := map[string]bool{}
+		add := func(s string) {
+			if s != "" && !seen[s] {
+				seen[s] = true
+				out = append(out, s)
+			}
+		}
+		add(st.DefaultModel)
+		add(st.DefaultProvider + "/" + st.DefaultModel)
+
+		// 权威来源：pi --list-models 按实际凭据过滤（无凭据的 provider 不会出现）。
+		if raw, ok := cliOutput(5*time.Second, "pi", "--list-models"); ok {
+			for _, line := range strings.Split(raw, "\n") {
+				fs := strings.Fields(line)
+				if len(fs) < 2 || fs[0] == "provider" && fs[1] == "model" {
+					continue // 表头行
+				}
+				prov, model := fs[0], fs[1]
+				if prov == st.DefaultProvider {
+					add(model) // 默认 provider：裸 id 即可
+				}
+				add(prov + "/" + model)
+			}
+			if len(out) > 0 {
+				return capModels(out, 60)
+			}
+		}
+
+		// 回退：models-store.json 只取有凭据（auth.json）的 provider，
+		// 避免列出无法使用的模型（如未登录的 anthropic/openai-codex 目录）。
+		cred := map[string]bool{st.DefaultProvider: true}
+		var auth map[string]json.RawMessage
+		readJSONFile(filepath.Join(dir, "auth.json"), &auth)
+		for k := range auth {
+			cred[k] = true
+		}
 
 		// models-store.json: {"<provider>": {"models": [{"id": ...}]}}
 		provMap := map[string][]string{}
@@ -89,23 +172,15 @@ func (a *piAdapter) Models() []string {
 				}
 			}
 		}
-
-		var out []string
-		seen := map[string]bool{}
-		add := func(s string) {
-			if s != "" && !seen[s] {
-				seen[s] = true
-				out = append(out, s)
-			}
-		}
-		add(st.DefaultModel)
-		add(st.DefaultProvider + "/" + st.DefaultModel)
 		provs := make([]string, 0, len(provMap))
 		for p := range provMap {
 			provs = append(provs, p)
 		}
 		sort.Strings(provs)
 		for _, prov := range provs {
+			if !cred[prov] {
+				continue
+			}
 			for _, id := range provMap[prov] {
 				if prov == st.DefaultProvider {
 					add(id) // 默认 provider：裸 id 即可
@@ -118,13 +193,12 @@ func (a *piAdapter) Models() []string {
 }
 
 // ---------------------------------------------------------------------------
-// omp：~/.omp/agent/config.yml（modelRoles 的 provider/model 值）+ models.db
-// （model_cache 表的 JSON 模型列表：provider + id）。
+// omp：`omp models --json`（权威：按凭据只列实际可用模型，selector 即
+// provider/model）；失败回退 config.yml（modelRoles）+ models.yml +
+// models.db（model_cache 只取权威行）。
 
 func (a *ompAdapter) Models() []string {
 	return cachedModels("omp", func() []string {
-		home, _ := os.UserHomeDir()
-		agentDir := filepath.Join(home, ".omp", "agent")
 		var out []string
 		seen := map[string]bool{}
 		add := func(s string) {
@@ -133,6 +207,32 @@ func (a *ompAdapter) Models() []string {
 				out = append(out, s)
 			}
 		}
+
+		// 权威来源：omp models --json 按实际凭据过滤。
+		if raw, ok := cliOutput(5*time.Second, "omp", "models", "--json"); ok {
+			var m struct {
+				Models []struct {
+					Selector string `json:"selector"`
+					Provider string `json:"provider"`
+					ID       string `json:"id"`
+				} `json:"models"`
+			}
+			if json.Unmarshal([]byte(raw), &m) == nil {
+				for _, md := range m.Models {
+					if md.Selector != "" {
+						add(md.Selector)
+					} else if md.Provider != "" && md.ID != "" {
+						add(md.Provider + "/" + md.ID)
+					}
+				}
+			}
+			if len(out) > 0 {
+				return capModels(out, 80)
+			}
+		}
+
+		home, _ := os.UserHomeDir()
+		agentDir := filepath.Join(home, ".omp", "agent")
 
 		// config.yml：modelRoles 的形如 "deepseek/deepseek-v4-flash:max"
 		if b, err := os.ReadFile(filepath.Join(agentDir, "config.yml")); err == nil {
@@ -173,45 +273,26 @@ func (a *ompAdapter) Models() []string {
 			}
 		}
 
-		// models.db：model_cache 表，逐单元格尝试解析为模型 JSON 数组
+		// models.db：model_cache 表，只取 authoritative=1 的行（其余是
+		// 无凭据/离线缓存的全量目录，列为候选会误导）。
 		if db, err := sql.Open("sqlite", filepath.Join(agentDir, "models.db")); err == nil {
 			defer db.Close()
-			if rows, err := db.Query("SELECT * FROM model_cache"); err == nil {
+			rows, err := db.Query("SELECT models FROM model_cache WHERE authoritative = 1")
+			if err == nil {
 				defer rows.Close()
-				if cols, err := rows.Columns(); err == nil {
-					vals := make([]any, len(cols))
-					ptrs := make([]any, len(cols))
-					for i := range vals {
-						ptrs[i] = &vals[i]
+				for rows.Next() {
+					var b []byte
+					if rows.Scan(&b) != nil {
+						continue
 					}
-					for rows.Next() {
-						if rows.Scan(ptrs...) != nil {
-							continue
-						}
-						for _, v := range vals {
-							var b []byte
-							switch t := v.(type) {
-							case []byte:
-								b = t
-							case string:
-								b = []byte(t)
-							default:
-								continue
-							}
-							if len(b) < 2 || b[0] != '[' {
-								continue
-							}
-							var ms []struct {
-								Provider string `json:"provider"`
-								ID       string `json:"id"`
-							}
-							if json.Unmarshal(b, &ms) == nil && len(ms) > 0 {
-								for _, m := range ms {
-									if m.ID != "" {
-										add(m.Provider + "/" + m.ID)
-									}
-								}
-								break
+					var ms []struct {
+						Provider string `json:"provider"`
+						ID       string `json:"id"`
+					}
+					if json.Unmarshal(b, &ms) == nil {
+						for _, m := range ms {
+							if m.ID != "" {
+								add(m.Provider + "/" + m.ID)
 							}
 						}
 					}
@@ -236,10 +317,8 @@ func (a *openCodeAdapter) Models() []string {
 				out = append(out, s)
 			}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		defer cancel()
-		if b, err := osexec.CommandContext(ctx, "opencode", "models").Output(); err == nil {
-			for _, line := range strings.Split(string(b), "\n") {
+		if raw, ok := cliOutput(4*time.Second, "opencode", "models"); ok {
+			for _, line := range strings.Split(raw, "\n") {
 				add(strings.TrimSpace(line))
 			}
 			if len(out) > 0 {
@@ -260,6 +339,7 @@ func (a *openCodeAdapter) Models() []string {
 
 // ---------------------------------------------------------------------------
 // codex：~/.codex/models_cache.json（models[].slug）+ config.toml 的 model=。
+// （codex 无公开的模型列表命令；按实例实际配置枚举。）
 
 var codexModelRe = regexp.MustCompile(`(?m)^\s*model\s*=\s*"([^"]+)"`)
 
