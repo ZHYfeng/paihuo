@@ -136,8 +136,75 @@
 
   // internal/web/static/src/terminal.js
   var term = null;
+  var termFit = null;
+  function initTerm() {
+    if (term) return;
+    term = new Terminal({
+      fontFamily: "var(--font-mono)",
+      fontSize: 12.5,
+      lineHeight: 1.35,
+      convertEol: true,
+      scrollback: 1e4,
+      cursorBlink: true,
+      theme: {
+        background: "#060a13",
+        foreground: "#c9d4e5",
+        cursor: "#38bdf8",
+        selectionBackground: "rgba(56, 189, 248, .3)",
+        black: "#0b1019",
+        red: "#f87171",
+        green: "#34d399",
+        yellow: "#fbbf24",
+        blue: "#38bdf8",
+        magenta: "#a78bfa",
+        cyan: "#22d3ee",
+        white: "#c9d4e5",
+        brightBlack: "#5d6b84",
+        brightRed: "#fca5a5",
+        brightGreen: "#6ee7b7",
+        brightYellow: "#fde047",
+        brightBlue: "#7dd3fc",
+        brightMagenta: "#c4b5fd",
+        brightCyan: "#67e8f9",
+        brightWhite: "#f1f5f9"
+      }
+    });
+    termFit = new FitAddon.FitAddon();
+    term.loadAddon(termFit);
+    term.open(document.getElementById("termX"));
+    termFit.fit();
+    window.addEventListener("resize", () => {
+      try {
+        termFit.fit();
+      } catch (_) {
+      }
+    });
+  }
   function termWrite(content) {
     if (term) term.write(String(content ?? "") + "\r\n");
+  }
+  function openTerminal(id) {
+    const t = state.tasks.find((x) => x.id === id) || {};
+    document.getElementById("termTitle").textContent = `${t.agent_name || ""} \xB7 #${id} \u5BF9\u8BDD`;
+    openModal("termModal");
+    initTerm();
+    setTimeout(() => {
+      try {
+        termFit.fit();
+      } catch (_) {
+      }
+    }, 30);
+    term.clear();
+    term.write("\x1B[90m# loading logs...\x1B[0m\r\n");
+    state.termTask = id;
+    api(`/api/tasks/${id}/logs`).then((logs) => {
+      if (state.termTask !== id) return;
+      term.clear();
+      logs.forEach((l) => termWrite(l.content));
+      if (!logs.length) term.write("\x1B[90m\uFF08\u6682\u65E0\u8F93\u51FA\uFF09\x1B[0m\r\n");
+    }).catch(() => {
+      term.write("\x1B[31m\u65E5\u5FD7\u52A0\u8F7D\u5931\u8D25\x1B[0m\r\n");
+    });
   }
   function closeTerminal() {
     state.termTask = null;
@@ -278,6 +345,16 @@
     const cnt = document.getElementById("hSelCount");
     if (cnt) cnt.textContent = state.historySel.size;
   }
+  function toggleRow(tr) {
+    const id = Number(tr.dataset.id);
+    if (state.historySel.has(id)) state.historySel.delete(id);
+    else state.historySel.add(id);
+    tr.classList.toggle("selected", state.historySel.has(id));
+    const cb = tr.querySelector("input[type=checkbox]");
+    if (cb) cb.checked = state.historySel.has(id);
+    const cnt = document.getElementById("hSelCount");
+    if (cnt) cnt.textContent = state.historySel.size;
+  }
   function toggleAll() {
     const all = document.getElementById("hCheckAll").checked;
     state.historySel.clear();
@@ -414,6 +491,18 @@
       toast(e.message, true);
     }
   }
+  async function deleteSkill(id) {
+    const s = state.skillLib.find((x) => x.id === id);
+    if (!confirm(`\u5220\u9664 skill\u300C${s ? s.name : id}\u300D\uFF1F\u5C06\u540C\u65F6\u79FB\u9664\u5DE5\u4F5C\u76EE\u5F55\u4E2D\u7684\u526F\u672C\uFF0C\u5DF2\u5F15\u7528\u5B83\u7684\u89D2\u8272\u914D\u7F6E\u4F1A\u5931\u6548\u3002`)) return;
+    try {
+      await api(`/api/skills/${id}`, { method: "DELETE" });
+      toast("\u5DF2\u5220\u9664");
+      await loadSkillLib();
+      renderSkillLib();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
   async function loadTemplates() {
     try {
       state.templates = await api("/api/templates");
@@ -437,6 +526,15 @@
     </tr>`).join("");
     const empty = document.getElementById("templateEmpty");
     if (empty) empty.classList.toggle("hidden", state.templates.length > 0);
+  }
+  async function deleteTemplate(id) {
+    if (!confirm("\u5220\u9664\u8BE5\u6A21\u677F\uFF1F")) return;
+    try {
+      await api(`/api/templates/${id}`, { method: "DELETE" });
+      await loadTemplates();
+    } catch (e) {
+      toast(e.message, true);
+    }
   }
 
   // internal/web/static/src/task.js
@@ -533,6 +631,9 @@
   function applyFilters() {
     state.view === "list" ? renderList() : renderBoard();
   }
+  function openTask(id) {
+    location.hash = "#/issue/" + id;
+  }
   function closeDetail() {
     state.selected = null;
     location.hash = "#/";
@@ -625,6 +726,36 @@
       box.innerHTML = `<div class="empty">\u5DE5\u4F5C\u7A7A\u95F4\u4FE1\u606F\u4E0D\u53EF\u7528</div>`;
     }
   }
+  async function wsMerge(id) {
+    if (!confirm(`\u628A\u4EFB\u52A1 #${id} \u7684\u6539\u52A8 squash \u5408\u5E76\u56DE\u4E3B\u5206\u652F\uFF1F`)) return;
+    try {
+      const r = await api(`/api/workspace/${id}/merge`, { method: "POST" });
+      toast(`\u5DF2\u5408\u5E76${r.commit ? " (" + r.commit + ")" : ""}`);
+      loadWorkspace(id);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+  async function wsDiscard(id) {
+    if (!confirm(`\u4E22\u5F03\u4EFB\u52A1 #${id} \u7684\u5DE5\u4F5C\u7A7A\u95F4\uFF1F\u5206\u652F\u4E0E worktree \u5C06\u5220\u9664\uFF0C\u6539\u52A8\u4E0D\u53EF\u6062\u590D\u3002`)) return;
+    try {
+      await api(`/api/workspace/${id}/discard`, { method: "POST" });
+      toast("\u5DF2\u4E22\u5F03");
+      loadWorkspace(id);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+  async function gitInitProject(path, id) {
+    if (!confirm(`\u5728 ${path} \u521D\u59CB\u5316 git \u4ED3\u5E93\uFF1F\u4E4B\u540E\u7684\u4EFB\u52A1\u5C06\u83B7\u5F97\u72EC\u7ACB worktree\u3002`)) return;
+    try {
+      await api("/api/workspace/git-init", { method: "POST", body: JSON.stringify({ path }) });
+      toast("\u5DF2\u521D\u59CB\u5316");
+      loadWorkspace(id);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
   function renderSide(t) {
     const side = document.getElementById("dSide");
     if (!side) return;
@@ -661,6 +792,72 @@
     <div class="sec-title">\u64CD\u4F5C</div>
     <div class="detail-actions">${actions}</div>`;
   }
+  async function patchTask(id, set) {
+    try {
+      await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(set) });
+      toast("\u5DF2\u66F4\u65B0");
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+  async function setTaskStatus(id, status) {
+    try {
+      await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
+      if (status === "queued" && location.pathname === "/history") {
+        location.href = "/";
+        return;
+      }
+      await loadAll();
+      const p = location.pathname;
+      if (p === "/" || p === "/board") {
+        if (state.selected === id && location.hash.startsWith("#/issue/")) showDetail(id);
+        if (p === "/") loadDashboard();
+      } else if (p === "/history") {
+        loadHistory();
+      } else if (p === "/projects" && state.projectView) {
+        refreshProjectDetail();
+      }
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+  async function rejectTask(id) {
+    const note = prompt("\u9A73\u56DE\u539F\u56E0 / \u4FEE\u6539\u610F\u89C1\uFF08\u5C06\u8FFD\u52A0\u5230\u4EFB\u52A1\u63D0\u793A\u8BCD\uFF0C\u91CD\u65B0\u6267\u884C\uFF09");
+    if (note === null) return;
+    try {
+      await api(`/api/tasks/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "queued", review_note: note })
+      });
+      toast("\u5DF2\u9A73\u56DE\uFF0C\u4EFB\u52A1\u91CD\u65B0\u6267\u884C");
+      await loadAll();
+      showDetail(id);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+  async function deleteTask(id) {
+    if (!confirm(`\u5220\u9664\u4EFB\u52A1 #${id}\uFF1F\u6267\u884C\u65E5\u5FD7\u5C06\u4E00\u5E76\u5220\u9664\u3002`)) return;
+    try {
+      await api(`/api/tasks/${id}`, { method: "DELETE" });
+      toast("\u5DF2\u5220\u9664");
+      await loadAll();
+      const p = location.pathname;
+      if (state.selected === id) {
+        closeDetail();
+        location.hash = "#/";
+      }
+      if (p === "/history") loadHistory();
+      if (p === "/projects" && state.projectView) refreshProjectDetail();
+      if (p === "/") loadDashboard();
+      if (p === "/board") {
+        renderBoard();
+        renderList();
+      }
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
   async function loadChildren(id) {
     try {
       const kids = await api(`/api/tasks/${id}/children`);
@@ -673,6 +870,28 @@
         <span style="font-size:11px;color:var(--fg-faint)">${esc(k.agent_name || "")}</span></div>
       </div>`).join("");
     } catch (_) {
+    }
+  }
+  function openSubTask(parentId) {
+    fillSelects();
+    const t = state.tasks.find((x) => x.id === parentId);
+    document.getElementById("tTitle").value = "";
+    document.getElementById("tBody").value = "";
+    document.getElementById("tPerm").value = t ? t.perm : "full";
+    document.getElementById("tProject").value = t && t.project_id ? t.project_id : "";
+    document.getElementById("tParentId").value = parentId;
+    document.getElementById("taskModalTitle").textContent = "\u62C6\u5206\u5B50\u4EFB\u52A1";
+    openModal("taskModal");
+  }
+  async function resumeTask(id) {
+    if (!confirm(`\u7EED\u8DD1\u4EFB\u52A1 #${id}\uFF1F\u5C06\u521B\u5EFA\u65B0\u4EFB\u52A1\u5E76\u590D\u7528\u539F\u4F1A\u8BDD\u7EE7\u7EED\u5BF9\u8BDD\uFF08pi/omp \u771F\u5B9E\u7EED\u5BF9\u8BDD\uFF0C\u5176\u4ED6 CLI \u4E3A\u5168\u65B0\u4F1A\u8BDD\uFF09\u3002`)) return;
+    try {
+      const t = await api(`/api/tasks/${id}/resume`, { method: "POST" });
+      toast(`\u5DF2\u521B\u5EFA\u7EED\u8DD1\u4EFB\u52A1 #${t.id}`);
+      await loadAll();
+      location.hash = "#/issue/" + t.id;
+    } catch (e) {
+      toast(e.message, true);
     }
   }
   async function loadDiff(id) {
@@ -713,6 +932,14 @@
     }
     if (state.termTask === l.task_id) {
       if (term) termWrite(l.content);
+    }
+  }
+  async function copyLogs() {
+    try {
+      await navigator.clipboard.writeText(state.logs.map((l) => l.content).join("\n"));
+      toast("\u5DF2\u590D\u5236\u5BF9\u8BDD\u5185\u5BB9");
+    } catch (_) {
+      toast("\u590D\u5236\u5931\u8D25", true);
     }
   }
   function openNewTask() {
@@ -758,6 +985,23 @@
     document.getElementById("tBody").value = t.body || "";
     if (t.agent_id) document.getElementById("tAgent").value = t.agent_id;
   }
+  async function saveAsTemplate(taskId) {
+    let t;
+    try {
+      t = await api(`/api/tasks/${taskId}`);
+    } catch (_) {
+      return;
+    }
+    const name = prompt("\u6A21\u677F\u540D\u79F0\uFF08\u7528\u4E8E\u590D\u7528\u8BE5\u4EFB\u52A1\u7684\u63D0\u793A\u8BCD\uFF09", t.title);
+    if (!name) return;
+    try {
+      await api("/api/templates", { method: "POST", body: JSON.stringify({ name, body: t.body, agent_id: t.agent_id }) });
+      toast("\u5DF2\u4FDD\u5B58\u4E3A\u6A21\u677F");
+      loadTemplates();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
 
   // internal/web/static/src/projects.js
   function renderProjectList() {
@@ -793,6 +1037,9 @@
     if (empty) empty.classList.toggle("hidden", list.length > 0);
     const cnt = document.getElementById("projectCount");
     if (cnt) cnt.textContent = `${list.length} \u4E2A\u9879\u76EE`;
+  }
+  function openProject(id) {
+    location.hash = "#/project/" + id;
   }
   function closeProjectDetail() {
     location.hash = "#/";
@@ -927,6 +1174,17 @@
       await loadAll();
       renderProjectList();
       if (state.projectView) refreshProjectDetail();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+  async function patchProject(id, set) {
+    try {
+      await api(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(set) });
+      await loadAll();
+      if (state.projectView === id) refreshProjectDetail();
+      renderProjectList();
+      toast("\u5DF2\u66F4\u65B0");
     } catch (e) {
       toast(e.message, true);
     }
@@ -1151,6 +1409,9 @@
     state.agentView === "grid" ? renderAgentGrid() : renderAgentTable();
   }
   var pendingAgentTab = null;
+  function openAgentDetail(id) {
+    location.hash = "#/agent/" + id;
+  }
   function closeAgentDetail() {
     location.hash = "#/";
   }
@@ -1302,6 +1563,55 @@
   function chipHTML(key, p) {
     return `<span class="chip-item" data-v="${esc(p)}"><span class="ci-text">${esc(p)}</span><button type="button" class="chip-x" onclick="removeChip('${key}', this)" aria-label="\u79FB\u9664">\xD7</button></span>`;
   }
+  function chipEditorValue(el) {
+    const box = el.closest(".chip-editor");
+    return { box, hidden: box.querySelector('input[type="hidden"]') };
+  }
+  function syncChips(box, key) {
+    const h = box.querySelector('input[type="hidden"]');
+    const items = h.value ? h.value.split(",") : [];
+    const row = box.querySelector(".chips");
+    if (row) row.innerHTML = items.map((p) => chipHTML(key, p)).join("");
+    if (box.querySelector(".skill-opts")) {
+      box.querySelectorAll(".skill-opts input[type=checkbox]").forEach((cb) => cb.checked = items.includes(cb.dataset.v));
+    }
+  }
+  function addChip(key, input) {
+    const v = (input.value || "").trim();
+    if (!v) return;
+    const { box, hidden } = chipEditorValue(input);
+    const items = hidden.value ? hidden.value.split(",") : [];
+    if (!items.includes(v)) {
+      items.push(v);
+      hidden.value = items.join(",");
+    }
+    syncChips(box, key);
+    input.value = "";
+    input.focus();
+  }
+  function removeChip(key, btn) {
+    const chip = btn.closest(".chip-item");
+    if (!chip) return;
+    const { box, hidden } = chipEditorValue(btn);
+    const items = hidden.value ? hidden.value.split(",") : [];
+    const i = items.indexOf(chip.dataset.v);
+    if (i >= 0) items.splice(i, 1);
+    hidden.value = items.join(",");
+    syncChips(box, key);
+  }
+  function toggleSkill(key, cb) {
+    const { box, hidden } = chipEditorValue(cb);
+    const items = hidden.value ? hidden.value.split(",") : [];
+    const v = cb.dataset.v;
+    if (cb.checked) {
+      if (!items.includes(v)) items.push(v);
+    } else {
+      const i = items.indexOf(v);
+      if (i >= 0) items.splice(i, 1);
+    }
+    hidden.value = items.join(",");
+    syncChips(box, key);
+  }
   function skillsControlHTML(f, val) {
     const items = val ? String(val).split(",").map((s) => s.trim()).filter(Boolean) : [];
     const lib = state.skillLib || [];
@@ -1407,6 +1717,20 @@
     <div id="configForm">${schemaFormHTML(schema, a.role_config || {})}</div>
     <div style="margin-top:16px"><button class="btn primary" onclick="saveAgentConfig()">\u4FDD\u5B58</button></div>`;
   }
+  async function saveAgentConfig() {
+    const a = state.agentEditing;
+    if (!a) return;
+    const schema = state.schema[a.cli];
+    const cfg = readConfigFrom(schema, document.getElementById("configForm"));
+    try {
+      await api(`/api/agents/${a.id}`, { method: "PATCH", body: JSON.stringify({ role_config: cfg }) });
+      toast("\u914D\u7F6E\u5DF2\u4FDD\u5B58");
+      await loadAll();
+      showAgentDetail(a.id);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
   async function renderAgentEnv(a) {
     const form = document.getElementById("agentForm");
     if (!form) return;
@@ -1417,6 +1741,31 @@
       <textarea id="envText" rows="12" placeholder="KEY=VALUE">${esc(Object.entries(rc.env || {}).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea>
     </label>
     <div style="margin-top:16px"><button class="btn primary" onclick="saveAgentEnv()">\u4FDD\u5B58\u73AF\u5883\u53D8\u91CF</button></div>`;
+  }
+  async function saveAgentEnv() {
+    const a = state.agentEditing;
+    if (!a) return;
+    const rc = a.role_config || {};
+    const env = parseEnv(document.getElementById("envText").value);
+    const body = {
+      model: rc.model || "",
+      system_prompt: rc.system_prompt || "",
+      instructions: rc.instructions || "",
+      thinking: rc.thinking || "",
+      skills: rc.skills || [],
+      plugins: rc.plugins || [],
+      extra_args: rc.extra_args || [],
+      env,
+      custom: rc.custom || {}
+    };
+    try {
+      await api(`/api/agents/${a.id}`, { method: "PATCH", body: JSON.stringify({ role_config: body }) });
+      toast("\u73AF\u5883\u53D8\u91CF\u5DF2\u4FDD\u5B58");
+      await loadAll();
+      showAgentDetail(a.id);
+    } catch (e) {
+      toast(e.message, true);
+    }
   }
   async function openAgentModal(id) {
     const a = id ? state.agents.find((x) => x.id === id) : null;
@@ -1530,6 +1879,21 @@
     const cnt = document.getElementById("provCount");
     if (cnt) cnt.textContent = `\u5DF2\u5B89\u88C5 ${provState.prov.filter((p) => p.installed).length}/${provState.prov.length}`;
   }
+  async function installProvision(cli) {
+    provState.instCli = cli;
+    const box = document.getElementById("instBox");
+    const title = document.getElementById("instTitle");
+    box.innerHTML = `<div class="empty">\u6B63\u5728\u542F\u52A8\u5B89\u88C5...</div>`;
+    title.textContent = `\u5B89\u88C5 ${cli}`;
+    openModal("instModal");
+    try {
+      const r = await api("/api/provision/install", { method: "POST", body: JSON.stringify({ cli }) });
+      setTimeout(loadProvision, 3e3);
+    } catch (e) {
+      box.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+      provState.instCli = null;
+    }
+  }
   function appendInstLine(line) {
     const box = document.getElementById("instBox");
     if (!box) return;
@@ -1543,6 +1907,19 @@
   }
   function refreshProvision() {
     loadProvision();
+  }
+  function copyText(t) {
+    navigator.clipboard.writeText(t).then(() => toast("\u5DF2\u590D\u5236")).catch(() => toast("\u590D\u5236\u5931\u8D25", true));
+  }
+  async function createDefaultRole(cli) {
+    const name = prompt(`\u521B\u5EFA\u57FA\u4E8E ${cli} \u7684\u9ED8\u8BA4\u89D2\u8272\u540D\u79F0`, cli);
+    if (!name) return;
+    try {
+      await api("/api/agents", { method: "POST", body: JSON.stringify({ name, cli, enabled: true }) });
+      toast("\u5DF2\u521B\u5EFA\u89D2\u8272\uFF0C\u53EF\u5728\u89D2\u8272\u9875\u7EE7\u7EED\u5B9A\u5236");
+    } catch (e) {
+      toast(e.message, true);
+    }
   }
 
   // internal/web/static/src/schedules.js
@@ -1566,6 +1943,16 @@
     </tr>`).join("");
     const empty = document.getElementById("scheduleEmpty");
     if (empty) empty.classList.toggle("hidden", state.schedules.length > 0);
+  }
+  async function toggleSchedule(id) {
+    const sc = state.schedules.find((x) => x.id === id);
+    try {
+      await api(`/api/schedules/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: !sc.enabled }) });
+      await loadAll();
+      renderScheduleList();
+    } catch (e) {
+      toast(e.message, true);
+    }
   }
   function openScheduleModal(id) {
     fillSelects();
@@ -1594,6 +1981,16 @@
       if (id) await api(`/api/schedules/${id}`, { method: "PATCH", body: JSON.stringify(body) });
       else await api("/api/schedules", { method: "POST", body: JSON.stringify(body) });
       closeModal("scheduleModal");
+      await loadAll();
+      renderScheduleList();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+  async function deleteSchedule(id) {
+    if (!confirm("\u5220\u9664\u8BE5\u5B9A\u65F6\u4EFB\u52A1\uFF1F")) return;
+    try {
+      await api(`/api/schedules/${id}`, { method: "DELETE" });
       await loadAll();
       renderScheduleList();
     } catch (e) {
@@ -1955,6 +2352,7 @@
     }
     sse();
   });
+  window.addChip = addChip;
   window.agentTab = agentTab;
   window.applyFilters = applyFilters;
   window.applyTemplate = applyTemplate;
@@ -1965,30 +2363,53 @@
   window.closeModal = closeModal;
   window.closeProjectDetail = closeProjectDetail;
   window.closeTerminal = closeTerminal;
+  window.copyLogs = copyLogs;
+  window.copyText = copyText;
+  window.createDefaultRole = createDefaultRole;
   window.deleteAgent = deleteAgent;
   window.deleteProject = deleteProject;
+  window.deleteSchedule = deleteSchedule;
   window.deleteSelected = deleteSelected;
+  window.deleteSkill = deleteSkill;
+  window.deleteTask = deleteTask;
+  window.deleteTemplate = deleteTemplate;
+  window.gitInitProject = gitInitProject;
+  window.installProvision = installProvision;
   window.loadHistory = loadHistory;
   window.logout = logout;
   window.mkdirCurrent = mkdirCurrent;
+  window.openAgentDetail = openAgentDetail;
   window.openAgentModal = openAgentModal;
   window.openDirPicker = openDirPicker;
   window.openExtModal = openExtModal;
   window.openNewTask = openNewTask;
+  window.openProject = openProject;
   window.openProjectModal = openProjectModal;
   window.openScheduleModal = openScheduleModal;
   window.openSkillModal = openSkillModal;
+  window.openSubTask = openSubTask;
+  window.openTask = openTask;
+  window.openTerminal = openTerminal;
+  window.patchProject = patchProject;
+  window.patchTask = patchTask;
   window.pickDir = pickDir;
   window.refreshProvision = refreshProvision;
+  window.rejectTask = rejectTask;
+  window.removeChip = removeChip;
   window.removeExt = removeExt;
   window.renderAgentList = renderAgentList;
   window.renderAgentModalSchema = renderAgentModalSchema;
   window.renderProjectList = renderProjectList;
+  window.resumeTask = resumeTask;
   window.runCleanup = runCleanup;
+  window.saveAgentConfig = saveAgentConfig;
+  window.saveAgentEnv = saveAgentEnv;
+  window.saveAsTemplate = saveAsTemplate;
   window.saveRetention = saveRetention;
   window.saveWtRetention = saveWtRetention;
   window.setAgentView = setAgentView;
   window.setSkillTab = setSkillTab;
+  window.setTaskStatus = setTaskStatus;
   window.setView = setView;
   window.submitAgent = submitAgent;
   window.submitExt = submitExt;
@@ -1997,7 +2418,12 @@
   window.submitSkill = submitSkill;
   window.submitTask = submitTask;
   window.toggleAll = toggleAll;
+  window.toggleRow = toggleRow;
+  window.toggleSchedule = toggleSchedule;
   window.toggleSidebar = toggleSidebar;
+  window.toggleSkill = toggleSkill;
+  window.wsDiscard = wsDiscard;
+  window.wsMerge = wsMerge;
   window.addEventListener("pagehide", () => {
     if (state.es) {
       state.es.close();

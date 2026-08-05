@@ -96,9 +96,22 @@ function findChrome() {
   await page.evaluate(() => closeModal("projectModal"));
 
   await page.goto(URL + "/agents");
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(2500);
   const prov = await page.evaluate(() => document.querySelectorAll(".prov-card").length);
   prov > 0 ? ok(`安装面板（${prov} 张卡片）`) : fail("安装面板未渲染");
+  // 动态按钮回归：JS 字符串生成的 onclick 必须挂到 window（防 installProvision is not defined 类回归）
+  const dyn = await page.evaluate(() => ({
+    install: typeof window.installProvision === "function",
+    createRole: typeof window.createDefaultRole === "function",
+    setTaskStatus: typeof window.setTaskStatus === "function",
+    openTask: typeof window.openTask === "function",
+    wsMerge: typeof window.wsMerge === "function",
+    resumeTask: typeof window.resumeTask === "function",
+  }));
+  Object.values(dyn).every(Boolean) ? ok("动态按钮全局函数（6 项）") : fail("动态按钮全局函数缺失: " + JSON.stringify(dyn));
+  const dynBtn = await page.evaluate(() =>
+    [...document.querySelectorAll(".prov-actions .btn")].some(b => b.textContent.includes("重装/更新")));
+  dynBtn ? ok("重装/更新按钮渲染") : fail("重装/更新按钮缺失");
 
   await page.goto(URL + "/autopilots");
   await page.waitForTimeout(700);

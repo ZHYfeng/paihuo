@@ -1,15 +1,15 @@
 // 模块 main（由 scripts/split-frontend.py 生成）
-import { agentTab, closeAgentDetail, deleteAgent, hideAgentDetail, openAgentModal, renderAgentList, renderAgentModalSchema, renderAgentOverview, setAgentView, showAgentDetail, submitAgent } from "./agents.js";
+import { addChip, agentTab, closeAgentDetail, deleteAgent, hideAgentDetail, openAgentDetail, openAgentModal, removeChip, renderAgentList, renderAgentModalSchema, renderAgentOverview, saveAgentConfig, saveAgentEnv, setAgentView, showAgentDetail, submitAgent, toggleSkill } from "./agents.js";
 import { api, closeModal, esc, fmtDur, fmtPct, logout, state, toast } from "./core.js";
 import { loadDashboard } from "./dashboard.js";
-import { cleanupHistory, deleteSelected, loadHistory, toggleAll } from "./history.js";
-import { closeProjectDetail, deleteProject, dirLoad, hideProjectDetail, mkdirCurrent, openDirPicker, openProjectModal, pickDir, refreshProjectDetail, renderProjectList, showProjectDetail, submitProject } from "./projects.js";
-import { appendInstLine, closeInstTerminal, loadProvision, provState, refreshProvision } from "./provision.js";
-import { openScheduleModal, renderScheduleList, submitSchedule } from "./schedules.js";
+import { cleanupHistory, deleteSelected, loadHistory, toggleAll, toggleRow } from "./history.js";
+import { closeProjectDetail, deleteProject, dirLoad, hideProjectDetail, mkdirCurrent, openDirPicker, openProject, openProjectModal, patchProject, pickDir, refreshProjectDetail, renderProjectList, showProjectDetail, submitProject } from "./projects.js";
+import { appendInstLine, closeInstTerminal, copyText, createDefaultRole, installProvision, loadProvision, provState, refreshProvision } from "./provision.js";
+import { deleteSchedule, openScheduleModal, renderScheduleList, submitSchedule, toggleSchedule } from "./schedules.js";
 import { loadSettings, runCleanup, saveRetention, saveWtRetention } from "./settings.js";
-import { loadSkillLib, loadTemplates, openExtModal, openSkillModal, removeExt, renderSkillLib, setSkillTab, submitExt, submitSkill } from "./skills.js";
-import { appendLog, applyFilters, applyTemplate, closeDetail, hideDetail, openNewTask, refreshDetail, renderBoard, renderList, setView, showDetail, submitTask } from "./task.js";
-import { closeTerminal } from "./terminal.js";
+import { deleteSkill, deleteTemplate, loadSkillLib, loadTemplates, openExtModal, openSkillModal, removeExt, renderSkillLib, setSkillTab, submitExt, submitSkill } from "./skills.js";
+import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, gitInitProject, hideDetail, openNewTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, wsDiscard, wsMerge } from "./task.js";
+import { closeTerminal, openTerminal } from "./terminal.js";
 
 export async function loadAll() {
   const [tasks, agents, schedules, projects] = await Promise.all([
@@ -310,6 +310,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 
 // ===== 模板 onclick 等引用的全局函数（脚本自动生成，勿手改） =====
+window.addChip = addChip;
 window.agentTab = agentTab;
 window.applyFilters = applyFilters;
 window.applyTemplate = applyTemplate;
@@ -320,30 +321,53 @@ window.closeInstTerminal = closeInstTerminal;
 window.closeModal = closeModal;
 window.closeProjectDetail = closeProjectDetail;
 window.closeTerminal = closeTerminal;
+window.copyLogs = copyLogs;
+window.copyText = copyText;
+window.createDefaultRole = createDefaultRole;
 window.deleteAgent = deleteAgent;
 window.deleteProject = deleteProject;
+window.deleteSchedule = deleteSchedule;
 window.deleteSelected = deleteSelected;
+window.deleteSkill = deleteSkill;
+window.deleteTask = deleteTask;
+window.deleteTemplate = deleteTemplate;
+window.gitInitProject = gitInitProject;
+window.installProvision = installProvision;
 window.loadHistory = loadHistory;
 window.logout = logout;
 window.mkdirCurrent = mkdirCurrent;
+window.openAgentDetail = openAgentDetail;
 window.openAgentModal = openAgentModal;
 window.openDirPicker = openDirPicker;
 window.openExtModal = openExtModal;
 window.openNewTask = openNewTask;
+window.openProject = openProject;
 window.openProjectModal = openProjectModal;
 window.openScheduleModal = openScheduleModal;
 window.openSkillModal = openSkillModal;
+window.openSubTask = openSubTask;
+window.openTask = openTask;
+window.openTerminal = openTerminal;
+window.patchProject = patchProject;
+window.patchTask = patchTask;
 window.pickDir = pickDir;
 window.refreshProvision = refreshProvision;
+window.rejectTask = rejectTask;
+window.removeChip = removeChip;
 window.removeExt = removeExt;
 window.renderAgentList = renderAgentList;
 window.renderAgentModalSchema = renderAgentModalSchema;
 window.renderProjectList = renderProjectList;
+window.resumeTask = resumeTask;
 window.runCleanup = runCleanup;
+window.saveAgentConfig = saveAgentConfig;
+window.saveAgentEnv = saveAgentEnv;
+window.saveAsTemplate = saveAsTemplate;
 window.saveRetention = saveRetention;
 window.saveWtRetention = saveWtRetention;
 window.setAgentView = setAgentView;
 window.setSkillTab = setSkillTab;
+window.setTaskStatus = setTaskStatus;
 window.setView = setView;
 window.submitAgent = submitAgent;
 window.submitExt = submitExt;
@@ -352,7 +376,12 @@ window.submitSchedule = submitSchedule;
 window.submitSkill = submitSkill;
 window.submitTask = submitTask;
 window.toggleAll = toggleAll;
+window.toggleRow = toggleRow;
+window.toggleSchedule = toggleSchedule;
 window.toggleSidebar = toggleSidebar;
+window.toggleSkill = toggleSkill;
+window.wsDiscard = wsDiscard;
+window.wsMerge = wsMerge;
 
 // ===== 页面生命周期 =====
 window.addEventListener("pagehide", () => {
