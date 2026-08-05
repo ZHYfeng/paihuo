@@ -35,7 +35,7 @@ func TestTmuxRunnerPersistsOutputAndExit(t *testing.T) {
 	if err := r.Start(taskID, t.TempDir(), "/bin/sh", []string{
 		"-c", `printf 'first\n'; printf 'arg=%s\n' "$1"; printf 'env=%s\n' "$PAIHUO_TMUX_TEST"; sleep 0.1; printf 'last'`,
 		"probe", "quote'\nline",
-	}, []string{"PAIHUO_TMUX_TEST=ok"}, false); err != nil {
+	}, []string{"PAIHUO_TMUX_TEST=ok"}, tmuxStartOptions{}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -119,7 +119,7 @@ func TestTmuxRunnerTaskTmuxWrapperIgnoresUserConfig(t *testing.T) {
 		"-lc",
 		`test -z "$TMUX" && test -z "$TMUX_PANE" && tmux -L "$1" new-session -d -s nested -- sleep 2147483647; created=$?; option="$(tmux -L "$1" show-options -gqv @paihuo_task_wrapper_test)"; shown=$?; tmux -L "$1" kill-server; stopped=$?; test "$created" -eq 0 && test "$shown" -eq 0 && test "$stopped" -eq 0 && test -z "$option" && printf 'nested config clean\n'`,
 		"wrapper-test", nestedSocket,
-	}, os.Environ(), false); err != nil {
+	}, os.Environ(), tmuxStartOptions{}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -165,7 +165,7 @@ func TestTmuxRunnerIsolatesBatchAgentProcessGroup(t *testing.T) {
 	// task window 消失却没有 exit-code；隔离后 setsid 只返回 137 给 run.sh。
 	if err := r.Start(42, t.TempDir(), "/bin/sh", []string{
 		"-c", "kill -KILL -$$",
-	}, os.Environ(), true); err != nil {
+	}, os.Environ(), tmuxStartOptions{IsolateProcessGroup: true}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -190,6 +190,56 @@ func TestTmuxRunnerIsolatesBatchAgentProcessGroup(t *testing.T) {
 	t.Fatal("等待隔离任务结束超时")
 }
 
+func TestTmuxRunnerDetachesCodexBatchTerminal(t *testing.T) {
+	bin := requireTmuxIntegration(t)
+	if _, err := osexec.LookPath("setsid"); err != nil {
+		t.Skip("setsid 未安装")
+	}
+	if _, err := osexec.LookPath("tail"); err != nil {
+		t.Skip("tail 未安装")
+	}
+	r := newTmuxRunnerAt(t.TempDir(), fmt.Sprintf("paihuo-detach-test-%d", os.Getpid()))
+	r.binary = bin
+	_ = r.command("kill-server")
+	t.Cleanup(func() { _ = r.command("kill-server") })
+
+	// 这个断言正好覆盖 Codex 的故障边界：agent 的 stdin/stdout/stderr 都不能
+	// 指向 paihuo task pane 的 pty，但输出仍必须实时回到 terminal.log。
+	if err := r.Start(42, t.TempDir(), "/bin/sh", []string{
+		"-c", `test ! -t 0 && test ! -t 1 && test ! -t 2 && printf 'detached agent output\n'`,
+	}, os.Environ(), tmuxStartOptions{IsolateProcessGroup: true, DetachTerminal: true}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	var offset int64
+	var output []string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		obs, err := r.Poll(42, offset)
+		if err != nil {
+			t.Fatalf("Poll: %v", err)
+		}
+		output = append(output, obs.Lines...)
+		offset = obs.Offset
+		if !obs.Done {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		if obs.ExitCode != 0 {
+			t.Fatalf("ExitCode=%d output=%q", obs.ExitCode, output)
+		}
+		if !strings.Contains(strings.Join(output, "\n"), "detached agent output") {
+			t.Fatalf("agent 输出未转发到 terminal.log: %q", output)
+		}
+		raw, err := os.ReadFile(r.agentOutputPath(42))
+		if err != nil || !strings.Contains(string(raw), "detached agent output") {
+			t.Fatalf("agent 原始输出不完整: %q err=%v", raw, err)
+		}
+		return
+	}
+	t.Fatal("等待脱离终端的 batch 任务结束超时")
+}
+
 func TestTmuxRunnerArchivesFailureArtifacts(t *testing.T) {
 	r := newTmuxRunnerAt(t.TempDir(), "paihuo-archive-test")
 	const taskID = int64(42)
@@ -197,9 +247,10 @@ func TestTmuxRunnerArchivesFailureArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, want := range map[string]string{
-		"terminal.log": "partial output\n",
-		"run.sh":       "#!/bin/sh\n",
-		"start":        "start\n",
+		"terminal.log":     "partial output\n",
+		"agent-output.log": "raw agent output\n",
+		"run.sh":           "#!/bin/sh\n",
+		"start":            "start\n",
 	} {
 		if err := os.WriteFile(filepath.Join(r.taskDir(taskID), name), []byte(want), 0o600); err != nil {
 			t.Fatal(err)
@@ -210,10 +261,11 @@ func TestTmuxRunnerArchivesFailureArtifacts(t *testing.T) {
 		t.Fatalf("ArchiveFailureArtifacts: %v", err)
 	}
 	for name, want := range map[string]string{
-		"terminal.log": "partial output\n",
-		"run.sh":       "#!/bin/sh\n",
-		"start":        "start\n",
-		"reason.txt":   "window vanished\n",
+		"terminal.log":     "partial output\n",
+		"agent-output.log": "raw agent output\n",
+		"run.sh":           "#!/bin/sh\n",
+		"start":            "start\n",
+		"reason.txt":       "window vanished\n",
 	} {
 		got, err := os.ReadFile(filepath.Join(archive, name))
 		if err != nil || string(got) != want {

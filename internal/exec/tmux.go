@@ -37,6 +37,14 @@ const tmuxConfigFile = "/dev/null"
 // 常规本地与 CI 测试不设置它，仍完整覆盖这些集成场景。
 const taskNestedTmuxSkipEnv = "PAIHUO_SKIP_NESTED_TMUX_TESTS"
 
+// tmuxStartOptions 描述任务命令与承载它的 tmux pane 之间的隔离边界。
+// 只有 Codex 的 batch 模式会脱离 pane TTY：其 unified exec 在收尾工具进程时
+// 会操作 stdio 所属的进程组，不能让它看到 paihuo 的 pane 终端。
+type tmuxStartOptions struct {
+	IsolateProcessGroup bool
+	DetachTerminal      bool
+}
+
 type tmuxObservation struct {
 	Lines    []string
 	Offset   int64
@@ -85,6 +93,10 @@ func (r *tmuxRunner) gatePath(taskID int64) string {
 
 func (r *tmuxRunner) scriptPath(taskID int64) string {
 	return filepath.Join(r.taskDir(taskID), "run.sh")
+}
+
+func (r *tmuxRunner) agentOutputPath(taskID int64) string {
+	return filepath.Join(r.taskDir(taskID), "agent-output.log")
 }
 
 func (r *tmuxRunner) taskBinDir(taskID int64) string {
@@ -139,11 +151,10 @@ func (r *tmuxRunner) paneDead(taskID int64) (bool, error) {
 // Start 创建一个暂停在 gate 文件前的 task window，先接好 pipe-pane 再放行，
 // 从而不会遗漏启动瞬间的终端输出。
 //
-// batch 任务会把 agent 放到独立 session。部分 CLI 会在结束工具子进程时向其
-// 进程组发送信号；若 agent 与本脚本共用 pane 的进程组，信号会让 run.sh 来不及
-// 写入 exit-code，执行器只能看到“window 消失”。交互式 Pi 则保留原进程组，
-// 以维持它所需的终端会话语义。
-func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, isolateAgentProcessGroup bool) error {
+// batch 任务可把 agent 放到独立 session。若 CLI 在结束工具子进程时向其进程组
+// 发送信号，run.sh 仍能写入 exit-code；交互式 Pi 则保留原进程组，以维持终端
+// 会话语义。Codex 另会按选项脱离 pane TTY，避免它的工具收尾误操作 pane。
+func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, options tmuxStartOptions) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.ensureSession(); err != nil {
@@ -168,10 +179,15 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, is
 	if err := os.WriteFile(r.logPath(taskID), nil, 0o600); err != nil {
 		return fmt.Errorf("创建 tmux 终端日志失败: %w", err)
 	}
+	if options.DetachTerminal {
+		if err := os.WriteFile(r.agentOutputPath(taskID), nil, 0o600); err != nil {
+			return fmt.Errorf("创建 agent 原始输出日志失败: %w", err)
+		}
+	}
 	if _, err := r.writeTmuxWrapper(taskID); err != nil {
 		return err
 	}
-	if err := r.writeScript(taskID, bin, args, isolateAgentProcessGroup); err != nil {
+	if err := r.writeScript(taskID, bin, args, options); err != nil {
 		return err
 	}
 	taskEnv := r.taskShellEnvironment(taskID, env)
@@ -255,14 +271,14 @@ func isTmuxInternalEnv(key string) bool {
 	return key == "TMUX" || key == "TMUX_PANE"
 }
 
-func (r *tmuxRunner) writeScript(taskID int64, bin string, args []string, isolateAgentProcessGroup bool) error {
+func (r *tmuxRunner) writeScript(taskID int64, bin string, args []string, options tmuxStartOptions) error {
 	command := append([]string{bin}, args...)
 	quoted := make([]string, 0, len(command))
 	for _, arg := range command {
 		quoted = append(quoted, shQuote(arg))
 	}
 	invocation := strings.Join(quoted, " ")
-	if isolateAgentProcessGroup {
+	if options.IsolateProcessGroup {
 		setsid, err := osexec.LookPath("setsid")
 		if err != nil {
 			return fmt.Errorf("未找到 setsid；batch 任务需要独立进程组以保留退出码: %w", err)
@@ -270,6 +286,27 @@ func (r *tmuxRunner) writeScript(taskID int64, bin string, args []string, isolat
 		// --wait 让 setsid 返回 agent 的真实退出状态；否则 run.sh 会过早写出
 		// 成功，-- 则避免 agent 可执行文件被解释为 setsid 的选项。
 		invocation = shQuote(setsid) + " --wait -- " + invocation
+	}
+	execution := invocation + "\n" +
+		"status=$?\n"
+	if options.DetachTerminal {
+		tail, err := osexec.LookPath("tail")
+		if err != nil {
+			return fmt.Errorf("未找到 tail；Codex batch 任务无法安全转发终端输出: %w", err)
+		}
+		// Codex 的 unified exec 会在工具退出时终止 stdio 所属进程组。setsid
+		// 只隔离 session，若仍继承 tmux pty，stdio 仍可能指向 pane 的前台组。
+		// 把三路标准流改为普通文件，外层 tail 负责转发到 pane，既保留实时日志
+		// 又让 Codex 的工具清理永远看不到 paihuo 的终端。
+		execution = "agent_output=" + shQuote(r.agentOutputPath(taskID)) + "\n" +
+			": > \"$agent_output\"\n" +
+			invocation + " </dev/null >\"$agent_output\" 2>&1 &\n" +
+			"agent_pid=$!\n" +
+			shQuote(tail) + " --pid=\"$agent_pid\" -n +1 -f -s 0.1 \"$agent_output\" &\n" +
+			"tail_pid=$!\n" +
+			"wait \"$agent_pid\"\n" +
+			"status=$?\n" +
+			"wait \"$tail_pid\" 2>/dev/null || true\n"
 	}
 	// POSIX sh 只负责等待 gate、执行精确 argv、写退出码；实际参数均由安全
 	// 单引号编码，支持空格、引号和换行，不依赖用户 shell 的历史或配置。
@@ -280,8 +317,7 @@ func (r *tmuxRunner) writeScript(taskID int64, bin string, args []string, isolat
 		"unset TMUX TMUX_PANE\n" +
 		"export PATH=" + shQuote(r.taskBinDir(taskID)) + ":\"$PATH\"\n" +
 		"while [ ! -f " + shQuote(r.gatePath(taskID)) + " ]; do sleep 0.05; done\n" +
-		invocation + "\n" +
-		"status=$?\n" +
+		execution +
 		"printf '%s\\n' \"$status\" > " + shQuote(r.exitPath(taskID)) + "\n" +
 		"exit \"$status\"\n"
 	if err := os.WriteFile(r.scriptPath(taskID), []byte(src), 0o700); err != nil {
@@ -438,7 +474,7 @@ func (r *tmuxRunner) ArchiveFailureArtifacts(taskID int64, reason string) (strin
 	if err := os.Mkdir(archiveDir, 0o700); err != nil {
 		return "", fmt.Errorf("创建 tmux 故障归档失败: %w", err)
 	}
-	for _, name := range []string{"terminal.log", "run.sh", "exit-code", "start"} {
+	for _, name := range []string{"terminal.log", "agent-output.log", "run.sh", "exit-code", "start"} {
 		from := filepath.Join(taskDir, name)
 		to := filepath.Join(archiveDir, name)
 		if err := os.Rename(from, to); errors.Is(err, os.ErrNotExist) {
