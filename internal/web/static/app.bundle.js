@@ -685,6 +685,9 @@
     state.selected = id;
     const shell = document.getElementById("boardShell") || document.getElementById("dashShell");
     if (shell) shell.classList.add("hidden");
+    const main = document.querySelector(".main");
+    main?.querySelector(".page-header")?.classList.add("hidden");
+    main?.querySelector(".page-content")?.classList.add("hidden");
     document.getElementById("detailShell").classList.remove("hidden");
     const t = state.tasks.find((x) => x.id === id);
     if (t) {
@@ -697,6 +700,9 @@
     document.getElementById("detailShell").classList.add("hidden");
     const shell = document.getElementById("boardShell") || document.getElementById("dashShell");
     if (shell) shell.classList.remove("hidden");
+    const main = document.querySelector(".main");
+    main?.querySelector(".page-header")?.classList.remove("hidden");
+    main?.querySelector(".page-content")?.classList.remove("hidden");
     state.selected = null;
   }
   async function refreshDetail() {

@@ -129,6 +129,11 @@ export function showDetail(id) {
   state.selected = id;
   const shell = document.getElementById("boardShell") || document.getElementById("dashShell");
   if (shell) shell.classList.add("hidden");
+  // 详情两栏页接管主区：隐藏页面自身的页头与内容（detailShell 位于 .main 内，
+  // flex:1 占满剩余空间），避免与详情自己的页头堆叠；hideDetail 时恢复。
+  const main = document.querySelector(".main");
+  main?.querySelector(".page-header")?.classList.add("hidden");
+  main?.querySelector(".page-content")?.classList.add("hidden");
   document.getElementById("detailShell").classList.remove("hidden");
   const t = state.tasks.find(x => x.id === id);
   if (t) {
@@ -143,6 +148,9 @@ export function hideDetail() {
   document.getElementById("detailShell").classList.add("hidden");
   const shell = document.getElementById("boardShell") || document.getElementById("dashShell");
   if (shell) shell.classList.remove("hidden");
+  const main = document.querySelector(".main");
+  main?.querySelector(".page-header")?.classList.remove("hidden");
+  main?.querySelector(".page-content")?.classList.remove("hidden");
   state.selected = null;
 }
 
