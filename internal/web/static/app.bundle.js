@@ -148,8 +148,8 @@
   function dashCardHTML(t, actions) {
     return `<div class="card dash-card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
     <div class="c-top">
-      <span class="st-dot"></span><span>#${t.id}</span>
-      <span>${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
+      <span class="st-dot"></span><span class="c-id">#${t.id}</span>
+      <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
       ${t.perm === "review" ? `<span class="chip review">\u5BA1\u6279</span>` : ""}
     </div>
     <div class="c-title">${esc(t.title)}</div>
@@ -478,8 +478,8 @@
   function cardHTML(t) {
     return `<div class="card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
     <div class="c-top">
-      <span class="st-dot"></span><span>#${t.id}</span>
-      <span>${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
+      <span class="st-dot"></span><span class="c-id">#${t.id}</span>
+      <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
       ${t.perm === "review" ? `<span class="chip review">\u5BA1\u6279</span>` : ""}
       ${t.review_rounds > 0 ? `<span class="chip">\u7B2C${t.review_rounds}\u8F6E</span>` : ""}
     </div>

@@ -351,9 +351,11 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   opacity: .9;
 }
 .card .c-top {
-  display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--fg-faint);
+  display: flex; align-items: center; gap: 7px; font-size: 10.5px; color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
 }
+.card .c-top .c-id { font-weight: 700; color: var(--fg-muted); }
+.card .c-top .c-time { color: var(--fg-faint); }
 .card .c-top .st-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--st-color); flex-shrink: 0; }
 .card .c-title {
   font-size: 13px; font-weight: 600; line-height: 17px; margin: 4px 0 2px;
@@ -387,6 +389,19 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 }
 .list-grid tbody td { padding: 5.5px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .list-grid tbody tr { cursor: pointer; transition: background var(--t-fast); }
+.t-link { color: var(--brand); text-decoration: none; cursor: pointer; transition: filter var(--t-fast); }
+.t-link:hover { filter: brightness(1.18); text-decoration: underline; text-underline-offset: 3px; }
+.sec-link {
+  display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0;
+  font-size: 11.5px; font-weight: 600; color: var(--fg-muted); text-decoration: none; cursor: pointer;
+  padding: 3px 11px; border-radius: 20px; white-space: nowrap;
+  background: var(--raised); border: 1px solid var(--border);
+  transition: color var(--t-fast), border-color var(--t-fast), background var(--t-fast), transform var(--t-fast);
+}
+.sec-link:hover { color: var(--brand); border-color: rgba(56, 189, 248, .42); background: var(--brand-dim); text-decoration: none; }
+.sec-link:active { transform: scale(.96); }
+.sec-link .arw { transition: transform var(--t-fast); }
+.sec-link:hover .arw { transform: translateX(3px); }
 .list-grid tbody tr:hover { background: rgba(148, 163, 184, .05); }
 .list-grid tbody tr.selected { background: var(--brand-dim); }
 .list-grid .t-title { max-width: 420px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -914,7 +929,8 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   border: 1px solid rgba(56, 189, 248, .22); border-radius: var(--r-md);
   padding: 8px 10px; line-height: 18px;
 }
-.prov-actions { margin-top: 10px; }
+.prov-actions { margin-top: 12px; flex-wrap: wrap; gap: 6px; }
+.prov-actions .btn { flex-shrink: 0; }
 
 /* ============================================================
    技能库（Skills 页）

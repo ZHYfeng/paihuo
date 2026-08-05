@@ -48,8 +48,8 @@ export function renderBoard() {
 export function cardHTML(t) {
   return `<div class="card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
     <div class="c-top">
-      <span class="st-dot"></span><span>#${t.id}</span>
-      <span>${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
+      <span class="st-dot"></span><span class="c-id">#${t.id}</span>
+      <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
       ${t.perm === "review" ? `<span class="chip review">审批</span>` : ""}
       ${t.review_rounds > 0 ? `<span class="chip">第${t.review_rounds}轮</span>` : ""}
     </div>
