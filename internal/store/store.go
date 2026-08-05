@@ -138,6 +138,7 @@ func migrate(db *sql.DB) error {
 		"ALTER TABLE projects ADD COLUMN project_dir TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE tasks ADD COLUMN worktree_branch TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE tasks ADD COLUMN base_commit TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE tasks ADD COLUMN resume_of INTEGER REFERENCES tasks(id)",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)",
 	} {

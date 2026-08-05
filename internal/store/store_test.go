@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -139,4 +140,71 @@ func TestCleanupTasksOnlyTerminal(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("应只删除 1 条终态任务，得到 %d", n)
 	}
+}
+
+// 迁移完整性：模拟老库（缺新列）→ 重新 Open 后 migrate 应补齐所有新列。
+func TestMigrateAddsNewColumns(t *testing.T) {
+	path := t.TempDir() + "/mig.db"
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	// 模拟老库：删掉新列后再打开，migrate 应补齐
+	for _, col := range []string{"resume_of", "worktree_branch", "base_commit"} {
+		if _, err := s.db.Exec("ALTER TABLE tasks DROP COLUMN " + col); err != nil {
+			s.Close()
+			t.Fatalf("drop %s: %v", col, err)
+		}
+	}
+	s.Close()
+
+	s2, err := Open(path) // 触发 migrate
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s2.Close()
+	cols := map[string]bool{}
+	for _, r := range mustRows(t, s2, "PRAGMA table_info(tasks)") {
+		cols[r[1]] = true
+	}
+	for _, want := range []string{"resume_of", "worktree_branch", "base_commit", "project_dir"} {
+		if !cols[want] {
+			t.Fatalf("迁移后缺少列 %s（现有列: %v）", want, cols)
+		}
+	}
+	// 迁移后应能正常读写
+	id, err := s2.CreateTask(Task{Title: "t", Status: StatusQueued})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := s2.GetTask(id); err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+}
+
+func mustRows(t *testing.T, s *Store, q string) [][]string {
+	t.Helper()
+	rows, err := s.db.Query(q)
+	if err != nil {
+		t.Fatalf("query %s: %v", q, err)
+	}
+	defer rows.Close()
+	var out [][]string
+	cols, _ := rows.Columns()
+	for rows.Next() {
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			t.Fatal(err)
+		}
+		row := make([]string, len(cols))
+		for i, v := range vals {
+			row[i] = fmt.Sprint(v)
+		}
+		out = append(out, row)
+	}
+	return out
 }
