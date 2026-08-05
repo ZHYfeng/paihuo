@@ -23,7 +23,7 @@
     <div id="agentGrid" class="agent-grid"></div>
     <div id="agentTableWrap" class="list-wrap hidden">
       <table class="list-grid">
-        <thead><tr><th>角色</th><th>CLI</th><th>模型</th><th>状态</th><th style="width:130px">操作</th></tr></thead>
+        <thead><tr><th>角色</th><th>CLI</th><th>模型</th><th>最大并发</th><th>状态</th><th style="width:130px">操作</th></tr></thead>
         <tbody id="agentList"></tbody>
       </table>
       <div id="agentEmpty" class="empty hidden">还没有角色。每个角色绑定一种 CLI，配置按该 CLI 的官方文档深度定制。</div>
@@ -45,7 +45,6 @@
     <div class="tab-bar" id="agentTabs">
       <button class="active" data-tab="overview" onclick="agentTab('overview')">概况</button>
       <button data-tab="config" onclick="agentTab('config')">配置</button>
-      <button data-tab="env" onclick="agentTab('env')">环境变量</button>
       <button data-tab="stats" onclick="agentTab('stats')">统计</button>
     </div>
     <div id="agentForm" class="tab-panel"></div>
@@ -63,12 +62,12 @@
       <label class="field">CLI
         <select id="aCli" onchange="renderAgentModalSchema()"></select>
       </label>
+      <label class="field">最大并发
+        <input id="aMaxConcurrency" type="number" min="1" step="1" inputmode="numeric" value="1" required aria-describedby="aConcurrencyHelp">
+      </label>
     </div>
+    <div class="field-help" id="aConcurrencyHelp">同一角色最多同时运行的任务数。每个任务独占 tmux、会话和 Git worktree；请按机器资源与模型配额设置。</div>
     <label class="field">描述 <input id="aDesc" placeholder="这个角色负责什么"></label>
-    <label class="field">最大并发
-      <input id="aMaxConcurrency" type="number" min="1" step="1" inputmode="numeric" value="1" required aria-describedby="aConcurrencyHelp">
-      <span class="field-help" id="aConcurrencyHelp">同一角色最多同时运行的任务数（默认 1，即串行执行）</span>
-    </label>
     <label class="field" style="display:flex;align-items:center;gap:8px;margin-top:12px">
       <input type="checkbox" id="aEnabled" checked style="width:auto"> 启用
     </label>

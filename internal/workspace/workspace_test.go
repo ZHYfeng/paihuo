@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"paihuo/internal/store"
@@ -123,6 +124,79 @@ func TestConflictAborts(t *testing.T) {
 		t.Fatalf("abort 后主分支应干净, got: %q", out)
 	}
 	Discard(tk, sess)
+}
+
+func TestSnapshotIntegrateAndMergeApprovedTask(t *testing.T) {
+	proj := gitInitTest(t)
+	sess := t.TempDir()
+	source := store.Task{ID: 20, ProjectDir: proj, ProjectName: "proj", Title: "reviewed change"}
+	sourceDir, sourceBranch, sourceBase, err := Ensure(source, sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.WorktreeBranch = sourceBranch
+	source.BaseCommit = sourceBase
+	if err := os.WriteFile(filepath.Join(sourceDir, "approved.txt"), []byte("approved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Snapshot(source, sess); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if out, _ := git(sourceDir, "status", "--porcelain"); out != "" {
+		t.Fatalf("审批分支快照后应干净，得到 %q", out)
+	}
+
+	target := store.Task{ID: 21, ProjectDir: proj, ProjectName: "proj", Title: "merge reviewed change"}
+	targetDir, targetBranch, targetBase, err := Ensure(target, sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target.WorktreeBranch = targetBranch
+	target.BaseCommit = targetBase
+	result, err := Integrate(source, target, sess)
+	if err != nil {
+		t.Fatalf("integrate: %v", err)
+	}
+	if len(result.Conflicts) != 0 || result.Skipped {
+		t.Fatalf("无冲突整合结果异常: %+v", result)
+	}
+	if got, err := os.ReadFile(filepath.Join(targetDir, "approved.txt")); err != nil || string(got) != "approved\n" {
+		t.Fatalf("合并任务未获得审批改动: %q err=%v", got, err)
+	}
+	if _, err := Merge(target, sess); err != nil {
+		t.Fatalf("merge target: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(proj, "approved.txt")); err != nil || string(got) != "approved\n" {
+		t.Fatalf("主分支未获得审批改动: %q err=%v", got, err)
+	}
+}
+
+func TestMergeRejectsDirtyMainWithoutDestroyingChanges(t *testing.T) {
+	proj := gitInitTest(t)
+	sess := t.TempDir()
+	tk := store.Task{ID: 22, ProjectDir: proj, ProjectName: "proj", Title: "safe merge"}
+	dir, branch, base, err := Ensure(tk, sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk.WorktreeBranch = branch
+	tk.BaseCommit = base
+	if err := os.WriteFile(filepath.Join(dir, "agent.txt"), []byte("agent\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "local.txt"), []byte("keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Merge(tk, sess); err == nil || !strings.Contains(err.Error(), "未提交改动") {
+		t.Fatalf("脏主工作区应拒绝自动合并，得到 %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(proj, "local.txt")); err != nil || string(got) != "keep me\n" {
+		t.Fatalf("主工作区本地改动被破坏: %q err=%v", got, err)
+	}
+	if out, _ := git(proj, "log", "-1", "--pretty=%s"); strings.TrimSpace(out) != "init" {
+		t.Fatalf("拒绝合并时不应产生主分支提交，得到 %q", out)
+	}
 }
 
 func TestCleanup(t *testing.T) {

@@ -20,8 +20,15 @@ const (
 
 // 权限模式（每任务单独配置）
 const (
-	PermFull   = "full"   // 完整：直接执行
-	PermReview = "review" // 完成后审批：跑完进入待审批，通过才算成功
+	PermFull   = "full"   // 自动：执行成功后自动 squash 合并
+	PermReview = "review" // 人工审批：通过后创建同角色的自动合并任务
+)
+
+// 任务执行方式。默认 batch 保持现有的一次性 CLI 语义；interactive 目前只
+// 供 Pi 的手工任务使用，它会留在 tmux TTY 中等待用户继续发消息。
+const (
+	RunModeBatch       = "batch"
+	RunModeInteractive = "interactive"
 )
 
 // RoleConfig 是角色的执行配置，翻译为各 CLI 的原生参数。
@@ -46,10 +53,19 @@ type Agent struct {
 	CLI            string     `json:"cli"` // 适配器 id：omp | opencode | pi | claude | codex
 	RoleConfig     RoleConfig `json:"role_config"`
 	ProjectDir     string     `json:"project_dir"`     // 绑定的项目目录
-	MaxConcurrency int        `json:"max_concurrency"` // 同一角色最多同时运行的任务数
+	MaxConcurrency int        `json:"max_concurrency"` // 该角色同时运行的任务上限
 	Enabled        bool       `json:"enabled"`
 	CreatedAt      string     `json:"created_at"`
 	UpdatedAt      string     `json:"updated_at"`
+}
+
+// ConcurrencyLimit 返回可执行的角色并发上限。数据库迁移前后和直接调用
+// Store 的场景都把零值收敛为 1，避免一个缺失配置意外阻塞整个队列。
+func (a Agent) ConcurrencyLimit() int {
+	if a.MaxConcurrency < 1 {
+		return 1
+	}
+	return a.MaxConcurrency
 }
 
 type Task struct {
@@ -58,6 +74,7 @@ type Task struct {
 	Body           string  `json:"body"`
 	Status         string  `json:"status"`
 	Perm           string  `json:"perm"`
+	RunMode        string  `json:"run_mode"`
 	AgentID        *int64  `json:"agent_id"`
 	AgentName      string  `json:"agent_name,omitempty"`
 	ProjectID      *int64  `json:"project_id"`
@@ -73,6 +90,7 @@ type Task struct {
 	WorktreeBranch string  `json:"worktree_branch"` // 任务隔离 worktree 分支（paihuo/task-<id>）
 	BaseCommit     string  `json:"base_commit"`     // 创建 worktree 时主分支 HEAD
 	ResumeOf       *int64  `json:"resume_of"`       // 续跑自哪个任务（复用其会话目录）
+	MergeOf        *int64  `json:"merge_of"`        // 合并任务整合自哪个已审批任务
 	CreatedAt      string  `json:"created_at"`
 	StartedAt      *string `json:"started_at"`
 	FinishedAt     *string `json:"finished_at"`
@@ -194,7 +212,7 @@ type TaskLog struct {
 	ID        int64  `json:"id"`
 	TaskID    int64  `json:"task_id"`
 	Seq       int64  `json:"seq"`
-	Stream    string `json:"stream"` // out | err | sys
+	Stream    string `json:"stream"` // out | err | sys | in
 	Content   string `json:"content"`
 	CreatedAt string `json:"created_at"`
 }

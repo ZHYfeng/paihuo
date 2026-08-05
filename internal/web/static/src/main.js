@@ -1,5 +1,5 @@
 // 模块 main（由 scripts/split-frontend.py 生成）
-import { addChip, agentTab, closeAgentDetail, deleteAgent, hideAgentDetail, openAgentDetail, openAgentModal, removeChip, renderAgentList, renderAgentModalSchema, renderAgentOverview, saveAgentConfig, saveAgentEnv, setAgentView, showAgentDetail, submitAgent, toggleSkill } from "./agents.js";
+import { addChip, agentTab, closeAgentDetail, deleteAgent, hideAgentDetail, openAgentDetail, openAgentModal, removeChip, renderAgentList, renderAgentModalSchema, renderAgentOverview, saveAgentConcurrency, saveAgentConfig, setAgentView, showAgentDetail, submitAgent, toggleSkill } from "./agents.js";
 import { api, closeModal, esc, fmtDur, fmtPct, logout, state, toast } from "./core.js";
 import { loadDashboard } from "./dashboard.js";
 import { cleanupHistory, deleteSelected, loadHistory, toggleAll, toggleRow } from "./history.js";
@@ -8,8 +8,8 @@ import { appendInstLine, closeInstTerminal, copyText, createDefaultRole, install
 import { deleteSchedule, openScheduleModal, renderScheduleList, submitSchedule, toggleSchedule } from "./schedules.js";
 import { loadSettings, runCleanup, saveRetention, saveWtRetention } from "./settings.js";
 import { deleteSkill, deleteTemplate, loadSkillLib, loadTemplates, openExtModal, openSkillModal, removeExt, renderSkillLib, setSkillTab, submitExt, submitSkill } from "./skills.js";
-import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, gitInitProject, hideDetail, openNewTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, wsDiscard, wsMerge } from "./task.js";
-import { closeTerminal, openTerminal } from "./terminal.js";
+import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskRunMode, wsDiscard, wsMerge } from "./task.js";
+import { closeTerminal, openTerminal, sendTaskInput, sendTerminalInput, syncTerminalInput } from "./terminal.js";
 
 export async function loadAll() {
   const [tasks, agents, schedules, projects] = await Promise.all([
@@ -335,6 +335,7 @@ window.deleteSelected = deleteSelected;
 window.deleteSkill = deleteSkill;
 window.deleteTask = deleteTask;
 window.deleteTemplate = deleteTemplate;
+window.endInteractiveTask = endInteractiveTask;
 window.gitInitProject = gitInitProject;
 window.installProvision = installProvision;
 window.loadHistory = loadHistory;
@@ -347,6 +348,7 @@ window.openExtModal = openExtModal;
 window.openNewTask = openNewTask;
 window.openProject = openProject;
 window.openProjectModal = openProjectModal;
+window.openProjectTask = openProjectTask;
 window.openScheduleModal = openScheduleModal;
 window.openSkillModal = openSkillModal;
 window.openSubTask = openSubTask;
@@ -364,11 +366,13 @@ window.renderAgentModalSchema = renderAgentModalSchema;
 window.renderProjectList = renderProjectList;
 window.resumeTask = resumeTask;
 window.runCleanup = runCleanup;
+window.saveAgentConcurrency = saveAgentConcurrency;
 window.saveAgentConfig = saveAgentConfig;
-window.saveAgentEnv = saveAgentEnv;
 window.saveAsTemplate = saveAsTemplate;
 window.saveRetention = saveRetention;
 window.saveWtRetention = saveWtRetention;
+window.sendTaskInput = sendTaskInput;
+window.sendTerminalInput = sendTerminalInput;
 window.setAgentView = setAgentView;
 window.setSkillTab = setSkillTab;
 window.setTaskStatus = setTaskStatus;
@@ -379,6 +383,7 @@ window.submitProject = submitProject;
 window.submitSchedule = submitSchedule;
 window.submitSkill = submitSkill;
 window.submitTask = submitTask;
+window.syncTaskRunMode = syncTaskRunMode;
 window.toggleAll = toggleAll;
 window.toggleRow = toggleRow;
 window.toggleSchedule = toggleSchedule;

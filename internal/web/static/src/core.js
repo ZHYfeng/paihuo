@@ -25,7 +25,7 @@ export const STATUS_LABEL = {
   queued: "待执行", claimed: "领取中", running: "执行中",
   awaiting_review: "待审批", succeeded: "完成", failed: "失败", cancelled: "已取消",
 };
-export const PERM_LABEL = { full: "完整", review: "完成后审批" };
+export const PERM_LABEL = { full: "自动合并", review: "审批后 Agent 合并" };
 
 export const ST_COLOR = {
   queued: "var(--st-queued)", claimed: "var(--st-claimed)", running: "var(--st-running)",
@@ -37,7 +37,6 @@ export const BOARD_COLS = [
   ["running", "执行中", ["running"]],
   ["awaiting_review", "待审批", ["awaiting_review"]],
 ];
-export const BUILTIN_KEYS = ["model", "system_prompt", "instructions", "thinking", "skills", "plugins", "extra_args", "env"];
 
 export function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, c =>

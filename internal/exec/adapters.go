@@ -18,6 +18,7 @@ type RunOptions struct {
 	Prompt     string // 任务提示词（已含权限模式修饰）
 	Role       store.RoleConfig
 	Perm       string // 任务权限模式：full | review
+	RunMode    string // batch | interactive（交互式目前仅 Pi 支持）
 	SessionDir string // 任务专属会话目录（会话隔离，互不干扰）
 }
 
@@ -282,7 +283,12 @@ func (a *openCodeAdapter) Docs() string { return "https://opencode.ai/docs" }
 type piAdapter struct{ baseAdapter }
 
 func (a *piAdapter) Build(o RunOptions) (string, []string, []string, error) {
-	args := []string{"-p", o.Prompt}
+	interactive := o.RunMode == store.RunModeInteractive
+	args := []string{}
+	if !interactive {
+		// 保持已有批处理 argv 形状，避免影响已验证的 Pi 调用方式。
+		args = append(args, "-p", o.Prompt)
+	}
 	if o.SessionDir != "" {
 		args = append(args, "--session-dir", o.SessionDir)
 	}
@@ -311,6 +317,10 @@ func (a *piAdapter) Build(o RunOptions) (string, []string, []string, error) {
 		args = append(args, "--skill", s)
 	}
 	args = append(args, o.Role.ExtraArgs...)
+	if interactive {
+		// Pi 的交互模式把初始消息作为位置参数；随后会留在 TTY 等待下一轮输入。
+		args = append(args, o.Prompt)
+	}
 	return a.bin, args, mergeEnv(o.Role.Env), nil
 }
 

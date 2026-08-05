@@ -26,17 +26,17 @@ import (
 )
 
 type Server struct {
-	st        *store.Store
-	hub       *events.Hub
-	ex        *exec.Executor
-	sched     *sched.Scheduler
-	token     string
-	skillsDir   string                        // 技能库工作目录（<db目录>/skills，定向添加的技能复制到这里）
-	sessionsRoot string                       // 任务 worktree 根目录（<db目录>/sessions）
-	pages     map[string]*template.Template // 每页一个模板集（base + 页面，避免 content 冲突）
-	mux       *http.ServeMux
-	provMu    sync.Mutex      // 安装互斥锁
-	provBusy  map[string]bool // 正在安装的 CLI
+	st           *store.Store
+	hub          *events.Hub
+	ex           *exec.Executor
+	sched        *sched.Scheduler
+	token        string
+	skillsDir    string                        // 技能库工作目录（<db目录>/skills，定向添加的技能复制到这里）
+	sessionsRoot string                        // 任务 worktree 根目录（<db目录>/sessions）
+	pages        map[string]*template.Template // 每页一个模板集（base + 页面，避免 content 冲突）
+	mux          *http.ServeMux
+	provMu       sync.Mutex      // 安装互斥锁
+	provBusy     map[string]bool // 正在安装的 CLI
 }
 
 const (
@@ -80,12 +80,12 @@ func (s *Server) validSession(r *http.Request) bool {
 
 func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Scheduler, token, skillsDir string) *Server {
 	s := &Server{
-		st:        st,
-		hub:       hub,
-		ex:        ex,
-		sched:     sc,
-		token:     token,
-		skillsDir:   skillsDir,
+		st:           st,
+		hub:          hub,
+		ex:           ex,
+		sched:        sc,
+		token:        token,
+		skillsDir:    skillsDir,
 		sessionsRoot: filepath.Join(filepath.Dir(skillsDir), "sessions"),
 		pages: map[string]*template.Template{
 			"index":      template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/index.html")),
@@ -150,6 +150,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("PATCH /api/tasks/{id}", s.patchTask)
 	m.HandleFunc("DELETE /api/tasks/{id}", s.deleteTask)
 	m.HandleFunc("POST /api/tasks/{id}/resume", s.resumeTask)
+	m.HandleFunc("POST /api/tasks/{id}/input", s.sendTaskInput)
 	m.HandleFunc("GET /api/tasks/{id}/logs", s.getTaskLogs)
 	m.HandleFunc("GET /api/tasks/{id}/diff", s.taskDiff)
 	m.HandleFunc("GET /api/tasks/{id}/children", s.getTaskChildren)

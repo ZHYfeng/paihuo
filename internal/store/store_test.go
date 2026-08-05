@@ -51,6 +51,34 @@ func TestListQueuedTasksSkipsDisabledAgents(t *testing.T) {
 	}
 }
 
+// 角色是执行池而非单一会话：未配置时维持兼容的单并发，显式配置则完整保存。
+func TestAgentMaxConcurrencyDefaultsAndRoundTrips(t *testing.T) {
+	s := openTest(t)
+	defaultID := mustAgent(t, s, "default-pool", true)
+	defaultAgent, err := s.GetAgent(defaultID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultAgent.MaxConcurrency != 1 || defaultAgent.ConcurrencyLimit() != 1 {
+		t.Fatalf("未配置角色应默认单并发，得到 %+v", defaultAgent)
+	}
+
+	id, err := s.CreateAgent(Agent{Name: "parallel-pool", CLI: "pi", Enabled: true, MaxConcurrency: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateAgent(id, map[string]any{"max_concurrency": 5}); err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.GetAgent(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.MaxConcurrency != 5 || a.ConcurrencyLimit() != 5 {
+		t.Fatalf("角色并发数未正确往返保存，得到 %+v", a)
+	}
+}
+
 // 重启重置只应命中 running/claimed，awaiting_review（执行已完成、等审批）要保留。
 func TestListRunningTasksExcludesAwaitingReview(t *testing.T) {
 	s := openTest(t)
@@ -125,6 +153,83 @@ func TestListBodyTruncatedDetailFull(t *testing.T) {
 	}
 }
 
+// 旧任务和未显式选择执行方式的新任务都必须保持批处理，避免升级后意外进入
+// 永不自动退出的交互会话；手工选择的交互式方式则需完整往返保存。
+func TestTaskRunModeDefaultsBatchAndRoundTripsInteractive(t *testing.T) {
+	s := openTest(t)
+	batchID, err := s.CreateTask(Task{Title: "batch", Status: StatusQueued})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := s.GetTask(batchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch.RunMode != RunModeBatch {
+		t.Fatalf("未指定执行方式应为 batch，得到 %q", batch.RunMode)
+	}
+
+	interactiveID, err := s.CreateTask(Task{
+		Title: "interactive", Status: StatusQueued, RunMode: RunModeInteractive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	interactive, err := s.GetTask(interactiveID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if interactive.RunMode != RunModeInteractive {
+		t.Fatalf("交互式执行方式未保存，得到 %q", interactive.RunMode)
+	}
+}
+
+func TestApproveReviewTaskCreatesOneMergeTaskAtomically(t *testing.T) {
+	s := openTest(t)
+	a := mustAgent(t, s, "reviewer", true)
+	projectID, err := s.CreateProject(Project{Name: "proj", ProjectDir: t.TempDir(), Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceID, err := s.CreateTask(Task{
+		Title: "review me", Status: StatusAwaitingReview, Perm: PermReview,
+		AgentID: &a, ProjectID: &projectID, ProjectDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	merge := Task{
+		Title: "merge reviewed task", Body: "integrate", Status: StatusQueued,
+		Perm: PermFull, RunMode: RunModeBatch, AgentID: &a, ProjectID: &projectID,
+		ProjectDir: t.TempDir(), ParentID: &sourceID, MergeOf: &sourceID,
+	}
+	mergeID, err := s.ApproveTaskAndCreateMerge(sourceID, merge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := s.GetTask(sourceID)
+	if err != nil || source.Status != StatusSucceeded {
+		t.Fatalf("审批后原任务状态异常: %+v err=%v", source, err)
+	}
+	created, err := s.GetTask(mergeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.MergeOf == nil || *created.MergeOf != sourceID || created.ParentID == nil || *created.ParentID != sourceID {
+		t.Fatalf("合并任务来源关系未保存: %+v", created)
+	}
+	if created.Perm != PermFull || created.Status != StatusQueued || created.AgentID == nil || *created.AgentID != a {
+		t.Fatalf("合并任务执行配置异常: %+v", created)
+	}
+	if _, err := s.ApproveTaskAndCreateMerge(sourceID, merge); err == nil {
+		t.Fatal("重复审批不应再创建合并任务")
+	}
+	children, err := s.ListChildren(sourceID)
+	if err != nil || len(children) != 1 {
+		t.Fatalf("重复审批后应仍只有一个合并任务: %+v err=%v", children, err)
+	}
+}
+
 // CleanupTasks 只删终态任务。
 func TestCleanupTasksOnlyTerminal(t *testing.T) {
 	s := openTest(t)
@@ -150,11 +255,15 @@ func TestMigrateAddsNewColumns(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	// 模拟老库：删掉新列后再打开，migrate 应补齐
-	for _, col := range []string{"resume_of", "worktree_branch", "base_commit", "tmux_log_offset"} {
+	for _, col := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "tmux_log_offset", "run_mode"} {
 		if _, err := s.db.Exec("ALTER TABLE tasks DROP COLUMN " + col); err != nil {
 			s.Close()
 			t.Fatalf("drop %s: %v", col, err)
 		}
+	}
+	if _, err := s.db.Exec("ALTER TABLE agents DROP COLUMN max_concurrency"); err != nil {
+		s.Close()
+		t.Fatalf("drop agents.max_concurrency: %v", err)
 	}
 	s.Close()
 
@@ -167,10 +276,17 @@ func TestMigrateAddsNewColumns(t *testing.T) {
 	for _, r := range mustRows(t, s2, "PRAGMA table_info(tasks)") {
 		cols[r[1]] = true
 	}
-	for _, want := range []string{"resume_of", "worktree_branch", "base_commit", "project_dir", "tmux_log_offset"} {
+	for _, want := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "project_dir", "tmux_log_offset", "run_mode"} {
 		if !cols[want] {
 			t.Fatalf("迁移后缺少列 %s（现有列: %v）", want, cols)
 		}
+	}
+	agentCols := map[string]bool{}
+	for _, r := range mustRows(t, s2, "PRAGMA table_info(agents)") {
+		agentCols[r[1]] = true
+	}
+	if !agentCols["max_concurrency"] {
+		t.Fatalf("迁移后 agents 缺少 max_concurrency（现有列: %v）", agentCols)
 	}
 	// 迁移后应能正常读写
 	id, err := s2.CreateTask(Task{Title: "t", Status: StatusQueued})

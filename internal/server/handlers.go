@@ -40,6 +40,10 @@ var validPerms = map[string]bool{
 	store.PermFull: true, store.PermReview: true,
 }
 
+var validRunModes = map[string]bool{
+	store.RunModeBatch: true, store.RunModeInteractive: true,
+}
+
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f := store.TaskFilter{}
@@ -74,12 +78,13 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		AgentID   *int64 `json:"agent_id"`
 		ProjectID *int64 `json:"project_id"`
 		Perm      string `json:"perm"`
+		RunMode   string `json:"run_mode"`
 		ParentID  *int64 `json:"parent_id"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	s.createTaskInner(w, in.Title, in.Body, in.AgentID, in.ProjectID, in.Perm, in.ParentID, nil)
+	s.createTaskInner(w, in.Title, in.Body, in.AgentID, in.ProjectID, in.Perm, in.RunMode, in.ParentID, nil)
 }
 
 // resumeTask 续跑：新任务复用原任务的角色/项目/会话目录（attach 回上次对话）。
@@ -103,10 +108,10 @@ func (s *Server) resumeTask(w http.ResponseWriter, r *http.Request) {
 		body += "\n\n"
 	}
 	body += fmt.Sprintf("（这是任务 #%d 的续跑：请基于之前的进展继续完成目标。若有疑问先检查当前状态。）", id)
-	s.createTaskInner(w, title, body, src.AgentID, src.ProjectID, src.Perm, nil, &id)
+	s.createTaskInner(w, title, body, src.AgentID, src.ProjectID, src.Perm, src.RunMode, nil, &id)
 }
 
-func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agentID, projectID *int64, perm string, parentID, resumeOf *int64) {
+func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agentID, projectID *int64, perm, runMode string, parentID, resumeOf *int64) {
 	if title == "" {
 		writeErr(w, http.StatusBadRequest, "标题不能为空")
 		return
@@ -118,7 +123,14 @@ func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agen
 		writeErr(w, http.StatusBadRequest, "非法权限模式: "+perm)
 		return
 	}
-	tk := store.Task{Title: title, Body: body, Status: store.StatusQueued, Perm: perm, AgentID: agentID, ParentID: parentID, ResumeOf: resumeOf}
+	if runMode == "" {
+		runMode = store.RunModeBatch
+	}
+	if !validRunModes[runMode] {
+		writeErr(w, http.StatusBadRequest, "非法执行方式: "+runMode)
+		return
+	}
+	tk := store.Task{Title: title, Body: body, Status: store.StatusQueued, Perm: perm, RunMode: runMode, AgentID: agentID, ParentID: parentID, ResumeOf: resumeOf}
 	// 工作目录属于项目：快照项目目录（历史记录不随配置漂移）；
 	// 老数据兼容：项目未设目录时回退角色的旧 project_dir。
 	if projectID != nil {
@@ -130,13 +142,22 @@ func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agen
 		tk.ProjectID = projectID
 		tk.ProjectDir = p.ProjectDir
 	}
-	if tk.ProjectDir == "" && agentID != nil {
+	if agentID != nil {
 		a, err := s.st.GetAgent(*agentID)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "角色不存在")
 			return
 		}
-		tk.ProjectDir = a.ProjectDir // 兼容旧数据：角色级目录
+		if runMode == store.RunModeInteractive && a.CLI != "pi" {
+			writeErr(w, http.StatusBadRequest, "交互式执行目前只支持 Pi 角色")
+			return
+		}
+		if tk.ProjectDir == "" {
+			tk.ProjectDir = a.ProjectDir // 兼容旧数据：角色级目录
+		}
+	} else if runMode == store.RunModeInteractive {
+		writeErr(w, http.StatusBadRequest, "交互式任务必须指派 Pi 角色")
+		return
 	}
 	id, err := s.st.CreateTask(tk)
 	if err != nil {
@@ -150,6 +171,29 @@ func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agen
 		return
 	}
 	writeJSON(w, http.StatusCreated, tk2)
+}
+
+// sendTaskInput 把已登录用户的一条人工消息送进运行中的 Pi 交互式 pane。
+func (s *Server) sendTaskInput(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if _, err := s.st.GetTask(id); err != nil {
+		writeErr(w, http.StatusNotFound, "任务不存在")
+		return
+	}
+	var in struct {
+		Message string `json:"message"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := s.ex.SendInput(id, in.Message); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"sent": true})
 }
 
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
@@ -179,6 +223,7 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "任务不存在")
 		return
 	}
+	approveReview := false
 
 	// 状态流转校验
 	if st, ok := set["status"]; ok {
@@ -187,6 +232,7 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "不允许从 "+cur.Status+" 转为 "+to)
 			return
 		}
+		approveReview = cur.Status == store.StatusAwaitingReview && to == store.StatusSucceeded
 		if to == store.StatusQueued {
 			// 重试：清空执行痕迹
 			set["started_at"] = nil
@@ -223,9 +269,17 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusBadRequest, "角色不存在")
 				return
 			}
+			if cur.RunMode == store.RunModeInteractive && a.CLI != "pi" {
+				writeErr(w, http.StatusBadRequest, "交互式执行目前只支持 Pi 角色")
+				return
+			}
 			set["agent_id"] = int64(aid)
 			set["project_dir"] = a.ProjectDir
 		} else {
+			if cur.RunMode == store.RunModeInteractive {
+				writeErr(w, http.StatusBadRequest, "交互式任务必须指派 Pi 角色")
+				return
+			}
 			set["agent_id"] = nil
 			set["project_dir"] = ""
 		}
@@ -262,6 +316,14 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if approveReview {
+		if len(set) != 1 {
+			writeErr(w, http.StatusBadRequest, "审批通过不能同时修改任务其他字段")
+			return
+		}
+		s.approveReviewTask(w, *cur)
+		return
+	}
 
 	if err := s.st.UpdateTask(id, set); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -276,6 +338,79 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, tk)
+}
+
+// approveReviewTask 固化已审批分支，并原子创建一个同角色的自动合并任务。
+// 合并任务会在自己的 worktree 中处理冲突、验证结果，成功后由执行器自动
+// squash 合并到主分支。
+func (s *Server) approveReviewTask(w http.ResponseWriter, source store.Task) {
+	if source.AgentID == nil {
+		writeErr(w, http.StatusBadRequest, "原任务未指派角色，无法创建合并任务")
+		return
+	}
+	if strings.TrimSpace(source.ProjectDir) == "" {
+		writeErr(w, http.StatusBadRequest, "原任务未绑定项目，无法创建合并任务")
+		return
+	}
+	if source.WorktreeBranch != "" {
+		if _, err := workspace.Snapshot(source, s.sessionsRoot); err != nil {
+			writeErr(w, http.StatusConflict, "保存审批改动失败: "+err.Error())
+			return
+		}
+	}
+	sourceID := source.ID
+	title := fmt.Sprintf("合并已审批任务 #%d：%s", source.ID, firstLine(source.Title, 80))
+	body := fmt.Sprintf(`这是系统在任务 #%d 审批通过后自动创建的合并任务。
+
+源任务：%s
+源分支：%s
+
+系统会在本任务启动前，把源任务的已审批改动导入当前独立 worktree。请：
+1. 检查 git status 和完整 diff，确认审批内容已经进入当前工作区；
+2. 如有冲突，正确解决冲突并保留双方有效改动；
+3. 运行与改动相关的测试或构建，修复发现的问题；
+4. 不要直接操作主工作区或手工合并 main。完成退出后，平台会自动 squash 合并本任务分支。`,
+		source.ID, source.Title, source.WorktreeBranch)
+	merge := store.Task{
+		Title: title, Body: body, Status: store.StatusQueued, Perm: store.PermFull,
+		RunMode: store.RunModeBatch, AgentID: source.AgentID, ProjectID: source.ProjectID,
+		ProjectDir: source.ProjectDir, ParentID: &sourceID, MergeOf: &sourceID,
+	}
+	mergeID, err := s.st.ApproveTaskAndCreateMerge(source.ID, merge)
+	if err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	if l, err := s.st.AppendLog(store.TaskLog{
+		TaskID: source.ID, Stream: "sys", Content: fmt.Sprintf("✓ 审批通过，已创建自动合并任务 #%d", mergeID),
+	}); err == nil {
+		s.hub.Publish(events.Event{Type: "log", TaskID: source.ID, Payload: l})
+	}
+	approved, err := s.st.GetTask(source.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	mergeTask, err := s.st.GetTask(mergeID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.hub.Publish(events.Event{Type: "task", TaskID: approved.ID, Payload: approved})
+	s.hub.Publish(events.Event{Type: "task", TaskID: mergeTask.ID, Payload: mergeTask})
+	s.ex.Wake()
+	writeJSON(w, http.StatusOK, approved)
+}
+
+func firstLine(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if len([]rune(s)) > max {
+		s = string([]rune(s)[:max])
+	}
+	return s
 }
 
 func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {

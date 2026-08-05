@@ -1,5 +1,5 @@
 // 模块 agents（由 scripts/split-frontend.py 生成）
-import { BUILTIN_KEYS, STATUS_LABEL, ST_COLOR, api, closeModal, esc, fmtDur, fmtPct, icon, openModal, state, toast } from "./core.js";
+import { STATUS_LABEL, ST_COLOR, api, closeModal, esc, fmtDur, fmtPct, icon, openModal, state, toast } from "./core.js";
 import { loadAll, loadSchema } from "./main.js";
 import { dailyChartHTML, openProject, statusBarHTML } from "./projects.js";
 import { loadSkillLib } from "./skills.js";
@@ -154,7 +154,6 @@ export function agentTab(name) {
   const form = document.getElementById("agentForm");
   if (name === "overview") renderAgentOverview(a);
   else if (name === "config") renderAgentConfig(a);
-  else if (name === "env") renderAgentEnv(a);
   else if (name === "stats") renderAgentStats(a);
 }
 
@@ -177,7 +176,14 @@ export async function renderAgentOverview(a) {
         <div class="ah-name">${esc(a.name)} <span class="badge">${esc(a.cli)}</span>
           <span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "启用" : "停用"}</span></div>
         ${a.description ? `<div class="ah-desc">${esc(a.description)}</div>` : ""}
-        <div class="ah-sub">执行池：最多同时运行 ${esc(String(a.max_concurrency || 1))} 个任务</div>
+        <div class="ah-sub">执行池：
+          <input id="aMaxConc" class="conc-input" type="number" min="1" step="1" inputmode="numeric"
+            value="${esc(String(a.max_concurrency || 1))}" aria-label="最大并发"
+            onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();saveAgentConcurrency()}">
+          个任务
+          <button class="btn xs primary" onclick="saveAgentConcurrency()">更新并发</button>
+          <span class="count-info">同时最多运行的任务数，每个任务独占 tmux/会话/Git worktree</span>
+        </div>
       </div>
     </div>
     ${st ? `
@@ -264,8 +270,13 @@ export async function renderAgentStats(a) {
 
 /* ---- schema 驱动的配置表单（深度定制核心） ---- */
 
+// 字段读写按 schema 的 builtin 标记落位：true=RoleConfig 顶层字段，
+// false=Custom。标记由服务端从 RoleConfig 结构体反射派生——在 Go 里新增/
+// 删除角色创建选项后，创建弹窗与角色页配置表单自动同步，这里不再维护
+// 硬编码字段清单。
+
 export function fieldValue(f, rc) {
-  if (BUILTIN_KEYS.includes(f.key)) {
+  if (f.builtin) {
     const v = rc[f.key];
     if (f.type === "list") return Array.isArray(v) ? (v || []).join(",") : (v ?? "");
     if (f.type === "env") return Object.entries(v || {}).map(([k, val]) => `${k}=${val}`).join("\n");
@@ -404,30 +415,47 @@ export function schemaFormHTML(schema, rc) {
     </div>`).join("");
 }
 
+// 从表单容器收集配置：完全按 schema 渲染的字段回读，不存在于 schema 的
+// 字段（含已删除的旧选项）一律不输出，服务端整包替换后自动清除。
 export function readConfigFrom(schema, container) {
-  const cfg = { model: "", system_prompt: "", instructions: "", thinking: "", skills: [], plugins: [], extra_args: [], env: {}, custom: {} };
+  const cfg = { custom: {} };
   (schema.fields || []).forEach(f => {
     const el = container.querySelector(`[data-key="${f.key}"]`);
     if (!el) return;
+    const val = el.value;
     if (f.type === "env") {
-      if (BUILTIN_KEYS.includes(f.key)) cfg.env = parseEnv(el.value);
-      else cfg.custom[f.key] = el.value;
+      if (f.builtin) cfg.env = parseEnv(val);
+      else cfg.custom[f.key] = val;
       return;
     }
     if (f.type === "list") {
-      const arr = el.value.split(",").map(s => s.trim()).filter(Boolean);
-      if (BUILTIN_KEYS.includes(f.key)) cfg[f.key] = arr;
+      const arr = val.split(",").map(s => s.trim()).filter(Boolean);
+      if (f.builtin) cfg[f.key] = arr;
       else cfg.custom[f.key] = arr.join(",");
       return;
     }
-    if (f.key === "extra_args") {
-      cfg.extra_args = el.value.split(/\s+/).filter(Boolean);
+    if (f.builtin && f.key === "extra_args") {
+      cfg.extra_args = val.split(/\s+/).filter(Boolean);
       return;
     }
-    if (BUILTIN_KEYS.includes(f.key)) cfg[f.key] = el.value;
-    else cfg.custom[f.key] = el.value;
+    if (f.builtin) cfg[f.key] = val;
+    else cfg.custom[f.key] = val;
   });
   return cfg;
+}
+
+export async function saveAgentConcurrency() {
+  const a = state.agentEditing;
+  if (!a) return;
+  const n = Number(document.getElementById("aMaxConc")?.value);
+  if (!Number.isInteger(n) || n < 1) return toast("最大并发必须是至少为 1 的整数", true);
+  if (n === (a.max_concurrency || 1)) return;
+  try {
+    await api(`/api/agents/${a.id}`, { method: "PATCH", body: JSON.stringify({ max_concurrency: n }) });
+    toast(`并发已更新为 ${n}`);
+    await loadAll();
+    showAgentDetail(a.id); // 重新渲染概况，展示最新并发
+  } catch (e) { toast(e.message, true); }
 }
 
 export async function renderAgentConfig(a) {
@@ -440,7 +468,7 @@ export async function renderAgentConfig(a) {
   form.innerHTML = `
     <div class="schema-tip">该角色的可配置参数来自 ${esc(schema.name)} 官方文档
       ${schema.docs ? `<a class="t-link" target="_blank" rel="noreferrer" href="${esc(schema.docs)}">查看文档 ↗</a>` : ""}。
-      每个 CLI 的字段不同——这是按角色深度定制，不是统一定制。</div>
+      每个 CLI 的字段不同——这是按角色深度定制，不是统一定制；环境变量在下方「执行」分组里一并编辑。</div>
     <div id="configForm">${schemaFormHTML(schema, a.role_config || {})}</div>
     <div style="margin-top:16px"><button class="btn primary" onclick="saveAgentConfig()">保存</button></div>`;
 }
@@ -453,36 +481,6 @@ export async function saveAgentConfig() {
   try {
     await api(`/api/agents/${a.id}`, { method: "PATCH", body: JSON.stringify({ role_config: cfg }) });
     toast("配置已保存");
-    await loadAll();
-    showAgentDetail(a.id);
-  } catch (e) { toast(e.message, true); }
-}
-
-export async function renderAgentEnv(a) {
-  const form = document.getElementById("agentForm");
-  if (!form) return;
-  const rc = a.role_config || {};
-  form.innerHTML = `
-    <div class="schema-tip">环境变量注入到该角色的每次执行进程（继承并覆盖系统环境）。</div>
-    <label class="field">环境变量（每行 K=V）
-      <textarea id="envText" rows="12" placeholder="KEY=VALUE">${esc(Object.entries(rc.env || {}).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea>
-    </label>
-    <div style="margin-top:16px"><button class="btn primary" onclick="saveAgentEnv()">保存环境变量</button></div>`;
-}
-
-export async function saveAgentEnv() {
-  const a = state.agentEditing;
-  if (!a) return;
-  const rc = a.role_config || {};
-  const env = parseEnv(document.getElementById("envText").value);
-  const body = {
-    model: rc.model || "", system_prompt: rc.system_prompt || "", instructions: rc.instructions || "",
-    thinking: rc.thinking || "", skills: rc.skills || [], plugins: rc.plugins || [],
-    extra_args: rc.extra_args || [], env, custom: rc.custom || {},
-  };
-  try {
-    await api(`/api/agents/${a.id}`, { method: "PATCH", body: JSON.stringify({ role_config: body }) });
-    toast("环境变量已保存");
     await loadAll();
     showAgentDetail(a.id);
   } catch (e) { toast(e.message, true); }

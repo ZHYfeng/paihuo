@@ -504,6 +504,14 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 .term-body .c.out { color: #c9d4e5; }
 .term-body .c.err { color: var(--danger); }
 .term-body .c.sys { color: var(--warning); font-weight: 600; }
+.term-body .c.in { color: var(--brand); }
+.term-input {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px; background: var(--surface); border-top: 1px solid var(--border);
+}
+.term-input input { flex: 1; min-width: 0; font-family: var(--font-mono); }
+.term-input .btn { flex-shrink: 0; }
+.term-input.detail-input { padding: 8px 10px; }
 .term-full { max-height: none; flex: 1; }
 
 /* ============================================================
@@ -797,7 +805,10 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 .agent-hero { display: flex; gap: 14px; align-items: center; margin-bottom: 16px; }
 .ah-name { font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ah-desc { font-size: 13px; color: var(--fg-muted); margin-top: 3px; }
-.ah-sub { font-size: 11px; color: var(--fg-faint); margin-top: 3px; font-family: var(--font-mono); }
+.ah-sub { font-size: 11px; color: var(--fg-faint); margin-top: 3px; font-family: var(--font-mono); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* 概况页内联并发编辑器 */
+.conc-input { width: 64px; padding: 2px 6px; font-size: 12px; font-family: var(--font-mono); }
+.conc-input[aria-invalid="true"] { border-color: var(--danger); }
 
 /* ============================================================
    角色卡片视图

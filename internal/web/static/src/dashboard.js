@@ -39,7 +39,7 @@ export function renderDashTasks() {
     .sort((a, b) => (a.created_at || "") < (b.created_at || "") ? 1 : -1).slice(0, 12);
   run.innerHTML = running.map(t => dashCardHTML(t)).join("") || `<div class="empty">暂无进行中任务</div>`;
   rev.innerHTML = review.map(t => dashCardHTML(t,
-    `<button class="btn xs brand" onclick="setTaskStatus(${t.id},'succeeded')">通过</button>` +
+    `<button class="btn xs brand" onclick="setTaskStatus(${t.id},'succeeded')">通过并合并</button>` +
     `<button class="btn xs" onclick="rejectTask(${t.id})">驳回</button>` +
     `<button class="btn xs" onclick="openTerminal(${t.id})">看对话</button>`)).join("") || `<div class="empty">无待审批任务</div>`;
   const rc = document.getElementById("dashRunningCount");

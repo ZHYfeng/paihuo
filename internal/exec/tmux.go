@@ -121,7 +121,7 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string) er
 	if err := r.ensureSession(); err != nil {
 		return err
 	}
-	if err := r.Stop(taskID); err != nil {
+	if err := r.stopLocked(taskID); err != nil {
 		return err
 	}
 
@@ -156,18 +156,18 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string) er
 		return err
 	}
 	if err := r.command("set-window-option", "-t", r.target(taskID), "remain-on-exit", "on"); err != nil {
-		_ = r.Stop(taskID)
+		_ = r.stopLocked(taskID)
 		return err
 	}
 	// pipe-pane 由 tmux 托管；即使 paihuo 进程崩溃，输出仍会进入磁盘文件，
 	// 下次启动时可按数据库偏移继续补收。
 	pipeCmd := "cat >> " + shQuote(r.logPath(taskID))
 	if err := r.command("pipe-pane", "-o", "-t", r.target(taskID), pipeCmd); err != nil {
-		_ = r.Stop(taskID)
+		_ = r.stopLocked(taskID)
 		return err
 	}
 	if err := os.WriteFile(r.gatePath(taskID), []byte("start\n"), 0o600); err != nil {
-		_ = r.Stop(taskID)
+		_ = r.stopLocked(taskID)
 		return fmt.Errorf("启动 tmux 任务失败: %w", err)
 	}
 	return nil
@@ -286,10 +286,49 @@ func (r *tmuxRunner) readLines(taskID, offset int64, flushTail bool) ([]string, 
 }
 
 func (r *tmuxRunner) Stop(taskID int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.stopLocked(taskID)
+}
+
+// stopLocked 与 Start/SendText 共用同一把锁，避免取消恰好发生在 new-window
+// 与 pipe-pane 建立之间时相互抢占。调用方必须已持有 r.mu。
+func (r *tmuxRunner) stopLocked(taskID int64) error {
 	if !r.hasWindow(taskID) {
 		return nil
 	}
-	return r.command("kill-window", "-t", r.target(taskID))
+	err := r.command("kill-window", "-t", r.target(taskID))
+	// window 可能在 hasWindow 与 kill-window 之间被正常结算清理；对停止
+	// 语义而言它已经达到目标，不应把一次取消记作任务启动失败。
+	if err != nil && strings.Contains(err.Error(), "can't find window") {
+		return nil
+	}
+	return err
+}
+
+// SendText 向仍在运行的 task pane 注入一条字面消息并确认。它从不经 shell
+// 解释；-l 保证空格、引号和元字符均作为 Pi 的普通输入，而不是 tmux key 名或
+// shell 语法。调用方负责校验消息格式与任务是否允许交互。
+func (r *tmuxRunner) SendText(taskID int64, text string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.hasWindow(taskID) {
+		return fmt.Errorf("交互终端 task-%d 不存在", taskID)
+	}
+	dead, err := r.paneDead(taskID)
+	if err != nil {
+		return fmt.Errorf("读取交互终端状态失败: %w", err)
+	}
+	if dead {
+		return fmt.Errorf("交互终端 task-%d 已退出", taskID)
+	}
+	if err := r.command("send-keys", "-t", r.target(taskID), "-l", "--", text); err != nil {
+		return fmt.Errorf("发送交互消息失败: %w", err)
+	}
+	if err := r.command("send-keys", "-t", r.target(taskID), "Enter"); err != nil {
+		return fmt.Errorf("确认交互消息失败: %w", err)
+	}
+	return nil
 }
 
 // Cleanup 只清理该任务的 window 与运行时文件；control window / 专用 server 会保留。

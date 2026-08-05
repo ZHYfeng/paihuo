@@ -6,12 +6,14 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"paihuo/internal/store"
@@ -33,6 +35,15 @@ type Info struct {
 
 // gitIdentity 合并/丢弃时使用的提交身份（仅覆盖单条命令，不改用户全局配置）。
 var gitIdentity = []string{"-c", "user.name=paihuo", "-c", "user.email=paihuo@local"}
+
+// mutationMu 串行化共享仓库上的 commit/merge 操作。任务可并行执行，但 Git
+// index 与主工作区不能被两个完成中的任务同时改写。
+var mutationMu sync.Mutex
+
+type IntegrationResult struct {
+	Conflicts []string
+	Skipped   bool
+}
 
 // WorktreePath 返回任务 worktree 的预期路径（sessions/<project>/task-<id>）。
 func WorktreePath(sessionsRoot, projectName string, taskID int64) string {
@@ -112,6 +123,83 @@ func Status(tk store.Task, sessionsRoot string) Info {
 	return info
 }
 
+// Snapshot 把任务 worktree 的全部已审批改动固化到任务分支，供后续合并任务
+// 稳定读取。无改动时只返回当前 HEAD。
+func Snapshot(tk store.Task, sessionsRoot string) (string, error) {
+	mutationMu.Lock()
+	defer mutationMu.Unlock()
+	return snapshotLocked(tk, sessionsRoot)
+}
+
+func snapshotLocked(tk store.Task, sessionsRoot string) (string, error) {
+	wt := WorktreePath(sessionsRoot, tk.ProjectName, tk.ID)
+	if fi, err := os.Stat(wt); err != nil || !fi.IsDir() {
+		return "", fmt.Errorf("worktree 不存在，无法保存任务改动")
+	}
+	status, err := git(wt, "status", "--porcelain")
+	if err != nil {
+		return "", fmt.Errorf("读取任务改动失败: %v", err)
+	}
+	if strings.TrimSpace(status) != "" {
+		if _, err := git(wt, "add", "-A"); err != nil {
+			return "", fmt.Errorf("暂存任务改动失败: %v", err)
+		}
+		msg := fmt.Sprintf("paihuo: task #%d %s", tk.ID, firstLine(tk.Title))
+		if _, err := git(wt, append(gitIdentity, "commit", "-m", msg)...); err != nil {
+			return "", fmt.Errorf("提交任务改动失败: %v", err)
+		}
+	}
+	head, err := git(wt, "rev-parse", "--short", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("读取任务提交失败: %v", err)
+	}
+	return strings.TrimSpace(head), nil
+}
+
+// Integrate 把已审批任务分支 squash 到自动创建的合并任务 worktree。冲突会
+// 保留在隔离 worktree 中交给 agent 处理，不会触碰主工作区。
+func Integrate(source, target store.Task, sessionsRoot string) (IntegrationResult, error) {
+	mutationMu.Lock()
+	defer mutationMu.Unlock()
+	if source.WorktreeBranch == "" || target.WorktreeBranch == "" {
+		return IntegrationResult{Skipped: true}, nil
+	}
+	if filepath.Clean(source.ProjectDir) != filepath.Clean(target.ProjectDir) {
+		return IntegrationResult{}, fmt.Errorf("源任务与合并任务不属于同一项目")
+	}
+	if _, err := snapshotLocked(source, sessionsRoot); err != nil {
+		return IntegrationResult{}, err
+	}
+	targetDir := WorktreePath(sessionsRoot, target.ProjectName, target.ID)
+	if fi, err := os.Stat(targetDir); err != nil || !fi.IsDir() {
+		return IntegrationResult{}, fmt.Errorf("合并任务 worktree 不存在")
+	}
+	// 重试时保留 agent 上一轮已经整合或修复的内容，不重复套用源分支。
+	if status, err := git(targetDir, "status", "--porcelain"); err != nil {
+		return IntegrationResult{}, fmt.Errorf("读取合并任务状态失败: %v", err)
+	} else if strings.TrimSpace(status) != "" {
+		return IntegrationResult{Skipped: true}, nil
+	}
+	if target.BaseCommit != "" {
+		head, err := git(targetDir, "rev-parse", "HEAD")
+		if err != nil {
+			return IntegrationResult{}, fmt.Errorf("读取合并任务 HEAD 失败: %v", err)
+		}
+		if strings.TrimSpace(head) != target.BaseCommit {
+			return IntegrationResult{Skipped: true}, nil
+		}
+	}
+	if _, err := git(targetDir, "merge", "--squash", source.WorktreeBranch); err != nil {
+		conflicts := mergeConflicts(targetDir)
+		if len(conflicts) > 0 {
+			return IntegrationResult{Conflicts: conflicts}, nil
+		}
+		git(targetDir, "reset", "--hard", "HEAD")
+		return IntegrationResult{}, fmt.Errorf("导入审批分支失败: %v", err)
+	}
+	return IntegrationResult{}, nil
+}
+
 // Merge 把任务分支 squash 合并回主分支：
 //  1. worktree 内提交全部改动（未提交部分也并入）
 //  2. 主仓库 git merge --squash <branch> 并提交
@@ -119,6 +207,8 @@ func Status(tk store.Task, sessionsRoot string) Info {
 //
 // 冲突时中止合并并返回包含冲突文件列表的错误。
 func Merge(tk store.Task, sessionsRoot string) (string, error) {
+	mutationMu.Lock()
+	defer mutationMu.Unlock()
 	wt := WorktreePath(sessionsRoot, tk.ProjectName, tk.ID)
 	if fi, err := os.Stat(wt); err != nil || !fi.IsDir() {
 		return "", fmt.Errorf("worktree 不存在，无法合并")
@@ -126,12 +216,23 @@ func Merge(tk store.Task, sessionsRoot string) (string, error) {
 	if !isGitRepo(tk.ProjectDir) {
 		return "", fmt.Errorf("项目不是 git 仓库")
 	}
-	msg := fmt.Sprintf("paihuo: task #%d %s", tk.ID, firstLine(tk.Title))
-	// 1. 提交 worktree 内全部改动（无改动时 git commit 会失败，忽略）
-	git(wt, "add", "-A")
-	if _, err := git(wt, append(gitIdentity, "commit", "-m", msg)...); err != nil && !strings.Contains(err.Error(), "nothing to commit") {
-		// 无身份/其他错误：忽略（merge --squash 拉的是分支提交，这里只是保险）
+	// 自动合并绝不能覆盖用户或其他任务留在主工作区的未提交内容。
+	if status, err := git(tk.ProjectDir, "status", "--porcelain"); err != nil {
+		return "", fmt.Errorf("读取主工作区状态失败: %v", err)
+	} else if strings.TrimSpace(status) != "" {
+		return "", fmt.Errorf("主工作区存在未提交改动，无法自动合并")
 	}
+	if _, err := snapshotLocked(tk, sessionsRoot); err != nil {
+		return "", err
+	}
+	differs, err := treesDiffer(tk.ProjectDir, "HEAD", Branch(tk.ID))
+	if err != nil {
+		return "", fmt.Errorf("比较任务分支失败: %v", err)
+	}
+	if !differs {
+		return "", nil
+	}
+	msg := fmt.Sprintf("paihuo: task #%d %s", tk.ID, firstLine(tk.Title))
 	// 2. squash 合并
 	if _, err := git(tk.ProjectDir, "merge", "--squash", Branch(tk.ID)); err != nil {
 		conflicts := mergeConflicts(tk.ProjectDir)
@@ -143,13 +244,15 @@ func Merge(tk store.Task, sessionsRoot string) (string, error) {
 		return "", fmt.Errorf("合并失败: %v", err)
 	}
 	// 3. 提交
-	if out, err := git(tk.ProjectDir, append(gitIdentity, "commit", "-m", msg)...); err != nil {
-		// 无任何可合并改动（空任务）→ 清理 index
+	if _, err := git(tk.ProjectDir, append(gitIdentity, "commit", "-m", msg)...); err != nil {
 		git(tk.ProjectDir, "reset", "--hard", "HEAD")
-		return "", fmt.Errorf("提交失败（可能无改动）: %v", err)
-	} else {
-		return strings.TrimSpace(out), nil
+		return "", fmt.Errorf("提交自动合并结果失败: %v", err)
 	}
+	head, err := git(tk.ProjectDir, "rev-parse", "--short", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("读取自动合并提交失败: %v", err)
+	}
+	return strings.TrimSpace(head), nil
 }
 
 // Discard 丢弃任务分支：删除 worktree 与分支。已合并的分支一并清理。
@@ -260,4 +363,18 @@ func mergeConflicts(dir string) []string {
 		}
 	}
 	return res
+}
+
+func treesDiffer(dir, left, right string) (bool, error) {
+	cmd := exec.Command("git", "diff", "--quiet", left, right, "--")
+	cmd.Dir = dir
+	err := cmd.Run()
+	if err == nil {
+		return false, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return true, nil
+	}
+	return false, err
 }

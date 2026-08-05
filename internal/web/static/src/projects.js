@@ -123,9 +123,13 @@ export function renderProjectDetail(p, s, tasks) {
     <div class="sec-title">近 14 天完成</div>
     ${dailyChartHTML(s.daily, 14)}
 
-    <div class="sec-title">任务 ${tasks.length}</div>
+    <div class="sec-title" style="display:flex;align-items:center;justify-content:space-between">
+      <span>任务 ${tasks.length}</span>
+      <button class="btn sm brand" onclick="openProjectTask(${p.id})">${icon("plus")}新建任务</button>
+    </div>
     <div class="p-task-list">
-      ${rowHTML || `<div class="empty">还没有任务，去看板派活并归入本项目</div>`}
+      ${rowHTML || `<div class="empty">还没有任务
+        <button class="btn xs brand" style="margin-left:8px" onclick="openProjectTask(${p.id})">${icon("plus")}派活</button></div>`}
     </div>
 
     <div class="sec-title">成员统计（在本项目上工作的 agent）</div>
@@ -148,6 +152,7 @@ export function renderProjectDetail(p, s, tasks) {
     <div class="prop-row"><span class="k">创建</span><span class="v">${esc((p.created_at || "").slice(0, 16).replace("T", " "))}</span></div>
     <div class="sec-title">操作</div>
     <div class="detail-actions">
+      <button class="btn sm brand" onclick="openProjectTask(${p.id})">${icon("plus")}新建任务</button>
       <button class="btn sm" onclick="openProjectModal(${p.id})">编辑</button>
       <button class="btn sm danger" onclick="deleteProject(${p.id})">删除</button>
     </div>`;

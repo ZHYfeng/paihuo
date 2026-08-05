@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   body        TEXT NOT NULL DEFAULT '',
   status      TEXT NOT NULL DEFAULT 'queued',
   perm        TEXT NOT NULL DEFAULT 'full',
+  run_mode    TEXT NOT NULL DEFAULT 'batch',
   agent_id    INTEGER REFERENCES agents(id),
   project_id  INTEGER REFERENCES projects(id),
   project_dir TEXT NOT NULL DEFAULT '',
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   worktree_branch TEXT NOT NULL DEFAULT '',
   base_commit   TEXT NOT NULL DEFAULT '',
   resume_of     INTEGER REFERENCES tasks(id),
+  merge_of      INTEGER,
   created_at  TEXT NOT NULL,
   started_at  TEXT,
   finished_at TEXT,
@@ -135,13 +137,16 @@ func migrate(db *sql.DB) error {
 		}
 	}
 	for _, stmt := range []string{
+		"ALTER TABLE agents ADD COLUMN max_concurrency INTEGER NOT NULL DEFAULT 1",
 		"ALTER TABLE tasks ADD COLUMN review_rounds INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE tasks ADD COLUMN tmux_log_offset INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE tasks ADD COLUMN run_mode TEXT NOT NULL DEFAULT 'batch'",
 		"ALTER TABLE tasks ADD COLUMN project_id INTEGER REFERENCES projects(id)",
 		"ALTER TABLE projects ADD COLUMN project_dir TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE tasks ADD COLUMN worktree_branch TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE tasks ADD COLUMN base_commit TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE tasks ADD COLUMN resume_of INTEGER REFERENCES tasks(id)",
+		"ALTER TABLE tasks ADD COLUMN merge_of INTEGER",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)",
 	} {
@@ -175,15 +180,11 @@ func migrate(db *sql.DB) error {
 	}
 	// 索引在迁移阶段创建：老库先补列再建索引；新库 schema 建表时列已存在
 	for _, stmt := range []string{
-		"ALTER TABLE agents ADD COLUMN max_concurrency INTEGER NOT NULL DEFAULT 1",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)",
 	} {
 		if _, err := db.Exec(stmt); err != nil {
-			// 列已存在则忽略（老库可能已带该列）
-			if !strings.Contains(err.Error(), "duplicate column name") {
-				return err
-			}
+			return err
 		}
 	}
 	// readonly 权限模式已移除：历史任务按完整权限继续执行
@@ -309,6 +310,7 @@ func scanAgent(rows scanner) (Agent, error) {
 	if rc != "" {
 		_ = json.Unmarshal([]byte(rc), &a.RoleConfig)
 	}
+	a.MaxConcurrency = a.ConcurrencyLimit()
 	return a, nil
 }
 
@@ -345,9 +347,7 @@ func (s *Store) CreateAgent(a Agent) (int64, error) {
 	if a.UpdatedAt == "" {
 		a.UpdatedAt = a.CreatedAt
 	}
-	if a.MaxConcurrency < 1 {
-		a.MaxConcurrency = 1 // 默认串行；CHECK(max_concurrency >= 1) 兜底
-	}
+	a.MaxConcurrency = a.ConcurrencyLimit()
 	rc, err := json.Marshal(a.RoleConfig)
 	if err != nil {
 		return 0, err
@@ -391,27 +391,30 @@ func (s *Store) DeleteAgent(id int64) error {
 // 任务
 
 // taskCols 完整列（详情页用：含完整 body，驳回重做会追加修改意见）。
-const taskCols = `t.id, t.title, t.body, t.status, t.perm, t.agent_id, COALESCE(a.name, ''),
+const taskCols = `t.id, t.title, t.body, t.status, t.perm, t.run_mode, t.agent_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.created_at, t.started_at, t.finished_at, t.updated_at`
+	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.created_at, t.started_at, t.finished_at, t.updated_at`
 
 // taskColsBrief 列表列（看板/历史/项目页用）：body 截断到 400 字符，
 // 避免大提示词把列表接口载荷撑爆。列序与 taskCols 完全一致（scanTask 共用）。
-const taskColsBrief = `t.id, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.agent_id, COALESCE(a.name, ''),
+const taskColsBrief = `t.id, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.run_mode, t.agent_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.created_at, t.started_at, t.finished_at, t.updated_at`
+	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.created_at, t.started_at, t.finished_at, t.updated_at`
 
 func scanTask(rows scanner) (Task, error) {
 	var tk Task
 	var agentID, projectID, parentID, scheduleID, exitCode sql.NullInt64
 	var agentName, projectName string
 	var started, finished sql.NullString
-	var resumeOf sql.NullInt64
-	err := rows.Scan(&tk.ID, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &agentID, &agentName,
+	var resumeOf, mergeOf sql.NullInt64
+	err := rows.Scan(&tk.ID, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &tk.RunMode, &agentID, &agentName,
 		&projectID, &projectName, &tk.ProjectDir, &parentID, &scheduleID, &tk.Error, &exitCode,
-		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt)
+		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt)
 	if err != nil {
 		return tk, err
+	}
+	if tk.RunMode == "" {
+		tk.RunMode = RunModeBatch
 	}
 	if agentID.Valid {
 		tk.AgentID = &agentID.Int64
@@ -422,6 +425,9 @@ func scanTask(rows scanner) (Task, error) {
 	}
 	if resumeOf.Valid {
 		tk.ResumeOf = &resumeOf.Int64
+	}
+	if mergeOf.Valid {
+		tk.MergeOf = &mergeOf.Int64
 	}
 	tk.ProjectName = projectName
 	if parentID.Valid {
@@ -543,14 +549,62 @@ func (s *Store) CreateTask(t Task) (int64, error) {
 	if t.UpdatedAt == "" {
 		t.UpdatedAt = t.CreatedAt
 	}
-	res, err := s.db.Exec(`INSERT INTO tasks (title, body, status, perm, agent_id, project_id, project_dir, parent_id, schedule_id, resume_of, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.Title, t.Body, t.Status, t.Perm, nullInt64(t.AgentID), nullInt64(t.ProjectID), t.ProjectDir,
-		nullInt64(t.ParentID), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), t.CreatedAt, t.UpdatedAt)
+	if t.RunMode == "" {
+		t.RunMode = RunModeBatch
+	}
+	res, err := s.db.Exec(`INSERT INTO tasks (title, body, status, perm, run_mode, agent_id, project_id, project_dir, parent_id, schedule_id, resume_of, merge_of, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.Title, t.Body, t.Status, t.Perm, t.RunMode, nullInt64(t.AgentID), nullInt64(t.ProjectID), t.ProjectDir,
+		nullInt64(t.ParentID), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), t.CreatedAt, t.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// ApproveTaskAndCreateMerge 原子完成 review 审批并创建唯一的合并任务。
+// 条件更新保证重复点击或并发请求不会生成两个合并任务。
+func (s *Store) ApproveTaskAndCreateMerge(sourceID int64, merge Task) (int64, error) {
+	if merge.CreatedAt == "" {
+		merge.CreatedAt = Now()
+	}
+	if merge.UpdatedAt == "" {
+		merge.UpdatedAt = merge.CreatedAt
+	}
+	if merge.RunMode == "" {
+		merge.RunMode = RunModeBatch
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	now := Now()
+	res, err := tx.Exec(`UPDATE tasks
+		SET status='succeeded', finished_at=COALESCE(finished_at, ?), exit_code=COALESCE(exit_code, 0), updated_at=?
+		WHERE id=? AND status='awaiting_review' AND perm='review'`, now, now, sourceID)
+	if err != nil {
+		return 0, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return 0, errors.New("任务已审批或当前不在待审批状态")
+	}
+	res, err = tx.Exec(`INSERT INTO tasks
+		(title, body, status, perm, run_mode, agent_id, project_id, project_dir, parent_id, schedule_id, resume_of, merge_of, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		merge.Title, merge.Body, merge.Status, merge.Perm, merge.RunMode, nullInt64(merge.AgentID), nullInt64(merge.ProjectID), merge.ProjectDir,
+		nullInt64(merge.ParentID), nullInt64(merge.ScheduleID), nullInt64(merge.ResumeOf), nullInt64(merge.MergeOf), merge.CreatedAt, merge.UpdatedAt)
+	if err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func (s *Store) UpdateTask(id int64, set map[string]any) error {

@@ -1,5 +1,5 @@
 // 模块 terminal（由 scripts/split-frontend.py 生成）
-import { api, closeModal, openModal, state } from "./core.js";
+import { api, closeModal, openModal, state, toast } from "./core.js";
 
 export let term = null, termFit = null;
 
@@ -42,6 +42,7 @@ export function openTerminal(id) {
   term.clear();
   term.write("\x1b[90m# loading logs...\x1b[0m\r\n");
   state.termTask = id;
+  syncTerminalInput(t);
   api(`/api/tasks/${id}/logs`).then(logs => {
     if (state.termTask !== id) return;
     term.clear();
@@ -52,7 +53,48 @@ export function openTerminal(id) {
 
 export function closeTerminal() {
   state.termTask = null; // 停止向已关闭的弹窗追加日志
+  const bar = document.getElementById("termInputBar");
+  if (bar) bar.classList.add("hidden");
   closeModal("termModal");
+}
+
+// syncTerminalInput 与任务 SSE 同步：只有正在运行的交互式 Pi 任务才能收到
+// 消息，任务退出后立即收起输入栏，避免把内容误发到已归档的窗口。
+export function syncTerminalInput(t) {
+  const bar = document.getElementById("termInputBar");
+  const input = document.getElementById("termInput");
+  if (!bar || !input) return;
+  const enabled = t?.run_mode === "interactive" && t?.status === "running";
+  bar.classList.toggle("hidden", !enabled);
+  input.disabled = !enabled;
+  if (!enabled) input.value = "";
+}
+
+// sendTaskInput 通过服务端再转交给专用 tmux；浏览器不接触 tmux socket，也不
+// 能把文本解释成 shell 命令。inputID 为空时使用 explicitMessage（/exit 按钮）。
+export async function sendTaskInput(id, inputID, explicitMessage) {
+  const input = inputID ? document.getElementById(inputID) : null;
+  const message = explicitMessage ?? input?.value ?? "";
+  if (!message.trim()) {
+    toast("消息不能为空", true);
+    return false;
+  }
+  try {
+    await api(`/api/tasks/${id}/input`, { method: "POST", body: JSON.stringify({ message }) });
+    if (input) {
+      input.value = "";
+      input.focus();
+    }
+    return true;
+  } catch (e) {
+    toast(e.message, true);
+    return false;
+  }
+}
+
+export function sendTerminalInput() {
+  if (!state.termTask) return;
+  sendTaskInput(state.termTask, "termInput");
 }
 
 /* ============================================================

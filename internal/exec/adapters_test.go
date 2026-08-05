@@ -2,6 +2,7 @@ package exec
 
 import (
 	"paihuo/internal/store"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -168,5 +169,33 @@ func TestPiSchema(t *testing.T) {
 	}
 	if ws := a.Warnings(RunOptions{Role: store.RoleConfig{Plugins: []string{"/p"}}}); len(ws) != 1 {
 		t.Fatalf("plugins 应有一条警告，得到 %v", ws)
+	}
+}
+
+// 角色创建的选项以 schema 为准：Enrich 从 RoleConfig 结构体反射派生 builtin
+// 标记。在 Go 里新增/删除角色创建选项后，前端（创建弹窗与角色页面配置表单）
+// 都按这个标记读写，无需再改前端硬编码清单——这里锁住两者的同步性。
+func TestSchemaBuiltinMarking(t *testing.T) {
+	fs := Enrich([]Field{
+		{Key: "model"}, {Key: "skills"}, {Key: "provider"}, {Key: "execution_mode"},
+	})
+	want := map[string]bool{"model": true, "skills": true, "provider": false, "execution_mode": false}
+	for _, f := range fs {
+		if f.Builtin != want[f.Key] {
+			t.Fatalf("字段 %s builtin=%v，期望 %v", f.Key, f.Builtin, want[f.Key])
+		}
+	}
+
+	// builtin 集合必须与 RoleConfig 的 JSON 顶层字段一一对应（custom 除外）。
+	wantKeys := []string{"env", "extra_args", "instructions", "model", "plugins", "skills", "system_prompt", "thinking"}
+	got := make([]string, 0, len(wantKeys))
+	for k, v := range builtinKeys {
+		if v {
+			got = append(got, k)
+		}
+	}
+	sort.Strings(got)
+	if strings.Join(got, ",") != strings.Join(wantKeys, ",") {
+		t.Fatalf("builtinKeys 与 RoleConfig 不同步：得到 %v", got)
 	}
 }

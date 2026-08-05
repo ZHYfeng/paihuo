@@ -6,15 +6,19 @@ package exec
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
+
+	"paihuo/internal/store"
 )
 
 // Field 描述某个 CLI 适配器支持的一个配置参数（提炼自该 CLI 的官方文档）。
 type Field struct {
-	Key         string   `json:"key"` // role_config 内置字段名，或 Custom 中的参数名
+	Key         string   `json:"key"`    // role_config 内置字段名，或 Custom 中的参数名
 	Label       string   `json:"label"`
-	Type        string   `json:"type"`                  // text | textarea | select | list | env
+	Type        string   `json:"type"`   // text | textarea | select | list | env
+	Builtin     bool     `json:"builtin"` // true=直落 RoleConfig 顶层字段；false=存入 Custom
 	Options     []string `json:"options,omitempty"`     // select 的严格选项
 	Suggestions []string `json:"suggestions,omitempty"` // 候选列表（可自定义，前端 datalist / 多选）
 	Source      string   `json:"source,omitempty"`      // skills | files | dirs：服务端扫描后填入 Suggestions
@@ -24,6 +28,26 @@ type Field struct {
 	Help        string   `json:"help,omitempty"`
 	Group       string   `json:"group"` // 表单分组标题
 }
+
+// builtinKeys 从 RoleConfig 结构体的 JSON 字段反射派生（custom 除外）：
+// schema 中 key 命中该集合的字段直落 role_config 顶层，其余进 Custom。
+// 前端按字段的 builtin 标记决定读写位置——在 Go 里新增/删除角色创建选项
+// （RoleConfig 字段或适配器 schema 字段）时，创建弹窗与角色页面配置表单
+// 自动同步，无需再改前端硬编码清单。
+var builtinKeys = func() map[string]bool {
+	m := map[string]bool{}
+	t := reflect.TypeOf(store.RoleConfig{})
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get("json")
+		if tag == "" || strings.HasPrefix(tag, "-") {
+			continue
+		}
+		if name := strings.Split(tag, ",")[0]; name != "custom" {
+			m[name] = true
+		}
+	}
+	return m
+}()
 
 // listFiles 按 glob 展开文件候选（支持 ~ 前缀）。
 func listFiles(pattern string) []string {
@@ -48,11 +72,13 @@ func listFiles(pattern string) []string {
 	return ms
 }
 
-// Enrich 为带 Source 的字段填充动态 Suggestions（配置文件等）。
-// 技能候选由前端从 /api/skills（注册到 paihuo 工作目录的技能库）拉取。
+// Enrich 为带 Source 的字段填充动态 Suggestions（配置文件等），并标记
+// builtin 归属（RoleConfig 顶层 vs Custom）。技能候选由前端从 /api/skills
+// （注册到 paihuo 工作目录的技能库）拉取。
 func Enrich(fs []Field) []Field {
 	for i := range fs {
 		f := &fs[i]
+		f.Builtin = builtinKeys[f.Key]
 		if f.Source == "files" {
 			f.Suggestions = listFiles(f.Pattern)
 		}

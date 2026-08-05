@@ -70,16 +70,73 @@ function findChrome() {
   await page.evaluate(() => openAgentModal());
   await page.waitForTimeout(350);
   const agentModal = await page.evaluate(() =>
-    !document.getElementById("agentModal").classList.contains("hidden") && !document.getElementById("aPerm"));
-  agentModal ? ok("角色弹窗") : fail("角色弹窗未打开");
+    !document.getElementById("agentModal").classList.contains("hidden") &&
+    !document.getElementById("aPerm") &&
+    document.getElementById("aMaxConcurrency")?.value === "1");
+  agentModal ? ok("角色弹窗（默认单并发）") : fail("角色弹窗未打开或默认最大并发异常");
   await page.evaluate(() => closeModal("agentModal"));
+
+  // 角色详情页内联并发编辑器：改值保存后 API 应持久化（先改再还原，不污染数据）
+  const agents = await page.evaluate(async () => await (await fetch("/api/agents")).json());
+  if (!agents.length) ok("角色详情页并发编辑器（无角色，跳过）");
+  else {
+    const a = agents[0];
+    await page.evaluate(id => openAgentDetail(id), a.id);
+    await page.waitForFunction(() => !!document.getElementById("aMaxConc"), null, { timeout: 6000 }).catch(() => {});
+    const edited = await page.evaluate(id => {
+      const inp = document.getElementById("aMaxConc");
+      if (!inp) return false;
+      const n = Number(inp.value) === 1 ? 2 : 1;
+      inp.value = String(n);
+      saveAgentConcurrency();
+      return true;
+    }, a.id);
+    await page.waitForTimeout(1300);
+    const expect = Number(a.max_concurrency || 1) === 1 ? 2 : 1;
+    const persisted = edited && await page.evaluate(async id => {
+      const all = await (await fetch("/api/agents")).json();
+      return all.find(x => x.id === id)?.max_concurrency;
+    }, a.id);
+    persisted === expect ? ok("角色详情页修改并发数") : fail(`角色详情页并发修改未持久化：期望 ${expect}，得到 ${persisted}`);
+    await page.evaluate(async id => {
+      await fetch("/api/agents/" + id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ max_concurrency: 1 }) });
+    }, a.id);
+    await page.evaluate(() => closeAgentDetail());
+  }
+
+  // 角色创建的选项与角色页同源：schema 字段必须带 builtin 标记（Go 侧从
+  // RoleConfig 反射派生），前端据此决定读写位置，新增/删除选项自动同步。
+  const schemaSync = await page.evaluate(async () => {
+    const schema = await (await fetch("/api/agents/schema")).json();
+    if (!schema.every(s => (s.fields || []).every(f => typeof f.builtin === "boolean"))) return false;
+    const pi = schema.find(s => s.id === "pi");
+    return pi.fields.find(f => f.key === "model")?.builtin === true &&
+      pi.fields.find(f => f.key === "provider")?.builtin === false;
+  });
+  schemaSync ? ok("schema 字段 builtin 标记（创建选项与角色页同源）") : fail("schema 字段 builtin 标记异常");
 
   await page.goto(URL + "/board");
   await page.waitForTimeout(700);
   await page.evaluate(() => openNewTask());
   await page.waitForTimeout(350);
-  const taskModal = await page.evaluate(() => !document.getElementById("taskModal").classList.contains("hidden"));
-  taskModal ? ok("任务弹窗") : fail("任务弹窗未打开");
+  const taskModal = await page.evaluate(() =>
+    !document.getElementById("taskModal").classList.contains("hidden") &&
+    document.getElementById("tRunMode")?.value === "batch");
+  taskModal ? ok("任务弹窗（默认批处理）") : fail("任务弹窗未打开或默认执行方式异常");
+  if (process.env.E2E_EXPECT_INTERACTIVE === "1") {
+    const interactive = await page.evaluate(() => {
+      const agent = document.getElementById("tAgent");
+      const pi = [...agent.options].find(o => o.textContent.includes("Pi smoke"));
+      if (!pi) return false;
+      agent.value = pi.value;
+      syncTaskRunMode();
+      const mode = document.getElementById("tRunMode");
+      const option = mode.querySelector('option[value="interactive"]');
+      mode.value = "interactive";
+      return !option.disabled && mode.value === "interactive";
+    });
+    interactive ? ok("Pi 手工交互方式") : fail("Pi 交互方式未启用");
+  }
   await page.evaluate(() => closeModal("taskModal"));
 
   await page.goto(URL + "/projects");
@@ -96,8 +153,50 @@ function findChrome() {
   await page.evaluate(() => closeModal("dirModal"));
   await page.evaluate(() => closeModal("projectModal"));
 
+  // 项目页直接派活：详情页新建任务按钮 → 弹窗预选项目（真实走 API 建/删，验证完整链路）
+  const proj = await page.evaluate(async () => {
+    const r = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "e2e 派活验证", description: "", project_dir: "", status: "active" }),
+    });
+    return r.ok ? await r.json() : null;
+  });
+  if (!proj) fail("创建测试项目失败");
+  else {
+    // 先跳到别的路径再带 hash 进详情：同路径仅 hash 差异时 goto 是同一文档导航（不重载），
+    // state.projects 会是旧数据（不含刚建的项目），详情页会静默空白。
+    await page.goto(URL + "/board");
+    await page.goto(URL + "/projects#/project/" + proj.id);
+    // 等待详情页真正渲染完成（loadAll → route → refreshProjectDetail 是异步链，CLI 探测可能慢）
+    await page.waitForFunction(id => {
+      const d = document.getElementById("projectDetailShell");
+      if (!d || d.classList.contains("hidden")) return false;
+      const b = document.querySelector("#pdMain .btn");
+      return b && b.textContent.includes("新建任务");
+    }, proj.id, { timeout: 10000 }).catch(() => {});
+    const btn = await page.evaluate(() => {
+      const b = [...document.querySelectorAll("#pdMain .btn")].find(x => x.textContent.includes("新建任务"));
+      const d = document.getElementById("projectDetailShell");
+      return { has: !!b, detail: d && !d.classList.contains("hidden") };
+    });
+    btn.has && btn.detail ? ok("项目详情页新建任务按钮") : fail("项目详情页无新建任务入口");
+    await page.evaluate(id => openProjectTask(id), proj.id);
+    await page.waitForTimeout(350);
+    const pre = await page.evaluate(id => {
+      const m = document.getElementById("taskModal");
+      return !m.classList.contains("hidden") && Number(document.getElementById("tProject")?.value) === id;
+    }, proj.id);
+    pre ? ok("项目页直接派活（弹窗预选项目）") : fail("项目页派活弹窗未预选项目");
+    await page.evaluate(() => closeModal("taskModal"));
+    await page.evaluate(async id => {
+      await fetch("/api/projects/" + id, { method: "DELETE" });
+    }, proj.id);
+  }
+
   await page.goto(URL + "/agents");
-  await page.waitForTimeout(2500);
+  // 首次检测会逐个探测本机 CLI，慢机器或某个 CLI 超时也不应让回归误判。
+  await page.waitForFunction(() => document.querySelectorAll(".prov-card").length > 0, null, { timeout: 12000 }).catch(() => {});
   const prov = await page.evaluate(() => document.querySelectorAll(".prov-card").length);
   prov > 0 ? ok(`安装面板（${prov} 张卡片）`) : fail("安装面板未渲染");
   // 动态按钮回归：JS 字符串生成的 onclick 必须挂到 window（防 installProvision is not defined 类回归）

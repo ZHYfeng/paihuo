@@ -15,10 +15,9 @@ import (
 	"paihuo/internal/workspace"
 )
 
-// Executor 轮询领取 queued 任务并执行。
-// 约束：同一角色（agent）同时运行的任务数不超过其 max_concurrency（默认 1），
-// 避免模型 API 并发冲突；不同角色可并行（每任务一个 goroutine）。任务在 git
-// worktree 隔离目录中执行。
+// Executor 轮询领取 queued 任务并执行。角色是一个可配置大小的执行池：
+// 每个任务独立拥有 tmux window、agent 会话目录和（Git 项目时）worktree，
+// 因而同一角色可以并行；MaxConcurrency 只负责控制资源与上游配额占用。
 type Executor struct {
 	st           *store.Store
 	hub          *events.Hub
@@ -26,7 +25,7 @@ type Executor struct {
 	taskSessions *taskSessionStore
 	runner       *tmuxRunner
 	mu           sync.Mutex
-	busy         map[int64]int // 各 agent 正在执行的任务数（受 max_concurrency 限制）
+	active       map[int64]int // 每个 agent 当前已占用的执行槽位数
 	// cancels 是任务级取消句柄
 	cancels map[int64]context.CancelFunc
 	wake    chan struct{}
@@ -43,7 +42,7 @@ func New(st *store.Store, hub *events.Hub, sessionsRoot, instanceID string) *Exe
 		sessionsRoot: sessionsRoot,
 		taskSessions: newTaskSessionStore(sessionsRoot, instanceID),
 		runner:       newTmuxRunner(sessionsRoot),
-		busy:         make(map[int64]int),
+		active:       make(map[int64]int),
 		cancels:      make(map[int64]context.CancelFunc),
 		wake:         make(chan struct{}, 1),
 	}
@@ -89,9 +88,7 @@ func (e *Executor) recoverInterrupted(ctx context.Context) {
 			e.markInterrupted(tk, "服务重启，任务未指派角色")
 			continue
 		}
-		e.mu.Lock()
-		e.busy[*tk.AgentID]++
-		e.mu.Unlock()
+		e.restoreAgentSlot(*tk.AgentID)
 		e.log(tk.ID, "sys", "↻ 服务恢复：重新接管专用 tmux window")
 		go e.monitorRecovered(ctx, tk)
 	}
@@ -164,50 +161,71 @@ func (e *Executor) dispatch(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	// 每轮派发读一次角色并发上限：配置变更（PATCH /api/agents）下一轮即生效
-	agents, err := e.st.ListAgents()
-	if err != nil {
-		return
-	}
-	maxConc := make(map[int64]int, len(agents))
-	for _, a := range agents {
-		if a.MaxConcurrency < 1 {
-			maxConc[a.ID] = 1
-		} else {
-			maxConc[a.ID] = a.MaxConcurrency
-		}
-	}
+	limits := make(map[int64]int)
 	for _, tk := range tasks {
 		if tk.AgentID == nil {
 			continue
 		}
-		e.mu.Lock()
-		n := e.busy[*tk.AgentID]
-		e.mu.Unlock()
-		if n >= maxConc[*tk.AgentID] {
+		agentID := *tk.AgentID
+		limit, ok := limits[agentID]
+		if !ok {
+			agent, err := e.st.GetAgent(agentID)
+			if err != nil || !agent.Enabled {
+				continue
+			}
+			limit = agent.ConcurrencyLimit()
+			limits[agentID] = limit
+		}
+		if !e.reserveAgentSlot(agentID, limit) {
 			continue
 		}
 		claimed, err := e.st.ClaimTask(tk.ID)
 		if err != nil || !claimed {
+			e.releaseAgentSlot(agentID)
 			continue
 		}
-		e.mu.Lock()
-		e.busy[*tk.AgentID]++
-		e.mu.Unlock()
 		go e.runTask(ctx, tk)
 	}
+}
+
+// reserveAgentSlot 原子地尝试占用一个角色槽位。角色上限在调度时读取，
+// 因此提高上限会在下一次 Wake/轮询立即生效；下调上限不会中断已有任务，
+// 只会阻止新的任务继续进入直到占用数回落。
+func (e *Executor) reserveAgentSlot(agentID int64, limit int) bool {
+	if limit < 1 {
+		limit = 1
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.active[agentID] >= limit {
+		return false
+	}
+	e.active[agentID]++
+	return true
+}
+
+// restoreAgentSlot 在服务重启后接管尚存 tmux window 时恢复其槽位。即使
+// 配置已被下调，也必须先接管所有存量任务；它们结束后新上限自然生效。
+func (e *Executor) restoreAgentSlot(agentID int64) {
+	e.mu.Lock()
+	e.active[agentID]++
+	e.mu.Unlock()
+}
+
+func (e *Executor) releaseAgentSlot(agentID int64) {
+	e.mu.Lock()
+	if e.active[agentID] <= 1 {
+		delete(e.active, agentID)
+	} else {
+		e.active[agentID]--
+	}
+	e.mu.Unlock()
 }
 
 func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	agentID := *tk.AgentID
 	defer func() {
-		e.mu.Lock()
-		if e.busy[agentID] > 1 {
-			e.busy[agentID]--
-		} else {
-			delete(e.busy, agentID)
-		}
-		e.mu.Unlock()
+		e.releaseAgentSlot(agentID)
 		e.Wake()
 	}()
 
@@ -270,12 +288,38 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	}
 	if branch != "" {
 		_ = e.st.UpdateTask(tk.ID, map[string]any{"worktree_branch": branch, "base_commit": baseCommit})
+		tk.WorktreeBranch = branch
+		tk.BaseCommit = baseCommit
 		e.log(tk.ID, "sys", fmt.Sprintf("🌿 独立工作空间: %s（分支 %s）", dir, branch))
 	} else {
 		e.log(tk.ID, "sys", "📁 在项目目录直接执行（非 git 仓库，无隔离）")
 	}
+	if tk.MergeOf != nil {
+		source, err := e.st.GetTask(*tk.MergeOf)
+		if err != nil {
+			fail(fmt.Sprintf("读取待合并源任务 #%d 失败: %v", *tk.MergeOf, err))
+			return
+		}
+		result, err := workspace.Integrate(*source, tk, e.sessionsRoot)
+		if err != nil {
+			fail(fmt.Sprintf("准备合并任务失败: %v", err))
+			return
+		}
+		switch {
+		case len(result.Conflicts) > 0:
+			e.log(tk.ID, "sys", "⚠ 已导入审批分支，以下冲突交给 agent 处理: "+strings.Join(result.Conflicts, "、"))
+		case result.Skipped:
+			e.log(tk.ID, "sys", "↻ 合并内容已准备或项目未启用 Git 隔离，交给 agent 检查")
+		default:
+			e.log(tk.ID, "sys", fmt.Sprintf("⇄ 已将审批任务 #%d 的分支导入当前工作空间", *tk.MergeOf))
+		}
+	}
 
-	ro := RunOptions{Dir: dir, Prompt: taskPrompt(tk), Role: agent.RoleConfig, Perm: tk.Perm}
+	if tk.RunMode == store.RunModeInteractive && agent.CLI != "pi" {
+		fail("交互式任务目前只支持 Pi 角色")
+		return
+	}
+	ro := RunOptions{Dir: dir, Prompt: taskPrompt(tk), Role: agent.RoleConfig, Perm: tk.Perm, RunMode: tk.RunMode}
 	// instructions：任务指令模板，追加在提示词之前（适配器可按 CLI 映射为官方参数）
 	if instr := strings.TrimSpace(agent.RoleConfig.Instructions); instr != "" {
 		ro.Prompt = instr + "\n\n" + ro.Prompt
@@ -321,13 +365,7 @@ func (e *Executor) monitorRecovered(ctx context.Context, tk store.Task) {
 		return
 	}
 	defer func() {
-		e.mu.Lock()
-		if e.busy[*tk.AgentID] > 1 {
-			e.busy[*tk.AgentID]--
-		} else {
-			delete(e.busy, *tk.AgentID)
-		}
-		e.mu.Unlock()
+		e.releaseAgentSlot(*tk.AgentID)
 		e.Wake()
 	}()
 	rctx, release := e.taskContext(tk.ID)
@@ -347,6 +385,47 @@ func (e *Executor) taskContext(taskID int64) (context.Context, func()) {
 		e.mu.Unlock()
 		cancel()
 	}
+}
+
+const maxInteractiveInputBytes = 16 * 1024
+
+// SendInput 将一条人工消息送入正在运行的 Pi 交互式任务。输入必须是单行，
+// 以保证它在 Pi TUI 中是一条原子消息；复杂的初始指令仍由任务内容承载。
+func (e *Executor) SendInput(taskID int64, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return fmt.Errorf("消息不能为空")
+	}
+	if strings.ContainsAny(text, "\x00\r\n") {
+		return fmt.Errorf("交互消息暂不支持换行")
+	}
+	if len(text) > maxInteractiveInputBytes {
+		return fmt.Errorf("交互消息不能超过 %d KB", maxInteractiveInputBytes/1024)
+	}
+	tk, err := e.st.GetTask(taskID)
+	if err != nil {
+		return fmt.Errorf("读取任务失败: %w", err)
+	}
+	if tk.Status != store.StatusRunning {
+		return fmt.Errorf("任务当前不是运行状态")
+	}
+	if tk.RunMode != store.RunModeInteractive {
+		return fmt.Errorf("任务不是交互式 Pi 会话")
+	}
+	if tk.AgentID == nil {
+		return fmt.Errorf("任务未指派角色")
+	}
+	agent, err := e.st.GetAgent(*tk.AgentID)
+	if err != nil {
+		return fmt.Errorf("读取角色失败: %w", err)
+	}
+	if agent.CLI != "pi" {
+		return fmt.Errorf("交互式任务目前只支持 Pi 角色")
+	}
+	if err := e.runner.SendText(taskID, text); err != nil {
+		return err
+	}
+	e.log(taskID, "in", text)
+	return nil
 }
 
 // waitTmux 将 tmux pipe-pane 文件增量同步到 SQLite，并等待 window 内命令退出。
@@ -449,6 +528,23 @@ func (e *Executor) finishRun(tk store.Task, code int, runErr error, canceled boo
 		e.log(tk.ID, "sys", fmt.Sprintf("⏸ 第 %d 轮完成，等待审批", rounds))
 		e.publishTask(tk.ID)
 		return
+	}
+	if tk.WorktreeBranch != "" {
+		hash, err := workspace.Merge(tk, e.sessionsRoot)
+		if err != nil {
+			msg := "自动合并失败: " + err.Error()
+			_ = e.st.UpdateTask(tk.ID, map[string]any{
+				"status": store.StatusFailed, "finished_at": store.Now(), "exit_code": code, "error": msg,
+			})
+			e.log(tk.ID, "sys", "✗ "+msg)
+			e.publishTask(tk.ID)
+			return
+		}
+		if hash == "" {
+			e.log(tk.ID, "sys", "✓ 自动合并完成（主分支无需新增提交）")
+		} else {
+			e.log(tk.ID, "sys", "✓ 已自动合并到主分支: "+hash)
+		}
 	}
 	_ = e.st.UpdateTask(tk.ID, map[string]any{
 		"status": store.StatusSucceeded, "finished_at": store.Now(), "exit_code": 0,

@@ -5,7 +5,7 @@ import { loadHistory } from "./history.js";
 import { fillSelects, loadAll, refreshOverview } from "./main.js";
 import { refreshProjectDetail } from "./projects.js";
 import { loadTemplates } from "./skills.js";
-import { openTerminal, term, termWrite } from "./terminal.js";
+import { openTerminal, sendTaskInput, term, termWrite } from "./terminal.js";
 
 export function currentFilters() {
   return {
@@ -51,6 +51,7 @@ export function cardHTML(t) {
       <span class="st-dot"></span><span class="c-id">#${t.id}</span>
       <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
       ${t.perm === "review" ? `<span class="chip review">审批</span>` : ""}
+      ${t.run_mode === "interactive" ? `<span class="chip">交互</span>` : ""}
       ${t.review_rounds > 0 ? `<span class="chip">第${t.review_rounds}轮</span>` : ""}
     </div>
     <div class="c-title">${esc(t.title)}</div>
@@ -161,6 +162,11 @@ export async function refreshDetail() {
 export function renderDetail(t) {
   const main = document.getElementById("dMain");
   if (!main) return;
+  const isInteractive = t.run_mode === "interactive" && t.status === "running";
+  const input = isInteractive ? `<div class="term-input detail-input">
+      <input id="taskInput" autocomplete="off" aria-label="发送给 Pi 的消息" placeholder="发送消息给 Pi（Enter 发送）" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();sendTaskInput(${t.id},'taskInput')}">
+      <button class="btn primary" onclick="sendTaskInput(${t.id},'taskInput')">发送</button>
+    </div>` : "";
   main.innerHTML = `
     <h2>${esc(t.title)}</h2>
     <div class="detail-id">#${t.id} · 创建于 ${esc((t.created_at || "").slice(0, 16).replace("T", " "))}
@@ -179,6 +185,7 @@ export function renderDetail(t) {
         <button class="btn ghost xs" onclick="openTerminal(${t.id})">${icon("expand")}全屏</button>
       </div>
       <div class="term-body" id="logBox">${logsHTML()}</div>
+      ${input}
     </div>`;
   const box = document.getElementById("logBox");
   if (box) box.scrollTop = box.scrollHeight;
@@ -258,8 +265,11 @@ export function renderSide(t) {
   if (["queued", "claimed", "running"].includes(t.status)) {
     actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}取消任务</button>`;
   }
+  if (t.run_mode === "interactive" && t.status === "running") {
+    actions += `<button class="btn sm" onclick="endInteractiveTask(${t.id})">${icon("terminal")}结束会话</button>`;
+  }
   if (t.status === "awaiting_review") {
-    actions += `<button class="btn sm brand" onclick="setTaskStatus(${t.id},'succeeded')">${icon("check")}审批通过</button>`;
+    actions += `<button class="btn sm brand" onclick="setTaskStatus(${t.id},'succeeded')">${icon("check")}通过并派发合并</button>`;
     actions += `<button class="btn sm" onclick="rejectTask(${t.id})">${icon("retry")}驳回重做</button>`;
     actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}取消</button>`;
   }
@@ -279,6 +289,7 @@ export function renderSide(t) {
       <span class="v"><select onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
     <div class="prop-row"><span class="k">角色</span><span class="v">${esc(t.agent_name || "未指派")}</span></div>
     <div class="prop-row"><span class="k">权限</span><span class="v">${PERM_LABEL[t.perm] || t.perm}</span></div>
+    <div class="prop-row"><span class="k">方式</span><span class="v">${t.run_mode === "interactive" ? "交互式 Pi" : "批处理 · -p"}</span></div>
     <div class="prop-row"><span class="k">执行器</span><span class="v">tmux · ${["claimed", "running"].includes(t.status) ? `paihuo:task-${t.id}` : "日志已归档"}</span></div>
     <div class="prop-row"><span class="k">目录</span><span class="v" style="font-size:12px;word-break:break-all">${esc(t.project_dir || "-")}</span></div>
     <div class="prop-row"><span class="k">轮次</span><span class="v">${t.review_rounds || "-"}</span></div>
@@ -298,6 +309,7 @@ export async function patchTask(id, set) {
 export async function setTaskStatus(id, status) {
   try {
     await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
+    if (status === "succeeded") toast("已审批，自动合并任务已派发");
     if (status === "queued" && location.pathname === "/history") { location.href = "/"; return; }
     await loadAll();
     const p = location.pathname;
@@ -310,6 +322,13 @@ export async function setTaskStatus(id, status) {
       refreshProjectDetail();
     }
   } catch (e) { toast(e.message, true); }
+}
+
+export async function endInteractiveTask(id) {
+  if (!confirm("向 Pi 发送 /exit 并结束交互会话？任务会按正常退出结果结算。")) return;
+  if (await sendTaskInput(id, "", "/exit")) {
+    toast("已发送 /exit，等待 Pi 退出");
+  }
 }
 
 export async function rejectTask(id) {
@@ -362,9 +381,11 @@ export function openSubTask(parentId) {
   document.getElementById("tTitle").value = "";
   document.getElementById("tBody").value = "";
   document.getElementById("tPerm").value = t ? t.perm : "full";
+  document.getElementById("tRunMode").value = "batch";
   document.getElementById("tProject").value = t && t.project_id ? t.project_id : "";
   document.getElementById("tParentId").value = parentId;
   document.getElementById("taskModalTitle").textContent = "拆分子任务";
+  syncTaskRunMode();
   openModal("taskModal");
 }
 
@@ -440,10 +461,47 @@ export function openNewTask() {
   document.getElementById("tTitle").value = "";
   document.getElementById("tBody").value = "";
   document.getElementById("tPerm").value = "full";
+  document.getElementById("tRunMode").value = "batch";
   document.getElementById("tProject").value = "";
   document.getElementById("tParentId").value = "";
   document.getElementById("taskModalTitle").textContent = "新建任务";
+  syncTaskRunMode();
   openModal("taskModal");
+}
+
+// 项目页直接派活：打开新建任务弹窗并预选项目
+// （当前项目状态 active 才允许派活，已归档项目不提供入口）
+export function openProjectTask(projectId) {
+  const p = state.projects.find(x => x.id === projectId);
+  fillSelects();
+  document.getElementById("tTitle").value = "";
+  document.getElementById("tBody").value = "";
+  document.getElementById("tPerm").value = "full";
+  document.getElementById("tRunMode").value = "batch";
+  document.getElementById("tProject").value = projectId;
+  document.getElementById("tParentId").value = "";
+  document.getElementById("taskModalTitle").textContent = p ? `新建任务 · ${esc(p.name)}` : "新建任务";
+  syncTaskRunMode();
+  openModal("taskModal");
+}
+
+// 交互式是任务级能力，但当前仅 Pi 支持。前端即时说明限制，服务端会再次
+// 验证，避免手写请求绕过。
+export function syncTaskRunMode() {
+  const agentID = Number(document.getElementById("tAgent")?.value) || 0;
+  const agent = state.agents.find(a => a.id === agentID);
+  const isPi = agent?.cli === "pi";
+  const select = document.getElementById("tRunMode");
+  const help = document.getElementById("tRunModeHelp");
+  if (!select) return;
+  const interactive = select.querySelector('option[value="interactive"]');
+  if (interactive) interactive.disabled = !isPi;
+  if (!isPi && select.value === "interactive") select.value = "batch";
+  if (help) {
+    help.textContent = isPi
+      ? "批处理会自动结算；交互式会保留 Pi 终端，直到你发送 /exit。"
+      : "批处理会自动结算；交互式目前仅支持 Pi 角色。";
+  }
 }
 
 export async function submitTask() {
@@ -460,6 +518,7 @@ export async function submitTask() {
         agent_id: Number(document.getElementById("tAgent").value) || null,
         project_id: projectId,
         perm: document.getElementById("tPerm").value,
+        run_mode: document.getElementById("tRunMode").value,
         parent_id: parentId,
       }),
     });
@@ -468,6 +527,7 @@ export async function submitTask() {
     await loadAll();
     renderBoard(); renderList();
     refreshOverview();
+    if (location.pathname === "/projects" && state.projectView) refreshProjectDetail();
   } catch (e) { toast(e.message, true); }
 }
 
@@ -476,6 +536,7 @@ export function applyTemplate() {
   if (!t) return;
   document.getElementById("tBody").value = t.body || "";
   if (t.agent_id) document.getElementById("tAgent").value = t.agent_id;
+  syncTaskRunMode();
 }
 
 export async function saveAsTemplate(taskId) {

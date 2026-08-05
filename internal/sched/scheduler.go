@@ -109,7 +109,7 @@ func (j *scheduleJob) Run() {
 	now := store.Now()
 	id, err := j.s.st.CreateTask(store.Task{
 		Title: title, Body: body, Status: store.StatusQueued,
-		Perm: sc.Perm, AgentID: &agent.ID, ProjectDir: agent.ProjectDir,
+		Perm: sc.Perm, RunMode: store.RunModeBatch, AgentID: &agent.ID, ProjectDir: agent.ProjectDir,
 		ScheduleID: &sc.ID, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {

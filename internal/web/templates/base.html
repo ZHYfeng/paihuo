@@ -106,14 +106,21 @@
       <textarea id="tBody" rows="5" placeholder="给 agent 的详细指令；标题和这里的内容都会作为提示词传给 agent。"></textarea>
     </label>
     <div class="row">
-      <label class="field">角色 <select id="tAgent"></select></label>
+      <label class="field">角色 <select id="tAgent" onchange="syncTaskRunMode()"></select></label>
       <label class="field">项目 <select id="tProject"></select></label>
     </div>
     <label class="field">权限
       <select id="tPerm">
-        <option value="full">Full（直接执行）</option>
-        <option value="review">Review（完成后审批）</option>
+        <option value="full">自动（完成后直接合并）</option>
+        <option value="review">人工审批（通过后由 Agent 合并）</option>
       </select>
+    </label>
+    <label class="field">执行方式
+      <select id="tRunMode" onchange="syncTaskRunMode()">
+        <option value="batch">批处理（默认，Pi 使用 -p）</option>
+        <option value="interactive">交互式 Pi 终端</option>
+      </select>
+      <span class="field-help" id="tRunModeHelp">批处理会在完成后自动结算。</span>
     </label>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal('taskModal')">取消</button>
@@ -194,6 +201,10 @@
         <button class="btn ghost xs" onclick="closeTerminal()">关闭</button>
       </div>
       <div class="term-body term-full" id="termX" style="padding:0"></div>
+    </div>
+    <div class="term-input hidden" id="termInputBar">
+      <input id="termInput" autocomplete="off" aria-label="发送给交互式 Pi 的消息" placeholder="发送消息给 Pi（Enter 发送）" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();sendTerminalInput()}">
+      <button class="btn primary" onclick="sendTerminalInput()">发送</button>
     </div>
   </div>
 </div>
