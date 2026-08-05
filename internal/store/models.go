@@ -40,15 +40,16 @@ type RoleConfig struct {
 }
 
 type Agent struct {
-	ID          int64      `json:"id"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	CLI         string     `json:"cli"` // 适配器 id：omp | opencode | pi | claude | codex
-	RoleConfig  RoleConfig `json:"role_config"`
-	ProjectDir  string     `json:"project_dir"` // 绑定的项目目录
-	Enabled     bool       `json:"enabled"`
-	CreatedAt   string     `json:"created_at"`
-	UpdatedAt   string     `json:"updated_at"`
+	ID             int64      `json:"id"`
+	Name           string     `json:"name"`
+	Description    string     `json:"description"`
+	CLI            string     `json:"cli"` // 适配器 id：omp | opencode | pi | claude | codex
+	RoleConfig     RoleConfig `json:"role_config"`
+	ProjectDir     string     `json:"project_dir"`     // 绑定的项目目录
+	MaxConcurrency int        `json:"max_concurrency"` // 同一角色最多同时运行的任务数
+	Enabled        bool       `json:"enabled"`
+	CreatedAt      string     `json:"created_at"`
+	UpdatedAt      string     `json:"updated_at"`
 }
 
 type Task struct {

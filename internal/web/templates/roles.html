@@ -65,6 +65,10 @@
       </label>
     </div>
     <label class="field">描述 <input id="aDesc" placeholder="这个角色负责什么"></label>
+    <label class="field">最大并发
+      <input id="aMaxConcurrency" type="number" min="1" step="1" inputmode="numeric" value="1" required aria-describedby="aConcurrencyHelp">
+      <span class="field-help" id="aConcurrencyHelp">同一角色最多同时运行的任务数（默认 1，即串行执行）</span>
+    </label>
     <label class="field" style="display:flex;align-items:center;gap:8px;margin-top:12px">
       <input type="checkbox" id="aEnabled" checked style="width:auto"> 启用
     </label>

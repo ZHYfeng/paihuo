@@ -29,6 +29,67 @@ import (
 // /api/agents/schema，进而卡住前端首屏。调成 1 小时。
 const modelsCacheTTL = time.Hour
 
+// probeTimeout：模型列表命令的超时。这些命令（pi --list-models /
+// omp models --json / opencode models）冷启动要拉起 Node 进程，正常
+// 5~6s，但偶发走目录刷新/网络路径会拖到 15~20s，甚至超过 30s（实测 2025：
+// opencode models 5.5~20.8s、omp models 4.5~15.3s、pi --list-models 2.4~9.2s）。
+// 超时太短会触发配置回退，列出 agent 实际**不可用**的模型：opencode
+// 回退只剩 opencode.json 的 small_model；omp 回退 models.db 会带出
+// 无凭据/凭据已删除的 provider 目录（如 zenmux）。探测带 1h 缓存且
+// 后台并行加载，宽松超时几乎零成本——留 30s 保证权威命令总能跑完；
+// 仍超时时回退优先复用磁盘上最近一次成功结果（见 loadModelsDisk）。
+const probeTimeout = 30 * time.Second
+
+// ---------------------------------------------------------------------------
+// 探测结果磁盘缓存：权威命令偶发走网络目录刷新（opencode models 实测
+// 20~30s+，可能超过 probeTimeout），此时若直接回退到配置文件，候选会
+// 缩水到 1~2 个已配置模型。每次探测成功把候选列表落盘，命令超时/失败时
+// 优先复用 24h 内最近一次成功结果——既保证候选完整，又不含不可用模型。
+
+const modelsDiskTTL = 24 * time.Hour
+
+func modelsDiskPath(id string) string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		dir = os.TempDir()
+	}
+	return filepath.Join(dir, "paihuo", "models-"+id+".txt")
+}
+
+// saveModelsDisk 探测成功后保存候选列表（每行一个）。失败静默忽略（探测容错）。
+func saveModelsDisk(id string, models []string) {
+	if len(models) == 0 {
+		return
+	}
+	path := modelsDiskPath(id)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(path, []byte(strings.Join(models, "\n")), 0o600)
+}
+
+// loadModelsDisk 返回 24h 内最近一次成功的候选；缺失/过期返回 nil。
+func loadModelsDisk(id string) []string {
+	path := modelsDiskPath(id)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if fi, err := os.Stat(path); err == nil && time.Since(fi.ModTime()) > modelsDiskTTL {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			out = append(out, line)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 var modelsCache struct {
 	sync.Mutex
 	at    time.Time
@@ -125,7 +186,7 @@ func (a *piAdapter) Models() []string {
 		add(st.DefaultProvider + "/" + st.DefaultModel)
 
 		// 权威来源：pi --list-models 按实际凭据过滤（无凭据的 provider 不会出现）。
-		if raw, ok := cliOutput(5*time.Second, "pi", "--list-models"); ok {
+		if raw, ok := cliOutput(probeTimeout, "pi", "--list-models"); ok {
 			for _, line := range strings.Split(raw, "\n") {
 				fs := strings.Fields(line)
 				if len(fs) < 2 || fs[0] == "provider" && fs[1] == "model" {
@@ -138,8 +199,13 @@ func (a *piAdapter) Models() []string {
 				add(prov + "/" + model)
 			}
 			if len(out) > 0 {
+				saveModelsDisk("pi", out)
 				return capModels(out, 60)
 			}
+		}
+		// 命令超时/失败：优先复用最近一次成功结果，避免候选缩水到配置里的 1~2 个
+		if disk := loadModelsDisk("pi"); disk != nil {
+			return disk
 		}
 
 		// 回退：models-store.json 只取有凭据（auth.json）的 provider，
@@ -199,108 +265,166 @@ func (a *piAdapter) Models() []string {
 
 func (a *ompAdapter) Models() []string {
 	return cachedModels("omp", func() []string {
-		var out []string
-		seen := map[string]bool{}
-		add := func(s string) {
-			if s != "" && !seen[s] {
-				seen[s] = true
-				out = append(out, s)
+		home, _ := os.UserHomeDir()
+		return ompModelsProbe(home)
+	})
+}
+
+// ompModelsProbe 是 omp 的模型候选探测（home 可注入，便于测试）。
+// 权威来源 `omp models --json` 按实际凭据过滤；失败时才回退解析配置
+// 文件，且回退只保留凭据仍然有效的 provider（见 ompActiveProviders），
+// 避免列出 agent 实际不可用的模型。
+func ompModelsProbe(home string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(s string) {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+
+	// 权威来源：omp models --json 按实际凭据过滤。
+	if raw, ok := cliOutput(probeTimeout, "omp", "models", "--json"); ok {
+		var m struct {
+			Models []struct {
+				Selector string `json:"selector"`
+				Provider string `json:"provider"`
+				ID       string `json:"id"`
+			} `json:"models"`
+		}
+		if json.Unmarshal([]byte(raw), &m) == nil {
+			for _, md := range m.Models {
+				if md.Selector != "" {
+					add(md.Selector)
+				} else if md.Provider != "" && md.ID != "" {
+					add(md.Provider + "/" + md.ID)
+				}
 			}
 		}
+		if len(out) > 0 {
+			saveModelsDisk("omp", out)
+			return capModels(out, 80)
+		}
+	}
+	// 命令超时/失败：优先复用最近一次成功结果（死凭据过滤仍保证可用性）
+	if disk := loadModelsDisk("omp"); disk != nil {
+		return disk
+	}
+	return ompModelsFallback(home)
+}
 
-		// 权威来源：omp models --json 按实际凭据过滤。
-		if raw, ok := cliOutput(5*time.Second, "omp", "models", "--json"); ok {
-			var m struct {
-				Models []struct {
-					Selector string `json:"selector"`
+// ompModelsFallback 是 omp 探测的命令失败/超时时的配置回退：
+// config.yml（modelRoles）+ models.yml + models.db（model_cache 只取
+// 权威行，且再按凭据仍然有效的 provider 过滤）。
+func ompModelsFallback(home string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(s string) {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+
+	agentDir := filepath.Join(home, ".omp", "agent")
+
+	// config.yml：modelRoles 的形如 "deepseek/deepseek-v4-flash:max"
+	if b, err := os.ReadFile(filepath.Join(agentDir, "config.yml")); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			k, v, ok := strings.Cut(line, ":")
+			if !ok || k == "" || v == "" {
+				continue
+			}
+			v = strings.TrimSpace(v)
+			if strings.Contains(v, "/") {
+				if i := strings.LastIndex(v, ":"); i > 0 && !strings.Contains(v[i:], "/") {
+					v = v[:i] // 去掉 :thinking 后缀
+				}
+				add(v)
+			}
+		}
+	}
+
+	// models.yml：providers: 块（官方新格式，README "Custom OpenAI-compatible providers"）
+	// 用户显式定义（自带 baseUrl/密钥），不做凭据过滤。
+	if b, err := os.ReadFile(filepath.Join(agentDir, "models.yml")); err == nil {
+		cur := ""
+		idRe := regexp.MustCompile(`^-\s*id:\s*(\S+)`)
+		for _, line := range strings.Split(string(b), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			// 2 空格缩进且以冒号结尾 = provider 名；6 空格缩进 "- id: xxx" = 模型
+			if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "    ") && strings.HasSuffix(trimmed, ":") {
+				cur = strings.TrimSuffix(trimmed, ":")
+			} else if m := idRe.FindStringSubmatch(trimmed); m != nil && strings.HasPrefix(line, "      ") && cur != "" {
+				add(cur + "/" + m[1])
+			}
+		}
+	}
+
+	// models.db：model_cache 表，只取 authoritative=1 的行（其余是
+	// 无凭据/离线缓存的全量目录，列为候选会误导）。
+	// 即使 authoritative=1，目录也可能已过期（凭据被删/停用，如本机
+	// opencode-go 行凭据标记 deleted by user、zenmux 从无凭据），
+	// 因此再按 auth_credentials 里凭据仍然有效的 provider 过滤。
+	cred := ompActiveProviders(home)
+	if db, err := sql.Open("sqlite", filepath.Join(agentDir, "models.db")); err == nil {
+		defer db.Close()
+		rows, err := db.Query("SELECT models FROM model_cache WHERE authoritative = 1")
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var b []byte
+				if rows.Scan(&b) != nil {
+					continue
+				}
+				var ms []struct {
 					Provider string `json:"provider"`
 					ID       string `json:"id"`
-				} `json:"models"`
-			}
-			if json.Unmarshal([]byte(raw), &m) == nil {
-				for _, md := range m.Models {
-					if md.Selector != "" {
-						add(md.Selector)
-					} else if md.Provider != "" && md.ID != "" {
-						add(md.Provider + "/" + md.ID)
-					}
 				}
-			}
-			if len(out) > 0 {
-				return capModels(out, 80)
-			}
-		}
-
-		home, _ := os.UserHomeDir()
-		agentDir := filepath.Join(home, ".omp", "agent")
-
-		// config.yml：modelRoles 的形如 "deepseek/deepseek-v4-flash:max"
-		if b, err := os.ReadFile(filepath.Join(agentDir, "config.yml")); err == nil {
-			for _, line := range strings.Split(string(b), "\n") {
-				line = strings.TrimSpace(line)
-				if line == "" || strings.HasPrefix(line, "#") {
-					continue
-				}
-				k, v, ok := strings.Cut(line, ":")
-				if !ok || k == "" || v == "" {
-					continue
-				}
-				v = strings.TrimSpace(v)
-				if strings.Contains(v, "/") {
-					if i := strings.LastIndex(v, ":"); i > 0 && !strings.Contains(v[i:], "/") {
-						v = v[:i] // 去掉 :thinking 后缀
-					}
-					add(v)
-				}
-			}
-		}
-
-		// models.yml：providers: 块（官方新格式，README "Custom OpenAI-compatible providers"）
-		if b, err := os.ReadFile(filepath.Join(agentDir, "models.yml")); err == nil {
-			cur := ""
-			idRe := regexp.MustCompile(`^-\s*id:\s*(\S+)`)
-			for _, line := range strings.Split(string(b), "\n") {
-				trimmed := strings.TrimSpace(line)
-				if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-					continue
-				}
-				// 2 空格缩进且以冒号结尾 = provider 名；6 空格缩进 "- id: xxx" = 模型
-				if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "    ") && strings.HasSuffix(trimmed, ":") {
-					cur = strings.TrimSuffix(trimmed, ":")
-				} else if m := idRe.FindStringSubmatch(trimmed); m != nil && strings.HasPrefix(line, "      ") && cur != "" {
-					add(cur + "/" + m[1])
-				}
-			}
-		}
-
-		// models.db：model_cache 表，只取 authoritative=1 的行（其余是
-		// 无凭据/离线缓存的全量目录，列为候选会误导）。
-		if db, err := sql.Open("sqlite", filepath.Join(agentDir, "models.db")); err == nil {
-			defer db.Close()
-			rows, err := db.Query("SELECT models FROM model_cache WHERE authoritative = 1")
-			if err == nil {
-				defer rows.Close()
-				for rows.Next() {
-					var b []byte
-					if rows.Scan(&b) != nil {
-						continue
-					}
-					var ms []struct {
-						Provider string `json:"provider"`
-						ID       string `json:"id"`
-					}
-					if json.Unmarshal(b, &ms) == nil {
-						for _, m := range ms {
-							if m.ID != "" {
-								add(m.Provider + "/" + m.ID)
-							}
+				if json.Unmarshal(b, &ms) == nil {
+					for _, m := range ms {
+						if m.ID != "" && (cred == nil || cred[m.Provider]) {
+							add(m.Provider + "/" + m.ID)
 						}
 					}
 				}
 			}
 		}
-		return capModels(out, 80)
-	})
+	}
+	return capModels(out, 80)
+}
+
+// ompActiveProviders 返回 omp 实例中凭据仍然有效的提供商集合
+// （agent.db auth_credentials，disabled_cause 为空 = 可用；为
+// "deleted by user" 等 = 已停用）。读库失败返回 nil——调用方对 nil
+// 不过滤（探测容错，保持旧行为）。
+func ompActiveProviders(home string) map[string]bool {
+	db, err := sql.Open("sqlite", filepath.Join(home, ".omp", "agent", "agent.db"))
+	if err != nil {
+		return nil
+	}
+	defer db.Close()
+	rows, err := db.Query("SELECT DISTINCT provider FROM auth_credentials WHERE disabled_cause IS NULL")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	provs := map[string]bool{}
+	for rows.Next() {
+		var p string
+		if rows.Scan(&p) == nil && p != "" {
+			provs[p] = true
+		}
+	}
+	return provs
 }
 
 // ---------------------------------------------------------------------------
@@ -317,13 +441,18 @@ func (a *openCodeAdapter) Models() []string {
 				out = append(out, s)
 			}
 		}
-		if raw, ok := cliOutput(4*time.Second, "opencode", "models"); ok {
+		if raw, ok := cliOutput(probeTimeout, "opencode", "models"); ok {
 			for _, line := range strings.Split(raw, "\n") {
 				add(strings.TrimSpace(line))
 			}
 			if len(out) > 0 {
+				saveModelsDisk("opencode", out)
 				return capModels(out, 60)
 			}
+		}
+		// opencode models 偶发走目录刷新超 30s：优先复用最近一次成功结果
+		if disk := loadModelsDisk("opencode"); disk != nil {
+			return disk
 		}
 		home, _ := os.UserHomeDir()
 		var cfg struct {
