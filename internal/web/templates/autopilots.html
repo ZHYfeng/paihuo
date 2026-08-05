@@ -32,7 +32,7 @@
       <label class="field">角色 <select id="sAgent"></select></label>
     </div>
     <label class="field">生成任务的权限
-      <select id="sPerm"><option value="full">自动（完成后直接合并）</option><option value="review">人工审批（通过后由 Agent 合并）</option></select>
+      <select id="sPerm"><option value="full">自动（完成后派发代码合并任务）</option><option value="review">人工审批（通过后由 Agent 合并）</option></select>
     </label>
     <label class="field">标题模板 <input id="sTitle" placeholder="每日巡检 {{"{{.date}}"}}"></label>
     <label class="field">提示词模板 <textarea id="sBody" rows="4" placeholder="检查服务状态并汇报。可用 {{"{{.date}}"}} 变量"></textarea></label>

@@ -25,7 +25,7 @@ export const STATUS_LABEL = {
   queued: "待执行", claimed: "领取中", running: "执行中",
   awaiting_review: "待审批", succeeded: "完成", failed: "失败", cancelled: "已取消",
 };
-export const PERM_LABEL = { full: "自动合并", review: "审批后 Agent 合并" };
+export const PERM_LABEL = { full: "自动派发代码合并任务", review: "审批后 Agent 合并" };
 
 export const ST_COLOR = {
   queued: "var(--st-queued)", claimed: "var(--st-claimed)", running: "var(--st-running)",

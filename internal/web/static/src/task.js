@@ -84,7 +84,7 @@ export function renderList() {
       <td>
         <span class="ops">
           <button class="btn xs" onclick="event.stopPropagation();openTerminal(${t.id})">${icon("terminal")}对话</button>
-          ${["succeeded", "failed", "cancelled"].includes(t.status)
+          ${canRetryTask(t)
             ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>` : ""}
           <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>
         </span>
@@ -213,6 +213,9 @@ export async function loadWorkspace(id) {
     const w = await api(`/api/workspace/${id}`);
     const t = state.tasks.find(x => x.id === id) || {};
     const done = ["succeeded", "failed", "cancelled"].includes(t.status);
+    const isMergeTask = !!t.merge_of;
+    const canManualMerge = isMergeTask && ["succeeded", "failed"].includes(t.status);
+    const sourceAwaitingMerge = !isMergeTask && t.status === "succeeded";
     if (!w.is_git) {
       box.innerHTML = `<div class="ws-row"><span class="ws-label">隔离</span><span class="ws-val">项目非 git 仓库，任务直接在项目目录执行</span>` +
         `<button class="btn xs" onclick="gitInitProject('${esc(w.path)}', ${id})">git init</button></div>`;
@@ -229,10 +232,11 @@ export async function loadWorkspace(id) {
       (w.ahead > 0 ? ` <span class="ws-tag ahead">+${w.ahead}</span>` : "") +
       `</span></div>
       <div class="ws-row"><span class="ws-label">路径</span><span class="ws-val mono" title="${esc(w.path)}">${esc(w.path)}</span></div>` +
-      (done ? `<div class="ws-actions">
-        <button class="btn sm brand" onclick="wsMerge(${id})">合并回主分支</button>
-        <button class="btn sm danger" onclick="wsDiscard(${id})">丢弃</button>
-      </div>` : "");
+      (done ? `<div class="ws-actions">` +
+        (canManualMerge ? `<button class="btn sm brand" onclick="wsMerge(${id})">合并回主分支</button>` :
+          `<span class="ws-val">代码由系统创建的合并任务写入主分支</span>`) +
+        (sourceAwaitingMerge ? "" : `<button class="btn sm danger" onclick="wsDiscard(${id})">丢弃</button>`) +
+      `</div>` : "");
   } catch (_) { box.innerHTML = `<div class="empty">工作空间信息不可用</div>`; }
 }
 
@@ -282,7 +286,7 @@ export function renderSide(t) {
     actions += `<button class="btn sm" onclick="rejectTask(${t.id})">${icon("retry")}驳回重做</button>`;
     actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}取消</button>`;
   }
-  if (["succeeded", "failed", "cancelled"].includes(t.status)) {
+  if (canRetryTask(t)) {
     actions += `<button class="btn sm" onclick="setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>`;
     actions += `<button class="btn sm" onclick="resumeTask(${t.id})">${icon("terminal")}继续对话</button>`;
   }
@@ -323,7 +327,7 @@ export async function patchTask(id, set) {
 export async function setTaskStatus(id, status) {
   try {
     await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
-    if (status === "succeeded") toast("已审批，自动合并任务已派发");
+    if (status === "succeeded") toast("已审批，代码合并任务已派发");
     if (status === "queued" && location.pathname === "/history") { location.href = "/"; return; }
     await loadAll();
     const p = location.pathname;
@@ -359,7 +363,7 @@ export async function rejectTask(id) {
 }
 
 export async function deleteTask(id) {
-  if (!confirm(`删除任务 #${id}？执行日志将一并删除。`)) return;
+  if (!confirm(`删除任务 #${id}？执行日志、worktree、任务分支及其合并子任务将一并删除。`)) return;
   try {
     await api(`/api/tasks/${id}`, { method: "DELETE" });
     toast("已删除");
@@ -371,6 +375,11 @@ export async function deleteTask(id) {
     if (p === "/") loadDashboard();
     if (p === "/board") { renderBoard(); renderList(); }
   } catch (e) { toast(e.message, true); }
+}
+
+export function canRetryTask(t) {
+  if (!["succeeded", "failed", "cancelled"].includes(t.status)) return false;
+  return !(t.status === "succeeded" && !t.merge_of && state.tasks.some(child => child.merge_of === t.id));
 }
 
 /* 子任务 */

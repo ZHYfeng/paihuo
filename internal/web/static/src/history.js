@@ -1,7 +1,7 @@
 // 模块 history（由 scripts/split-frontend.py 生成）
 import { PERM_LABEL, STATUS_LABEL, ST_COLOR, api, esc, icon, state, toast } from "./core.js";
 import { loadAll } from "./main.js";
-import { deleteTask, setTaskStatus } from "./task.js";
+import { canRetryTask, deleteTask, setTaskStatus } from "./task.js";
 import { openTerminal } from "./terminal.js";
 
 export function loadHistory() {
@@ -38,7 +38,7 @@ export function renderHistory() {
       <td class="num">${(t.finished_at || "").slice(5, 16).replace("T", " ")}</td>
       <td>
         <span class="ops">
-          ${["succeeded", "failed", "cancelled"].includes(t.status)
+          ${canRetryTask(t)
             ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>` : ""}
           <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>
         </span>

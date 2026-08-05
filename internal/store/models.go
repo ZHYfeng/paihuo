@@ -1,6 +1,10 @@
 package store
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // 任务状态机：
 //
@@ -20,8 +24,8 @@ const (
 
 // 权限模式（每任务单独配置）
 const (
-	PermFull   = "full"   // 自动：执行成功后自动 squash 合并
-	PermReview = "review" // 人工审批：通过后创建同角色的自动合并任务
+	PermFull   = "full"   // 自动：执行成功后派发专属代码合并任务
+	PermReview = "review" // 人工审批：通过后创建同角色的代码合并任务
 )
 
 // 任务执行方式。默认 batch 保持现有的一次性 CLI 语义；interactive 目前只
@@ -91,11 +95,50 @@ type Task struct {
 	WorktreeBranch string  `json:"worktree_branch"` // 任务隔离 worktree 分支（paihuo/task-<id>）
 	BaseCommit     string  `json:"base_commit"`     // 创建 worktree 时主分支 HEAD
 	ResumeOf       *int64  `json:"resume_of"`       // 续跑自哪个任务（复用其会话目录）
-	MergeOf        *int64  `json:"merge_of"`        // 合并任务整合自哪个已审批任务
+	MergeOf        *int64  `json:"merge_of"`        // 合并任务整合自哪个源任务
 	CreatedAt      string  `json:"created_at"`
 	StartedAt      *string `json:"started_at"`
 	FinishedAt     *string `json:"finished_at"`
 	UpdatedAt      string  `json:"updated_at"`
+}
+
+// NewMergeTask 创建用于整合 source 代码的专属子任务。它自身带有 MergeOf，
+// 因而执行成功后会写入主分支，而不会再次递归创建新的合并任务。
+func NewMergeTask(source Task) Task {
+	sourceID := source.ID
+	return Task{
+		Title: fmt.Sprintf("合并任务 #%d：%s", source.ID, taskFirstLine(source.Title, 80)),
+		Body: fmt.Sprintf(`这是系统在任务 #%d 完成或审批通过后自动创建的代码合并任务。
+
+源任务：%s
+源分支：%s
+
+系统会在本任务启动前，把源任务的改动导入当前独立 worktree。请：
+1. 检查 git status 和完整 diff，确认源任务改动已进入当前工作区；
+2. 如有冲突，正确解决冲突并保留双方有效改动；
+3. 运行与改动相关的测试或构建，修复发现的问题；
+4. 不要直接操作主工作区或手工合并 main。完成退出后，平台会自动 squash 合并本任务分支。`,
+			source.ID, source.Title, source.WorktreeBranch),
+		Status:     StatusQueued,
+		Perm:       PermFull,
+		RunMode:    RunModeBatch,
+		AgentID:    source.AgentID,
+		ProjectID:  source.ProjectID,
+		ProjectDir: source.ProjectDir,
+		ParentID:   &sourceID,
+		MergeOf:    &sourceID,
+	}
+}
+
+func taskFirstLine(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if len([]rune(s)) > max {
+		s = string([]rune(s)[:max])
+	}
+	return s
 }
 
 // Duration 返回任务耗时（秒）：终态且 started/finished 齐全时有效。

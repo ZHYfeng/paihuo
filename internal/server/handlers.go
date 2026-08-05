@@ -234,6 +234,19 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		approveReview = cur.Status == store.StatusAwaitingReview && to == store.StatusSucceeded
+		if to == store.StatusQueued && cur.Status == store.StatusSucceeded && cur.MergeOf == nil {
+			tasks, err := s.st.ListTaskDeletionOrder(cur.ID)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			for _, child := range tasks {
+				if child.MergeOf != nil && *child.MergeOf == cur.ID {
+					writeErr(w, http.StatusConflict, "源任务已有代码合并任务；请重试该合并任务，或新建任务")
+					return
+				}
+			}
+		}
 		if to == store.StatusQueued {
 			// 重试：清空执行痕迹
 			set["started_at"] = nil
@@ -349,9 +362,8 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tk)
 }
 
-// approveReviewTask 固化已审批分支，并原子创建一个同角色的自动合并任务。
-// 合并任务会在自己的 worktree 中处理冲突、验证结果，成功后由执行器自动
-// squash 合并到主分支。
+// approveReviewTask 固化已审批分支，并原子创建一个同角色的代码合并任务。
+// 合并任务会在自己的 worktree 中处理冲突、验证结果，成功后写入主分支。
 func (s *Server) approveReviewTask(w http.ResponseWriter, source store.Task) {
 	if source.AgentID == nil {
 		writeErr(w, http.StatusBadRequest, "原任务未指派角色，无法创建合并任务")
@@ -367,31 +379,14 @@ func (s *Server) approveReviewTask(w http.ResponseWriter, source store.Task) {
 			return
 		}
 	}
-	sourceID := source.ID
-	title := fmt.Sprintf("合并已审批任务 #%d：%s", source.ID, firstLine(source.Title, 80))
-	body := fmt.Sprintf(`这是系统在任务 #%d 审批通过后自动创建的合并任务。
-
-源任务：%s
-源分支：%s
-
-系统会在本任务启动前，把源任务的已审批改动导入当前独立 worktree。请：
-1. 检查 git status 和完整 diff，确认审批内容已经进入当前工作区；
-2. 如有冲突，正确解决冲突并保留双方有效改动；
-3. 运行与改动相关的测试或构建，修复发现的问题；
-4. 不要直接操作主工作区或手工合并 main。完成退出后，平台会自动 squash 合并本任务分支。`,
-		source.ID, source.Title, source.WorktreeBranch)
-	merge := store.Task{
-		Title: title, Body: body, Status: store.StatusQueued, Perm: store.PermFull,
-		RunMode: store.RunModeBatch, AgentID: source.AgentID, // 自动创建的合并任务默认串行（未勾选并发）
-		ProjectID: source.ProjectID, ProjectDir: source.ProjectDir, ParentID: &sourceID, MergeOf: &sourceID,
-	}
+	merge := store.NewMergeTask(source) // 自动创建的合并任务默认串行（未勾选并发）
 	mergeID, err := s.st.ApproveTaskAndCreateMerge(source.ID, merge)
 	if err != nil {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
 	if l, err := s.st.AppendLog(store.TaskLog{
-		TaskID: source.ID, Stream: "sys", Content: fmt.Sprintf("✓ 审批通过，已创建自动合并任务 #%d", mergeID),
+		TaskID: source.ID, Stream: "sys", Content: fmt.Sprintf("✓ 审批通过，已创建代码合并任务 #%d", mergeID),
 	}); err == nil {
 		s.hub.Publish(events.Event{Type: "log", TaskID: source.ID, Payload: l})
 	}
@@ -411,29 +406,45 @@ func (s *Server) approveReviewTask(w http.ResponseWriter, source store.Task) {
 	writeJSON(w, http.StatusOK, approved)
 }
 
-func firstLine(s string, max int) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	if len([]rune(s)) > max {
-		s = string([]rune(s)[:max])
-	}
-	return s
-}
-
 func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
-	// 先取消还在运行的子任务进程，再删库（否则进程继续在项目目录里跑）
-	if kids, err := s.st.ListChildren(id); err == nil {
-		for _, k := range kids {
-			s.ex.RemoveTask(k.ID)
+	// 先标记根任务取消，阻止它在删除竞态中再派发新的合并子任务。
+	if _, err := s.st.GetTask(id); err != nil {
+		writeErr(w, http.StatusNotFound, "任务不存在")
+		return
+	}
+	if err := s.st.UpdateTask(id, map[string]any{"status": store.StatusCancelled, "finished_at": store.Now(), "error": "任务已删除"}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	tasks, err := s.st.ListTaskDeletionOrder(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// 先停止整个任务树，再删 worktree。顺序为叶子到根，合并子任务会先于
+	// 源任务清理；任一步失败都保留数据库记录，方便重试。
+	for _, tk := range tasks {
+		if tk.ID == id {
+			continue
+		}
+		if err := s.st.UpdateTask(tk.ID, map[string]any{"status": store.StatusCancelled, "finished_at": store.Now(), "error": "父任务已删除"}); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 	}
-	s.ex.RemoveTask(id)
+	for _, tk := range tasks {
+		s.ex.RemoveTask(tk.ID)
+	}
+	for _, tk := range tasks {
+		if err := workspace.Discard(tk, s.sessionsRoot); err != nil {
+			writeErr(w, http.StatusConflict, fmt.Sprintf("清理任务 #%d 的 worktree 失败: %v", tk.ID, err))
+			return
+		}
+	}
 	if err := s.st.DeleteTask(id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -535,6 +546,14 @@ func (s *Server) workspaceMerge(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "任务不存在")
 		return
 	}
+	if tk.MergeOf == nil {
+		writeErr(w, http.StatusConflict, "普通任务不能直接合并；请等待系统创建的代码合并任务")
+		return
+	}
+	if tk.Status != store.StatusSucceeded && tk.Status != store.StatusFailed {
+		writeErr(w, http.StatusConflict, "代码合并任务尚未结束，不能手工合并")
+		return
+	}
 	hash, err := workspace.Merge(*tk, s.sessionsRoot)
 	if err != nil {
 		writeErr(w, http.StatusConflict, err.Error())
@@ -552,6 +571,27 @@ func (s *Server) workspaceDiscard(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "任务不存在")
 		return
+	}
+	if tk.MergeOf != nil && tk.Status != store.StatusSucceeded {
+		writeErr(w, http.StatusConflict, "代码合并任务尚未成功；如需放弃代码，请删除源任务")
+		return
+	}
+	if tk.Status != store.StatusSucceeded && tk.Status != store.StatusFailed && tk.Status != store.StatusCancelled {
+		writeErr(w, http.StatusConflict, "任务尚未结束，不能丢弃工作空间")
+		return
+	}
+	if tk.MergeOf == nil && tk.Status == store.StatusSucceeded {
+		tasks, err := s.st.ListTaskDeletionOrder(tk.ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for _, child := range tasks {
+			if child.MergeOf != nil && *child.MergeOf == tk.ID && child.Status != store.StatusSucceeded {
+				writeErr(w, http.StatusConflict, "代码合并任务尚未成功；如需放弃代码，请删除源任务")
+				return
+			}
+		}
 	}
 	if err := workspace.Discard(*tk, s.sessionsRoot); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())

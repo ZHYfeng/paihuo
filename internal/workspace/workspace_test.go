@@ -100,6 +100,16 @@ func TestNonGitFallback(t *testing.T) {
 	}
 }
 
+func TestEnsureRejectsGitProjectWithoutInitialCommit(t *testing.T) {
+	proj := t.TempDir()
+	if _, err := git(proj, "init", "-q", "-b", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := Ensure(store.Task{ID: 2, ProjectDir: proj, ProjectName: "empty"}, t.TempDir()); err == nil {
+		t.Fatal("没有初始提交的 Git 项目不应退回主工作区执行")
+	}
+}
+
 func TestConflictAborts(t *testing.T) {
 	proj := gitInitTest(t)
 	sess := t.TempDir()

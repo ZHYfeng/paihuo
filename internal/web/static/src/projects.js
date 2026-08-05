@@ -1,7 +1,7 @@
 // 模块 projects（由 scripts/split-frontend.py 生成）
 import { STATUS_LABEL, ST_COLOR, api, closeModal, esc, fmtDur, fmtPct, icon, openModal, state, toast } from "./core.js";
 import { loadAll } from "./main.js";
-import { deleteTask, setTaskStatus } from "./task.js";
+import { canRetryTask, deleteTask, setTaskStatus } from "./task.js";
 import { openTerminal } from "./terminal.js";
 
 export function renderProjectList() {
@@ -86,7 +86,7 @@ export function renderProjectDetail(p, s, tasks) {
       <span class="a">${t.agent_name ? `<span class="avatar sm">${esc(t.agent_name.slice(0, 1))}</span>${esc(t.agent_name)}` : "-"}</span>
       <span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>
       <span class="ops">
-        ${["succeeded", "failed", "cancelled"].includes(t.status)
+          ${canRetryTask(t)
           ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>` : ""}
         <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>
       </span>

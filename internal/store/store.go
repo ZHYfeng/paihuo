@@ -184,6 +184,7 @@ func migrate(db *sql.DB) error {
 	for _, stmt := range []string{
 		"CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_merge_of_unique ON tasks(merge_of) WHERE merge_of IS NOT NULL",
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			return err
@@ -588,18 +589,40 @@ func (s *Store) CreateTask(t Task) (int64, error) {
 	return res.LastInsertId()
 }
 
+// CompleteTaskAndCreateMerge 原子地完成一个普通任务并创建唯一的代码合并
+// 子任务。条件更新确保重试、重复回调或已取消任务不会派发重复合并任务。
+func (s *Store) CompleteTaskAndCreateMerge(sourceID int64, merge Task) (int64, error) {
+	prepareMergeTask(sourceID, &merge)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	now := Now()
+	res, err := tx.Exec(`UPDATE tasks
+		SET status='succeeded', finished_at=?, exit_code=0, error='', updated_at=?
+		WHERE id=? AND status IN ('claimed','running') AND perm='full' AND merge_of IS NULL`, now, now, sourceID)
+	if err != nil {
+		return 0, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return 0, errors.New("任务已完成、已取消，或已创建代码合并任务")
+	}
+	mergeID, err := insertMergeTask(tx, merge)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return mergeID, nil
+}
+
 // ApproveTaskAndCreateMerge 原子完成 review 审批并创建唯一的合并任务。
 // 条件更新保证重复点击或并发请求不会生成两个合并任务。
 func (s *Store) ApproveTaskAndCreateMerge(sourceID int64, merge Task) (int64, error) {
-	if merge.CreatedAt == "" {
-		merge.CreatedAt = Now()
-	}
-	if merge.UpdatedAt == "" {
-		merge.UpdatedAt = merge.CreatedAt
-	}
-	if merge.RunMode == "" {
-		merge.RunMode = RunModeBatch
-	}
+	prepareMergeTask(sourceID, &merge)
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
@@ -615,15 +638,7 @@ func (s *Store) ApproveTaskAndCreateMerge(sourceID int64, merge Task) (int64, er
 	if n, _ := res.RowsAffected(); n != 1 {
 		return 0, errors.New("任务已审批或当前不在待审批状态")
 	}
-	res, err = tx.Exec(`INSERT INTO tasks
-		(title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, schedule_id, resume_of, merge_of, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		merge.Title, merge.Body, merge.Status, merge.Perm, merge.RunMode, boolInt(merge.Concurrent), nullInt64(merge.AgentID), nullInt64(merge.ProjectID), merge.ProjectDir,
-		nullInt64(merge.ParentID), nullInt64(merge.ScheduleID), nullInt64(merge.ResumeOf), nullInt64(merge.MergeOf), merge.CreatedAt, merge.UpdatedAt)
-	if err != nil {
-		return 0, err
-	}
-	id, err := res.LastInsertId()
+	id, err := insertMergeTask(tx, merge)
 	if err != nil {
 		return 0, err
 	}
@@ -631,6 +646,38 @@ func (s *Store) ApproveTaskAndCreateMerge(sourceID int64, merge Task) (int64, er
 		return 0, err
 	}
 	return id, nil
+}
+
+func prepareMergeTask(sourceID int64, merge *Task) {
+	// 合并任务是系统内部状态机的一部分：固定关联到源任务、串行 batch
+	// 执行、完整权限。这样即使未来新增调用方，也不会创建会再次审批或
+	// 失去来源关系的任务。
+	merge.ParentID = &sourceID
+	merge.MergeOf = &sourceID
+	merge.Status = StatusQueued
+	merge.Perm = PermFull
+	merge.RunMode = RunModeBatch
+	merge.Concurrent = false
+	merge.ScheduleID = nil
+	merge.ResumeOf = nil
+	if merge.CreatedAt == "" {
+		merge.CreatedAt = Now()
+	}
+	if merge.UpdatedAt == "" {
+		merge.UpdatedAt = merge.CreatedAt
+	}
+}
+
+func insertMergeTask(tx *sql.Tx, merge Task) (int64, error) {
+	res, err := tx.Exec(`INSERT INTO tasks
+		(title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, schedule_id, resume_of, merge_of, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		merge.Title, merge.Body, merge.Status, merge.Perm, merge.RunMode, boolInt(merge.Concurrent), nullInt64(merge.AgentID), nullInt64(merge.ProjectID), merge.ProjectDir,
+		nullInt64(merge.ParentID), nullInt64(merge.ScheduleID), nullInt64(merge.ResumeOf), nullInt64(merge.MergeOf), merge.CreatedAt, merge.UpdatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
 }
 
 func (s *Store) UpdateTask(id int64, set map[string]any) error {
@@ -666,12 +713,100 @@ func (s *Store) StartTask(id int64) (bool, error) {
 }
 
 func (s *Store) DeleteTask(id int64) error {
-	// 级联删除子任务（含其日志）
-	if _, err := s.db.Exec("DELETE FROM tasks WHERE parent_id=?", id); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
 		return err
 	}
-	_, err := s.db.Exec("DELETE FROM tasks WHERE id=?", id)
-	return err
+	defer tx.Rollback()
+	if err := deleteTaskTree(tx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ListTaskDeletionOrder 返回删除 root 时须一并清理的任务，按叶子到根的
+// 顺序排列。merge_of 也视为父子关系，兼容早期仅保存 merge_of 的数据。
+func (s *Store) ListTaskDeletionOrder(rootID int64) ([]Task, error) {
+	root, err := s.GetTask(rootID)
+	if err == sql.ErrNoRows {
+		return []Task{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[int64]bool)
+	out := make([]Task, 0, 1)
+	var visit func(Task) error
+	visit = func(tk Task) error {
+		if seen[tk.ID] {
+			return nil
+		}
+		seen[tk.ID] = true
+		children, err := s.listTaskDeletionChildren(tk.ID)
+		if err != nil {
+			return err
+		}
+		for _, child := range children {
+			if err := visit(child); err != nil {
+				return err
+			}
+		}
+		out = append(out, tk)
+		return nil
+	}
+	if err := visit(*root); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Store) listTaskDeletionChildren(parentID int64) ([]Task, error) {
+	rows, err := s.db.Query("SELECT "+taskCols+taskFrom+" WHERE t.parent_id=? OR t.merge_of=? ORDER BY t.created_at, t.id", parentID, parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	children := make([]Task, 0)
+	for rows.Next() {
+		tk, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		children = append(children, tk)
+	}
+	return children, rows.Err()
+}
+
+func deleteTaskTree(tx *sql.Tx, id int64) error {
+	rows, err := tx.Query("SELECT id FROM tasks WHERE parent_id=? OR merge_of=? ORDER BY id", id, id)
+	if err != nil {
+		return err
+	}
+	children := make([]int64, 0)
+	for rows.Next() {
+		var childID int64
+		if err := rows.Scan(&childID); err != nil {
+			rows.Close()
+			return err
+		}
+		children = append(children, childID)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, childID := range children {
+		if err := deleteTaskTree(tx, childID); err != nil {
+			return err
+		}
+	}
+	res, err := tx.Exec("DELETE FROM tasks WHERE id=?", id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *Store) HasTask(id int64) (bool, error) {

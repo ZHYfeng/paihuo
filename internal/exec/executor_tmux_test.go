@@ -97,7 +97,7 @@ func (tmuxReviewMergeTestAdapter) Schema() []Field              { return nil }
 func (tmuxReviewMergeTestAdapter) Models() []string             { return nil }
 func (tmuxReviewMergeTestAdapter) Docs() string                 { return "" }
 
-func TestExecutorAutoMergesSuccessfulFullTask(t *testing.T) {
+func TestExecutorQueuesMergeTaskAfterSuccessfulFullTask(t *testing.T) {
 	if _, err := osexec.LookPath("tmux"); err != nil {
 		t.Skip("tmux 未安装")
 	}
@@ -160,9 +160,21 @@ func TestExecutorAutoMergesSuccessfulFullTask(t *testing.T) {
 	e.Wake()
 
 	waitTaskStatus(t, st, taskID, store.StatusSucceeded, 5*time.Second)
+	children, err := st.ListChildren(taskID)
+	if err != nil || len(children) != 1 {
+		t.Fatalf("普通任务完成后应创建一个代码合并任务: %+v err=%v", children, err)
+	}
+	merge := children[0]
+	if merge.MergeOf == nil || *merge.MergeOf != taskID || merge.Perm != store.PermFull {
+		t.Fatalf("自动创建的合并任务配置错误: %+v", merge)
+	}
+	waitTaskStatus(t, st, merge.ID, store.StatusSucceeded, 5*time.Second)
 	got, err := os.ReadFile(filepath.Join(projectDir, "auto-merged.txt"))
 	if err != nil || string(got) != "merged\n" {
-		t.Fatalf("自动任务产出未进入主分支: %q err=%v", got, err)
+		t.Fatalf("代码合并任务产出未进入主分支: %q err=%v", got, err)
+	}
+	if nested, err := st.ListChildren(merge.ID); err != nil || len(nested) != 0 {
+		t.Fatalf("合并任务不应递归创建合并任务: %+v err=%v", nested, err)
 	}
 }
 

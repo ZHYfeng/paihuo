@@ -41,7 +41,7 @@
     failed: "\u5931\u8D25",
     cancelled: "\u5DF2\u53D6\u6D88"
   };
-  var PERM_LABEL = { full: "\u81EA\u52A8\u5408\u5E76", review: "\u5BA1\u6279\u540E Agent \u5408\u5E76" };
+  var PERM_LABEL = { full: "\u81EA\u52A8\u6D3E\u53D1\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1", review: "\u5BA1\u6279\u540E Agent \u5408\u5E76" };
   var ST_COLOR = {
     queued: "var(--st-queued)",
     claimed: "var(--st-claimed)",
@@ -369,7 +369,7 @@
       <td class="num">${(t.finished_at || "").slice(5, 16).replace("T", " ")}</td>
       <td>
         <span class="ops">
-          ${["succeeded", "failed", "cancelled"].includes(t.status) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}\u91CD\u8BD5</button>` : ""}
+          ${canRetryTask(t) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}\u91CD\u8BD5</button>` : ""}
           <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}\u5220\u9664</button>
         </span>
       </td>
@@ -645,7 +645,7 @@
       <td>
         <span class="ops">
           <button class="btn xs" onclick="event.stopPropagation();openTerminal(${t.id})">${icon("terminal")}\u5BF9\u8BDD</button>
-          ${["succeeded", "failed", "cancelled"].includes(t.status) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}\u91CD\u8BD5</button>` : ""}
+          ${canRetryTask(t) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}\u91CD\u8BD5</button>` : ""}
           <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}\u5220\u9664</button>
         </span>
       </td>
@@ -763,6 +763,9 @@
       const w = await api(`/api/workspace/${id}`);
       const t = state.tasks.find((x) => x.id === id) || {};
       const done = ["succeeded", "failed", "cancelled"].includes(t.status);
+      const isMergeTask = !!t.merge_of;
+      const canManualMerge = isMergeTask && ["succeeded", "failed"].includes(t.status);
+      const sourceAwaitingMerge = !isMergeTask && t.status === "succeeded";
       if (!w.is_git) {
         box.innerHTML = `<div class="ws-row"><span class="ws-label">\u9694\u79BB</span><span class="ws-val">\u9879\u76EE\u975E git \u4ED3\u5E93\uFF0C\u4EFB\u52A1\u76F4\u63A5\u5728\u9879\u76EE\u76EE\u5F55\u6267\u884C</span><button class="btn xs" onclick="gitInitProject('${esc(w.path)}', ${id})">git init</button></div>`;
         return;
@@ -774,10 +777,7 @@
       box.innerHTML = `
       <div class="ws-row"><span class="ws-label">\u5206\u652F</span><span class="ws-val mono">${esc(w.branch)}</span></div>
       <div class="ws-row"><span class="ws-label">HEAD</span><span class="ws-val mono">${esc(w.head || "-")}` + (w.dirty ? ` <span class="ws-tag dirty">dirty</span>` : "") + (w.ahead > 0 ? ` <span class="ws-tag ahead">+${w.ahead}</span>` : "") + `</span></div>
-      <div class="ws-row"><span class="ws-label">\u8DEF\u5F84</span><span class="ws-val mono" title="${esc(w.path)}">${esc(w.path)}</span></div>` + (done ? `<div class="ws-actions">
-        <button class="btn sm brand" onclick="wsMerge(${id})">\u5408\u5E76\u56DE\u4E3B\u5206\u652F</button>
-        <button class="btn sm danger" onclick="wsDiscard(${id})">\u4E22\u5F03</button>
-      </div>` : "");
+      <div class="ws-row"><span class="ws-label">\u8DEF\u5F84</span><span class="ws-val mono" title="${esc(w.path)}">${esc(w.path)}</span></div>` + (done ? `<div class="ws-actions">` + (canManualMerge ? `<button class="btn sm brand" onclick="wsMerge(${id})">\u5408\u5E76\u56DE\u4E3B\u5206\u652F</button>` : `<span class="ws-val">\u4EE3\u7801\u7531\u7CFB\u7EDF\u521B\u5EFA\u7684\u5408\u5E76\u4EFB\u52A1\u5199\u5165\u4E3B\u5206\u652F</span>`) + (sourceAwaitingMerge ? "" : `<button class="btn sm danger" onclick="wsDiscard(${id})">\u4E22\u5F03</button>`) + `</div>` : "");
     } catch (_) {
       box.innerHTML = `<div class="empty">\u5DE5\u4F5C\u7A7A\u95F4\u4FE1\u606F\u4E0D\u53EF\u7528</div>`;
     }
@@ -829,7 +829,7 @@
       actions += `<button class="btn sm" onclick="rejectTask(${t.id})">${icon("retry")}\u9A73\u56DE\u91CD\u505A</button>`;
       actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}\u53D6\u6D88</button>`;
     }
-    if (["succeeded", "failed", "cancelled"].includes(t.status)) {
+    if (canRetryTask(t)) {
       actions += `<button class="btn sm" onclick="setTaskStatus(${t.id},'queued')">${icon("retry")}\u91CD\u8BD5</button>`;
       actions += `<button class="btn sm" onclick="resumeTask(${t.id})">${icon("terminal")}\u7EE7\u7EED\u5BF9\u8BDD</button>`;
     }
@@ -869,7 +869,7 @@
   async function setTaskStatus(id, status) {
     try {
       await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
-      if (status === "succeeded") toast("\u5DF2\u5BA1\u6279\uFF0C\u81EA\u52A8\u5408\u5E76\u4EFB\u52A1\u5DF2\u6D3E\u53D1");
+      if (status === "succeeded") toast("\u5DF2\u5BA1\u6279\uFF0C\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1\u5DF2\u6D3E\u53D1");
       if (status === "queued" && location.pathname === "/history") {
         location.href = "/";
         return;
@@ -910,7 +910,7 @@
     }
   }
   async function deleteTask(id) {
-    if (!confirm(`\u5220\u9664\u4EFB\u52A1 #${id}\uFF1F\u6267\u884C\u65E5\u5FD7\u5C06\u4E00\u5E76\u5220\u9664\u3002`)) return;
+    if (!confirm(`\u5220\u9664\u4EFB\u52A1 #${id}\uFF1F\u6267\u884C\u65E5\u5FD7\u3001worktree\u3001\u4EFB\u52A1\u5206\u652F\u53CA\u5176\u5408\u5E76\u5B50\u4EFB\u52A1\u5C06\u4E00\u5E76\u5220\u9664\u3002`)) return;
     try {
       await api(`/api/tasks/${id}`, { method: "DELETE" });
       toast("\u5DF2\u5220\u9664");
@@ -930,6 +930,10 @@
     } catch (e) {
       toast(e.message, true);
     }
+  }
+  function canRetryTask(t) {
+    if (!["succeeded", "failed", "cancelled"].includes(t.status)) return false;
+    return !(t.status === "succeeded" && !t.merge_of && state.tasks.some((child) => child.merge_of === t.id));
   }
   async function loadChildren(id) {
     try {
@@ -1196,7 +1200,7 @@
       <span class="a">${t.agent_name ? `<span class="avatar sm">${esc(t.agent_name.slice(0, 1))}</span>${esc(t.agent_name)}` : "-"}</span>
       <span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>
       <span class="ops">
-        ${["succeeded", "failed", "cancelled"].includes(t.status) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}\u91CD\u8BD5</button>` : ""}
+          ${canRetryTask(t) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}\u91CD\u8BD5</button>` : ""}
         <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}\u5220\u9664</button>
       </span>
     </div>`).join("");

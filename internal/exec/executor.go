@@ -342,9 +342,18 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 
 	e.log(tk.ID, "sys", fmt.Sprintf("▶ 开始执行：角色=%s CLI=%s 权限=%s", agent.Name, agent.CLI, tk.Perm))
 	// 任务隔离工作空间：git worktree（独立分支+目录）；非 git 项目直接执行
+	isGitProject := workspace.IsGitRepo(tk.ProjectDir)
 	dir, branch, baseCommit, werr := workspace.Ensure(tk, e.sessionsRoot)
 	if werr != nil {
+		if isGitProject {
+			fail("创建隔离代码工作空间失败: " + werr.Error())
+			return
+		}
 		e.log(tk.ID, "sys", "⚠ "+werr.Error())
+	}
+	if isGitProject && branch == "" {
+		fail("Git 项目未能创建隔离代码工作空间，已拒绝在主工作区执行")
+		return
 	}
 	if branch != "" {
 		_ = e.st.UpdateTask(tk.ID, map[string]any{"worktree_branch": branch, "base_commit": baseCommit})
@@ -367,11 +376,11 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		}
 		switch {
 		case len(result.Conflicts) > 0:
-			e.log(tk.ID, "sys", "⚠ 已导入审批分支，以下冲突交给 agent 处理: "+strings.Join(result.Conflicts, "、"))
+			e.log(tk.ID, "sys", "⚠ 已导入源任务分支，以下冲突交给 agent 处理: "+strings.Join(result.Conflicts, "、"))
 		case result.Skipped:
 			e.log(tk.ID, "sys", "↻ 合并内容已准备或项目未启用 Git 隔离，交给 agent 检查")
 		default:
-			e.log(tk.ID, "sys", fmt.Sprintf("⇄ 已将审批任务 #%d 的分支导入当前工作空间", *tk.MergeOf))
+			e.log(tk.ID, "sys", fmt.Sprintf("⇄ 已将源任务 #%d 的分支导入当前工作空间", *tk.MergeOf))
 		}
 	}
 
@@ -581,7 +590,7 @@ func (e *Executor) finishRun(tk store.Task, code int, runErr error, canceled boo
 		e.publishTask(tk.ID)
 		return
 	}
-	if tk.Perm == store.PermReview {
+	if tk.MergeOf == nil && tk.Perm == store.PermReview {
 		rounds := tk.ReviewRounds + 1
 		_ = e.st.UpdateTask(tk.ID, map[string]any{
 			"status": store.StatusAwaitingReview, "finished_at": store.Now(), "exit_code": 0, "review_rounds": rounds,
@@ -590,10 +599,43 @@ func (e *Executor) finishRun(tk store.Task, code int, runErr error, canceled boo
 		e.publishTask(tk.ID)
 		return
 	}
-	if tk.WorktreeBranch != "" {
+	// 普通 Git 任务不会直接改主分支：先固化源分支，再派发一个专属的
+	// MergeOf 子任务。只有子任务完成时才真正 squash 合并，避免递归派发。
+	if tk.MergeOf == nil && tk.WorktreeBranch != "" {
+		if _, err := workspace.Snapshot(tk, e.sessionsRoot); err != nil {
+			msg := "准备代码合并任务失败: " + err.Error()
+			_ = e.st.UpdateTask(tk.ID, map[string]any{
+				"status": store.StatusFailed, "finished_at": store.Now(), "exit_code": code, "error": msg,
+			})
+			e.log(tk.ID, "sys", "✗ "+msg)
+			e.publishTask(tk.ID)
+			return
+		}
+		mergeID, err := e.st.CompleteTaskAndCreateMerge(tk.ID, store.NewMergeTask(tk))
+		if err != nil {
+			if cur, getErr := e.st.GetTask(tk.ID); getErr == nil && cur.Status == store.StatusCancelled {
+				e.log(tk.ID, "sys", "■ 已取消")
+				return
+			}
+			msg := "创建代码合并任务失败: " + err.Error()
+			_ = e.st.UpdateTask(tk.ID, map[string]any{
+				"status": store.StatusFailed, "finished_at": store.Now(), "exit_code": code, "error": msg,
+			})
+			e.log(tk.ID, "sys", "✗ "+msg)
+			e.publishTask(tk.ID)
+			return
+		}
+		e.log(tk.ID, "sys", fmt.Sprintf("✓ 任务完成，已自动创建代码合并任务 #%d", mergeID))
+		e.log(mergeID, "sys", fmt.Sprintf("⇄ 由任务 #%d 完成后自动创建，等待整合代码", tk.ID))
+		e.publishTask(tk.ID)
+		e.publishTask(mergeID)
+		e.Wake()
+		return
+	}
+	if tk.MergeOf != nil && tk.WorktreeBranch != "" {
 		hash, err := workspace.Merge(tk, e.sessionsRoot)
 		if err != nil {
-			msg := "自动合并失败: " + err.Error()
+			msg := "代码合并任务失败: " + err.Error()
 			_ = e.st.UpdateTask(tk.ID, map[string]any{
 				"status": store.StatusFailed, "finished_at": store.Now(), "exit_code": code, "error": msg,
 			})
@@ -602,15 +644,19 @@ func (e *Executor) finishRun(tk store.Task, code int, runErr error, canceled boo
 			return
 		}
 		if hash == "" {
-			e.log(tk.ID, "sys", "✓ 自动合并完成（主分支无需新增提交）")
+			e.log(tk.ID, "sys", "✓ 代码合并完成（主分支无需新增提交）")
 		} else {
-			e.log(tk.ID, "sys", "✓ 已自动合并到主分支: "+hash)
+			e.log(tk.ID, "sys", "✓ 已合并到主分支: "+hash)
 		}
 	}
 	_ = e.st.UpdateTask(tk.ID, map[string]any{
 		"status": store.StatusSucceeded, "finished_at": store.Now(), "exit_code": 0,
 	})
-	e.log(tk.ID, "sys", "✓ 完成")
+	if tk.MergeOf == nil && tk.WorktreeBranch == "" {
+		e.log(tk.ID, "sys", "✓ 完成（非 Git 项目，无需代码合并）")
+	} else {
+		e.log(tk.ID, "sys", "✓ 完成")
+	}
 	e.publishTask(tk.ID)
 }
 

@@ -230,6 +230,54 @@ func TestApproveReviewTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 	}
 }
 
+func TestCompleteTaskCreatesOneMergeTaskAtomically(t *testing.T) {
+	s := openTest(t)
+	agentID := mustAgent(t, s, "merger", true)
+	projectID, err := s.CreateProject(Project{Name: "proj", ProjectDir: t.TempDir(), Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceID, err := s.CreateTask(Task{
+		Title: "finish me", Status: StatusRunning, Perm: PermFull,
+		AgentID: &agentID, ProjectID: &projectID, ProjectDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := s.GetTask(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mergeID, err := s.CompleteTaskAndCreateMerge(sourceID, NewMergeTask(*source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed, err := s.GetTask(sourceID)
+	if err != nil || completed.Status != StatusSucceeded {
+		t.Fatalf("完成后源任务状态异常: %+v err=%v", completed, err)
+	}
+	merge, err := s.GetTask(mergeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merge.MergeOf == nil || *merge.MergeOf != sourceID || merge.ParentID == nil || *merge.ParentID != sourceID {
+		t.Fatalf("合并任务来源关系未保存: %+v", merge)
+	}
+	if merge.Status != StatusQueued || merge.Perm != PermFull || merge.Concurrent {
+		t.Fatalf("自动合并任务执行配置异常: %+v", merge)
+	}
+	if _, err := s.CompleteTaskAndCreateMerge(sourceID, NewMergeTask(*source)); err == nil {
+		t.Fatal("重复完成不应创建第二个合并任务")
+	}
+	if _, err := s.CreateTask(NewMergeTask(*source)); err == nil {
+		t.Fatal("数据库约束不应允许同一源任务创建第二个合并任务")
+	}
+	children, err := s.ListChildren(sourceID)
+	if err != nil || len(children) != 1 {
+		t.Fatalf("应只创建一个合并任务: %+v err=%v", children, err)
+	}
+}
+
 // 并发开关：默认不并发（串行），显式勾选则完整往返保存。
 func TestTaskConcurrentDefaultsFalseAndRoundTrips(t *testing.T) {
 	s := openTest(t)
@@ -298,6 +346,10 @@ func TestMigrateAddsNewColumns(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	// 模拟老库：删掉新列后再打开，migrate 应补齐
+	if _, err := s.db.Exec("DROP INDEX IF EXISTS idx_tasks_merge_of_unique"); err != nil {
+		s.Close()
+		t.Fatalf("drop merge index: %v", err)
+	}
 	for _, col := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "tmux_log_offset", "run_mode", "concurrent"} {
 		if _, err := s.db.Exec("ALTER TABLE tasks DROP COLUMN " + col); err != nil {
 			s.Close()

@@ -1,6 +1,6 @@
 // Package workspace 提供任务级 git worktree 隔离工作空间：
 // 每个任务在项目仓库的独立分支 + 独立目录中执行，互不污染；
-// 审批通过后可一键 squash 合并回主分支，或丢弃整个任务分支。
+// 专属代码合并任务完成后可 squash 合并回主分支，也可丢弃整个任务分支。
 // 非 git 项目回退为直接在项目目录执行（任务标注未隔离）。
 package workspace
 
@@ -56,7 +56,8 @@ func Branch(taskID int64) string { return fmt.Sprintf("paihuo/task-%d", taskID) 
 // Ensure 为任务准备执行目录：
 //   - 项目是 git 仓库且 worktree 不存在 → 创建独立 worktree（paihuo/task-<id>）
 //   - 已存在 → 直接返回
-//   - 非 git 或 git 失败 → 回退项目目录（Note 说明原因）
+//   - 非 git → 回退项目目录
+//   - git 仓库无法建立隔离工作区 → 返回错误（绝不在主工作区执行）
 //
 // 返回 (执行目录, 任务分支, baseCommit, error)。非隔离场景 branch 为空串。
 func Ensure(tk store.Task, sessionsRoot string) (dir, branch, baseCommit string, err error) {
@@ -72,19 +73,29 @@ func Ensure(tk store.Task, sessionsRoot string) (dir, branch, baseCommit string,
 	if !isGitRepo(project) {
 		return project, "", "", nil // 非 git 项目：直接执行
 	}
-	if tk.WorktreeBranch != "" && Branch(tk.ID) == tk.WorktreeBranch {
-		return wt, tk.WorktreeBranch, tk.BaseCommit, nil // DB 已记录但目录被清：回退项目目录
+	if tk.WorktreeBranch != "" {
+		if tk.WorktreeBranch != Branch(tk.ID) {
+			return "", "", "", fmt.Errorf("任务 worktree 分支记录异常: %s", tk.WorktreeBranch)
+		}
+		// 重试或清理后恢复时，重新挂载原任务分支，而不是退回主工作区。
+		if err := os.MkdirAll(filepath.Dir(wt), 0o755); err != nil {
+			return "", "", "", fmt.Errorf("创建 worktree 目录失败: %v", err)
+		}
+		if _, err := git(project, "worktree", "add", wt, tk.WorktreeBranch); err != nil {
+			return "", "", "", fmt.Errorf("恢复 worktree 失败: %v", err)
+		}
+		return wt, tk.WorktreeBranch, tk.BaseCommit, nil
 	}
 	base, err := git(project, "rev-parse", "HEAD")
 	if err != nil {
-		return project, "", "", nil
+		return "", "", "", fmt.Errorf("读取 Git 基准提交失败: %v", err)
 	}
 	baseCommit = strings.TrimSpace(base)
 	if err := os.MkdirAll(filepath.Dir(wt), 0o755); err != nil {
-		return project, "", "", nil
+		return "", "", "", fmt.Errorf("创建 worktree 目录失败: %v", err)
 	}
 	if _, err := git(project, "worktree", "add", wt, "-b", Branch(tk.ID)); err != nil {
-		return project, "", "", fmt.Errorf("创建 worktree 失败: %v", err)
+		return "", "", "", fmt.Errorf("创建 worktree 失败: %v", err)
 	}
 	return wt, Branch(tk.ID), baseCommit, nil
 }
@@ -156,7 +167,7 @@ func snapshotLocked(tk store.Task, sessionsRoot string) (string, error) {
 	return strings.TrimSpace(head), nil
 }
 
-// Integrate 把已审批任务分支 squash 到自动创建的合并任务 worktree。冲突会
+// Integrate 把源任务分支 squash 到自动创建的合并任务 worktree。冲突会
 // 保留在隔离 worktree 中交给 agent 处理，不会触碰主工作区。
 func Integrate(source, target store.Task, sessionsRoot string) (IntegrationResult, error) {
 	mutationMu.Lock()
@@ -195,7 +206,7 @@ func Integrate(source, target store.Task, sessionsRoot string) (IntegrationResul
 			return IntegrationResult{Conflicts: conflicts}, nil
 		}
 		git(targetDir, "reset", "--hard", "HEAD")
-		return IntegrationResult{}, fmt.Errorf("导入审批分支失败: %v", err)
+		return IntegrationResult{}, fmt.Errorf("导入源任务分支失败: %v", err)
 	}
 	return IntegrationResult{}, nil
 }
@@ -216,11 +227,11 @@ func Merge(tk store.Task, sessionsRoot string) (string, error) {
 	if !isGitRepo(tk.ProjectDir) {
 		return "", fmt.Errorf("项目不是 git 仓库")
 	}
-	// 自动合并绝不能覆盖用户或其他任务留在主工作区的未提交内容。
+	// 代码合并任务绝不能覆盖用户或其他任务留在主工作区的未提交内容。
 	if status, err := git(tk.ProjectDir, "status", "--porcelain"); err != nil {
 		return "", fmt.Errorf("读取主工作区状态失败: %v", err)
 	} else if strings.TrimSpace(status) != "" {
-		return "", fmt.Errorf("主工作区存在未提交改动，无法自动合并")
+		return "", fmt.Errorf("主工作区存在未提交改动，无法合并")
 	}
 	if _, err := snapshotLocked(tk, sessionsRoot); err != nil {
 		return "", err
@@ -246,23 +257,40 @@ func Merge(tk store.Task, sessionsRoot string) (string, error) {
 	// 3. 提交
 	if _, err := git(tk.ProjectDir, append(gitIdentity, "commit", "-m", msg)...); err != nil {
 		git(tk.ProjectDir, "reset", "--hard", "HEAD")
-		return "", fmt.Errorf("提交自动合并结果失败: %v", err)
+		return "", fmt.Errorf("提交代码合并结果失败: %v", err)
 	}
 	head, err := git(tk.ProjectDir, "rev-parse", "--short", "HEAD")
 	if err != nil {
-		return "", fmt.Errorf("读取自动合并提交失败: %v", err)
+		return "", fmt.Errorf("读取代码合并提交失败: %v", err)
 	}
 	return strings.TrimSpace(head), nil
 }
 
 // Discard 丢弃任务分支：删除 worktree 与分支。已合并的分支一并清理。
 func Discard(tk store.Task, sessionsRoot string) error {
+	mutationMu.Lock()
+	defer mutationMu.Unlock()
+
 	wt := WorktreePath(sessionsRoot, tk.ProjectName, tk.ID)
 	if fi, err := os.Stat(wt); err == nil && fi.IsDir() {
-		git(tk.ProjectDir, "worktree", "remove", "--force", wt)
+		if !isGitRepo(tk.ProjectDir) {
+			return fmt.Errorf("任务 worktree 存在，但项目不是 git 仓库")
+		}
+		if _, err := git(tk.ProjectDir, "worktree", "remove", "--force", wt); err != nil {
+			return fmt.Errorf("删除 worktree 失败: %v", err)
+		}
 	}
-	if isGitRepo(tk.ProjectDir) {
-		git(tk.ProjectDir, "branch", "-D", Branch(tk.ID))
+	if !isGitRepo(tk.ProjectDir) {
+		return nil
+	}
+	branches, err := git(tk.ProjectDir, "branch", "--list", Branch(tk.ID))
+	if err != nil {
+		return fmt.Errorf("读取任务分支失败: %v", err)
+	}
+	if strings.TrimSpace(branches) != "" {
+		if _, err := git(tk.ProjectDir, "branch", "-D", Branch(tk.ID)); err != nil {
+			return fmt.Errorf("删除任务分支失败: %v", err)
+		}
 	}
 	return nil
 }

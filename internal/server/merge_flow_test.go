@@ -108,6 +108,149 @@ func TestApproveReviewTaskSnapshotsChangesAndQueuesMergeAgent(t *testing.T) {
 	}
 }
 
+func TestDeleteTaskRemovesTaskTreeWorktrees(t *testing.T) {
+	base := t.TempDir()
+	projectDir := filepath.Join(base, "project")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"config", "user.email", "test@example.com"},
+		{"config", "user.name", "test"},
+		{"commit", "--allow-empty", "-qm", "init"},
+	} {
+		if out, err := runGit(projectDir, args...); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	hub := events.NewHub()
+	sessionsRoot := filepath.Join(base, "sessions")
+	executor := paiexec.New(st, hub, sessionsRoot, "delete-worktree-test.db")
+	s := New(st, hub, executor, sched.New(st, hub, executor), "", filepath.Join(base, "skills"))
+	agentID, err := st.CreateAgent(store.Agent{Name: "pi", CLI: "pi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, err := st.CreateProject(store.Project{Name: "proj", ProjectDir: projectDir, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceID, err := st.CreateTask(store.Task{
+		Title: "source", Status: store.StatusSucceeded, Perm: store.PermFull,
+		AgentID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := st.GetTask(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceDir, sourceBranch, sourceBase, err := workspace.Ensure(*source, sessionsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.WorktreeBranch, source.BaseCommit = sourceBranch, sourceBase
+	if err := st.UpdateTask(sourceID, map[string]any{"worktree_branch": sourceBranch, "base_commit": sourceBase}); err != nil {
+		t.Fatal(err)
+	}
+	mergeID, err := st.CreateTask(store.NewMergeTask(*source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	merge, err := st.GetTask(mergeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mergeDir, mergeBranch, mergeBase, err := workspace.Ensure(*merge, sessionsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateTask(mergeID, map[string]any{"worktree_branch": mergeBranch, "base_commit": mergeBase}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/tasks/"+itoa(sourceID), nil)
+	req.SetPathValue("id", itoa(sourceID))
+	resp := httptest.NewRecorder()
+	s.deleteTask(resp, req)
+	if resp.Code != http.StatusNoContent {
+		t.Fatalf("删除任务失败: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	for _, taskID := range []int64{sourceID, mergeID} {
+		if exists, err := st.HasTask(taskID); err != nil || exists {
+			t.Fatalf("任务 #%d 应已删除: exists=%v err=%v", taskID, exists, err)
+		}
+	}
+	for _, dir := range []string{sourceDir, mergeDir} {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Fatalf("worktree 应已删除: %s, err=%v", dir, err)
+		}
+	}
+	for _, branch := range []string{sourceBranch, mergeBranch} {
+		if out, err := runGit(projectDir, "branch", "--list", branch); err != nil || strings.TrimSpace(out) != "" {
+			t.Fatalf("任务分支应已删除: branch=%s out=%q err=%v", branch, out, err)
+		}
+	}
+}
+
+func TestWorkspaceMergeRejectsOrdinaryTask(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	hub := events.NewHub()
+	executor := paiexec.New(st, hub, t.TempDir(), "workspace-merge-guard-test.db")
+	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
+	taskID, err := st.CreateTask(store.Task{Title: "ordinary", Status: store.StatusSucceeded, Perm: store.PermFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/workspace/"+itoa(taskID)+"/merge", nil)
+	req.SetPathValue("id", itoa(taskID))
+	resp := httptest.NewRecorder()
+	s.workspaceMerge(resp, req)
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "普通任务不能直接合并") {
+		t.Fatalf("普通任务应被拒绝直接合并: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	if _, err := st.CreateTask(store.NewMergeTask(store.Task{ID: taskID, Title: "ordinary"})); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/workspace/"+itoa(taskID)+"/discard", nil)
+	req.SetPathValue("id", itoa(taskID))
+	resp = httptest.NewRecorder()
+	s.workspaceDiscard(resp, req)
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "代码合并任务尚未成功") {
+		t.Fatalf("有待处理合并任务的源任务不应丢弃 worktree: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	children, err := st.ListChildren(taskID)
+	if err != nil || len(children) != 1 {
+		t.Fatalf("读取代码合并任务失败: children=%+v err=%v", children, err)
+	}
+	req = httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(taskID), strings.NewReader(`{"status":"queued"}`))
+	req.SetPathValue("id", itoa(taskID))
+	resp = httptest.NewRecorder()
+	s.patchTask(resp, req)
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "已有代码合并任务") {
+		t.Fatalf("源任务不应绕过既有合并任务直接重试: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/workspace/"+itoa(children[0].ID)+"/discard", nil)
+	req.SetPathValue("id", itoa(children[0].ID))
+	resp = httptest.NewRecorder()
+	s.workspaceDiscard(resp, req)
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "代码合并任务尚未成功") {
+		t.Fatalf("未成功的代码合并任务不应丢弃 worktree: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
 func runGit(dir string, args ...string) (string, error) {
 	cmd := osexec.Command("git", args...)
 	cmd.Dir = dir
