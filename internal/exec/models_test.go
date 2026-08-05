@@ -165,3 +165,45 @@ func TestModelsDiskCacheRoundTrip(t *testing.T) {
 		t.Fatalf("空列表不应覆盖已有缓存: %v", got)
 	}
 }
+
+// Codex 的 models_cache 是唯一会明确给出逐模型 reasoning 档位的本机目录。
+// visibility=hide 的内部路由别名（如 sol-wm）不能因 config.toml 再次出现而
+// 泄漏到角色模型候选中。
+func TestCodexModelsProbeUsesHostCapabilitiesAndHidesAliases(t *testing.T) {
+	home := t.TempDir()
+	codexDir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cache := `{"models":[
+  {"slug":"gpt-visible","visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"xhigh"},{"effort":"max"}]},
+  {"slug":"gpt-hidden-wm","visibility":"hide","supported_reasoning_levels":[{"effort":"max"}]}
+]}`
+	if err := os.WriteFile(filepath.Join(codexDir, "models_cache.json"), []byte(cache), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte("model = \"gpt-visible\"\nmodel = \"gpt-hidden-wm\"\nmodel = \"local-custom\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := codexModelsProbe(home)
+	byID := map[string]ModelInfo{}
+	for _, m := range got {
+		byID[m.ID] = m
+	}
+	if _, ok := byID["gpt-hidden-wm"]; ok {
+		t.Fatalf("隐藏路由别名不应出现在候选: %v", got)
+	}
+	visible, ok := byID["gpt-visible"]
+	if !ok || strings.Join(visible.ThinkingLevels, ",") != "low,xhigh,max" {
+		t.Fatalf("可见模型的真实能力未保留: %v", got)
+	}
+	if custom, ok := byID["local-custom"]; !ok || len(custom.ThinkingLevels) != 0 {
+		t.Fatalf("仅在 config.toml 的自定义模型应保留但不猜测能力: %v", got)
+	}
+
+	opts := ModelThinkingOptions(got)
+	if strings.Join(opts["gpt-visible"], ",") != "low,xhigh,max" || strings.Join(opts[""], ",") != "low,xhigh,max" {
+		t.Fatalf("schema 思考档位映射不正确: %v", opts)
+	}
+}

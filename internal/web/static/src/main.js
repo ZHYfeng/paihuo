@@ -1,5 +1,5 @@
 // 模块 main（由 scripts/split-frontend.py 生成）
-import { addChip, agentTab, closeAgentDetail, deleteAgent, hideAgentDetail, openAgentDetail, openAgentModal, removeChip, renderAgentList, renderAgentModalSchema, renderAgentOverview, saveAgentConcurrency, saveAgentConfig, setAgentView, showAgentDetail, submitAgent, toggleSkill } from "./agents.js";
+import { addChip, agentTab, closeAgentDetail, deleteAgent, hideAgentDetail, openAgentDetail, openAgentModal, refreshAgentCatalog, removeChip, renderAgentList, renderAgentModalSchema, renderAgentOverview, saveAgentConcurrency, saveAgentConfig, setAgentView, showAgentDetail, submitAgent, syncModelThinking, toggleSkill } from "./agents.js";
 import { api, closeModal, esc, fmtDur, fmtPct, logout, state, toast } from "./core.js";
 import { loadDashboard } from "./dashboard.js";
 import { cleanupHistory, deleteSelected, loadHistory, toggleAll, toggleRow } from "./history.js";
@@ -22,16 +22,27 @@ export async function loadAll() {
   fillSelects();
 }
 
-export async function loadSchema() {
+// forceRefresh=true 会让服务端绕过模型目录内存缓存，重新读取当前 Linux 主机。
+// 普通打开页面仍复用缓存，避免每次角色表单都拉起多个 CLI 子进程。
+export async function loadSchema(forceRefresh = false) {
   try {
-    const list = await api("/api/agents/schema");
+    const list = forceRefresh
+      ? await api("/api/agents/schema/refresh", { method: "POST" })
+      : await api("/api/agents/schema");
     state.schema = {};
     list.forEach(s => state.schema[s.id] = s);
     const sel = document.getElementById("aCli");
-    if (sel) sel.innerHTML = list.map(s =>
-      `<option value="${s.id}">${esc(s.name)}</option>`).join("");
-    if (sel && !sel.value) sel.value = list.length ? list[0].id : "";
-  } catch (_) {}
+    const previous = sel ? sel.value : "";
+    if (sel) {
+      sel.innerHTML = list.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join("");
+      sel.value = state.schema[previous] ? previous : (list.length ? list[0].id : "");
+    }
+    return true;
+  } catch (e) {
+    // 首屏 schema 是非阻塞加载，保留原先的静默降级；手动刷新则交给调用方提示错误。
+    if (forceRefresh) throw e;
+    return false;
+  }
 }
 
 export function fillSelects() {
@@ -357,6 +368,7 @@ window.openTerminal = openTerminal;
 window.patchProject = patchProject;
 window.patchTask = patchTask;
 window.pickDir = pickDir;
+window.refreshAgentCatalog = refreshAgentCatalog;
 window.refreshProvision = refreshProvision;
 window.rejectTask = rejectTask;
 window.removeChip = removeChip;
@@ -383,6 +395,7 @@ window.submitProject = submitProject;
 window.submitSchedule = submitSchedule;
 window.submitSkill = submitSkill;
 window.submitTask = submitTask;
+window.syncModelThinking = syncModelThinking;
 window.syncTaskRunMode = syncTaskRunMode;
 window.toggleAll = toggleAll;
 window.toggleRow = toggleRow;

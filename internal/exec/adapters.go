@@ -335,8 +335,11 @@ func (a *piAdapter) Warnings(o RunOptions) []string {
 func (a *piAdapter) Schema() []Field {
 	fs := commonFields()
 	if f := byKey(fs, "thinking"); f != nil {
-		f.Options = []string{"", "off", "minimal", "low", "medium", "high", "xhigh", "max"}
-		f.Help = "官方 --thinking：off / minimal / low / medium / high / xhigh / max"
+		// pi 的 Linux 本机模型目录只报告 reasoning=true/false，或列表中的
+		// thinking yes/no；它没有声明每个模型允许哪些 --thinking 档位。不能
+		// 用 CLI 全局 flag 的 7 个值伪装成 DeepSeek 等模型的能力。
+		f.Options = []string{""}
+		f.Help = "本机 Pi 模型目录只报告是否支持推理，不声明每个模型可用的思考档位；留空使用 Pi/模型默认。已有旧值会保留，若要取消请改为“默认”。"
 	}
 	if f := byKey(fs, "skills"); f != nil {
 		f.Help = "官方 --skill 逐目录注入（可多个）；在 Skills 页把技能添加到 paihuo 工作目录后，这里按名称勾选"
@@ -452,11 +455,10 @@ func (a *codexAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	if s := o.Role.SystemPrompt; s != "" {
 		args = append(args, "-c", "system_prompt="+tomlQuote(s))
 	}
-	switch o.Role.Thinking {
-	case "low":
-		args = append(args, "-c", `reasoning_effort="minimal"`)
-	case "high":
-		args = append(args, "-c", `reasoning_effort="high"`)
+	if thinking := strings.TrimSpace(o.Role.Thinking); thinking != "" {
+		// Codex 的可用值由 ~/.codex/models_cache.json 按模型声明。不要把
+		// UI 的旧 low/high 抽象映射成其它值，否则 xhigh/max/ultra 无法生效。
+		args = append(args, "-c", "reasoning_effort="+tomlQuote(thinking))
 	}
 	if t := o.Role.Custom["temperature"]; t != "" {
 		args = append(args, "-c", "temperature="+tomlQuote(t))
@@ -484,7 +486,8 @@ func (a *codexAdapter) Warnings(o RunOptions) []string {
 func (a *codexAdapter) Schema() []Field {
 	fs := commonFields()
 	if f := byKey(fs, "thinking"); f != nil {
-		f.Help = "映射为 codex 配置 reasoning_effort（minimal / low / medium / high）"
+		f.Options = []string{""}
+		f.Help = "按所选模型从本机 ~/.codex/models_cache.json 读取，映射为 codex reasoning_effort；模型未声明时不展示猜测档位。"
 	}
 	return append(fs,
 		Field{Key: "execution_mode", Label: "执行模式", Type: "select", Group: "执行",

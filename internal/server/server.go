@@ -168,6 +168,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("PATCH /api/agents/{id}", s.patchAgent)
 	m.HandleFunc("DELETE /api/agents/{id}", s.deleteAgent)
 	m.HandleFunc("GET /api/agents/schema", s.listAgentSchemas)
+	m.HandleFunc("POST /api/agents/schema/refresh", s.refreshAgentSchemas)
 	m.HandleFunc("POST /api/provision/install", s.provisionInstall)
 	m.HandleFunc("GET /api/provision", s.provisionStatus)
 	m.HandleFunc("GET /api/skills", s.listSkills)

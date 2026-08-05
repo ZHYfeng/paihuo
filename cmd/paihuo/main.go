@@ -56,13 +56,10 @@ func main() {
 	srv := server.New(st, hub, ex, sc, token, filepath.Join(filepath.Dir(db), "skills"))
 	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
 
-	// 后台预热模型候选缓存：/api/agents/schema 的冷探测要跑各 CLI 命令
-	// （秒级），启动时预热后，服务重启后的首次页面访问也能秒开。
-	go func() {
-		for _, a := range exec.Adapters() {
-			a.Models()
-		}
-	}()
+	// 模型/能力目录属于当前 Linux 主机，而非角色数据库：每次服务启动
+	// （即重新部署）立即重查，此后每 7 天重查一次。角色选择的 model /
+	// thinking 仍只保存在 SQLite，不会被发现结果覆盖。
+	go refreshModelCatalogs(ctx)
 
 	go func() {
 		log.Printf("派活已启动: http://%s（数据库 %s%s）", addr, db, map[bool]string{true: "，已开启鉴权", false: ""}[token != ""])
@@ -78,6 +75,28 @@ func main() {
 	defer cancel()
 	_ = httpSrv.Shutdown(shCtx)
 	log.Println("已关闭")
+}
+
+// refreshModelCatalogs 在启动和固定周期从本机各 CLI 探测模型/能力。手动刷新
+// 由 POST /api/agents/schema/refresh 使用同一个 exec.RefreshModelCatalogs 流程。
+func refreshModelCatalogs(ctx context.Context) {
+	run := func(reason string) {
+		started := time.Now()
+		exec.RefreshModelCatalogs()
+		log.Printf("已从 Linux 主机刷新 agent 模型/能力目录（%s，耗时 %s）", reason, time.Since(started).Round(time.Millisecond))
+	}
+	run("服务启动")
+
+	ticker := time.NewTicker(7 * 24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run("7 天定期刷新")
+		}
+	}
 }
 
 // autoCleanup 每小时执行：清理超期历史、孤儿会话、过期任务 worktree。

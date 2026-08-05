@@ -1,5 +1,5 @@
 // 模型候选探测：从本机各 CLI 实例的实际配置/目录里枚举可用模型，
-// 而不是硬编码「常用模型」。结果带 60s 内存缓存，磁盘/命令探测失败时优雅降级为空。
+// 而不是硬编码「常用模型」。结果带内存缓存，磁盘/命令探测失败时优雅降级为空。
 //
 // 权威来源是各 CLI 自带的模型列表命令（pi --list-models / omp models --json /
 // opencode models）：它们只列出本实例「实际可用」的模型（按凭据过滤），
@@ -97,9 +97,102 @@ var modelsCache struct {
 	busy  map[string]chan struct{} // 进行中的探测：并发请求合并为一次，共享结果
 }
 
+// modelsProbeGate 让“强制刷新”和普通读取不会相互覆盖缓存：普通探测持有读锁，
+// 刷新先等待已有探测结束，再清空缓存并发起一轮新的主机探测。这样手动刷新或
+// 定期刷新不会被刷新前尚未结束的 CLI 子进程写回旧结果。
+var modelsProbeGate sync.RWMutex
+
+// modelsRefreshMu 串行化并发刷新请求（例如两个浏览器同时点刷新）。
+var modelsRefreshMu sync.Mutex
+
+// ModelInfo 是从 Linux 主机上的各 CLI 配置/目录发现的模型信息。它不是角色
+// 配置，也不写入 paihuo.db；数据库只保存角色选择了哪个模型及其覆盖项。
+// ThinkingLevels 仅在主机来源明确声明了“该模型支持哪些档位”时才填写。
+type ModelInfo struct {
+	ID             string   `json:"id"`
+	ThinkingLevels []string `json:"thinking_levels,omitempty"`
+}
+
+// modelCataloger 是可额外提供逐模型能力的适配器。保留 Adapter.Models 接口，
+// 使现有/第三方适配器仍可只返回模型候选。
+type modelCataloger interface {
+	ModelCatalog() []ModelInfo
+}
+
+// ModelCatalog 返回一个适配器在本机发现的模型及已知能力。没有能力目录的 CLI
+// 仍返回模型列表；此时 ThinkingLevels 留空，前端不会虚构可用档位。
+func ModelCatalog(a Adapter) []ModelInfo {
+	if c, ok := a.(modelCataloger); ok {
+		return c.ModelCatalog()
+	}
+	ids := a.Models()
+	out := make([]ModelInfo, 0, len(ids))
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" {
+			out = append(out, ModelInfo{ID: id})
+		}
+	}
+	return out
+}
+
+// ModelIDs 取能力目录中的有序模型 ID，供原有 datalist 候选复用。
+func ModelIDs(in []ModelInfo) []string {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, m := range in {
+		id := strings.TrimSpace(m.ID)
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// ModelThinkingOptions 将已知的逐模型档位转换成 schema 可直接使用的映射。
+// 空字符串键是“留空使用 CLI 默认模型”时的保守并集；选定具体模型后，前端
+// 会优先使用该模型的精确档位。
+func ModelThinkingOptions(in []ModelInfo) map[string][]string {
+	out := map[string][]string{}
+	var all []string
+	for _, m := range in {
+		id := strings.TrimSpace(m.ID)
+		if id == "" || len(m.ThinkingLevels) == 0 {
+			continue
+		}
+		levels := uniqueModelStrings(m.ThinkingLevels)
+		if len(levels) == 0 {
+			continue
+		}
+		out[id] = levels
+		all = append(all, levels...)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	out[""] = uniqueModelStrings(all)
+	return out
+}
+
+func uniqueModelStrings(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, v := range in {
+		v = strings.TrimSpace(v)
+		if v != "" && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // cachedModels 按适配器 id 缓存探测结果（TTL 内复用）。
 // 同一 id 的并发探测合并：后来的请求等先发者完成，避免重复跑 CLI。
 func cachedModels(id string, probe func() []string) []string {
+	modelsProbeGate.RLock()
+	defer modelsProbeGate.RUnlock()
+
 	modelsCache.Lock()
 	if modelsCache.items == nil || time.Since(modelsCache.at) > modelsCacheTTL {
 		modelsCache.items = map[string][]string{}
@@ -132,6 +225,34 @@ func cachedModels(id string, probe func() []string) []string {
 	close(ch)
 	modelsCache.Unlock()
 	return v
+}
+
+// RefreshModelCatalogs 强制重新从 Linux 主机探测全部已注册 CLI。它用于：
+// 服务每次启动（重新部署）、角色页的“刷新主机能力”按钮，以及 7 天周期任务。
+// 刷新只失效发现缓存，绝不会写入或覆盖 agents.role_config。
+func RefreshModelCatalogs() {
+	modelsRefreshMu.Lock()
+	defer modelsRefreshMu.Unlock()
+
+	// 等现有探测完成后再清空，防止旧探测在清空后覆盖新结果。
+	modelsProbeGate.Lock()
+	modelsCache.Lock()
+	modelsCache.at = time.Time{}
+	modelsCache.items = nil
+	modelsCache.busy = nil
+	modelsCache.Unlock()
+	modelsProbeGate.Unlock()
+
+	adapters := Adapters()
+	var wg sync.WaitGroup
+	for _, a := range adapters {
+		wg.Add(1)
+		go func(a Adapter) {
+			defer wg.Done()
+			a.Models()
+		}(a)
+	}
+	wg.Wait()
 }
 
 func capModels(in []string, n int) []string {
@@ -508,37 +629,84 @@ func (a *openCodeAdapter) Models() []string {
 
 // ---------------------------------------------------------------------------
 // codex：~/.codex/models_cache.json（models[].slug）+ config.toml 的 model=。
+// models_cache 同时含 visibility 与 supported_reasoning_levels；前者为 hide
+// 的是 CLI 内部路由别名（如 sol-wm），不应出现在角色可选模型中。
 // （codex 无公开的模型列表命令；按实例实际配置枚举。）
 
 var codexModelRe = regexp.MustCompile(`(?m)^\s*model\s*=\s*"([^"]+)"`)
 
 func (a *codexAdapter) Models() []string {
 	return cachedModels("codex", func() []string {
-		home, _ := os.UserHomeDir()
-		var out []string
-		seen := map[string]bool{}
-		add := func(s string) {
-			if s != "" && !seen[s] {
-				seen[s] = true
-				out = append(out, s)
-			}
-		}
-		var cache struct {
-			Models []struct {
-				Slug string `json:"slug"`
-			} `json:"models"`
-		}
-		readJSONFile(filepath.Join(home, ".codex", "models_cache.json"), &cache)
-		for _, m := range cache.Models {
-			add(m.Slug)
-		}
-		if b, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml")); err == nil {
-			for _, m := range codexModelRe.FindAllStringSubmatch(string(b), -1) {
-				add(m[1])
-			}
-		}
-		return capModels(out, 60)
+		return capModels(ModelIDs(a.ModelCatalog()), 60)
 	})
+}
+
+// ModelCatalog 返回 Codex 本机模型缓存中明确声明的能力。这里直接读本机文件
+// （无网络/子进程开销）；Models 仍有缓存，避免影响其它仅需候选列表的路径。
+func (a *codexAdapter) ModelCatalog() []ModelInfo {
+	home, _ := os.UserHomeDir()
+	return capModelInfo(codexModelsProbe(home), 60)
+}
+
+// codexModelsProbe 是 Codex 本机目录解析，home 可注入以便测试。
+func codexModelsProbe(home string) []ModelInfo {
+	var out []ModelInfo
+	pos := map[string]int{}
+	hidden := map[string]bool{}
+	add := func(m ModelInfo) {
+		m.ID = strings.TrimSpace(m.ID)
+		m.ThinkingLevels = uniqueModelStrings(m.ThinkingLevels)
+		if m.ID == "" {
+			return
+		}
+		if i, ok := pos[m.ID]; ok {
+			// 配置文件里的同名 model 只能补充候选，不能抹掉缓存已知能力。
+			if len(out[i].ThinkingLevels) == 0 && len(m.ThinkingLevels) > 0 {
+				out[i].ThinkingLevels = m.ThinkingLevels
+			}
+			return
+		}
+		pos[m.ID] = len(out)
+		out = append(out, m)
+	}
+
+	var cache struct {
+		Models []struct {
+			Slug       string `json:"slug"`
+			Visibility string `json:"visibility"`
+			Reasoning  []struct {
+				Effort string `json:"effort"`
+			} `json:"supported_reasoning_levels"`
+		} `json:"models"`
+	}
+	readJSONFile(filepath.Join(home, ".codex", "models_cache.json"), &cache)
+	for _, m := range cache.Models {
+		if strings.TrimSpace(m.Visibility) == "hide" {
+			hidden[m.Slug] = true
+			continue
+		}
+		levels := make([]string, 0, len(m.Reasoning))
+		for _, r := range m.Reasoning {
+			levels = append(levels, r.Effort)
+		}
+		add(ModelInfo{ID: m.Slug, ThinkingLevels: levels})
+	}
+	if b, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml")); err == nil {
+		for _, m := range codexModelRe.FindAllStringSubmatch(string(b), -1) {
+			// 不因为当前配置恰好写了内部隐藏别名就把它重新暴露到 UI。
+			if !hidden[m[1]] {
+				add(ModelInfo{ID: m[1]})
+			}
+		}
+	}
+	return out
+}
+
+func capModelInfo(in []ModelInfo, n int) []ModelInfo {
+	if len(in) > n {
+		return in[:n]
+	}
+	return in
 }
 
 // ---------------------------------------------------------------------------

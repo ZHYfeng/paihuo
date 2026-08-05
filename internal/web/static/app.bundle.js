@@ -1530,6 +1530,25 @@
   function renderAgentList() {
     state.agentView === "grid" ? renderAgentGrid() : renderAgentTable();
   }
+  async function refreshAgentCatalog() {
+    const btn = document.getElementById("refreshAgentCatalog");
+    const original = btn ? btn.innerHTML : "";
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "\u68C0\u6D4B\u4E2D\u2026";
+    }
+    try {
+      await loadSchema(true);
+      toast("\u5DF2\u4ECE Linux \u4E3B\u673A\u5237\u65B0\u6A21\u578B\u4E0E\u80FD\u529B\u76EE\u5F55");
+    } catch (e) {
+      toast("\u5237\u65B0\u4E3B\u673A\u80FD\u529B\u5931\u8D25\uFF1A" + e.message, true);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = original;
+      }
+    }
+  }
   var pendingAgentTab = null;
   function openAgentDetail(id) {
     location.hash = "#/agent/" + id;
@@ -1769,12 +1788,50 @@
     </div>
   </div>`;
   }
-  function fieldControlHTML(f, rc) {
+  function selectOptionsHTML(options, val) {
+    const current = String(val ?? "");
+    const values = Array.isArray(options) ? options.map(String) : [];
+    const legacy = current !== "" && !values.includes(current);
+    if (legacy) values.push(current);
+    return values.map((o) => {
+      const label = o === "" ? "\u9ED8\u8BA4" : legacy && o === current ? `${o}\uFF08\u5F53\u524D\u4FDD\u5B58\u503C\uFF09` : o;
+      return `<option value="${esc(o)}" ${current === o ? "selected" : ""}>${esc(label)}</option>`;
+    }).join("");
+  }
+  function syncModelThinking(input) {
+    const scope = input.closest("#configForm, #agentModalSchema");
+    const select = scope && scope.querySelector('select[data-key="thinking"][data-thinking-options]');
+    if (!select) return;
+    let byModel = {}, fallback = [];
+    try {
+      byModel = JSON.parse(select.dataset.thinkingOptions || "{}");
+    } catch (_) {
+    }
+    try {
+      fallback = JSON.parse(select.dataset.fallbackOptions || "[]");
+    } catch (_) {
+    }
+    const model = String(input.value || "").trim();
+    const options = Array.isArray(byModel[model]) ? byModel[model] : fallback;
+    const current = select.value;
+    select.innerHTML = selectOptionsHTML(options, current);
+  }
+  function fieldControlHTML(f, rc, selectedModel = "") {
     const val = fieldValue(f, rc);
-    const attrs = `data-key="${f.key}" data-type="${f.type}"`;
+    let attrs = `data-key="${f.key}" data-type="${f.type}"`;
+    const hasModelThinking = f.key === "thinking" && f.thinking_options_by_model;
+    if (hasModelThinking) {
+      attrs += ` data-thinking-options="${esc(JSON.stringify(f.thinking_options_by_model))}"`;
+      attrs += ` data-fallback-options="${esc(JSON.stringify(f.options || []))}"`;
+    }
     let ctl = "";
     if (f.type === "select") {
-      ctl = `<select ${attrs}>${f.options.map((o) => `<option value="${esc(o)}" ${String(val) === String(o) ? "selected" : ""}>${o === "" ? "\u9ED8\u8BA4" : esc(o)}</option>`).join("")}</select>`;
+      let options = f.options || [];
+      if (hasModelThinking && Array.isArray(f.thinking_options_by_model[selectedModel])) {
+        options = f.thinking_options_by_model[selectedModel];
+        if ((f.options || []).includes("") && !options.includes("")) options = ["", ...options];
+      }
+      ctl = `<select ${attrs}>${selectOptionsHTML(options, val)}</select>`;
     } else if (f.type === "textarea") {
       ctl = `<textarea ${attrs} rows="5" placeholder="${esc(f.placeholder || "")}">${esc(val)}</textarea>`;
     } else if (f.type === "env") {
@@ -1785,9 +1842,11 @@
       ctl = chipsControlHTML(f, val);
     } else if (f.suggestions && f.suggestions.length) {
       const dl = "dl_" + ++dlSeq;
-      ctl = `<input ${attrs} list="${dl}" value="${esc(val)}" placeholder="${esc(f.placeholder || "")}"><datalist id="${dl}">${f.suggestions.map((s) => `<option value="${esc(s)}">`).join("")}</datalist>`;
+      const sync = f.key === "model" ? ` oninput="syncModelThinking(this)" onchange="syncModelThinking(this)"` : "";
+      ctl = `<input ${attrs} list="${dl}" value="${esc(val)}" placeholder="${esc(f.placeholder || "")}"${sync}><datalist id="${dl}">${f.suggestions.map((s) => `<option value="${esc(s)}">`).join("")}</datalist>`;
     } else {
-      ctl = `<input ${attrs} value="${esc(val)}" placeholder="${esc(f.placeholder || "")}">`;
+      const sync = f.key === "model" ? ` oninput="syncModelThinking(this)" onchange="syncModelThinking(this)"` : "";
+      ctl = `<input ${attrs} value="${esc(val)}" placeholder="${esc(f.placeholder || "")}"${sync}>`;
     }
     return `<div class="schema-field">
     <label class="field">${esc(f.label)}${ctl}</label>
@@ -1796,13 +1855,16 @@
   }
   function schemaFormHTML(schema, rc) {
     const groups = {};
-    (schema.fields || []).forEach((f) => {
+    const fields = schema.fields || [];
+    const model = fields.find((f) => f.key === "model");
+    const selectedModel = model ? String(fieldValue(model, rc) || "") : "";
+    fields.forEach((f) => {
       (groups[f.group] = groups[f.group] || []).push(f);
     });
     return Object.entries(groups).map(([g, fs]) => `
     <div class="schema-group">
       <div class="schema-group-title">${esc(g)}</div>
-      <div class="schema-group-body">${fs.map((f) => fieldControlHTML(f, rc)).join("")}</div>
+      <div class="schema-group-body">${fs.map((f) => fieldControlHTML(f, rc, selectedModel)).join("")}</div>
     </div>`).join("");
   }
   function readConfigFrom(schema, container) {
@@ -2166,15 +2228,21 @@
     state.projects = projects;
     fillSelects();
   }
-  async function loadSchema() {
+  async function loadSchema(forceRefresh = false) {
     try {
-      const list = await api("/api/agents/schema");
+      const list = forceRefresh ? await api("/api/agents/schema/refresh", { method: "POST" }) : await api("/api/agents/schema");
       state.schema = {};
       list.forEach((s) => state.schema[s.id] = s);
       const sel = document.getElementById("aCli");
-      if (sel) sel.innerHTML = list.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("");
-      if (sel && !sel.value) sel.value = list.length ? list[0].id : "";
-    } catch (_) {
+      const previous = sel ? sel.value : "";
+      if (sel) {
+        sel.innerHTML = list.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("");
+        sel.value = state.schema[previous] ? previous : list.length ? list[0].id : "";
+      }
+      return true;
+    } catch (e) {
+      if (forceRefresh) throw e;
+      return false;
     }
   }
   function fillSelects() {
@@ -2508,6 +2576,7 @@
   window.patchProject = patchProject;
   window.patchTask = patchTask;
   window.pickDir = pickDir;
+  window.refreshAgentCatalog = refreshAgentCatalog;
   window.refreshProvision = refreshProvision;
   window.rejectTask = rejectTask;
   window.removeChip = removeChip;
@@ -2534,6 +2603,7 @@
   window.submitSchedule = submitSchedule;
   window.submitSkill = submitSkill;
   window.submitTask = submitTask;
+  window.syncModelThinking = syncModelThinking;
   window.syncTaskRunMode = syncTaskRunMode;
   window.toggleAll = toggleAll;
   window.toggleRow = toggleRow;

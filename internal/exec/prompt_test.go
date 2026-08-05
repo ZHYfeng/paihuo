@@ -59,3 +59,17 @@ func TestCodexSchemaExposesYoloMode(t *testing.T) {
 	}
 	t.Fatal("Codex schema 缺少 execution_mode")
 }
+
+func TestCodexBuildPassesDiscoveredThinkingLevelDirectly(t *testing.T) {
+	a := &codexAdapter{baseAdapter{id: "codex", name: "Codex", bin: "codex"}}
+	_, args, _, err := a.Build(RunOptions{
+		Prompt: "完成任务",
+		Role:   store.RoleConfig{Thinking: "xhigh"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(args, " "); !strings.Contains(got, `reasoning_effort="xhigh"`) {
+		t.Fatalf("Codex 应原样传递主机声明的 xhigh 档位: %s", got)
+	}
+}

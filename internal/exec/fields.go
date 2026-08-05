@@ -15,18 +15,21 @@ import (
 
 // Field 描述某个 CLI 适配器支持的一个配置参数（提炼自该 CLI 的官方文档）。
 type Field struct {
-	Key         string   `json:"key"`    // role_config 内置字段名，或 Custom 中的参数名
+	Key         string   `json:"key"` // role_config 内置字段名，或 Custom 中的参数名
 	Label       string   `json:"label"`
-	Type        string   `json:"type"`   // text | textarea | select | list | env
-	Builtin     bool     `json:"builtin"` // true=直落 RoleConfig 顶层字段；false=存入 Custom
+	Type        string   `json:"type"`                  // text | textarea | select | list | env
+	Builtin     bool     `json:"builtin"`               // true=直落 RoleConfig 顶层字段；false=存入 Custom
 	Options     []string `json:"options,omitempty"`     // select 的严格选项
 	Suggestions []string `json:"suggestions,omitempty"` // 候选列表（可自定义，前端 datalist / 多选）
-	Source      string   `json:"source,omitempty"`      // skills | files | dirs：服务端扫描后填入 Suggestions
-	Pattern     string   `json:"pattern,omitempty"`     // Source=files 时的 glob（支持 ~ 展开）
-	Default     string   `json:"default,omitempty"`
-	Placeholder string   `json:"placeholder,omitempty"`
-	Help        string   `json:"help,omitempty"`
-	Group       string   `json:"group"` // 表单分组标题
+	// ThinkingOptionsByModel 是主机发现的“模型 ID → 可用思考档位”。只有 CLI
+	// 明确报告该能力时才填充，避免把某个 CLI 的全局 flag 枚举伪装成模型能力。
+	ThinkingOptionsByModel map[string][]string `json:"thinking_options_by_model,omitempty"`
+	Source                 string              `json:"source,omitempty"`  // skills | files | dirs：服务端扫描后填入 Suggestions
+	Pattern                string              `json:"pattern,omitempty"` // Source=files 时的 glob（支持 ~ 展开）
+	Default                string              `json:"default,omitempty"`
+	Placeholder            string              `json:"placeholder,omitempty"`
+	Help                   string              `json:"help,omitempty"`
+	Group                  string              `json:"group"` // 表单分组标题
 }
 
 // builtinKeys 从 RoleConfig 结构体的 JSON 字段反射派生（custom 除外）：

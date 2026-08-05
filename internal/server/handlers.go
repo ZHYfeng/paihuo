@@ -1083,9 +1083,15 @@ func (s *Server) listAgentSchemas(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			catalog := exec.ModelCatalog(items[i].a)
+			models := exec.ModelIDs(catalog)
+			thinkingByModel := exec.ModelThinkingOptions(catalog)
 			for j := range items[i].fields {
 				if items[i].fields[j].Key == "model" {
-					items[i].fields[j].Suggestions = items[i].a.Models()
+					items[i].fields[j].Suggestions = models
+				}
+				if items[i].fields[j].Key == "thinking" && len(thinkingByModel) > 0 {
+					items[i].fields[j].ThinkingOptionsByModel = thinkingByModel
 				}
 			}
 		}(i)
@@ -1098,6 +1104,13 @@ func (s *Server) listAgentSchemas(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// refreshAgentSchemas 强制从 Linux 主机重查各 CLI 的模型目录后返回 schema。
+// 角色定义和 role_config 仍在 SQLite；这里仅刷新可选模型与其发现到的能力。
+func (s *Server) refreshAgentSchemas(w http.ResponseWriter, r *http.Request) {
+	exec.RefreshModelCatalogs()
+	s.listAgentSchemas(w, r)
 }
 
 // ---------------------------------------------------------------------------

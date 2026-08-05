@@ -103,6 +103,23 @@ export function renderAgentList() {
   state.agentView === "grid" ? renderAgentGrid() : renderAgentTable();
 }
 
+// refreshAgentCatalog 只刷新 Linux 主机发现的 CLI 模型/能力目录；不会修改
+// SQLite 中已创建角色或其未保存的表单内容。已打开的配置表单保留输入，重新
+// 打开时会使用新目录，避免刷新按钮造成意外丢失。
+export async function refreshAgentCatalog() {
+  const btn = document.getElementById("refreshAgentCatalog");
+  const original = btn ? btn.innerHTML : "";
+  if (btn) { btn.disabled = true; btn.textContent = "检测中…"; }
+  try {
+    await loadSchema(true);
+    toast("已从 Linux 主机刷新模型与能力目录");
+  } catch (e) {
+    toast("刷新主机能力失败：" + e.message, true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = original; }
+  }
+}
+
 export async function toggleAgent(id) {
   const a = state.agents.find(x => x.id === id);
   try {
@@ -377,13 +394,50 @@ export function chipsControlHTML(f, val) {
   </div>`;
 }
 
-export function fieldControlHTML(f, rc) {
+// selectOptionsHTML 保留数据库里已有但当前主机不再声明的值，避免用户只是
+// 打开/保存一个角色就意外清空旧配置；这种值会明确标成“当前保存值”。
+export function selectOptionsHTML(options, val) {
+  const current = String(val ?? "");
+  const values = Array.isArray(options) ? options.map(String) : [];
+  const legacy = current !== "" && !values.includes(current);
+  if (legacy) values.push(current);
+  return values.map(o => {
+    const label = o === "" ? "默认" : (legacy && o === current ? `${o}（当前保存值）` : o);
+    return `<option value="${esc(o)}" ${current === o ? "selected" : ""}>${esc(label)}</option>`;
+  }).join("");
+}
+
+// syncModelThinking 在模型输入变化时，把思考档位收窄到当前 Linux 主机为该
+// 模型实际声明的集合。没有模型能力目录的 CLI 保留 schema 的静态选项。
+export function syncModelThinking(input) {
+  const scope = input.closest("#configForm, #agentModalSchema");
+  const select = scope && scope.querySelector('select[data-key="thinking"][data-thinking-options]');
+  if (!select) return;
+  let byModel = {}, fallback = [];
+  try { byModel = JSON.parse(select.dataset.thinkingOptions || "{}"); } catch (_) {}
+  try { fallback = JSON.parse(select.dataset.fallbackOptions || "[]"); } catch (_) {}
+  const model = String(input.value || "").trim();
+  const options = Array.isArray(byModel[model]) ? byModel[model] : fallback;
+  const current = select.value;
+  select.innerHTML = selectOptionsHTML(options, current);
+}
+
+export function fieldControlHTML(f, rc, selectedModel = "") {
   const val = fieldValue(f, rc);
-  const attrs = `data-key="${f.key}" data-type="${f.type}"`;
+  let attrs = `data-key="${f.key}" data-type="${f.type}"`;
+  const hasModelThinking = f.key === "thinking" && f.thinking_options_by_model;
+  if (hasModelThinking) {
+    attrs += ` data-thinking-options="${esc(JSON.stringify(f.thinking_options_by_model))}"`;
+    attrs += ` data-fallback-options="${esc(JSON.stringify(f.options || []))}"`;
+  }
   let ctl = "";
   if (f.type === "select") {
-    ctl = `<select ${attrs}>${f.options.map(o =>
-      `<option value="${esc(o)}" ${String(val) === String(o) ? "selected" : ""}>${o === "" ? "默认" : esc(o)}</option>`).join("")}</select>`;
+    let options = f.options || [];
+    if (hasModelThinking && Array.isArray(f.thinking_options_by_model[selectedModel])) {
+      options = f.thinking_options_by_model[selectedModel];
+      if ((f.options || []).includes("") && !options.includes("")) options = ["", ...options];
+    }
+    ctl = `<select ${attrs}>${selectOptionsHTML(options, val)}</select>`;
   } else if (f.type === "textarea") {
     ctl = `<textarea ${attrs} rows="5" placeholder="${esc(f.placeholder || "")}">${esc(val)}</textarea>`;
   } else if (f.type === "env") {
@@ -394,10 +448,12 @@ export function fieldControlHTML(f, rc) {
     ctl = chipsControlHTML(f, val);
   } else if (f.suggestions && f.suggestions.length) {
     const dl = "dl_" + (++dlSeq);
-    ctl = `<input ${attrs} list="${dl}" value="${esc(val)}" placeholder="${esc(f.placeholder || "")}">` +
+    const sync = f.key === "model" ? ` oninput="syncModelThinking(this)" onchange="syncModelThinking(this)"` : "";
+    ctl = `<input ${attrs} list="${dl}" value="${esc(val)}" placeholder="${esc(f.placeholder || "")}"${sync}>` +
       `<datalist id="${dl}">${f.suggestions.map(s => `<option value="${esc(s)}">`).join("")}</datalist>`;
   } else {
-    ctl = `<input ${attrs} value="${esc(val)}" placeholder="${esc(f.placeholder || "")}">`;
+    const sync = f.key === "model" ? ` oninput="syncModelThinking(this)" onchange="syncModelThinking(this)"` : "";
+    ctl = `<input ${attrs} value="${esc(val)}" placeholder="${esc(f.placeholder || "")}"${sync}>`;
   }
   return `<div class="schema-field">
     <label class="field">${esc(f.label)}${ctl}</label>
@@ -407,11 +463,14 @@ export function fieldControlHTML(f, rc) {
 
 export function schemaFormHTML(schema, rc) {
   const groups = {};
-  (schema.fields || []).forEach(f => { (groups[f.group] = groups[f.group] || []).push(f); });
+  const fields = schema.fields || [];
+  const model = fields.find(f => f.key === "model");
+  const selectedModel = model ? String(fieldValue(model, rc) || "") : "";
+  fields.forEach(f => { (groups[f.group] = groups[f.group] || []).push(f); });
   return Object.entries(groups).map(([g, fs]) => `
     <div class="schema-group">
       <div class="schema-group-title">${esc(g)}</div>
-      <div class="schema-group-body">${fs.map(f => fieldControlHTML(f, rc)).join("")}</div>
+      <div class="schema-group-body">${fs.map(f => fieldControlHTML(f, rc, selectedModel)).join("")}</div>
     </div>`).join("");
 }
 
