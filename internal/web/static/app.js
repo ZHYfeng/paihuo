@@ -2140,7 +2140,7 @@ async function installProvision(cli) {
   openModal("instModal");
   try {
     const r = await api("/api/provision/install", { method: "POST", body: JSON.stringify({ cli }) });
-    appendInstLine("$ " + r.cmd);
+    // 命令回显与执行输出由服务端经 SSE provision 事件推送，这里不再重复追加
     setTimeout(loadProvision, 3000);
   } catch (e) {
     box.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
