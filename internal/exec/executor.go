@@ -438,6 +438,7 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	options := tmuxStartOptions{
 		IsolateProcessGroup: batch,
 		DetachTerminal:      batch && agent.CLI == "codex",
+		IsolateCgroup:       batch && agent.CLI == "codex",
 	}
 	if err := e.runner.Start(tk.ID, dir, bin, args, env, options); err != nil {
 		fail(err.Error())

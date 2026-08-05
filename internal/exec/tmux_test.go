@@ -22,6 +22,18 @@ func requireTmuxIntegration(t *testing.T) string {
 	return bin
 }
 
+func requireUserSystemdRun(t *testing.T) string {
+	t.Helper()
+	bin, err := osexec.LookPath("systemd-run")
+	if err != nil {
+		t.Skip("systemd-run 未安装")
+	}
+	if err := osexec.Command(bin, "--user", "--quiet", "--wait", "--collect", "/bin/true").Run(); err != nil {
+		t.Skipf("当前环境无法创建 user systemd service: %v", err)
+	}
+	return bin
+}
+
 func TestTmuxRunnerPersistsOutputAndExit(t *testing.T) {
 	bin := requireTmuxIntegration(t)
 	sessionsRoot := t.TempDir()
@@ -198,6 +210,7 @@ func TestTmuxRunnerDetachesCodexBatchTerminal(t *testing.T) {
 	if _, err := osexec.LookPath("tail"); err != nil {
 		t.Skip("tail 未安装")
 	}
+	requireUserSystemdRun(t)
 	r := newTmuxRunnerAt(t.TempDir(), fmt.Sprintf("paihuo-detach-test-%d", os.Getpid()))
 	r.binary = bin
 	_ = r.command("kill-server")
@@ -206,8 +219,8 @@ func TestTmuxRunnerDetachesCodexBatchTerminal(t *testing.T) {
 	// 这个断言正好覆盖 Codex 的故障边界：agent 的 stdin/stdout/stderr 都不能
 	// 指向 paihuo task pane 的 pty，但输出仍必须实时回到 terminal.log。
 	if err := r.Start(42, t.TempDir(), "/bin/sh", []string{
-		"-c", `test ! -t 0 && test ! -t 1 && test ! -t 2 && printf 'detached agent output\n'`,
-	}, os.Environ(), tmuxStartOptions{IsolateProcessGroup: true, DetachTerminal: true}); err != nil {
+		"-c", `test ! -t 0 && test ! -t 1 && test ! -t 2 || exit 1; printf 'detached agent output\n'; cat /proc/self/cgroup`,
+	}, os.Environ(), tmuxStartOptions{IsolateProcessGroup: true, DetachTerminal: true, IsolateCgroup: true}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -235,6 +248,23 @@ func TestTmuxRunnerDetachesCodexBatchTerminal(t *testing.T) {
 		if err != nil || !strings.Contains(string(raw), "detached agent output") {
 			t.Fatalf("agent 原始输出不完整: %q err=%v", raw, err)
 		}
+		outer, err := os.ReadFile(r.runnerCgroupPath(42))
+		if err != nil {
+			t.Fatalf("读取 pane cgroup: %v", err)
+		}
+		var agentCgroup string
+		for _, line := range strings.Split(string(raw), "\n") {
+			if strings.HasPrefix(line, "0::") {
+				agentCgroup = strings.TrimSpace(line)
+				break
+			}
+		}
+		if agentCgroup == "" {
+			t.Fatalf("未在 agent 输出中找到 cgroup: %q", raw)
+		}
+		if agentCgroup == strings.TrimSpace(string(outer)) {
+			t.Fatalf("agent 与 pane 不应共享 cgroup: %q", agentCgroup)
+		}
 		return
 	}
 	t.Fatal("等待脱离终端的 batch 任务结束超时")
@@ -249,6 +279,7 @@ func TestTmuxRunnerArchivesFailureArtifacts(t *testing.T) {
 	for name, want := range map[string]string{
 		"terminal.log":     "partial output\n",
 		"agent-output.log": "raw agent output\n",
+		"runner-cgroup":    "0::/test.scope\n",
 		"run.sh":           "#!/bin/sh\n",
 		"start":            "start\n",
 	} {
@@ -263,6 +294,7 @@ func TestTmuxRunnerArchivesFailureArtifacts(t *testing.T) {
 	for name, want := range map[string]string{
 		"terminal.log":     "partial output\n",
 		"agent-output.log": "raw agent output\n",
+		"runner-cgroup":    "0::/test.scope\n",
 		"run.sh":           "#!/bin/sh\n",
 		"start":            "start\n",
 		"reason.txt":       "window vanished\n",

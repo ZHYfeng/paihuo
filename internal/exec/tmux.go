@@ -43,6 +43,7 @@ const taskNestedTmuxSkipEnv = "PAIHUO_SKIP_NESTED_TMUX_TESTS"
 type tmuxStartOptions struct {
 	IsolateProcessGroup bool
 	DetachTerminal      bool
+	IsolateCgroup       bool
 }
 
 type tmuxObservation struct {
@@ -97,6 +98,10 @@ func (r *tmuxRunner) scriptPath(taskID int64) string {
 
 func (r *tmuxRunner) agentOutputPath(taskID int64) string {
 	return filepath.Join(r.taskDir(taskID), "agent-output.log")
+}
+
+func (r *tmuxRunner) runnerCgroupPath(taskID int64) string {
+	return filepath.Join(r.taskDir(taskID), "runner-cgroup")
 }
 
 func (r *tmuxRunner) taskBinDir(taskID int64) string {
@@ -171,7 +176,7 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, op
 	if err := os.Chmod(taskDir, 0o700); err != nil {
 		return fmt.Errorf("设置任务 tmux 目录权限失败: %w", err)
 	}
-	for _, path := range []string{r.exitPath(taskID), r.gatePath(taskID)} {
+	for _, path := range []string{r.exitPath(taskID), r.gatePath(taskID), r.agentOutputPath(taskID), r.runnerCgroupPath(taskID)} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("重置 tmux 任务状态失败: %w", err)
 		}
@@ -272,6 +277,9 @@ func isTmuxInternalEnv(key string) bool {
 }
 
 func (r *tmuxRunner) writeScript(taskID int64, bin string, args []string, options tmuxStartOptions) error {
+	if options.IsolateCgroup && !options.DetachTerminal {
+		return errors.New("cgroup 隔离需要同时脱离终端，以便可靠保存 agent 输出")
+	}
 	command := append([]string{bin}, args...)
 	quoted := make([]string, 0, len(command))
 	for _, arg := range command {
@@ -287,6 +295,21 @@ func (r *tmuxRunner) writeScript(taskID int64, bin string, args []string, option
 		// 成功，-- 则避免 agent 可执行文件被解释为 setsid 的选项。
 		invocation = shQuote(setsid) + " --wait -- " + invocation
 	}
+	if options.IsolateCgroup {
+		systemdRun, err := osexec.LookPath("systemd-run")
+		if err != nil {
+			return fmt.Errorf("未找到 systemd-run；Codex batch 任务需要独立 cgroup: %w", err)
+		}
+		output := r.agentOutputPath(taskID)
+		// systemd-run service 是 tmux pane scope 的同级 cgroup。即使 Codex 的
+		// unified exec 终止自己的 cgroup，run.sh 和 pipe-pane 也不会被波及。
+		// 标准流由 user manager 直接追加到文件；外层 tail 再将其转发给终端。
+		invocation = shQuote(systemdRun) + " --user --quiet --wait --collect" +
+			" --property=" + shQuote("StandardInput=null") +
+			" --property=" + shQuote("StandardOutput=append:"+output) +
+			" --property=" + shQuote("StandardError=append:"+output) +
+			" -- " + invocation
+	}
 	execution := invocation + "\n" +
 		"status=$?\n"
 	if options.DetachTerminal {
@@ -298,7 +321,8 @@ func (r *tmuxRunner) writeScript(taskID int64, bin string, args []string, option
 		// 只隔离 session，若仍继承 tmux pty，stdio 仍可能指向 pane 的前台组。
 		// 把三路标准流改为普通文件，外层 tail 负责转发到 pane，既保留实时日志
 		// 又让 Codex 的工具清理永远看不到 paihuo 的终端。
-		execution = "agent_output=" + shQuote(r.agentOutputPath(taskID)) + "\n" +
+		execution = "cat /proc/self/cgroup > " + shQuote(r.runnerCgroupPath(taskID)) + "\n" +
+			"agent_output=" + shQuote(r.agentOutputPath(taskID)) + "\n" +
 			": > \"$agent_output\"\n" +
 			invocation + " </dev/null >\"$agent_output\" 2>&1 &\n" +
 			"agent_pid=$!\n" +
@@ -474,7 +498,7 @@ func (r *tmuxRunner) ArchiveFailureArtifacts(taskID int64, reason string) (strin
 	if err := os.Mkdir(archiveDir, 0o700); err != nil {
 		return "", fmt.Errorf("创建 tmux 故障归档失败: %w", err)
 	}
-	for _, name := range []string{"terminal.log", "agent-output.log", "run.sh", "exit-code", "start"} {
+	for _, name := range []string{"terminal.log", "agent-output.log", "runner-cgroup", "run.sh", "exit-code", "start"} {
 		from := filepath.Join(taskDir, name)
 		to := filepath.Join(archiveDir, name)
 		if err := os.Rename(from, to); errors.Is(err, os.ErrNotExist) {
