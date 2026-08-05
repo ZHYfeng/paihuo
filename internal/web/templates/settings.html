@@ -29,8 +29,8 @@
             <div class="s-sub">按角色 / 时间批量删除历史任务（不可恢复）</div>
           </div>
           <div class="s-ctl">
-            <select id="cleanupAgent" style="width:130px"><option value="">全部角色</option></select>
-            <input id="cleanupDays" type="number" min="0" placeholder="早于N天">
+            <select id="cleanupAgent" class="sel-md"><option value="">全部角色</option></select>
+            <input id="cleanupDays" type="number" min="0" placeholder="早于N天" class="sel-xs">
             <button class="btn sm danger" onclick="runCleanup()">删除</button>
           </div>
         </div>
@@ -52,7 +52,7 @@
             <div class="s-title">服务信息</div>
             <div class="s-sub">单二进制部署于本机，任务在本地执行；数据库文件即完整备份</div>
           </div>
-          <div class="s-ctl"><span style="font-size:12px;color:var(--fg-faint)" id="srvInfo"></span></div>
+          <div class="s-ctl"><span class="count-info" id="srvInfo"></span></div>
         </div>
       </div>
     </div>

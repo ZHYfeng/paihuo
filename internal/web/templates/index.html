@@ -2,7 +2,11 @@
 <header class="page-header">
   <span class="crumb">派活 / <b>看板</b></span>
   <span class="spacer"></span>
-  <button class="btn brand sm" onclick="openNewTask()">＋ 新建任务</button>
+  <span class="kbd-hint"><kbd>N</kbd></span>
+  <button class="btn brand sm" onclick="openNewTask()">
+    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    新建任务
+  </button>
 </header>
 
 <div class="page-content">
@@ -16,9 +20,9 @@
         <button id="segBoard" class="active" onclick="setView('board')">看板</button>
         <button id="segList" onclick="setView('list')">列表</button>
       </div>
-      <select id="fProject" style="width:150px" onchange="applyFilters()"><option value="">全部项目</option></select>
-      <select id="fAgent" style="width:130px" onchange="applyFilters()"><option value="">全部角色</option></select>
-      <select id="fStatus" style="width:110px" onchange="applyFilters()">
+      <select id="fProject" class="sel-lg" onchange="applyFilters()"><option value="">全部项目</option></select>
+      <select id="fAgent" class="sel-md" onchange="applyFilters()"><option value="">全部角色</option></select>
+      <select id="fStatus" class="sel-sm" onchange="applyFilters()">
         <option value="">全部状态</option>
         <option value="queued">待执行</option>
         <option value="running">执行中</option>
@@ -28,14 +32,13 @@
         <option value="cancelled">已取消</option>
       </select>
       <span class="spacer"></span>
-      <span id="viewCount" style="font-size:12px;color:var(--fg-faint)"></span>
+      <span id="viewCount" class="count-info"></span>
     </div>
     <div id="boardView" class="board-view"></div>
     <div id="listView" class="list-wrap hidden">
       <table class="list-grid">
         <thead><tr>
-          <th class="chk"><input type="checkbox" id="hCheckAll" onclick="toggleAll()"></th>
-          <th>ID</th><th>标题</th><th>角色</th><th>状态</th><th>轮次</th><th>创建</th><th>结束</th><th style="width:120px">操作</th>
+          <th>ID</th><th>标题</th><th>角色</th><th>项目</th><th>状态</th><th>轮次</th><th>创建</th><th>结束</th><th style="width:150px">操作</th>
         </tr></thead>
         <tbody id="listBody"></tbody>
       </table>
@@ -46,7 +49,10 @@
   <!-- 任务详情（两栏） -->
   <div id="detailShell" class="hidden">
     <header class="page-header">
-      <button class="btn ghost sm" onclick="closeDetail()">← 返回</button>
+      <button class="btn ghost sm" onclick="closeDetail()">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        返回
+      </button>
       <span class="crumb" id="dCrumb"></span>
       <span class="spacer"></span>
       <span id="dBadge"></span>

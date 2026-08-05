@@ -47,6 +47,36 @@ function esc(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+/* ---- 图标库（Phosphor 风格线性 SVG，stroke 由 CSS 统一） ---- */
+const ICONS = {
+  plus: "M12 5v14M5 12h14",
+  back: "M19 12H5M12 19l-7-7 7-7",
+  retry: "M16 8H5M9 12l-4-4 4-4M5 8v5a9 9 0 0 0 14 5",
+  trash: "M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6",
+  copy: "M9 9h12v12H9zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1",
+  expand: "M15 3h6v6M21 3l-7 7M9 21H3v-6M3 21l7-7",
+  check: "M20 6 9 17l-5-5",
+  x: "M18 6 6 18M6 6l12 12",
+  search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM21 21l-4.3-4.3",
+  folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z",
+  robot: "M4 10a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8Zm5-2V6a3 3 0 0 1 6 0v2M9 15h.01M15 15h.01",
+  clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7v5l3 3",
+  bookmark: "M6 3h12v18l-6-4-6 4V3Z",
+  gear: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9l2.1 2.1m10 10 2.1 2.1m0-14.2-2.1 2.1m-10 10-2.1 2.1",
+  logout: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9",
+  board: "M3 3h7v8H3zM14 3h7v5h-7zM14 11h7v10h-7zM3 14h7v7H3z",
+  calendar: "M8 2v4m8-4v4M3 9h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z",
+  zap: "M13 2 3 14h7l-1 8 10-12h-7l1-8Z",
+  sparkle: "M12 3l1.8 5.4L19 10l-5.2 1.6L12 17l-1.8-5.4L5 10l5.2-1.6L12 3Z",
+  history: "M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 3",
+  terminal: "M4 17l6-5-6-5m8 10h8",
+  chevL: "M15 18l-6-6 6-6",
+  alert: "M12 3 2.5 20h19L12 3Zm0 7v5m0 3.5v.5",
+};
+function icon(name, cls) {
+  return `<svg class="ic ${cls || ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name] || ""}"/></svg>`;
+}
+
 function fmtPct(x) { return (Math.round(x * 10) / 10) + "%"; }
 function fmtNum(x) { return Math.round(x * 10) / 10; }
 
@@ -60,7 +90,7 @@ function fmtDur(sec) {
 function toast(msg, isErr) {
   const t = document.getElementById("toast");
   if (!t) return;
-  t.textContent = msg;
+  t.innerHTML = `${icon(isErr ? "alert" : "check")}<span>${esc(msg)}</span>`;
   t.className = "toast" + (isErr ? " error" : "");
   clearTimeout(t._timer);
   t._timer = setTimeout(() => t.classList.add("hidden"), 3000);
@@ -235,7 +265,7 @@ function renderList() {
   const tasks = filteredTasks();
   el.innerHTML = tasks.map(t => `
     <tr onclick="openTask(${t.id})">
-      <td class="chk"><span class="num">#${t.id}</span></td>
+      <td class="num">#${t.id}</td>
       <td class="t-title">${esc(t.title)}</td>
       <td>${esc(t.agent_name || "-")}</td>
       <td>${esc(t.project_name || "-")}</td>
@@ -244,11 +274,11 @@ function renderList() {
       <td class="num">${(t.created_at || "").slice(5, 16).replace("T", " ")}</td>
       <td class="num">${(t.finished_at || "").slice(5, 16).replace("T", " ")}</td>
       <td>
-        <span class="ops" style="display:flex;gap:4px">
-          <button class="btn xs" onclick="event.stopPropagation();openTerminal(${t.id})">对话</button>
+        <span class="ops">
+          <button class="btn xs" onclick="event.stopPropagation();openTerminal(${t.id})">${icon("terminal")}对话</button>
           ${["succeeded", "failed", "cancelled"].includes(t.status)
-            ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">重试</button>` : ""}
-          <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">删除</button>
+            ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>` : ""}
+          <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>
         </span>
       </td>
     </tr>`).join("");
@@ -326,8 +356,8 @@ function renderDetail(t) {
       <div class="term-head">
         <span class="term-dots"><i></i><i></i><i></i></span>
         <span class="t-title">${esc(t.agent_name || "未指派")} · 对话 · ${esc(t.project_dir || "")}</span>
-        <button class="btn ghost xs" onclick="copyLogs()">复制</button>
-        <button class="btn ghost xs" onclick="openTerminal(${t.id})">全屏</button>
+        <button class="btn ghost xs" onclick="copyLogs()">${icon("copy")}复制</button>
+        <button class="btn ghost xs" onclick="openTerminal(${t.id})">${icon("expand")}全屏</button>
       </div>
       <div class="term-body" id="logBox">${logsHTML()}</div>
     </div>`;
@@ -347,19 +377,19 @@ function renderSide(t) {
     `<option value="${p.id}" ${t.project_id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
   let actions = "";
   if (["queued", "claimed", "running"].includes(t.status)) {
-    actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">取消任务</button>`;
+    actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}取消任务</button>`;
   }
   if (t.status === "awaiting_review") {
-    actions += `<button class="btn sm brand" onclick="setTaskStatus(${t.id},'succeeded')">审批通过</button>`;
-    actions += `<button class="btn sm" onclick="rejectTask(${t.id})">驳回重做</button>`;
-    actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">取消</button>`;
+    actions += `<button class="btn sm brand" onclick="setTaskStatus(${t.id},'succeeded')">${icon("check")}审批通过</button>`;
+    actions += `<button class="btn sm" onclick="rejectTask(${t.id})">${icon("retry")}驳回重做</button>`;
+    actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}取消</button>`;
   }
   if (["succeeded", "failed", "cancelled"].includes(t.status)) {
-    actions += `<button class="btn sm" onclick="setTaskStatus(${t.id},'queued')">重试</button>`;
+    actions += `<button class="btn sm" onclick="setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>`;
   }
-  actions += `<button class="btn sm" onclick="openSubTask(${t.id})">拆分子任务</button>`;
-  if (t.body) actions += `<button class="btn sm" onclick="saveAsTemplate(${t.id})">保存为模板</button>`;
-  actions += `<button class="btn sm danger" onclick="deleteTask(${t.id})">删除任务</button>`;
+  actions += `<button class="btn sm" onclick="openSubTask(${t.id})">${icon("plus")}拆分子任务</button>`;
+  if (t.body) actions += `<button class="btn sm" onclick="saveAsTemplate(${t.id})">${icon("bookmark")}保存为模板</button>`;
+  actions += `<button class="btn sm danger" onclick="deleteTask(${t.id})">${icon("trash")}删除任务</button>`;
 
   side.innerHTML = `
     <div class="sec-title">属性</div>
@@ -627,10 +657,10 @@ function renderHistory() {
       <td class="num">${(t.created_at || "").slice(5, 16).replace("T", " ")}</td>
       <td class="num">${(t.finished_at || "").slice(5, 16).replace("T", " ")}</td>
       <td>
-        <span style="display:flex;gap:4px">
+        <span class="ops">
           ${["succeeded", "failed", "cancelled"].includes(t.status)
-            ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">重试</button>` : ""}
-          <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">删除</button>
+            ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>` : ""}
+          <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>
         </span>
       </td>
     </tr>`).join("");
@@ -766,8 +796,8 @@ function renderProjectDetail(p, s, tasks) {
       <span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>
       <span class="ops">
         ${["succeeded", "failed", "cancelled"].includes(t.status)
-          ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">重试</button>` : ""}
-        <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">删除</button>
+          ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>` : ""}
+        <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>
       </span>
     </div>`).join("");
 
@@ -946,9 +976,9 @@ function renderAgentList() {
       <td style="font-size:12px;color:var(--fg-muted)">${esc(a.project_dir || "-")}</td>
       <td><span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "启用" : "停用"}</span></td>
       <td>
-        <span style="display:flex;gap:4px">
+        <span class="ops">
           <button class="btn xs" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "停用" : "启用"}</button>
-          <button class="btn xs danger" onclick="event.stopPropagation();deleteAgent(${a.id})">删除</button>
+          <button class="btn xs danger" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}删除</button>
         </span>
       </td>
     </tr>`;
@@ -1322,7 +1352,7 @@ function renderScheduleList() {
       <td class="num">${esc((sc.last_run_at || "-").slice(0, 16).replace("T", " "))}</td>
       <td><input type="checkbox" ${sc.enabled ? "checked" : ""} onclick="toggleSchedule(${sc.id})"></td>
       <td>
-        <span style="display:flex;gap:4px">
+        <span class="ops">
           <button class="btn xs" onclick="openScheduleModal(${sc.id})">编辑</button>
           <button class="btn xs danger" onclick="deleteSchedule(${sc.id})">删除</button>
         </span>
@@ -1406,7 +1436,7 @@ function renderTemplateList() {
       <td style="font-size:12px;color:var(--fg-muted);max-width:480px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc((t.body || "").slice(0, 90))}</td>
       <td>${esc(t.agent_name || "-")}</td>
       <td class="num">${(t.created_at || "").slice(0, 16).replace("T", " ")}</td>
-      <td><button class="btn xs danger" onclick="deleteTemplate(${t.id})">删除</button></td>
+      <td><button class="btn xs danger" onclick="deleteTemplate(${t.id})">${icon("trash")}删除</button></td>
     </tr>`).join("");
   const empty = document.getElementById("templateEmpty");
   if (empty) empty.classList.toggle("hidden", state.templates.length > 0);
@@ -1455,6 +1485,63 @@ async function runCleanup() {
 /* ============================================================
    hash 路由 + SSE
    ============================================================ */
+
+/* ---- 侧边栏折叠（localStorage 记忆） ---- */
+function toggleSidebar() {
+  const sb = document.getElementById("sidebar");
+  if (!sb) return;
+  const collapsed = sb.classList.toggle("collapsed");
+  const btn = document.getElementById("sbToggle");
+  if (btn) {
+    btn.title = collapsed ? "展开侧边栏 (Ctrl+B)" : "收起侧边栏 (Ctrl+B)";
+    btn.setAttribute("aria-label", btn.title);
+  }
+  try { localStorage.setItem("paihuo.sb", collapsed ? "1" : "0"); } catch (_) {}
+}
+function restoreSidebar() {
+  let collapsed = false;
+  try { collapsed = localStorage.getItem("paihuo.sb") === "1"; } catch (_) {}
+  const sb = document.getElementById("sidebar");
+  if (sb && collapsed) sb.classList.add("collapsed");
+  if (collapsed) {
+    const btn = document.getElementById("sbToggle");
+    if (btn) { btn.title = "展开侧边栏 (Ctrl+B)"; btn.setAttribute("aria-label", btn.title); }
+  }
+}
+
+/* ---- 全局快捷键 ----
+   N 新建任务（看板页）  / 聚焦搜索  Esc 关闭弹窗  Ctrl/Cmd+B 折叠侧边栏 */
+function initShortcuts() {
+  document.addEventListener("keydown", e => {
+    const t = e.target;
+    const inField = t && (t.matches("input, textarea, select") || t.isContentEditable);
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+      e.preventDefault(); toggleSidebar(); return;
+    }
+    if (e.key === "Escape") {
+      document.querySelectorAll(".modal:not(.hidden)").forEach(m => closeModal(m.id));
+      return;
+    }
+    if (inField) return;
+    if (e.key === "n" || e.key === "N") {
+      const taskModal = document.getElementById("taskModal");
+      const inDetail = !document.getElementById("detailShell")?.classList.contains("hidden");
+      if (!taskModal || inDetail) return; // 仅看板页、且未打开任务详情时生效
+      openNewTask();
+    }
+    if (e.key === "/") {
+      const s = document.querySelector("#pSearch, #aSearch");
+      if (s) { e.preventDefault(); s.focus(); }
+    }
+  });
+  // 点击弹窗背景关闭
+  document.addEventListener("click", e => {
+    if (e.target && e.target.classList && e.target.classList.contains("modal")) {
+      closeModal(e.target.id);
+    }
+  });
+}
+
 
 function route() {
   const h = location.hash;
@@ -1555,6 +1642,8 @@ window.addEventListener("pagehide", () => {
 });
 
 document.addEventListener("DOMContentLoaded", async () => {
+  restoreSidebar();
+  initShortcuts();
   await loadSchema();
   try { await loadAll(); } catch (e) { toast("加载失败: " + e.message, true); }
   const path = location.pathname;
