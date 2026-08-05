@@ -1,5 +1,5 @@
 // 模块 task（由 scripts/split-frontend.py 生成）
-import { BOARD_COLS, PERM_LABEL, STATUS_LABEL, ST_COLOR, api, closeModal, esc, icon, openModal, state, toast } from "./core.js";
+import { BOARD_COLS, STATUS_LABEL, ST_COLOR, api, closeModal, esc, icon, openModal, state, toast } from "./core.js";
 import { loadDashboard } from "./dashboard.js";
 import { loadHistory } from "./history.js";
 import { fillSelects, loadAll, refreshOverview } from "./main.js";
@@ -184,30 +184,62 @@ export function renderDetail(t) {
   const main = document.getElementById("dMain");
   if (!main) return;
   const isInteractive = t.run_mode === "interactive" && t.status === "running";
+  const isLive = ["claimed", "running"].includes(t.status);
+  const agent = state.agents.find(a => a.id === t.agent_id);
+  const agentName = t.agent_name || "未指派";
+  const agentCli = agent?.cli || "";
+  const runMode = t.run_mode === "interactive" ? "交互式" : "批处理";
+  const bodyLength = (t.body || "").length;
+  const createdAt = (t.created_at || "").slice(0, 16).replace("T", " ");
+  const { visible: visibleLogs, errors: logErrors } = logStats();
+  const logMeta = `${visibleLogs} 条${logErrors ? ` · ${logErrors} 个错误` : ""}`;
   const input = isInteractive ? `<div class="term-input detail-input">
       <input id="taskInput" autocomplete="off" aria-label="发送给 Pi 的消息" placeholder="发送消息给 Pi（Enter 发送）" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();sendTaskInput(${t.id},'taskInput')}">
       <button class="btn primary" onclick="sendTaskInput(${t.id},'taskInput')">发送</button>
     </div>` : "";
   main.innerHTML = `
-    <h2>${esc(t.title)}</h2>
-    <div class="detail-id">#${t.id} · 创建于 ${esc((t.created_at || "").slice(0, 16).replace("T", " "))}
-      ${t.resume_of ? ` · <span style="color:var(--brand)">续跑自 #${t.resume_of}</span>` : ""}</div>
-    ${t.body ? `<div class="detail-desc">${esc(t.body)}</div>` : ""}
-    ${t.error ? `<div class="detail-desc" style="border-color:rgba(255,99,105,.4);color:var(--danger)">错误：${esc(t.error)}</div>` : ""}
+    <section class="task-hero">
+      <div class="task-kicker"><span>任务 #${t.id}</span><span>创建于 ${esc(createdAt)}</span></div>
+      <h2>${esc(t.title)}</h2>
+      <div class="task-meta">
+        <span class="task-meta-item"><span class="avatar sm${agentCli ? ` av-${esc(agentCli)}` : ""}">${esc(agentName.slice(0, 1))}</span>${esc(agentName)}</span>
+        ${t.project_name ? `<span class="task-meta-item">${esc(t.project_name)}</span>` : ""}
+        <span class="task-meta-item">${runMode}</span>
+        ${t.resume_of ? `<span class="task-meta-item task-meta-accent">续跑自 #${t.resume_of}</span>` : ""}
+      </div>
+    </section>
+    ${t.body ? `<details class="task-section task-prompt"${bodyLength <= 160 ? " open" : ""}>
+      <summary><span>任务说明</span><span class="section-meta">${bodyLength} 字</span></summary>
+      <div class="task-prompt-body">${esc(t.body)}</div>
+    </details>` : ""}
+    ${t.error ? `<div class="task-alert"><span class="task-alert-title">任务失败</span><span>${esc(t.error)}</span></div>` : ""}
     <div id="childrenBox"></div>
-    ${t.status === "awaiting_review" ? `<div id="diffBox"><div class="empty">加载改动中...</div></div>` : ""}
-    <div class="sec-title">工作空间</div>
-    <div id="wsBox"><div class="empty">加载中...</div></div>
-    <div class="term">
+    ${t.status === "awaiting_review" ? `<details class="task-section task-diff" open>
+      <summary><span>代码改动</span><span class="section-meta">等待审批</span></summary>
+      <div id="diffBox"><div class="empty">加载改动中...</div></div>
+    </details>` : ""}
+    <details class="task-section task-log-section"${isLive ? " open" : ""}>
+      <summary><span>执行记录</span><span class="section-meta">${logMeta}</span></summary>
+      <div class="section-head">
+        <div class="section-sub">${esc(agentName)} · ${runMode}</div>
+        <div class="section-tools">
+          <button class="btn ghost xs" onclick="copyLogs()">${icon("copy")}复制</button>
+          <button class="btn ghost xs" onclick="openTerminal(${t.id})">${icon("expand")}全屏</button>
+        </div>
+      </div>
+      <div class="term">
       <div class="term-head">
         <span class="term-dots"><i></i><i></i><i></i></span>
-        <span class="t-title">${esc(t.agent_name || "未指派")} · 对话 · ${esc(t.project_dir || "")}</span>
-        <button class="btn ghost xs" onclick="copyLogs()">${icon("copy")}复制</button>
-        <button class="btn ghost xs" onclick="openTerminal(${t.id})">${icon("expand")}全屏</button>
+        <span class="t-title" title="${esc(t.project_dir || "")}">${esc(agentName)} · ${runMode}</span>
       </div>
       <div class="term-body" id="logBox">${logsHTML()}</div>
       ${input}
-    </div>`;
+      </div>
+    </details>
+    <details class="task-section task-workspace">
+      <summary><span>工作空间</span><span class="section-meta">Git / worktree 信息</span></summary>
+      <div id="wsBox"><div class="empty">加载中...</div></div>
+    </details>`;
   const box = document.getElementById("logBox");
   if (box) box.scrollTop = box.scrollHeight;
   if (t.status === "awaiting_review") loadDiff(t.id);
@@ -292,48 +324,65 @@ export function renderSide(t) {
     .join("");
   const pOpts = `<option value="">无项目</option>` + state.projects.map(p =>
     `<option value="${p.id}" ${t.project_id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
-  let actions = "";
+  let primaryActions = "";
+  let secondaryActions = "";
   if (["queued", "claimed", "running"].includes(t.status)) {
-    actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}取消任务</button>`;
+    primaryActions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}取消任务</button>`;
   }
   if (t.run_mode === "interactive" && t.status === "running") {
-    actions += `<button class="btn sm" onclick="endInteractiveTask(${t.id})">${icon("terminal")}结束会话</button>`;
+    primaryActions += `<button class="btn sm" onclick="endInteractiveTask(${t.id})">${icon("terminal")}结束会话</button>`;
   }
   if (t.status === "awaiting_review") {
-    actions += `<button class="btn sm brand" onclick="setTaskStatus(${t.id},'succeeded')">${icon("check")}通过并派发合并</button>`;
-    actions += `<button class="btn sm" onclick="rejectTask(${t.id})">${icon("retry")}驳回重做</button>`;
-    actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}取消</button>`;
+    primaryActions += `<button class="btn sm brand" onclick="setTaskStatus(${t.id},'succeeded')">${icon("check")}通过并派发合并</button>`;
+    primaryActions += `<button class="btn sm" onclick="rejectTask(${t.id})">${icon("retry")}驳回重做</button>`;
+    primaryActions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}取消</button>`;
   }
   if (canRetryTask(t)) {
-    actions += `<button class="btn sm" onclick="setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>`;
-    actions += `<button class="btn sm" onclick="resumeTask(${t.id})">${icon("terminal")}继续对话</button>`;
+    primaryActions += `<button class="btn sm" onclick="setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>`;
+    secondaryActions += `<button class="btn sm" onclick="resumeTask(${t.id})">${icon("terminal")}继续对话</button>`;
   }
-  actions += `<button class="btn sm" onclick="openSubTask(${t.id})">${icon("plus")}拆分子任务</button>`;
-  if (t.body) actions += `<button class="btn sm" onclick="saveAsTemplate(${t.id})">${icon("bookmark")}保存为模板</button>`;
-  actions += `<button class="btn sm danger" onclick="deleteTask(${t.id})">${icon("trash")}删除任务</button>`;
+  secondaryActions += `<button class="btn sm" onclick="openSubTask(${t.id})">${icon("plus")}拆分子任务</button>`;
+  if (t.body) secondaryActions += `<button class="btn sm" onclick="saveAsTemplate(${t.id})">${icon("bookmark")}保存为模板</button>`;
+  secondaryActions += `<button class="btn sm danger" onclick="deleteTask(${t.id})">${icon("trash")}删除任务</button>`;
+
+  const runInfo = `
+    <div class="prop-row"><span class="k">执行器</span><span class="v">tmux · ${["claimed", "running"].includes(t.status) ? `paihuo:task-${t.id}` : "日志已归档"}</span></div>
+    <div class="prop-row"><span class="k">目录</span><span class="v prop-mono" title="${esc(t.project_dir || "")}">${esc(t.project_dir || "-")}</span></div>
+    <div class="prop-row"><span class="k">审批轮次</span><span class="v">${t.review_rounds || "-"}</span></div>
+    <div class="prop-row"><span class="k">开始</span><span class="v">${esc((t.started_at || "-").slice(0, 16).replace("T", " "))}</span></div>
+    <div class="prop-row"><span class="k">结束</span><span class="v">${esc((t.finished_at || "-").slice(0, 16).replace("T", " "))}</span></div>`;
 
   side.innerHTML = `
-    <div class="sec-title">属性</div>
-    <div class="prop-row"><span class="k">状态</span>
-      <span class="v"><select onchange="patchTask(${t.id},{status:this.value})">${statusOpts}</select></span></div>
-    <div class="prop-row"><span class="k">项目</span>
-      <span class="v"><select onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
-    <div class="prop-row"><span class="k">角色</span>
-      <span class="v"><select aria-label="任务角色" onchange="patchTask(${t.id},{agent_id:Number(this.value)||null})">${agentOpts}</select></span></div>
-    <div class="prop-row"><span class="k">权限</span><span class="v">${PERM_LABEL[t.perm] || t.perm}</span></div>
-    <div class="prop-row"><span class="k">方式</span><span class="v">${t.run_mode === "interactive" ? "交互式 Pi" : "批处理 · -p"}</span></div>
-    <div class="prop-row"><span class="k">并发</span>
-      <span class="v"><select onchange="patchTask(${t.id},{concurrent:this.value==='1'})">
-        <option value="0" ${t.concurrent ? "" : "selected"}>串行（默认）</option>
-        <option value="1" ${t.concurrent ? "selected" : ""}>并发</option>
-      </select></span></div>
-    <div class="prop-row"><span class="k">执行器</span><span class="v">tmux · ${["claimed", "running"].includes(t.status) ? `paihuo:task-${t.id}` : "日志已归档"}</span></div>
-    <div class="prop-row"><span class="k">目录</span><span class="v" style="font-size:12px;word-break:break-all">${esc(t.project_dir || "-")}</span></div>
-    <div class="prop-row"><span class="k">轮次</span><span class="v">${t.review_rounds || "-"}</span></div>
-    <div class="prop-row"><span class="k">开始</span><span class="v">${esc((t.started_at || "-").slice(0, 16).replace("T", " "))}</span></div>
-    <div class="prop-row"><span class="k">结束</span><span class="v">${esc((t.finished_at || "-").slice(0, 16).replace("T", " "))}</span></div>
-    <div class="sec-title">操作</div>
-    <div class="detail-actions">${actions}</div>`;
+    <details class="side-collapse side-properties">
+      <summary><span>任务属性</span><span class="section-meta">可编辑</span></summary>
+      <div class="side-collapse-body">
+        <div class="prop-row"><span class="k">状态</span>
+          <span class="v"><select onchange="patchTask(${t.id},{status:this.value})">${statusOpts}</select></span></div>
+        <div class="prop-row"><span class="k">项目</span>
+          <span class="v"><select onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
+        <div class="prop-row"><span class="k">角色</span>
+          <span class="v"><select aria-label="任务角色" onchange="patchTask(${t.id},{agent_id:Number(this.value)||null})">${agentOpts}</select></span></div>
+        <div class="prop-row"><span class="k">权限</span><span class="v">${t.perm === "full" ? "自动合并" : "审批后合并"}</span></div>
+        <div class="prop-row"><span class="k">方式</span><span class="v">${t.run_mode === "interactive" ? "交互式" : "批处理"}</span></div>
+        <div class="prop-row"><span class="k">并发</span>
+          <span class="v"><select onchange="patchTask(${t.id},{concurrent:this.value==='1'})">
+            <option value="0" ${t.concurrent ? "" : "selected"}>串行（默认）</option>
+            <option value="1" ${t.concurrent ? "selected" : ""}>并发</option>
+          </select></span></div>
+      </div>
+    </details>
+    <details class="side-collapse">
+      <summary><span>运行信息</span><span class="section-meta">技术细节</span></summary>
+      <div class="side-collapse-body">${runInfo}</div>
+    </details>
+    <section class="side-actions">
+      <div class="side-heading">下一步</div>
+      <div class="detail-actions">${primaryActions || `<span class="side-muted">暂无需要处理的操作</span>`}</div>
+      ${secondaryActions ? `<details class="side-more-actions">
+        <summary>更多操作</summary>
+        <div class="detail-actions">${secondaryActions}</div>
+      </details>` : ""}
+    </section>`;
 }
 
 export async function patchTask(id, set) {
@@ -420,12 +469,15 @@ export async function loadChildren(id) {
     const box = document.getElementById("childrenBox");
     if (!box || !kids.length) return;
     const done = kids.filter(k => ["succeeded", "failed", "cancelled"].includes(k.status)).length;
-    box.innerHTML = `<div class="sec-title">子任务 ${done}/${kids.length}</div>` +
-      kids.map(k => `<div class="card" style="padding:8px 10px;margin-bottom:6px" onclick="openTask(${k.id})">
+    const hasActive = kids.some(k => ["queued", "claimed", "running", "awaiting_review"].includes(k.status));
+    box.innerHTML = `<details class="task-section task-subtasks"${hasActive ? " open" : ""}>
+      <summary><span>子任务</span><span class="section-meta">${done}/${kids.length} 已完成</span></summary>
+      <div class="task-subtask-list">` +
+      kids.map(k => `<div class="task-subtask" onclick="openTask(${k.id})">
         <div class="c-title">#${k.id} ${esc(k.title)}</div>
         <div class="c-meta"><span class="badge ${k.status}" style="--st-color:${ST_COLOR[k.status]}"><span class="st-dot"></span>${STATUS_LABEL[k.status]}</span>
         <span style="font-size:11px;color:var(--fg-faint)">${esc(k.agent_name || "")}</span></div>
-      </div>`).join("");
+      </div>`).join("") + `</div></details>`;
   } catch (_) {}
 }
 
@@ -482,12 +534,50 @@ export function tsOf(l) {
   return m ? m[1] : "";
 }
 
+// Codex 等 CLI 会把颜色、光标移动和进度条控制符写进 stdout。详情页是
+// 阅读视图，不需要这些终端控制码；全屏 xterm 仍保留原始输出以便排查。
+const ANSI_OSC_RE = /\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g;
+const ANSI_CSI_RE = /\u001b\[[0-?]*[ -\/]*[@-~]/g;
+const ANSI_CHAR_RE = /\u001b[()][0-2A-Z]/g;
+const ANSI_RE = /\u001b[@-_]/g;
+
+export function cleanLogContent(content) {
+  let text = String(content ?? "")
+    .replace(ANSI_OSC_RE, "")
+    .replace(ANSI_CSI_RE, "")
+    .replace(ANSI_CHAR_RE, "")
+    .replace(ANSI_RE, "")
+    .replace(/\u0000/g, "");
+  // \r 是终端进度条的“回到行首”。持久化时它和普通文本在同一行，
+  // 阅读视图取最后一次绘制结果，避免出现一整串重叠的状态信息。
+  text = text.split("\n").map(line => {
+    const parts = line.split("\r");
+    for (let i = parts.length - 1; i >= 0; i--) {
+      if (parts[i] !== "") return parts[i];
+    }
+    return "";
+  }).join("\n");
+  return text;
+}
+
+export function logStats() {
+  let visible = 0;
+  let errors = 0;
+  for (const l of state.logs) {
+    if (cleanLogContent(l.content).trim()) visible++;
+    if (l.stream === "err") errors++;
+  }
+  return { visible, errors };
+}
+
 export function logLineHTML(l) {
-  return `<div class="line"><span class="ts">${tsOf(l)}</span><span class="c ${l.stream}">${esc(l.content)}</span></div>`;
+  const content = cleanLogContent(l.content);
+  if (!content.trim() && l.stream !== "sys") return "";
+  return `<div class="line"><span class="ts">${tsOf(l)}</span><span class="c ${l.stream}">${esc(content)}</span></div>`;
 }
 
 export function logsHTML() {
-  return state.logs.map(logLineHTML).join("");
+  return state.logs.map(logLineHTML).filter(Boolean).join("");
 }
 
 export function appendLog(l) {
@@ -506,7 +596,7 @@ export function appendLog(l) {
 
 export async function copyLogs() {
   try {
-    await navigator.clipboard.writeText(state.logs.map(l => l.content).join("\n"));
+    await navigator.clipboard.writeText(state.logs.map(l => cleanLogContent(l.content)).filter(Boolean).join("\n"));
     toast("已复制对话内容");
   } catch (_) { toast("复制失败", true); }
 }

@@ -732,30 +732,62 @@
     const main = document.getElementById("dMain");
     if (!main) return;
     const isInteractive = t.run_mode === "interactive" && t.status === "running";
+    const isLive = ["claimed", "running"].includes(t.status);
+    const agent = state.agents.find((a) => a.id === t.agent_id);
+    const agentName = t.agent_name || "\u672A\u6307\u6D3E";
+    const agentCli = agent?.cli || "";
+    const runMode = t.run_mode === "interactive" ? "\u4EA4\u4E92\u5F0F" : "\u6279\u5904\u7406";
+    const bodyLength = (t.body || "").length;
+    const createdAt = (t.created_at || "").slice(0, 16).replace("T", " ");
+    const { visible: visibleLogs, errors: logErrors } = logStats();
+    const logMeta = `${visibleLogs} \u6761${logErrors ? ` \xB7 ${logErrors} \u4E2A\u9519\u8BEF` : ""}`;
     const input = isInteractive ? `<div class="term-input detail-input">
       <input id="taskInput" autocomplete="off" aria-label="\u53D1\u9001\u7ED9 Pi \u7684\u6D88\u606F" placeholder="\u53D1\u9001\u6D88\u606F\u7ED9 Pi\uFF08Enter \u53D1\u9001\uFF09" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();sendTaskInput(${t.id},'taskInput')}">
       <button class="btn primary" onclick="sendTaskInput(${t.id},'taskInput')">\u53D1\u9001</button>
     </div>` : "";
     main.innerHTML = `
-    <h2>${esc(t.title)}</h2>
-    <div class="detail-id">#${t.id} \xB7 \u521B\u5EFA\u4E8E ${esc((t.created_at || "").slice(0, 16).replace("T", " "))}
-      ${t.resume_of ? ` \xB7 <span style="color:var(--brand)">\u7EED\u8DD1\u81EA #${t.resume_of}</span>` : ""}</div>
-    ${t.body ? `<div class="detail-desc">${esc(t.body)}</div>` : ""}
-    ${t.error ? `<div class="detail-desc" style="border-color:rgba(255,99,105,.4);color:var(--danger)">\u9519\u8BEF\uFF1A${esc(t.error)}</div>` : ""}
+    <section class="task-hero">
+      <div class="task-kicker"><span>\u4EFB\u52A1 #${t.id}</span><span>\u521B\u5EFA\u4E8E ${esc(createdAt)}</span></div>
+      <h2>${esc(t.title)}</h2>
+      <div class="task-meta">
+        <span class="task-meta-item"><span class="avatar sm${agentCli ? ` av-${esc(agentCli)}` : ""}">${esc(agentName.slice(0, 1))}</span>${esc(agentName)}</span>
+        ${t.project_name ? `<span class="task-meta-item">${esc(t.project_name)}</span>` : ""}
+        <span class="task-meta-item">${runMode}</span>
+        ${t.resume_of ? `<span class="task-meta-item task-meta-accent">\u7EED\u8DD1\u81EA #${t.resume_of}</span>` : ""}
+      </div>
+    </section>
+    ${t.body ? `<details class="task-section task-prompt"${bodyLength <= 160 ? " open" : ""}>
+      <summary><span>\u4EFB\u52A1\u8BF4\u660E</span><span class="section-meta">${bodyLength} \u5B57</span></summary>
+      <div class="task-prompt-body">${esc(t.body)}</div>
+    </details>` : ""}
+    ${t.error ? `<div class="task-alert"><span class="task-alert-title">\u4EFB\u52A1\u5931\u8D25</span><span>${esc(t.error)}</span></div>` : ""}
     <div id="childrenBox"></div>
-    ${t.status === "awaiting_review" ? `<div id="diffBox"><div class="empty">\u52A0\u8F7D\u6539\u52A8\u4E2D...</div></div>` : ""}
-    <div class="sec-title">\u5DE5\u4F5C\u7A7A\u95F4</div>
-    <div id="wsBox"><div class="empty">\u52A0\u8F7D\u4E2D...</div></div>
-    <div class="term">
+    ${t.status === "awaiting_review" ? `<details class="task-section task-diff" open>
+      <summary><span>\u4EE3\u7801\u6539\u52A8</span><span class="section-meta">\u7B49\u5F85\u5BA1\u6279</span></summary>
+      <div id="diffBox"><div class="empty">\u52A0\u8F7D\u6539\u52A8\u4E2D...</div></div>
+    </details>` : ""}
+    <details class="task-section task-log-section"${isLive ? " open" : ""}>
+      <summary><span>\u6267\u884C\u8BB0\u5F55</span><span class="section-meta">${logMeta}</span></summary>
+      <div class="section-head">
+        <div class="section-sub">${esc(agentName)} \xB7 ${runMode}</div>
+        <div class="section-tools">
+          <button class="btn ghost xs" onclick="copyLogs()">${icon("copy")}\u590D\u5236</button>
+          <button class="btn ghost xs" onclick="openTerminal(${t.id})">${icon("expand")}\u5168\u5C4F</button>
+        </div>
+      </div>
+      <div class="term">
       <div class="term-head">
         <span class="term-dots"><i></i><i></i><i></i></span>
-        <span class="t-title">${esc(t.agent_name || "\u672A\u6307\u6D3E")} \xB7 \u5BF9\u8BDD \xB7 ${esc(t.project_dir || "")}</span>
-        <button class="btn ghost xs" onclick="copyLogs()">${icon("copy")}\u590D\u5236</button>
-        <button class="btn ghost xs" onclick="openTerminal(${t.id})">${icon("expand")}\u5168\u5C4F</button>
+        <span class="t-title" title="${esc(t.project_dir || "")}">${esc(agentName)} \xB7 ${runMode}</span>
       </div>
       <div class="term-body" id="logBox">${logsHTML()}</div>
       ${input}
-    </div>`;
+      </div>
+    </details>
+    <details class="task-section task-workspace">
+      <summary><span>\u5DE5\u4F5C\u7A7A\u95F4</span><span class="section-meta">Git / worktree \u4FE1\u606F</span></summary>
+      <div id="wsBox"><div class="empty">\u52A0\u8F7D\u4E2D...</div></div>
+    </details>`;
     const box = document.getElementById("logBox");
     if (box) box.scrollTop = box.scrollHeight;
     if (t.status === "awaiting_review") loadDiff(t.id);
@@ -825,47 +857,63 @@
     const statusOpts = Object.keys(STATUS_LABEL).map((s) => `<option value="${s}" ${s === t.status ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("");
     const agentOpts = `<option value="">\u4E0D\u6307\u6D3E</option>` + state.agents.filter((a) => a.enabled || a.id === t.agent_id).map((a) => `<option value="${a.id}" ${a.id === t.agent_id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
     const pOpts = `<option value="">\u65E0\u9879\u76EE</option>` + state.projects.map((p) => `<option value="${p.id}" ${t.project_id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
-    let actions = "";
+    let primaryActions = "";
+    let secondaryActions = "";
     if (["queued", "claimed", "running"].includes(t.status)) {
-      actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}\u53D6\u6D88\u4EFB\u52A1</button>`;
+      primaryActions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}\u53D6\u6D88\u4EFB\u52A1</button>`;
     }
     if (t.run_mode === "interactive" && t.status === "running") {
-      actions += `<button class="btn sm" onclick="endInteractiveTask(${t.id})">${icon("terminal")}\u7ED3\u675F\u4F1A\u8BDD</button>`;
+      primaryActions += `<button class="btn sm" onclick="endInteractiveTask(${t.id})">${icon("terminal")}\u7ED3\u675F\u4F1A\u8BDD</button>`;
     }
     if (t.status === "awaiting_review") {
-      actions += `<button class="btn sm brand" onclick="setTaskStatus(${t.id},'succeeded')">${icon("check")}\u901A\u8FC7\u5E76\u6D3E\u53D1\u5408\u5E76</button>`;
-      actions += `<button class="btn sm" onclick="rejectTask(${t.id})">${icon("retry")}\u9A73\u56DE\u91CD\u505A</button>`;
-      actions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}\u53D6\u6D88</button>`;
+      primaryActions += `<button class="btn sm brand" onclick="setTaskStatus(${t.id},'succeeded')">${icon("check")}\u901A\u8FC7\u5E76\u6D3E\u53D1\u5408\u5E76</button>`;
+      primaryActions += `<button class="btn sm" onclick="rejectTask(${t.id})">${icon("retry")}\u9A73\u56DE\u91CD\u505A</button>`;
+      primaryActions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}\u53D6\u6D88</button>`;
     }
     if (canRetryTask(t)) {
-      actions += `<button class="btn sm" onclick="setTaskStatus(${t.id},'queued')">${icon("retry")}\u91CD\u8BD5</button>`;
-      actions += `<button class="btn sm" onclick="resumeTask(${t.id})">${icon("terminal")}\u7EE7\u7EED\u5BF9\u8BDD</button>`;
+      primaryActions += `<button class="btn sm" onclick="setTaskStatus(${t.id},'queued')">${icon("retry")}\u91CD\u8BD5</button>`;
+      secondaryActions += `<button class="btn sm" onclick="resumeTask(${t.id})">${icon("terminal")}\u7EE7\u7EED\u5BF9\u8BDD</button>`;
     }
-    actions += `<button class="btn sm" onclick="openSubTask(${t.id})">${icon("plus")}\u62C6\u5206\u5B50\u4EFB\u52A1</button>`;
-    if (t.body) actions += `<button class="btn sm" onclick="saveAsTemplate(${t.id})">${icon("bookmark")}\u4FDD\u5B58\u4E3A\u6A21\u677F</button>`;
-    actions += `<button class="btn sm danger" onclick="deleteTask(${t.id})">${icon("trash")}\u5220\u9664\u4EFB\u52A1</button>`;
-    side.innerHTML = `
-    <div class="sec-title">\u5C5E\u6027</div>
-    <div class="prop-row"><span class="k">\u72B6\u6001</span>
-      <span class="v"><select onchange="patchTask(${t.id},{status:this.value})">${statusOpts}</select></span></div>
-    <div class="prop-row"><span class="k">\u9879\u76EE</span>
-      <span class="v"><select onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
-    <div class="prop-row"><span class="k">\u89D2\u8272</span>
-      <span class="v"><select aria-label="\u4EFB\u52A1\u89D2\u8272" onchange="patchTask(${t.id},{agent_id:Number(this.value)||null})">${agentOpts}</select></span></div>
-    <div class="prop-row"><span class="k">\u6743\u9650</span><span class="v">${PERM_LABEL[t.perm] || t.perm}</span></div>
-    <div class="prop-row"><span class="k">\u65B9\u5F0F</span><span class="v">${t.run_mode === "interactive" ? "\u4EA4\u4E92\u5F0F Pi" : "\u6279\u5904\u7406 \xB7 -p"}</span></div>
-    <div class="prop-row"><span class="k">\u5E76\u53D1</span>
-      <span class="v"><select onchange="patchTask(${t.id},{concurrent:this.value==='1'})">
-        <option value="0" ${t.concurrent ? "" : "selected"}>\u4E32\u884C\uFF08\u9ED8\u8BA4\uFF09</option>
-        <option value="1" ${t.concurrent ? "selected" : ""}>\u5E76\u53D1</option>
-      </select></span></div>
+    secondaryActions += `<button class="btn sm" onclick="openSubTask(${t.id})">${icon("plus")}\u62C6\u5206\u5B50\u4EFB\u52A1</button>`;
+    if (t.body) secondaryActions += `<button class="btn sm" onclick="saveAsTemplate(${t.id})">${icon("bookmark")}\u4FDD\u5B58\u4E3A\u6A21\u677F</button>`;
+    secondaryActions += `<button class="btn sm danger" onclick="deleteTask(${t.id})">${icon("trash")}\u5220\u9664\u4EFB\u52A1</button>`;
+    const runInfo = `
     <div class="prop-row"><span class="k">\u6267\u884C\u5668</span><span class="v">tmux \xB7 ${["claimed", "running"].includes(t.status) ? `paihuo:task-${t.id}` : "\u65E5\u5FD7\u5DF2\u5F52\u6863"}</span></div>
-    <div class="prop-row"><span class="k">\u76EE\u5F55</span><span class="v" style="font-size:12px;word-break:break-all">${esc(t.project_dir || "-")}</span></div>
-    <div class="prop-row"><span class="k">\u8F6E\u6B21</span><span class="v">${t.review_rounds || "-"}</span></div>
+    <div class="prop-row"><span class="k">\u76EE\u5F55</span><span class="v prop-mono" title="${esc(t.project_dir || "")}">${esc(t.project_dir || "-")}</span></div>
+    <div class="prop-row"><span class="k">\u5BA1\u6279\u8F6E\u6B21</span><span class="v">${t.review_rounds || "-"}</span></div>
     <div class="prop-row"><span class="k">\u5F00\u59CB</span><span class="v">${esc((t.started_at || "-").slice(0, 16).replace("T", " "))}</span></div>
-    <div class="prop-row"><span class="k">\u7ED3\u675F</span><span class="v">${esc((t.finished_at || "-").slice(0, 16).replace("T", " "))}</span></div>
-    <div class="sec-title">\u64CD\u4F5C</div>
-    <div class="detail-actions">${actions}</div>`;
+    <div class="prop-row"><span class="k">\u7ED3\u675F</span><span class="v">${esc((t.finished_at || "-").slice(0, 16).replace("T", " "))}</span></div>`;
+    side.innerHTML = `
+    <details class="side-collapse side-properties">
+      <summary><span>\u4EFB\u52A1\u5C5E\u6027</span><span class="section-meta">\u53EF\u7F16\u8F91</span></summary>
+      <div class="side-collapse-body">
+        <div class="prop-row"><span class="k">\u72B6\u6001</span>
+          <span class="v"><select onchange="patchTask(${t.id},{status:this.value})">${statusOpts}</select></span></div>
+        <div class="prop-row"><span class="k">\u9879\u76EE</span>
+          <span class="v"><select onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
+        <div class="prop-row"><span class="k">\u89D2\u8272</span>
+          <span class="v"><select aria-label="\u4EFB\u52A1\u89D2\u8272" onchange="patchTask(${t.id},{agent_id:Number(this.value)||null})">${agentOpts}</select></span></div>
+        <div class="prop-row"><span class="k">\u6743\u9650</span><span class="v">${t.perm === "full" ? "\u81EA\u52A8\u5408\u5E76" : "\u5BA1\u6279\u540E\u5408\u5E76"}</span></div>
+        <div class="prop-row"><span class="k">\u65B9\u5F0F</span><span class="v">${t.run_mode === "interactive" ? "\u4EA4\u4E92\u5F0F" : "\u6279\u5904\u7406"}</span></div>
+        <div class="prop-row"><span class="k">\u5E76\u53D1</span>
+          <span class="v"><select onchange="patchTask(${t.id},{concurrent:this.value==='1'})">
+            <option value="0" ${t.concurrent ? "" : "selected"}>\u4E32\u884C\uFF08\u9ED8\u8BA4\uFF09</option>
+            <option value="1" ${t.concurrent ? "selected" : ""}>\u5E76\u53D1</option>
+          </select></span></div>
+      </div>
+    </details>
+    <details class="side-collapse">
+      <summary><span>\u8FD0\u884C\u4FE1\u606F</span><span class="section-meta">\u6280\u672F\u7EC6\u8282</span></summary>
+      <div class="side-collapse-body">${runInfo}</div>
+    </details>
+    <section class="side-actions">
+      <div class="side-heading">\u4E0B\u4E00\u6B65</div>
+      <div class="detail-actions">${primaryActions || `<span class="side-muted">\u6682\u65E0\u9700\u8981\u5904\u7406\u7684\u64CD\u4F5C</span>`}</div>
+      ${secondaryActions ? `<details class="side-more-actions">
+        <summary>\u66F4\u591A\u64CD\u4F5C</summary>
+        <div class="detail-actions">${secondaryActions}</div>
+      </details>` : ""}
+    </section>`;
   }
   async function patchTask(id, set) {
     try {
@@ -960,11 +1008,14 @@
       const box = document.getElementById("childrenBox");
       if (!box || !kids.length) return;
       const done = kids.filter((k) => ["succeeded", "failed", "cancelled"].includes(k.status)).length;
-      box.innerHTML = `<div class="sec-title">\u5B50\u4EFB\u52A1 ${done}/${kids.length}</div>` + kids.map((k) => `<div class="card" style="padding:8px 10px;margin-bottom:6px" onclick="openTask(${k.id})">
+      const hasActive = kids.some((k) => ["queued", "claimed", "running", "awaiting_review"].includes(k.status));
+      box.innerHTML = `<details class="task-section task-subtasks"${hasActive ? " open" : ""}>
+      <summary><span>\u5B50\u4EFB\u52A1</span><span class="section-meta">${done}/${kids.length} \u5DF2\u5B8C\u6210</span></summary>
+      <div class="task-subtask-list">` + kids.map((k) => `<div class="task-subtask" onclick="openTask(${k.id})">
         <div class="c-title">#${k.id} ${esc(k.title)}</div>
         <div class="c-meta"><span class="badge ${k.status}" style="--st-color:${ST_COLOR[k.status]}"><span class="st-dot"></span>${STATUS_LABEL[k.status]}</span>
         <span style="font-size:11px;color:var(--fg-faint)">${esc(k.agent_name || "")}</span></div>
-      </div>`).join("");
+      </div>`).join("") + `</div></details>`;
     } catch (_) {
     }
   }
@@ -1015,11 +1066,37 @@
     const m = /T(\d{2}:\d{2}:\d{2})/.exec(l.created_at || "");
     return m ? m[1] : "";
   }
+  var ANSI_OSC_RE = /\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g;
+  var ANSI_CSI_RE = /\u001b\[[0-?]*[ -\/]*[@-~]/g;
+  var ANSI_CHAR_RE = /\u001b[()][0-2A-Z]/g;
+  var ANSI_RE = /\u001b[@-_]/g;
+  function cleanLogContent(content) {
+    let text = String(content ?? "").replace(ANSI_OSC_RE, "").replace(ANSI_CSI_RE, "").replace(ANSI_CHAR_RE, "").replace(ANSI_RE, "").replace(/\u0000/g, "");
+    text = text.split("\n").map((line) => {
+      const parts = line.split("\r");
+      for (let i = parts.length - 1; i >= 0; i--) {
+        if (parts[i] !== "") return parts[i];
+      }
+      return "";
+    }).join("\n");
+    return text;
+  }
+  function logStats() {
+    let visible = 0;
+    let errors = 0;
+    for (const l of state.logs) {
+      if (cleanLogContent(l.content).trim()) visible++;
+      if (l.stream === "err") errors++;
+    }
+    return { visible, errors };
+  }
   function logLineHTML(l) {
-    return `<div class="line"><span class="ts">${tsOf(l)}</span><span class="c ${l.stream}">${esc(l.content)}</span></div>`;
+    const content = cleanLogContent(l.content);
+    if (!content.trim() && l.stream !== "sys") return "";
+    return `<div class="line"><span class="ts">${tsOf(l)}</span><span class="c ${l.stream}">${esc(content)}</span></div>`;
   }
   function logsHTML() {
-    return state.logs.map(logLineHTML).join("");
+    return state.logs.map(logLineHTML).filter(Boolean).join("");
   }
   function appendLog(l) {
     if (state.selected === l.task_id) {
@@ -1036,7 +1113,7 @@
   }
   async function copyLogs() {
     try {
-      await navigator.clipboard.writeText(state.logs.map((l) => l.content).join("\n"));
+      await navigator.clipboard.writeText(state.logs.map((l) => cleanLogContent(l.content)).filter(Boolean).join("\n"));
       toast("\u5DF2\u590D\u5236\u5BF9\u8BDD\u5185\u5BB9");
     } catch (_) {
       toast("\u590D\u5236\u5931\u8D25", true);
