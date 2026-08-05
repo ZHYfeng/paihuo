@@ -102,25 +102,72 @@ export function renderStatsStrip() {
    看板页：board / list 视图
    ============================================================ */
 
+function isMobileNav() {
+  return window.matchMedia?.("(max-width: 900px)").matches || false;
+}
+
+function syncSidebarControls() {
+  const sb = document.getElementById("sidebar");
+  if (!sb) return;
+  const mobile = isMobileNav();
+  const open = sb.classList.contains("mobile-open");
+  const btn = document.getElementById("sbToggle");
+  if (btn) {
+    const title = mobile ? "关闭导航" : (sb.classList.contains("collapsed") ? "展开侧边栏 (Ctrl+B)" : "收起侧边栏 (Ctrl+B)");
+    btn.title = title;
+    btn.setAttribute("aria-expanded", mobile ? String(open) : String(!sb.classList.contains("collapsed")));
+    btn.setAttribute("aria-label", btn.title);
+  }
+  const mobileBtn = document.getElementById("mobileNavToggle");
+  if (mobileBtn) {
+    mobileBtn.setAttribute("aria-expanded", mobile ? String(open) : "false");
+    mobileBtn.setAttribute("aria-label", mobile && open ? "关闭导航" : "打开导航");
+    mobileBtn.title = mobile && open ? "关闭导航" : "打开导航";
+  }
+  const backdrop = document.getElementById("sidebarBackdrop");
+  if (backdrop) backdrop.setAttribute("aria-hidden", mobile && open ? "false" : "true");
+  document.body.classList.toggle("nav-open", mobile && open);
+}
+
 export function toggleSidebar() {
   const sb = document.getElementById("sidebar");
   if (!sb) return;
-  const collapsed = sb.classList.toggle("collapsed");
-  const btn = document.getElementById("sbToggle");
-  if (btn) {
-    btn.title = collapsed ? "展开侧边栏 (Ctrl+B)" : "收起侧边栏 (Ctrl+B)";
-    btn.setAttribute("aria-label", btn.title);
+  if (isMobileNav()) {
+    sb.classList.toggle("mobile-open");
+    sb.classList.remove("collapsed");
+    syncSidebarControls();
+    return;
   }
+  const collapsed = sb.classList.toggle("collapsed");
+  sb.classList.remove("mobile-open");
+  syncSidebarControls();
   try { localStorage.setItem("paihuo.sb", collapsed ? "1" : "0"); } catch (_) {}
 }
 export function restoreSidebar() {
   let collapsed = false;
   try { collapsed = localStorage.getItem("paihuo.sb") === "1"; } catch (_) {}
   const sb = document.getElementById("sidebar");
-  if (sb && collapsed) sb.classList.add("collapsed");
-  if (collapsed) {
-    const btn = document.getElementById("sbToggle");
-    if (btn) { btn.title = "展开侧边栏 (Ctrl+B)"; btn.setAttribute("aria-label", btn.title); }
+  if (sb) {
+    sb.classList.remove("mobile-open");
+    if (isMobileNav()) sb.classList.remove("collapsed");
+    else if (collapsed) sb.classList.add("collapsed");
+    syncSidebarControls();
+  }
+  const media = window.matchMedia?.("(max-width: 900px)");
+  if (media && !media.__paihuoBound) {
+    media.__paihuoBound = true;
+    media.addEventListener?.("change", () => {
+      const current = document.getElementById("sidebar");
+      if (!current) return;
+      current.classList.remove("mobile-open");
+      if (media.matches) current.classList.remove("collapsed");
+      else {
+        let saved = false;
+        try { saved = localStorage.getItem("paihuo.sb") === "1"; } catch (_) {}
+        current.classList.toggle("collapsed", saved);
+      }
+      syncSidebarControls();
+    });
   }
 }
 
@@ -134,6 +181,12 @@ export function initShortcuts() {
       e.preventDefault(); toggleSidebar(); return;
     }
     if (e.key === "Escape") {
+      const sb = document.getElementById("sidebar");
+      if (isMobileNav() && sb?.classList.contains("mobile-open")) {
+        sb.classList.remove("mobile-open");
+        syncSidebarControls();
+        return;
+      }
       document.querySelectorAll(".modal:not(.hidden)").forEach(m => closeModal(m.id));
       return;
     }
@@ -161,6 +214,12 @@ export function initShortcuts() {
     if (row) { dirLoad(row.dataset.path); return; }
     const seg = e.target.closest?.(".crumb-seg");
     if (seg && !seg.classList.contains("cur")) dirLoad(seg.dataset.p);
+  });
+  document.querySelector(".sidebar-nav")?.addEventListener("click", e => {
+    if (isMobileNav() && e.target.closest("a")) {
+      const sb = document.getElementById("sidebar");
+      if (sb) { sb.classList.remove("mobile-open"); syncSidebarControls(); }
+    }
   });
 }
 
