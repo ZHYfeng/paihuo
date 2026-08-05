@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS projects (
   name        TEXT NOT NULL UNIQUE,
   description TEXT NOT NULL DEFAULT '',
   status      TEXT NOT NULL DEFAULT 'active', -- active | archived
+  project_dir TEXT NOT NULL DEFAULT '',
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL
 );
@@ -95,6 +96,15 @@ CREATE TABLE IF NOT EXISTS templates (
   agent_id   INTEGER REFERENCES agents(id),
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS skills (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  dir         TEXT NOT NULL UNIQUE,      -- 复制到 paihuo 工作目录后的技能目录（绝对路径）
+  source_path TEXT NOT NULL DEFAULT '',  -- 添加时的来源路径
+  created_at  TEXT NOT NULL
+);
 `
 
 // migrate 结构迁移：老库升级到新 schema（pre-1.0 阶段直接删旧结构）。
@@ -122,6 +132,7 @@ func migrate(db *sql.DB) error {
 	for _, stmt := range []string{
 		"ALTER TABLE tasks ADD COLUMN review_rounds INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE tasks ADD COLUMN project_id INTEGER REFERENCES projects(id)",
+		"ALTER TABLE projects ADD COLUMN project_dir TEXT NOT NULL DEFAULT ''",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)",
 	} {
@@ -766,11 +777,11 @@ func (s *Store) DeleteTemplate(id int64) error {
 // ---------------------------------------------------------------------------
 // 项目（projects）
 
-const projectCols = "id, name, description, status, created_at, updated_at"
+const projectCols = "id, name, description, status, project_dir, created_at, updated_at"
 
 func scanProject(rows scanner) (Project, error) {
 	var p Project
-	err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+	err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Status, &p.ProjectDir, &p.CreatedAt, &p.UpdatedAt)
 	return p, err
 }
 
@@ -810,8 +821,8 @@ func (s *Store) CreateProject(p Project) (int64, error) {
 	if p.Status == "" {
 		p.Status = "active"
 	}
-	res, err := s.db.Exec("INSERT INTO projects (name, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-		p.Name, p.Description, p.Status, p.CreatedAt, p.UpdatedAt)
+	res, err := s.db.Exec("INSERT INTO projects (name, description, status, project_dir, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+		p.Name, p.Description, p.Status, p.ProjectDir, p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -1099,4 +1110,58 @@ func (s *Store) OverviewStatsOf() (*OverviewStats, error) {
 		ov.Daily = []DailyCount{}
 	}
 	return ov, nil
+}
+
+// ---------------------------------------------------------------------------
+// 技能库（注册到 paihuo 工作目录，角色配置时按名称勾选）
+
+const skillCols = "id, name, description, dir, source_path, created_at"
+
+func scanSkill(rows scanner) (Skill, error) {
+	var s Skill
+	err := rows.Scan(&s.ID, &s.Name, &s.Description, &s.Dir, &s.SourcePath, &s.CreatedAt)
+	return s, err
+}
+
+func (s *Store) ListSkills() ([]Skill, error) {
+	rows, err := s.db.Query("SELECT " + skillCols + " FROM skills ORDER BY name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out = make([]Skill, 0)
+	for rows.Next() {
+		sk, err := scanSkill(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sk)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetSkill(id int64) (*Skill, error) {
+	row := s.db.QueryRow("SELECT "+skillCols+" FROM skills WHERE id=?", id)
+	sk, err := scanSkill(row)
+	if err != nil {
+		return nil, err
+	}
+	return &sk, nil
+}
+
+func (s *Store) CreateSkill(sk Skill) (int64, error) {
+	if sk.CreatedAt == "" {
+		sk.CreatedAt = Now()
+	}
+	res, err := s.db.Exec("INSERT INTO skills (name, description, dir, source_path, created_at) VALUES (?, ?, ?, ?, ?)",
+		sk.Name, sk.Description, sk.Dir, sk.SourcePath, sk.CreatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) DeleteSkill(id int64) error {
+	_, err := s.db.Exec("DELETE FROM skills WHERE id=?", id)
+	return err
 }

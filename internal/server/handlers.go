@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -85,21 +87,24 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tk := store.Task{Title: in.Title, Body: in.Body, Status: store.StatusQueued, Perm: perm, AgentID: in.AgentID, ParentID: in.ParentID}
-	// 指派角色时快照项目目录（历史记录不随角色配置漂移）
-	if in.AgentID != nil {
+	// 工作目录属于项目：快照项目目录（历史记录不随配置漂移）；
+	// 老数据兼容：项目未设目录时回退角色的旧 project_dir。
+	if in.ProjectID != nil {
+		p, err := s.st.GetProject(*in.ProjectID)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "项目不存在")
+			return
+		}
+		tk.ProjectID = in.ProjectID
+		tk.ProjectDir = p.ProjectDir
+	}
+	if tk.ProjectDir == "" && in.AgentID != nil {
 		a, err := s.st.GetAgent(*in.AgentID)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "角色不存在")
 			return
 		}
-		tk.ProjectDir = a.ProjectDir
-	}
-	if in.ProjectID != nil {
-		if _, err := s.st.GetProject(*in.ProjectID); err != nil {
-			writeErr(w, http.StatusBadRequest, "项目不存在")
-			return
-		}
-		tk.ProjectID = in.ProjectID
+		tk.ProjectDir = a.ProjectDir // 兼容旧数据：角色级目录
 	}
 	id, err := s.st.CreateTask(tk)
 	if err != nil {
@@ -381,11 +386,11 @@ func (s *Server) validateAgent(in *agentIn) error {
 	if _, ok := exec.GetAdapter(in.CLI); !ok {
 		return errMsg("未知 CLI: " + in.CLI)
 	}
-	if in.ProjectDir == "" {
-		return errMsg("必须绑定项目目录")
-	}
-	if fi, err := os.Stat(in.ProjectDir); err != nil || !fi.IsDir() {
-		return errMsg("项目目录不存在: " + in.ProjectDir)
+	// 项目目录属于项目，不再属于角色（老数据保留兼容，创建任务时优先用项目目录）
+	if in.ProjectDir != "" {
+		if fi, err := os.Stat(in.ProjectDir); err != nil || !fi.IsDir() {
+			return errMsg("项目目录不存在: " + in.ProjectDir)
+		}
 	}
 	if in.DefaultPerm == "" {
 		in.DefaultPerm = store.PermFull
@@ -673,7 +678,7 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "name", "description", "status")
+	set, ok := patchMap(w, r, "name", "description", "status", "project_dir")
 	if !ok {
 		return
 	}
@@ -720,11 +725,248 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listAgentSchemas(w http.ResponseWriter, r *http.Request) {
 	var out []map[string]any
 	for _, a := range exec.Adapters() {
+		fields := exec.Enrich(a.Schema())
+		// 模型候选：探测该 CLI 在本机实例的实际配置，而非硬编码常用模型
+		for i := range fields {
+			if fields[i].Key == "model" {
+				fields[i].Suggestions = a.Models()
+			}
+		}
 		out = append(out, map[string]any{
-			"id": a.ID(), "name": a.Name(), "docs": a.Docs(), "fields": a.Schema(),
+			"id": a.ID(), "name": a.Name(), "docs": a.Docs(), "fields": fields,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// ---------------------------------------------------------------------------
+// 技能库（注册到 paihuo 工作目录；角色配置按名称勾选，执行注入实际目录）
+
+func (s *Server) listSkills(w http.ResponseWriter, r *http.Request) {
+	skills, err := s.st.ListSkills()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, skills)
+}
+
+// createSkill 定向添加：把源目录（含 SKILL.md）复制到 paihuo 工作目录并登记。
+func (s *Server) createSkill(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		SourcePath string `json:"source_path"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	src, err := filepath.Abs(strings.TrimSpace(in.SourcePath))
+	if err != nil || src == "" {
+		writeErr(w, http.StatusBadRequest, "需要技能目录路径")
+		return
+	}
+	fi, err := os.Stat(src)
+	if err != nil || !fi.IsDir() {
+		writeErr(w, http.StatusBadRequest, "目录不存在")
+		return
+	}
+	skillmd := filepath.Join(src, "SKILL.md")
+	if _, err := os.Stat(skillmd); err != nil {
+		writeErr(w, http.StatusBadRequest, "该目录没有 SKILL.md，不是技能")
+		return
+	}
+	name, desc := parseSkillFrontmatter(skillmd)
+	if name == "" {
+		name = filepath.Base(src)
+	}
+	if err := os.MkdirAll(s.skillsDir, 0o755); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// 目标目录：slug 化名称，冲突则追加序号
+	slug := skillSlug(name)
+	dst := filepath.Join(s.skillsDir, slug)
+	for n := 2; ; n++ {
+		if _, err := os.Stat(dst); os.IsNotExist(err) {
+			break
+		}
+		dst = filepath.Join(s.skillsDir, fmt.Sprintf("%s-%d", slug, n))
+	}
+	if err := copyDir(src, dst); err != nil {
+		writeErr(w, http.StatusInternalServerError, "复制技能目录失败: "+err.Error())
+		return
+	}
+	id, err := s.st.CreateSkill(store.Skill{
+		Name: name, Description: desc, Dir: dst, SourcePath: src,
+	})
+	if err != nil {
+		os.RemoveAll(dst)
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	sk, _ := s.st.GetSkill(id)
+	writeJSON(w, http.StatusCreated, sk)
+}
+
+func (s *Server) deleteSkill(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	sk, err := s.st.GetSkill(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "技能不存在")
+		return
+	}
+	if err := s.st.DeleteSkill(id); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	os.RemoveAll(sk.Dir) // 登记删除后清理工作目录副本（角色引用会变成失效路径）
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
+}
+
+// parseSkillFrontmatter 解析 SKILL.md 头部 YAML frontmatter 的 name / description。
+// 解析失败或没有 frontmatter 时返回空，由调用方用目录名兜底。
+func parseSkillFrontmatter(path string) (name, desc string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	text := string(b)
+	if !strings.HasPrefix(text, "---") {
+		return
+	}
+	rest := text[3:]
+	end := strings.Index(rest, "---")
+	if end < 0 {
+		return
+	}
+	for _, line := range strings.Split(rest[:end], "\n") {
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(k) {
+		case "name":
+			name = strings.Trim(strings.TrimSpace(v), `"'`)
+		case "description":
+			desc = strings.Trim(strings.TrimSpace(v), `"'`)
+		}
+	}
+	return
+}
+
+func skillSlug(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else if r == ' ' || r == '_' || r == '-' || r == '.' {
+			b.WriteRune('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		out = "skill"
+	}
+	return out
+}
+
+// copyDir 递归复制目录（技能可能含子文件/脚本）。
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(p string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if fi.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, b, fi.Mode().Perm())
+	})
+}
+
+// ---------------------------------------------------------------------------
+// 文件系统浏览（目录选择器：项目目录 / 技能目录等，仅返回子目录名）
+
+// junkDir 是目录选择器中跳过的常见噪音目录。
+var junkDir = map[string]bool{
+	".git": true, "node_modules": true, "vendor": true, "dist": true,
+	"build": true, "target": true, ".cache": true, "__pycache__": true,
+	".venv": true, "venv": true, "env": true, "Pods": true,
+}
+
+func (s *Server) fsDirs(w http.ResponseWriter, r *http.Request) {
+	p := strings.TrimSpace(r.URL.Query().Get("path"))
+	if p == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "无法确定家目录")
+			return
+		}
+		p = home
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "无效路径")
+		return
+	}
+	abs = filepath.Clean(abs)
+	if !filepath.IsAbs(abs) {
+		writeErr(w, http.StatusBadRequest, "需要绝对路径")
+		return
+	}
+	fi, err := os.Stat(abs)
+	if err != nil || !fi.IsDir() {
+		writeErr(w, http.StatusNotFound, "目录不存在")
+		return
+	}
+	es, err := os.ReadDir(abs)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var dirs []string
+	for _, e := range es {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || junkDir[e.Name()] {
+			continue
+		}
+		dirs = append(dirs, e.Name())
+	}
+	sort.Strings(dirs)
+	parent := "/"
+	if abs != "/" {
+		parent = filepath.Dir(abs)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"path": abs, "parent": parent, "dirs": dirs})
+}
+
+func (s *Server) fsMkdir(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Path) == "" {
+		writeErr(w, http.StatusBadRequest, "需要 path")
+		return
+	}
+	abs, err := filepath.Abs(strings.TrimSpace(req.Path))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "无效路径")
+		return
+	}
+	if err := os.MkdirAll(filepath.Clean(abs), 0o755); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"path": filepath.Clean(abs)})
 }
 
 // ---------------------------------------------------------------------------

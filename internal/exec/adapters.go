@@ -34,6 +34,8 @@ type Adapter interface {
 	// Schema 返回该 CLI 支持配置的字段定义（源自官方文档）；前端按 schema
 	// 渲染每个角色的深度定制表单，而非统一的固定字段。
 	Schema() []Field
+	// Models 返回该 CLI 实例实际配置/可用的模型候选（探测本机配置，带缓存）。
+	Models() []string
 	// Docs 返回该 CLI 官方文档链接。
 	Docs() string
 }
@@ -70,8 +72,9 @@ type baseAdapter struct {
 	bin  string
 }
 
-func (a *baseAdapter) ID() string   { return a.id }
-func (a *baseAdapter) Name() string { return a.name }
+func (a *baseAdapter) ID() string       { return a.id }
+func (a *baseAdapter) Name() string     { return a.name }
+func (a *baseAdapter) Models() []string { return nil }
 
 func (a *baseAdapter) Detect() (string, error) {
 	p, err := exec.LookPath(a.bin)
@@ -211,15 +214,16 @@ func (a *openCodeAdapter) Warnings(o RunOptions) []string {
 // 目录，故不展示；特有字段：agent（opencode agent 定义）、config（配置文件）。
 func (a *openCodeAdapter) Schema() []Field {
 	return []Field{
-		{Key: "model", Label: "模型", Type: "text", Group: "模型与指令",
-			Placeholder: "留空用默认",
-			Help:        "--model，例如 gpt-5 / gemini-2.5-pro"},
+		{Key: "model", Label: "Model", Type: "text", Group: "模型与指令",
+			Placeholder: "留空用默认（探测本机实例实际配置）",
+			Help:        "--model；候选取自 `opencode models` 与本机配置"},
 		{Key: "thinking", Label: "思考级别", Type: "select", Group: "模型与指令",
 			Options: []string{"", "low", "medium", "high"},
 			Help:    "low→--variant minimal（省 token）、high→--variant high"},
 		{Key: "agent", Label: "Agent 定义", Type: "text", Group: "模型与指令",
-			Placeholder: "如 build / planner",
-			Help:        "opencode agent 名称（--agent），项目 .opencode/agent/*.md 定义的角色"},
+			Suggestions: []string{"build", "plan", "architect", "debug", "test", "code-review"},
+			Placeholder: "如 build / planner（可输入自定义）",
+			Help:        "opencode agent 名称（--agent），项目 .opencode/agent/*.md 定义的角色；从候选中选择或直接输入"},
 		{Key: "config", Label: "配置文件", Type: "text", Group: "执行",
 			Placeholder: "/path/to/opencode.json",
 			Help:        "--config 叠加指定配置文件（默认读项目 opencode.json / .opencode/opencode.json）"},
@@ -272,9 +276,9 @@ func (a *piAdapter) Warnings(o RunOptions) []string {
 // pi 仅支持模型/系统提示词/额外参数/环境变量；skills、plugins、thinking 不展示。
 func (a *piAdapter) Schema() []Field {
 	return []Field{
-		{Key: "model", Label: "模型", Type: "text", Group: "模型与指令",
-			Placeholder: "留空用默认",
-			Help:        "--model，例如 claude-sonnet-4-5 / qwen3-coder"},
+		{Key: "model", Label: "Model", Type: "text", Group: "模型与指令",
+			Placeholder: "留空用默认（探测本机实例实际配置）",
+			Help:        "--model；候选取自 `opencode models` 与本机配置"},
 		{Key: "system_prompt", Label: "系统提示词", Type: "textarea", Group: "模型与指令",
 			Placeholder: "角色定位、行为规范",
 			Help:        "追加到 pi 默认系统提示词之后（--append-system-prompt）"},
@@ -341,9 +345,10 @@ func (a *claudeAdapter) Schema() []Field {
 			Options: []string{"default", "acceptEdits", "plan", "bypassPermissions"},
 			Default: "acceptEdits",
 			Help:    "default 每次询问；acceptEdits 自动接受文件编辑；plan 只读计划；bypassPermissions 全自动（危险）"},
-		Field{Key: "settings", Label: "settings.json", Type: "text", Group: "执行",
+		Field{Key: "settings", Label: "settings.json", Type: "text", Group: "执行", Source: "files",
+			Pattern:     "~/.claude/settings*.json",
 			Placeholder: "/path/to/settings.json",
-			Help:        "--settings 叠加自定义 settings 文件（hooks、permissions、env 等）"},
+			Help:        "--settings 叠加自定义 settings 文件（hooks、permissions、env 等）；候选来自 ~/.claude"},
 	)
 }
 
@@ -401,12 +406,13 @@ func (a *codexAdapter) Schema() []Field {
 		f.Help = "映射为 codex 配置 reasoning_effort（minimal / low / medium / high）"
 	}
 	return append(fs,
-		Field{Key: "temperature", Label: "Temperature", Type: "text", Group: "模型与指令",
-			Placeholder: "0.0 ~ 1.0",
-			Help:        "codex 配置 temperature（默认 0.2），越高越发散"},
-		Field{Key: "mcp_config_file", Label: "MCP 配置文件", Type: "text", Group: "技能",
+		Field{Key: "temperature", Label: "Temperature", Type: "select", Group: "模型与指令",
+			Options: []string{"", "0.0", "0.2", "0.4", "0.6", "0.8", "1.0"},
+			Help:    "codex 配置 temperature（默认 0.2），越高越发散"},
+		Field{Key: "mcp_config_file", Label: "MCP 配置文件", Type: "text", Group: "技能", Source: "files",
+			Pattern:     "~/.codex/*.json",
 			Placeholder: "/path/to/mcp.json",
-			Help:        "codex 配置 mcp_config_file，挂载外部工具（MCP 服务器）"},
+			Help:        "codex 配置 mcp_config_file，挂载外部工具（MCP 服务器）；候选来自 ~/.codex"},
 	)
 }
 

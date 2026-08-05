@@ -25,13 +25,14 @@ import (
 )
 
 type Server struct {
-	st    *store.Store
-	hub   *events.Hub
-	ex    *exec.Executor
-	sched *sched.Scheduler
-	token string
-	pages map[string]*template.Template // 每页一个模板集（base + 页面，避免 content 冲突）
-	mux   *http.ServeMux
+	st        *store.Store
+	hub       *events.Hub
+	ex        *exec.Executor
+	sched     *sched.Scheduler
+	token     string
+	skillsDir string                        // 技能库工作目录（<db目录>/skills，定向添加的技能复制到这里）
+	pages     map[string]*template.Template // 每页一个模板集（base + 页面，避免 content 冲突）
+	mux       *http.ServeMux
 }
 
 const (
@@ -73,13 +74,14 @@ func (s *Server) validSession(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(parts[1]), []byte(hex.EncodeToString(mac.Sum(nil)[:16]))) == 1
 }
 
-func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Scheduler, token string) *Server {
+func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Scheduler, token, skillsDir string) *Server {
 	s := &Server{
-		st:    st,
-		hub:   hub,
-		ex:    ex,
-		sched: sc,
-		token: token,
+		st:        st,
+		hub:       hub,
+		ex:        ex,
+		sched:     sc,
+		token:     token,
+		skillsDir: skillsDir,
 		pages: map[string]*template.Template{
 			"index":      template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/index.html")),
 			"history":    template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/history.html")),
@@ -154,6 +156,11 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("PATCH /api/agents/{id}", s.patchAgent)
 	m.HandleFunc("DELETE /api/agents/{id}", s.deleteAgent)
 	m.HandleFunc("GET /api/agents/schema", s.listAgentSchemas)
+	m.HandleFunc("GET /api/skills", s.listSkills)
+	m.HandleFunc("POST /api/skills", s.createSkill)
+	m.HandleFunc("DELETE /api/skills/{id}", s.deleteSkill)
+	m.HandleFunc("GET /api/fs/dirs", s.fsDirs)
+	m.HandleFunc("POST /api/fs/mkdir", s.fsMkdir)
 
 	m.HandleFunc("GET /api/projects", s.listProjects)
 	m.HandleFunc("POST /api/projects", s.createProject)

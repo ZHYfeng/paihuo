@@ -1,10 +1,10 @@
 {{define "content"}}
 <header class="page-header">
-  <span class="crumb">派活 / <b>角色</b></span>
+  <span class="crumb">派活 / <b>Agents</b></span>
   <span class="spacer"></span>
   <button class="btn brand sm" onclick="openAgentModal()">
     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-    新建角色
+    New Agent
   </button>
 </header>
 <div class="page-content">
@@ -12,16 +12,21 @@
   <!-- 角色列表 -->
   <div id="agentListShell">
     <div class="toolbar">
-      <input id="aSearch" class="inp" placeholder="搜索角色…" oninput="renderAgentList()">
+      <div class="seg" id="agentViewSeg">
+        <button id="segGrid" class="active" onclick="setAgentView('grid')">Cards</button>
+        <button id="segTable" onclick="setAgentView('table')">Table</button>
+      </div>
+      <input id="aSearch" class="inp" placeholder="Search agents…" oninput="renderAgentList()">
       <span class="spacer"></span>
       <span id="agentCount" class="count-info"></span>
     </div>
-    <div class="list-wrap">
+    <div id="agentGrid" class="agent-grid"></div>
+    <div id="agentTableWrap" class="list-wrap hidden">
       <table class="list-grid">
-        <thead><tr><th>角色</th><th>CLI</th><th>模型</th><th>项目目录</th><th>状态</th><th style="width:110px">操作</th></tr></thead>
+        <thead><tr><th>Agent</th><th>CLI</th><th>Model</th><th>Status</th><th style="width:130px">Actions</th></tr></thead>
         <tbody id="agentList"></tbody>
       </table>
-      <div id="agentEmpty" class="empty hidden">还没有角色。每个角色绑定一种 CLI 与项目目录，配置按该 CLI 的官方文档深度定制。</div>
+      <div id="agentEmpty" class="empty hidden">No agents yet. Each agent binds a CLI; its config form is tailored to that CLI's official docs.</div>
     </div>
   </div>
 
@@ -30,18 +35,18 @@
     <header class="page-header">
       <button class="btn ghost sm" onclick="closeAgentDetail()">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        返回
+        Back
       </button>
       <span class="crumb" id="adCrumb"></span>
       <span class="spacer"></span>
       <span id="adCliDocs" class="count-info"></span>
-      <button class="btn sm danger" onclick="deleteAgent(state.agentEditing ? state.agentEditing.id : null)">删除</button>
+      <button class="btn sm danger" onclick="deleteAgent(state.agentEditing ? state.agentEditing.id : null)">Delete</button>
     </header>
     <div class="tab-bar" id="agentTabs">
-      <button class="active" data-tab="overview" onclick="agentTab('overview')">概况</button>
-      <button data-tab="config" onclick="agentTab('config')">配置</button>
-      <button data-tab="env" onclick="agentTab('env')">环境变量</button>
-      <button data-tab="stats" onclick="agentTab('stats')">统计</button>
+      <button class="active" data-tab="overview" onclick="agentTab('overview')">Overview</button>
+      <button data-tab="config" onclick="agentTab('config')">Config</button>
+      <button data-tab="env" onclick="agentTab('env')">Environment</button>
+      <button data-tab="stats" onclick="agentTab('stats')">Stats</button>
     </div>
     <div id="agentForm" class="tab-panel"></div>
   </div>
@@ -50,29 +55,28 @@
 <!-- 新建/编辑角色弹窗（配置区按所选 CLI 的 schema 渲染） -->
 <div class="modal hidden" id="agentModal">
   <div class="modal-box wide">
-    <h3 id="agentModalTitle">新建角色</h3>
-    <div class="sub" id="agentModalSub">不同 CLI 有各自官方的可配置参数，表单随之深度定制</div>
+    <h3 id="agentModalTitle">New Agent</h3>
+    <div class="sub" id="agentModalSub">Each CLI has its own official config params; the form adapts to the selected CLI</div>
     <input type="hidden" id="aId">
     <div class="row">
-      <label class="field">角色名 <input id="aName" placeholder="如：编码工"></label>
+      <label class="field">Name <input id="aName" placeholder="如：编码工"></label>
       <label class="field">CLI
         <select id="aCli" onchange="renderAgentModalSchema()"></select>
       </label>
     </div>
-    <label class="field">绑定项目目录 <input id="aProjectDir" placeholder="/path/to/project"></label>
-    <label class="field">描述 <input id="aDesc" placeholder="这个角色负责什么"></label>
+    <label class="field">Description <input id="aDesc" placeholder="这个角色负责什么"></label>
     <div class="row">
-      <label class="field">默认权限
-        <select id="aPerm"><option value="full">完整（直接执行）</option><option value="review">完成后审批</option></select>
+      <label class="field">Default permission
+        <select id="aPerm"><option value="full">Full（直接执行）</option><option value="review">Review（完成后审批）</option></select>
       </label>
       <label class="field" style="display:flex;align-items:center;gap:8px;margin-top:26px">
-        <input type="checkbox" id="aEnabled" checked style="width:auto"> 启用
+        <input type="checkbox" id="aEnabled" checked style="width:auto"> Enabled
       </label>
     </div>
     <div id="agentModalSchema"></div>
     <div class="modal-actions">
-      <button class="btn" onclick="closeModal('agentModal')">取消</button>
-      <button class="btn primary" onclick="submitAgent()">保存</button>
+      <button class="btn" onclick="closeModal('agentModal')">Cancel</button>
+      <button class="btn primary" onclick="submitAgent()">Save</button>
     </div>
   </div>
 </div>

@@ -23,6 +23,8 @@ const state = {
   agentTab: "overview",
   agentModalRC: {},  // 新建/编辑弹窗中的临时 role_config
   projectView: null, // 项目详情中的项目 id
+  agentView: "grid",
+  skillLib: [],      // 注册到 paihuo 工作目录的技能库 [{id,name,description,dir}]
 };
 
 const STATUS_LABEL = {
@@ -76,6 +78,9 @@ const ICONS = {
 function icon(name, cls) {
   return `<svg class="ic ${cls || ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name] || ""}"/></svg>`;
 }
+
+/* ---- 字段控件：datalist 唯一 id（同页可能同时存在弹窗与配置 tab 两套表单） ---- */
+let dlSeq = 0;
 
 function fmtPct(x) { return (Math.round(x * 10) / 10) + "%"; }
 function fmtNum(x) { return Math.round(x * 10) / 10; }
@@ -729,15 +734,16 @@ function renderProjectList() {
     return `<div class="project-card" onclick="openProject(${p.id})">
       <div class="pc-top">
         <b>${esc(p.name)}</b>
-        <span class="badge ${p.status === "active" ? "running" : "cancelled"}">${p.status === "active" ? "进行中" : "已归档"}</span>
+        <span class="badge ${p.status === "active" ? "running" : "cancelled"}">${p.status === "active" ? "Active" : "Archived"}</span>
       </div>
       ${p.description ? `<div class="pc-desc">${esc(p.description)}</div>` : ""}
       <div class="pc-progress"><div class="pp-bar"><div style="width:${pct}%"></div></div>
         <span class="pc-pct">${fmtPct(pct)}</span></div>
       <div class="pc-meta">
-        <span>${ts.length} 个任务</span>
-        <span>${done} 完成</span>
-        <span>${agents.size} 个角色</span>
+        ${p.project_dir ? `<span class="pc-dir" title="${esc(p.project_dir)}">${esc(p.project_dir)}</span>` : ""}
+        <span>${ts.length} tasks</span>
+        <span>${done} done</span>
+        <span>${agents.size} agents</span>
         <span class="spacer"></span>
         <span class="pc-date">${(p.updated_at || p.created_at || "").slice(5, 16).replace("T", " ")}</span>
       </div>
@@ -746,7 +752,7 @@ function renderProjectList() {
   const empty = document.getElementById("projectEmpty");
   if (empty) empty.classList.toggle("hidden", list.length > 0);
   const cnt = document.getElementById("projectCount");
-  if (cnt) cnt.textContent = `${list.length} 个项目`;
+  if (cnt) cnt.textContent = `${list.length} projects`;
 }
 
 function openProject(id) { location.hash = "#/project/" + id; }
@@ -849,25 +855,28 @@ function renderProjectDetail(p, s, tasks) {
     <div class="sec-title">属性</div>
     <div class="prop-row"><span class="k">状态</span>
       <span class="v"><select onchange="patchProject(${p.id},{status:this.value})">
-        <option value="active" ${p.status === "active" ? "selected" : ""}>进行中</option>
-        <option value="archived" ${p.status === "archived" ? "selected" : ""}>已归档</option>
+        <option value="active" ${p.status === "active" ? "selected" : ""}>Active</option>
+        <option value="archived" ${p.status === "archived" ? "selected" : ""}>Archived</option>
       </select></span></div>
+    <div class="prop-row"><span class="k">工作目录</span><span class="v" style="font-size:12px;word-break:break-all">${esc(p.project_dir || "-")}</span></div>
     <div class="prop-row"><span class="k">描述</span><span class="v" style="font-size:12px;white-space:pre-wrap">${esc(p.description || "-")}</span></div>
     <div class="prop-row"><span class="k">创建</span><span class="v">${esc((p.created_at || "").slice(0, 16).replace("T", " "))}</span></div>
     <div class="sec-title">操作</div>
     <div class="detail-actions">
-      <button class="btn sm" onclick="openProjectModal(${p.id})">编辑项目</button>
-      <button class="btn sm danger" onclick="deleteProject(${p.id})">删除项目</button>
+      <button class="btn sm" onclick="openProjectModal(${p.id})">Edit</button>
+      <button class="btn sm danger" onclick="deleteProject(${p.id})">Delete</button>
     </div>`;
 }
 
 function openProjectModal(id) {
   const p = id ? state.projects.find(x => x.id === id) : null;
-  document.getElementById("projectModalTitle").textContent = p ? "编辑项目" : "新建项目";
+  document.getElementById("projectModalTitle").textContent = p ? "Edit Project" : "New Project";
   document.getElementById("pId").value = p ? p.id : "";
   document.getElementById("pName").value = p ? p.name : "";
   document.getElementById("pDesc").value = p ? (p.description || "") : "";
+  document.getElementById("pProjectDir").value = p ? (p.project_dir || "") : "";
   document.getElementById("pStatus").value = p ? (p.status || "active") : "active";
+  loadProjDatalist();
   openModal("projectModal");
 }
 
@@ -876,6 +885,7 @@ async function submitProject() {
   const body = {
     name: document.getElementById("pName").value.trim(),
     description: document.getElementById("pDesc").value.trim(),
+    project_dir: document.getElementById("pProjectDir").value.trim(),
     status: document.getElementById("pStatus").value,
   };
   if (!body.name) return toast("项目名不能为空", true);
@@ -958,7 +968,71 @@ function statusBarHTML(counts) {
    agents 页：列表 + 详情 tab（schema 驱动深度定制）
    ============================================================ */
 
-function renderAgentList() {
+/* ============================================================
+   agents 页：卡片 / 表格双视图 + 列表 + 详情 tab（schema 驱动深度定制）
+   ============================================================ */
+
+function setAgentView(v) {
+  state.agentView = v;
+  const g = document.getElementById("segGrid"), t = document.getElementById("segTable");
+  if (g) g.classList.toggle("active", v === "grid");
+  if (t) t.classList.toggle("active", v === "table");
+  const grid = document.getElementById("agentGrid");
+  const wrap = document.getElementById("agentTableWrap");
+  if (grid) grid.classList.toggle("hidden", v !== "grid");
+  if (wrap) wrap.classList.toggle("hidden", v !== "table");
+  try { localStorage.setItem("paihuo.agentView", v); } catch (_) {}
+  renderAgentList();
+}
+
+function agentTaskStats(a) {
+  const ts = state.tasks.filter(t => t.agent_id === a.id);
+  return {
+    total: ts.length,
+    inFlight: ts.filter(t => ["queued", "claimed", "running", "awaiting_review"].includes(t.status)).length,
+    review: ts.filter(t => t.status === "awaiting_review").length,
+  };
+}
+
+function renderAgentGrid() {
+  const grid = document.getElementById("agentGrid");
+  if (!grid) return;
+  const q = (document.getElementById("aSearch")?.value || "").trim().toLowerCase();
+  const list = state.agents.filter(a =>
+    !q || a.name.toLowerCase().includes(q) || (a.description || "").toLowerCase().includes(q));
+  grid.innerHTML = list.map(a => {
+    const rc = a.role_config || {};
+    const st = agentTaskStats(a);
+    return `<div class="agent-card" onclick="openAgentDetail(${a.id})">
+      <div class="ac-top">
+        <span class="avatar lg av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
+        <div class="ac-id">
+          <div class="ac-name">${esc(a.name)}</div>
+          <div class="ac-sub">${esc(a.description || "未设置描述")}</div>
+        </div>
+        <span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "Enabled" : "Disabled"}</span>
+      </div>
+      <div class="ac-meta">
+        <span class="chip">${esc(a.cli)}</span>
+        <span class="chip" title="${esc(rc.model || "默认模型")}">${esc(rc.model || "default model")}</span>
+      </div>
+      <div class="ac-stats">
+        <span><b>${st.total}</b> 任务</span>
+        <span><b style="color:var(--st-running)">${st.inFlight}</b> 进行中</span>
+        <span><b style="color:var(--st-review)">${st.review}</b> 待审批</span>
+        <span class="ac-ops">
+          <button class="btn xs" title="打开详情并切到配置 tab" onclick="event.stopPropagation();agentTabFromCard(${a.id})">配置</button>
+          <button class="btn xs" onclick="event.stopPropagation();openAgentModal(${a.id})">编辑</button>
+          <button class="btn xs" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "停用" : "启用"}</button>
+        </span>
+      </div>
+    </div>`;
+  }).join("");
+  const cnt = document.getElementById("agentCount");
+  if (cnt) cnt.textContent = `${list.length} 个角色`;
+}
+
+function renderAgentTable() {
   const body = document.getElementById("agentList");
   if (!body) return;
   const q = (document.getElementById("aSearch")?.value || "").trim().toLowerCase();
@@ -967,18 +1041,17 @@ function renderAgentList() {
     const rc = a.role_config || {};
     return `<tr onclick="openAgentDetail(${a.id})">
       <td><span style="display:flex;align-items:center;gap:8px">
-        <span class="avatar">${esc((a.name || "?").slice(0, 1))}</span>
+        <span class="avatar av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
         <b>${esc(a.name)}</b>
         <span style="font-size:11px;color:var(--fg-faint)">${esc(a.description || "")}</span>
       </span></td>
       <td><span class="badge">${esc(a.cli)}</span></td>
-      <td>${esc(rc.model || "默认")}</td>
-      <td style="font-size:12px;color:var(--fg-muted)">${esc(a.project_dir || "-")}</td>
-      <td><span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "启用" : "停用"}</span></td>
+      <td>${esc(rc.model || "default")}</td>
+      <td><span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "Enabled" : "Disabled"}</span></td>
       <td>
         <span class="ops">
           <button class="btn xs" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "停用" : "启用"}</button>
-          <button class="btn xs danger" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}删除</button>
+          <button class="btn xs danger" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}Delete</button>
         </span>
       </td>
     </tr>`;
@@ -986,7 +1059,11 @@ function renderAgentList() {
   const empty = document.getElementById("agentEmpty");
   if (empty) empty.classList.toggle("hidden", list.length > 0);
   const cnt = document.getElementById("agentCount");
-  if (cnt) cnt.textContent = `${list.length} 个角色`;
+  if (cnt) cnt.textContent = `${list.length} agents`;
+}
+
+function renderAgentList() {
+  state.agentView === "grid" ? renderAgentGrid() : renderAgentTable();
 }
 
 async function toggleAgent(id) {
@@ -996,6 +1073,96 @@ async function toggleAgent(id) {
     await loadAll();
     renderAgentList();
   } catch (e) { toast(e.message, true); }
+}
+
+/* ---- 目录选择器 ---- */
+const dirState = { inputId: null, path: "" };
+
+async function dirLoad(path) {
+  try {
+    const d = await api(`/api/fs/dirs?path=${encodeURIComponent(path || "")}`);
+    dirState.path = d.path;
+    // 面包屑
+    const el = document.getElementById("dirCrumb");
+    const segs = d.path.split("/").filter(Boolean);
+    let html = `<span class="crumb-seg" data-p="/">/</span>`;
+    let cur = "";
+    segs.forEach((s, i) => {
+      cur += "/" + s;
+      const last = i === segs.length - 1;
+      html += `<span class="crumb-sep">/</span>` +
+        `<span class="crumb-seg${last ? " cur" : ""}" data-p="${esc(cur)}">${esc(s)}</span>`;
+    });
+    el.innerHTML = html;
+    // 目录列表
+    const list = document.getElementById("dirList");
+    list.innerHTML = "";
+    if (d.parent !== d.path) {
+      const up = document.createElement("div");
+      up.className = "dir-row up";
+      up.dataset.path = d.parent;
+      up.innerHTML = icon("back") + `<span>上一级</span>`;
+      list.appendChild(up);
+    }
+    d.dirs.forEach(n => {
+      const row = document.createElement("div");
+      row.className = "dir-row";
+      row.dataset.path = d.path.replace(/\/+$/, "") + "/" + n;
+      row.innerHTML = icon("folder") + `<span class="dr-name">${esc(n)}</span>`;
+      list.appendChild(row);
+    });
+    if (!d.dirs.length) list.innerHTML = `<div class="empty">空目录</div>`;
+  } catch (e) { toast(e.message, true); }
+}
+
+function openDirPicker(inputId) {
+  dirState.inputId = inputId;
+  const cur = (document.getElementById(inputId).value || "").trim();
+  document.getElementById("dirNewName").value = "";
+  dirLoad(cur || ""); // 空路径 → 家目录
+  openModal("dirModal");
+}
+
+function pickDir() {
+  const input = document.getElementById(dirState.inputId);
+  if (input) input.value = dirState.path;
+  closeModal("dirModal");
+  toast("已选择目录");
+}
+
+async function mkdirCurrent() {
+  const name = document.getElementById("dirNewName").value.trim();
+  if (!name) return toast("先输入目录名", true);
+  const p = dirState.path.replace(/\/+$/, "") + "/" + name;
+  try {
+    await api("/api/fs/mkdir", { method: "POST", body: JSON.stringify({ path: p }) });
+    document.getElementById("dirNewName").value = "";
+    toast("已创建");
+    dirLoad(dirState.path);
+  } catch (e) { toast(e.message, true); }
+}
+
+// 项目目录 datalist：家目录顶层候选（项目弹窗 + 技能添加弹窗共用）
+async function loadProjDatalist() {
+  for (const id of ["dlistProj", "dlistSkill"]) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = "";
+  }
+  try {
+    const d = await api("/api/fs/dirs");
+    const opts = d.dirs.map(n => `<option value="${esc(d.path.replace(/\/+$/, "") + "/" + n)}">`).join("");
+    for (const id of ["dlistProj", "dlistSkill"]) {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = opts;
+    }
+  } catch (_) {}
+}
+
+/* ---- 从卡片直接进入配置 tab ---- */
+let pendingAgentTab = null;
+function agentTabFromCard(id) {
+  pendingAgentTab = "config";
+  openAgentDetail(id);
 }
 
 function openAgentDetail(id) { location.hash = "#/agent/" + id; }
@@ -1011,7 +1178,9 @@ function showAgentDetail(id) {
   const docs = state.schema[a.cli]?.docs;
   document.getElementById("adCliDocs").innerHTML =
     `<span class="badge">${esc(a.cli)}</span> ${docs ? `<a class="t-link" target="_blank" rel="noreferrer" href="${esc(docs)}">官方文档 ↗</a>` : ""}`;
-  agentTab("overview");
+  const tab = pendingAgentTab || "overview";
+  pendingAgentTab = null;
+  agentTab(tab);
 }
 
 function hideAgentDetail() {
@@ -1047,12 +1216,11 @@ async function renderAgentOverview(a) {
   if (state.agentTab !== "overview") return;
   form.innerHTML = `
     <div class="agent-hero">
-      <span class="avatar lg">${esc((a.name || "?").slice(0, 1))}</span>
+      <span class="avatar lg av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
       <div>
         <div class="ah-name">${esc(a.name)} <span class="badge">${esc(a.cli)}</span>
-          <span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "启用" : "停用"}</span></div>
+          <span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "Enabled" : "Disabled"}</span></div>
         ${a.description ? `<div class="ah-desc">${esc(a.description)}</div>` : ""}
-        <div class="ah-sub">${esc(a.project_dir || "")}</div>
       </div>
     </div>
     ${st ? `
@@ -1150,6 +1318,97 @@ function fieldValue(f, rc) {
   return (rc.custom && rc.custom[f.key] != null) ? rc.custom[f.key] : (f.default ?? "");
 }
 
+/* ---- 列表字段（chips 编辑器）：逗号分隔值 ↔ 可增删的 chip ---- */
+
+function chipHTML(key, p) {
+  return `<span class="chip-item" data-v="${esc(p)}"><span class="ci-text">${esc(p)}</span><button type="button" class="chip-x" onclick="removeChip('${key}', this)" aria-label="移除">×</button></span>`;
+}
+
+function chipEditorValue(el) {
+  const box = el.closest(".chip-editor");
+  return { box, hidden: box.querySelector('input[type="hidden"]') };
+}
+
+function syncChips(box, key) {
+  const h = box.querySelector('input[type="hidden"]');
+  const items = h.value ? h.value.split(",") : [];
+  const row = box.querySelector(".chips");
+  if (row) row.innerHTML = items.map(p => chipHTML(key, p)).join("");
+  if (box.querySelector(".skill-opts")) {
+    box.querySelectorAll(".skill-opts input[type=checkbox]").forEach(cb =>
+      cb.checked = items.includes(cb.dataset.v));
+  }
+}
+
+function addChip(key, input) {
+  const v = (input.value || "").trim();
+  if (!v) return;
+  const { box, hidden } = chipEditorValue(input);
+  const items = hidden.value ? hidden.value.split(",") : [];
+  if (!items.includes(v)) {
+    items.push(v);
+    hidden.value = items.join(",");
+  }
+  syncChips(box, key);
+  input.value = "";
+  input.focus();
+}
+
+function removeChip(key, btn) {
+  const chip = btn.closest(".chip-item");
+  if (!chip) return;
+  const { box, hidden } = chipEditorValue(btn);
+  const items = hidden.value ? hidden.value.split(",") : [];
+  const i = items.indexOf(chip.dataset.v);
+  if (i >= 0) items.splice(i, 1);
+  hidden.value = items.join(",");
+  syncChips(box, key);
+}
+
+function toggleSkill(key, cb) {
+  const { box, hidden } = chipEditorValue(cb);
+  const items = hidden.value ? hidden.value.split(",") : [];
+  const v = cb.dataset.v;
+  if (cb.checked) { if (!items.includes(v)) items.push(v); }
+  else { const i = items.indexOf(v); if (i >= 0) items.splice(i, 1); }
+  hidden.value = items.join(",");
+  syncChips(box, key);
+}
+
+/* ---- 技能多选：paihuo 技能库（按名称勾选，值=工作目录实际路径） ---- */
+
+function skillsControlHTML(f, val) {
+  const items = val ? String(val).split(",").map(s => s.trim()).filter(Boolean) : [];
+  const lib = state.skillLib || [];
+  const opts = lib.map(s => {
+    const on = items.includes(s.dir);
+    return `<label class="skill-opt"><input type="checkbox" data-v="${esc(s.dir)}" ${on ? "checked" : ""} onchange="toggleSkill('${f.key}', this)"><span title="${esc(s.description || s.dir)}">${esc(s.name)}</span></label>`;
+  }).join("");
+  return `<div class="chip-editor">
+    <input type="hidden" data-key="${f.key}" data-type="list" value="${esc(items.join(","))}">
+    <div class="chips">${items.map(p => chipHTML(f.key, p)).join("")}</div>
+    <div class="skill-opts">${opts || `<div class="empty">技能库为空：到 Skills 页添加技能（含 SKILL.md 的目录）</div>`}</div>
+    <div class="chip-add">
+      <input placeholder="自定义技能目录路径，回车添加" onkeydown="if(event.key==='Enter'){event.preventDefault();addChip('${f.key}', this)}">
+      <button type="button" class="btn xs" onclick="addChip('${f.key}', this.previousElementSibling)">添加</button>
+    </div>
+  </div>`;
+}
+
+/* ---- 普通列表字段（plugins 等）：chip 编辑器 ---- */
+
+function chipsControlHTML(f, val) {
+  const items = val ? String(val).split(",").map(s => s.trim()).filter(Boolean) : [];
+  return `<div class="chip-editor">
+    <input type="hidden" data-key="${f.key}" data-type="list" value="${esc(items.join(","))}">
+    <div class="chips">${items.map(p => chipHTML(f.key, p)).join("")}</div>
+    <div class="chip-add">
+      <input placeholder="${esc(f.placeholder || "回车添加")}" onkeydown="if(event.key==='Enter'){event.preventDefault();addChip('${f.key}', this)}">
+      <button type="button" class="btn xs" onclick="addChip('${f.key}', this.previousElementSibling)">添加</button>
+    </div>
+  </div>`;
+}
+
 function fieldControlHTML(f, rc) {
   const val = fieldValue(f, rc);
   const attrs = `data-key="${f.key}" data-type="${f.type}"`;
@@ -1161,8 +1420,14 @@ function fieldControlHTML(f, rc) {
     ctl = `<textarea ${attrs} rows="5" placeholder="${esc(f.placeholder || "")}">${esc(val)}</textarea>`;
   } else if (f.type === "env") {
     ctl = `<textarea ${attrs} rows="6" placeholder="${esc(f.placeholder || "")}">${esc(val)}</textarea>`;
+  } else if (f.type === "list" && f.source === "skills") {
+    ctl = skillsControlHTML(f, val);
   } else if (f.type === "list") {
-    ctl = `<input ${attrs} value="${esc(val)}" placeholder="${esc(f.placeholder || "")}">`;
+    ctl = chipsControlHTML(f, val);
+  } else if (f.suggestions && f.suggestions.length) {
+    const dl = "dl_" + (++dlSeq);
+    ctl = `<input ${attrs} list="${dl}" value="${esc(val)}" placeholder="${esc(f.placeholder || "")}">` +
+      `<datalist id="${dl}">${f.suggestions.map(s => `<option value="${esc(s)}">`).join("")}</datalist>`;
   } else {
     ctl = `<input ${attrs} value="${esc(val)}" placeholder="${esc(f.placeholder || "")}">`;
   }
@@ -1213,12 +1478,13 @@ async function renderAgentConfig(a) {
   if (!form) return;
   const schema = state.schema[a.cli];
   if (!schema) { form.innerHTML = `<div class="empty">CLI schema 未加载</div>`; return; }
+  await loadSkillLib();
   form.innerHTML = `
     <div class="schema-tip">该角色的可配置参数来自 ${esc(schema.name)} 官方文档
       ${schema.docs ? `<a class="t-link" target="_blank" rel="noreferrer" href="${esc(schema.docs)}">查看文档 ↗</a>` : ""}。
       每个 CLI 的字段不同——这是按角色深度定制，不是统一定制。</div>
     <div id="configForm">${schemaFormHTML(schema, a.role_config || {})}</div>
-    <div style="margin-top:16px"><button class="btn primary" onclick="saveAgentConfig()">保存配置</button></div>`;
+    <div style="margin-top:16px"><button class="btn primary" onclick="saveAgentConfig()">Save</button></div>`;
 }
 
 async function saveAgentConfig() {
@@ -1266,15 +1532,15 @@ async function saveAgentEnv() {
 
 async function openAgentModal(id) {
   const a = id ? state.agents.find(x => x.id === id) : null;
-  document.getElementById("agentModalTitle").textContent = a ? "编辑角色" : "新建角色";
+  document.getElementById("agentModalTitle").textContent = a ? "Edit Agent" : "New Agent";
   document.getElementById("aId").value = a ? a.id : "";
   document.getElementById("aName").value = a ? a.name : "";
   document.getElementById("aDesc").value = a ? (a.description || "") : "";
-  document.getElementById("aProjectDir").value = a ? (a.project_dir || "") : "";
   document.getElementById("aPerm").value = a ? (a.default_perm || "full") : "full";
   document.getElementById("aEnabled").checked = a ? a.enabled : true;
   state.agentModalRC = a ? JSON.parse(JSON.stringify(a.role_config || {})) : {};
   await loadSchema();
+  await loadSkillLib();
   const sel = document.getElementById("aCli");
   if (a) sel.value = a.cli;
   else if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
@@ -1302,7 +1568,6 @@ async function submitAgent() {
     name: document.getElementById("aName").value.trim(),
     description: document.getElementById("aDesc").value.trim(),
     cli,
-    project_dir: document.getElementById("aProjectDir").value.trim(),
     default_perm: document.getElementById("aPerm").value,
     enabled: document.getElementById("aEnabled").checked,
     role_config: schema ? readConfigFrom(schema, document.getElementById("agentModalSchema")) : {},
@@ -1414,8 +1679,74 @@ async function deleteSchedule(id) {
 }
 
 /* ============================================================
-   skills 页
+   skills 页：技能库管理（定向添加 → 复制到 paihuo 工作目录 → 角色按名称勾选）
    ============================================================ */
+
+async function loadSkillLib() {
+  try {
+    state.skillLib = await api("/api/skills");
+  } catch (_) { state.skillLib = []; }
+}
+
+function renderSkillLib() {
+  const grid = document.getElementById("skillGrid");
+  if (!grid) return;
+  const lib = state.skillLib;
+  grid.innerHTML = lib.map(s => `
+    <div class="skill-card">
+      <div class="sk-top">
+        <span class="avatar">${esc((s.name || "?").slice(0, 1))}</span>
+        <div class="sk-id">
+          <div class="sk-name">${esc(s.name)}</div>
+          <div class="sk-desc">${esc(s.description || "无描述")}</div>
+        </div>
+      </div>
+      <div class="sk-meta">
+        <span class="chip" title="${esc(s.dir)}">${esc(s.dir)}</span>
+      </div>
+      <div class="sk-foot">
+        <span class="count-info">source: ${esc(s.source_path || "-")} · ${(s.created_at || "").slice(0, 10)}</span>
+        <span class="ac-ops">
+          <button class="btn xs danger" onclick="deleteSkill(${s.id})">${icon("trash")}Delete</button>
+        </span>
+      </div>
+    </div>`).join("");
+  const empty = document.getElementById("skillEmpty");
+  if (empty) empty.classList.toggle("hidden", lib.length > 0);
+  const cnt = document.getElementById("skillCount");
+  if (cnt) cnt.textContent = `${lib.length} skills`;
+}
+
+function openSkillModal() {
+  document.getElementById("sSkillPath").value = "";
+  loadProjDatalist();
+  openModal("skillModal");
+}
+
+async function submitSkill() {
+  const path = document.getElementById("sSkillPath").value.trim();
+  if (!path) return toast("需要技能目录路径", true);
+  try {
+    const sk = await api("/api/skills", { method: "POST", body: JSON.stringify({ source_path: path }) });
+    closeModal("skillModal");
+    toast(`已导入 skill: ${sk.name}`);
+    await loadSkillLib();
+    renderSkillLib();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function deleteSkill(id) {
+  const s = state.skillLib.find(x => x.id === id);
+  if (!confirm(`删除 skill「${s ? s.name : id}」？将同时移除工作目录中的副本，已引用它的角色配置会失效。`)) return;
+  try {
+    await api(`/api/skills/${id}`, { method: "DELETE" });
+    toast("已删除");
+    await loadSkillLib();
+    renderSkillLib();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---- 模板列表（提示词模板，任务详情「保存为模板」沉淀） ---- */
 
 async function loadTemplates() {
   try {
@@ -1540,6 +1871,13 @@ function initShortcuts() {
       closeModal(e.target.id);
     }
   });
+  // 目录选择器事件委托（全站共享：agents / projects / skills）
+  document.addEventListener("click", e => {
+    const row = e.target.closest?.(".dir-row");
+    if (row) { dirLoad(row.dataset.path); return; }
+    const seg = e.target.closest?.(".crumb-seg");
+    if (seg && !seg.classList.contains("cur")) dirLoad(seg.dataset.p);
+  });
 }
 
 
@@ -1656,7 +1994,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   } else if (path === "/history") {
     loadHistory();
   } else if (path === "/agents") {
-    renderAgentList();
+    let av = "grid";
+    try { av = localStorage.getItem("paihuo.agentView") || "grid"; } catch (_) {}
+    setAgentView(av === "table" ? "table" : "grid");
     route();
     window.addEventListener("hashchange", route);
   } else if (path === "/projects") {
@@ -1666,7 +2006,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   } else if (path === "/autopilots") {
     renderScheduleList();
   } else if (path === "/skills") {
-    loadTemplates();
+    loadSkillLib().then(renderSkillLib);
   } else if (path === "/settings") {
     loadSettings();
   }

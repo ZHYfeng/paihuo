@@ -52,7 +52,7 @@ func main() {
 	sc.Start(ctx)
 	go autoCleanup(ctx, st)
 
-	srv := server.New(st, hub, ex, sc, token)
+	srv := server.New(st, hub, ex, sc, token, filepath.Join(filepath.Dir(db), "skills"))
 	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
 
 	go func() {
