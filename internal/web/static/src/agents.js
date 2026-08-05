@@ -493,7 +493,6 @@ export async function openAgentModal(id) {
   document.getElementById("aName").value = a ? a.name : "";
   document.getElementById("aDesc").value = a ? (a.description || "") : "";
   document.getElementById("aMaxConcurrency").value = a ? (a.max_concurrency || 1) : 1;
-  document.getElementById("aEnabled").checked = a ? a.enabled : true;
   state.agentModalRC = a ? JSON.parse(JSON.stringify(a.role_config || {})) : {};
   await loadSchema();
   await loadSkillLib();
@@ -525,7 +524,7 @@ export async function submitAgent() {
     description: document.getElementById("aDesc").value.trim(),
     cli,
     max_concurrency: Number(document.getElementById("aMaxConcurrency").value),
-    enabled: document.getElementById("aEnabled").checked,
+    enabled: true,
     role_config: schema ? readConfigFrom(schema, document.getElementById("agentModalSchema")) : {},
   };
   try {
