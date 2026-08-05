@@ -104,6 +104,71 @@ function findChrome() {
     await page.evaluate(() => closeAgentDetail());
   }
 
+  // 详情页删除按钮通过内联 onclick 触发。它不能直接引用 ES module 内的
+  // state，故创建临时角色后从详情页点击删除，验证完整的浏览器事件链路。
+  const deleteProbe = await page.evaluate(async () => {
+    const r = await fetch("/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "e2e 删除验证 " + Date.now(), cli: "pi", enabled: true }),
+    });
+    return r.ok ? await r.json() : null;
+  });
+  if (!deleteProbe) fail("创建角色删除验证数据失败");
+  else {
+    // 通过 HTTP 创建的临时角色不会立刻写入页面内存 state，先刷新确保以下
+    // 点击走的是真实渲染出的前端按钮。
+    await page.reload();
+    await page.waitForTimeout(700);
+    await page.evaluate(id => openAgentDetail(id), deleteProbe.id);
+    await page.waitForFunction(() => !document.getElementById("agentDetailShell").classList.contains("hidden"),
+      null, { timeout: 6000 }).catch(() => {});
+    page.once("dialog", dialog => dialog.accept());
+    await page.locator("#agentDetailShell .btn.danger").click();
+    await page.waitForFunction(async id => {
+      const all = await (await fetch("/api/agents")).json();
+      return !all.some(a => a.id === id);
+    }, deleteProbe.id, { timeout: 6000 }).catch(() => {});
+    const deleted = await page.evaluate(async id => {
+      const all = await (await fetch("/api/agents")).json();
+      return !all.some(a => a.id === id) && document.getElementById("agentDetailShell").classList.contains("hidden");
+    }, deleteProbe.id);
+    deleted ? ok("角色详情页删除按钮") : fail("角色详情页删除按钮未删除角色");
+  }
+
+  // 卡片删除按钮需要阻止卡片自身的“打开详情”点击事件，并把正确的角色 ID
+  // 传给删除请求。单独用临时角色覆盖这条事件链路。
+  const cardDeleteProbe = await page.evaluate(async () => {
+    const r = await fetch("/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "e2e 卡片删除验证 " + Date.now(), cli: "pi", enabled: true }),
+    });
+    return r.ok ? await r.json() : null;
+  });
+  if (!cardDeleteProbe) fail("创建卡片删除验证数据失败");
+  else {
+    await page.reload();
+    await page.waitForTimeout(700);
+    await page.evaluate(() => setAgentView("grid"));
+    await page.waitForFunction(id =>
+      !!document.querySelector(`.agent-card[data-agent-id="${id}"] .btn.danger`), cardDeleteProbe.id,
+      { timeout: 6000 }).catch(() => {});
+    page.once("dialog", dialog => dialog.accept());
+    await page.locator(`.agent-card[data-agent-id="${cardDeleteProbe.id}"] .btn.danger`).click();
+    await page.waitForFunction(async id => {
+      const all = await (await fetch("/api/agents")).json();
+      return !all.some(a => a.id === id);
+    }, cardDeleteProbe.id, { timeout: 6000 }).catch(() => {});
+    const deleted = await page.evaluate(async id => {
+      const all = await (await fetch("/api/agents")).json();
+      return !all.some(a => a.id === id) &&
+        !document.querySelector(`.agent-card[data-agent-id="${id}"]`) &&
+        document.getElementById("agentDetailShell").classList.contains("hidden");
+    }, cardDeleteProbe.id);
+    deleted ? ok("角色卡片删除按钮") : fail("角色卡片删除按钮未删除角色");
+  }
+
   // 角色创建的选项与角色页同源：schema 字段必须带 builtin 标记（Go 侧从
   // RoleConfig 反射派生），前端据此决定读写位置，新增/删除选项自动同步。
   const schemaSync = await page.evaluate(async () => {

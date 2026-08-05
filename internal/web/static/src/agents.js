@@ -38,7 +38,7 @@ export function renderAgentGrid() {
   grid.innerHTML = list.map(a => {
     const rc = a.role_config || {};
     const st = agentTaskStats(a);
-    return `<div class="agent-card" onclick="openAgentDetail(${a.id})">
+    return `<div class="agent-card" data-agent-id="${a.id}" onclick="openAgentDetail(${a.id})">
       <div class="ac-top">
         <span class="avatar lg av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
         <div class="ac-id">
@@ -60,6 +60,7 @@ export function renderAgentGrid() {
           <button class="btn xs" title="打开详情并切到配置 tab" onclick="event.stopPropagation();agentTabFromCard(${a.id})">配置</button>
           <button class="btn xs" onclick="event.stopPropagation();openAgentModal(${a.id})">编辑</button>
           <button class="btn xs" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "停用" : "启用"}</button>
+          <button class="btn xs danger" title="删除角色" aria-label="删除角色 ${esc(a.name)}" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}</button>
         </span>
       </div>
     </div>`;
@@ -596,13 +597,17 @@ export async function submitAgent() {
 }
 
 export async function deleteAgent(id) {
+  // 详情页的按钮是内联 onclick，无法访问 ES module 内部的 state；没有显式
+  // id 时从当前详情角色取值，列表/表格按钮仍可继续传入各自的 id。
+  if (!id) id = state.agentEditing?.id;
   if (!id) return;
   if (!confirm("删除该角色？未完成任务将失去指派，历史任务保留。")) return;
   try {
     await api(`/api/agents/${id}`, { method: "DELETE" });
     await loadAll();
     renderAgentList();
-    if (state.agentEditing && state.agentEditing.id === id) hideAgentDetail();
+    if (state.agentEditing && state.agentEditing.id === id) closeAgentDetail();
+    toast("已删除");
   } catch (e) { toast(e.message, true); }
 }
 

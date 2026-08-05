@@ -1473,7 +1473,7 @@
     grid.innerHTML = list.map((a) => {
       const rc = a.role_config || {};
       const st = agentTaskStats(a);
-      return `<div class="agent-card" onclick="openAgentDetail(${a.id})">
+      return `<div class="agent-card" data-agent-id="${a.id}" onclick="openAgentDetail(${a.id})">
       <div class="ac-top">
         <span class="avatar lg av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
         <div class="ac-id">
@@ -1495,6 +1495,7 @@
           <button class="btn xs" title="\u6253\u5F00\u8BE6\u60C5\u5E76\u5207\u5230\u914D\u7F6E tab" onclick="event.stopPropagation();agentTabFromCard(${a.id})">\u914D\u7F6E</button>
           <button class="btn xs" onclick="event.stopPropagation();openAgentModal(${a.id})">\u7F16\u8F91</button>
           <button class="btn xs" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "\u505C\u7528" : "\u542F\u7528"}</button>
+          <button class="btn xs danger" title="\u5220\u9664\u89D2\u8272" aria-label="\u5220\u9664\u89D2\u8272 ${esc(a.name)}" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}</button>
         </span>
       </div>
     </div>`;
@@ -1994,13 +1995,15 @@
     }
   }
   async function deleteAgent(id) {
+    if (!id) id = state.agentEditing?.id;
     if (!id) return;
     if (!confirm("\u5220\u9664\u8BE5\u89D2\u8272\uFF1F\u672A\u5B8C\u6210\u4EFB\u52A1\u5C06\u5931\u53BB\u6307\u6D3E\uFF0C\u5386\u53F2\u4EFB\u52A1\u4FDD\u7559\u3002")) return;
     try {
       await api(`/api/agents/${id}`, { method: "DELETE" });
       await loadAll();
       renderAgentList();
-      if (state.agentEditing && state.agentEditing.id === id) hideAgentDetail();
+      if (state.agentEditing && state.agentEditing.id === id) closeAgentDetail();
+      toast("\u5DF2\u5220\u9664");
     } catch (e) {
       toast(e.message, true);
     }
