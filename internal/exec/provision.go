@@ -31,7 +31,7 @@ var InstallCommands = map[string]string{
 	"codex":    "npm install -g @openai/codex",
 	"opencode": "npm install -g opencode-ai",
 	"pi":       "npm install -g @earendil-works/pi-coding-agent",
-	"omp":      "curl -fsSL https://omp.ai/install.sh | bash",
+	"omp":      "curl -fsSL https://omp.sh/install | sh",
 }
 
 // LoginHints 各 CLI 登录引导（手动登录可接受，能自动化的尽量自动化）。
@@ -40,7 +40,7 @@ var LoginHints = map[string]string{
 	"codex":    "在服务器终端执行 codex login（浏览器授权一次即可）",
 	"opencode": "在服务器终端执行 opencode auth login（浏览器授权）",
 	"pi":       "在服务器终端执行 pi auth login，或运行 pi 后输入 /account",
-	"omp":      "在服务器终端执行 omp auth login，或运行 omp 后输入 /account",
+	"omp":      "运行 omp 后用 /login 选择提供商登录（如 /login claude）；模型切换用 /model，也可先 omp setup 配置默认模型",
 }
 
 var provisionCache struct {
@@ -63,7 +63,7 @@ func ProvisionStatus() []ProvisionInfo {
 		"codex":    {filepath.Join(home, ".codex", "auth.json")},
 		"opencode": {filepath.Join(home, ".local", "share", "opencode", "auth.json")},
 		"pi":       {filepath.Join(home, ".pi", "agent", "auth.json")},
-		"omp":      {filepath.Join(home, ".pi", "agent", "auth.json"), filepath.Join(home, ".omp", "agent", "auth.json")},
+		"omp":      {filepath.Join(home, ".omp", "agent", "auth.json"), filepath.Join(home, ".pi", "agent", "auth.json")},
 	}
 	adapters := Adapters()
 	out := make([]ProvisionInfo, 0, len(adapters))

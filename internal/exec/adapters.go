@@ -137,8 +137,8 @@ func (a *ompAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	if s := o.Role.SystemPrompt; s != "" {
 		args = append(args, "--append-system-prompt", s)
 	}
-	for _, d := range o.Role.Skills {
-		args = append(args, "--add-dir", d)
+	if len(o.Role.Skills) > 0 {
+		args = append(args, "--skills", strings.Join(o.Role.Skills, ","))
 	}
 	switch o.Role.Thinking {
 	case "low":
@@ -148,6 +148,23 @@ func (a *ompAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	}
 	for _, p := range o.Role.Plugins {
 		args = append(args, "--config", p)
+	}
+	// omp 专属参数（官方 docs/flag-tables）：工具白名单 / 执行时限 / 配置档位 / 提供商
+	if v := o.Role.Custom["tools"]; v != "" {
+		args = append(args, "--tools", v)
+	}
+	if v := o.Role.Custom["max_time"]; v != "" {
+		args = append(args, "--max-time", v)
+	}
+	if v := o.Role.Custom["profile"]; v != "" {
+		args = append(args, "--profile", v)
+	}
+	if v := o.Role.Custom["provider"]; v != "" {
+		args = append(args, "--provider", v)
+	}
+	// 全权模式：官方 --auto-approve（除危险操作外自动批准），避免非交互执行中途挂起
+	if o.Perm == "full" {
+		args = append(args, "--auto-approve")
 	}
 	args = append(args, o.Role.ExtraArgs...)
 	return a.bin, args, mergeEnv(o.Role.Env), nil
@@ -162,10 +179,27 @@ func (a *ompAdapter) Schema() []Field {
 		f.Options = []string{"", "low", "medium", "high"}
 		f.Help = "low→--smol（小模型快速模式）、high→--slow（深度推理）、medium 默认"
 	}
+	if f := byKey(fs, "skills"); f != nil {
+		f.Help = "启动时注入的技能目录（官方 --skills 逗号分隔）；在 Skills 页把技能添加到 paihuo 工作目录后，这里按名称勾选"
+	}
+	fs = append(fs,
+		Field{Key: "tools", Label: "工具白名单", Type: "list", Group: "执行",
+			Placeholder: "read,edit,bash",
+			Help:        "官方 --tools：只启用列出的内置工具（共 31 个）；留空=全部。未知工具名会直接报错"},
+		Field{Key: "max_time", Label: "执行时限", Type: "text", Group: "执行",
+			Placeholder: "1800（秒），支持 30m / 2h",
+			Help:        "官方 --max-time：单次执行的超时上限"},
+		Field{Key: "profile", Label: "配置档位", Type: "text", Group: "执行",
+			Placeholder: "work / personal",
+			Help:        "官方 --profile：加载 ~/.omp/agent 下的命名配置档位"},
+		Field{Key: "provider", Label: "提供商", Type: "text", Group: "模型与指令",
+			Placeholder: "留空用默认（60+ 提供商自动探测）",
+			Help:        "官方 --provider：强制使用 models.yml 中定义的提供商（如 spark / claude / gemini），模型字段建议同步指定"},
+	)
 	return fs
 }
 
-func (a *ompAdapter) Docs() string { return "https://github.com/ohmygpt/omp" }
+func (a *ompAdapter) Docs() string { return "https://omp.sh/docs" }
 
 // ---------------------------------------------------------------------------
 // opencode：opencode run --dir <dir> "提示词"

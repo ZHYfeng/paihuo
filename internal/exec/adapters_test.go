@@ -1,6 +1,7 @@
 package exec
 
 import (
+	"paihuo/internal/store"
 	"strings"
 	"testing"
 )
@@ -28,5 +29,75 @@ func TestMergeEnvOverridesInPlace(t *testing.T) {
 	}
 	if got := seen["NEW_KEY"]; got != "v1" {
 		t.Fatalf("NEW_KEY 应存在，得到 %q", got)
+	}
+}
+
+// omp 官方文档参数映射（omp.sh/docs / flag-tables）：skills→--skills、
+// 全权→--auto-approve、自定义字段→--tools/--max-time/--profile/--provider。
+func TestOmpAdapterBuild(t *testing.T) {
+	a := &ompAdapter{baseAdapter{id: "omp", name: "omp", bin: "omp"}}
+	o := RunOptions{
+		Prompt:     "hi",
+		SessionDir: "/s/x",
+		Perm:       "full",
+		Role: store.RoleConfig{
+			Model:        "claude/claude-sonnet-4",
+			SystemPrompt: "sys",
+			Thinking:     "high",
+			Skills:       []string{"/sk/a", "/sk/b"},
+			Plugins:      []string{"/p.toml"},
+			ExtraArgs:    []string{"--no-lsp"},
+			Custom: map[string]string{
+				"tools":    "read,edit,bash",
+				"max_time": "30m",
+				"profile":  "work",
+				"provider": "claude",
+			},
+		},
+	}
+	bin, args, _, err := a.Build(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bin != "omp" {
+		t.Fatalf("bin=%q", bin)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		"-p hi", "--no-pty", "--session-dir /s/x", "--model claude/claude-sonnet-4",
+		"--append-system-prompt sys", "--slow", "--skills /sk/a,/sk/b",
+		"--config /p.toml", "--tools read,edit,bash", "--max-time 30m",
+		"--profile work", "--provider claude", "--auto-approve", "--no-lsp",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("缺少参数 %q（完整: %s）", want, joined)
+		}
+	}
+	if strings.Contains(joined, "--add-dir") {
+		t.Fatalf("旧参数 --add-dir 不应再出现: %s", joined)
+	}
+}
+
+// omp schema 含官方新增选项；review 权限不传 --auto-approve。
+func TestOmpSchemaAndPerm(t *testing.T) {
+	a := &ompAdapter{baseAdapter{id: "omp", name: "omp", bin: "omp"}}
+	keys := map[string]bool{}
+	for _, f := range a.Schema() {
+		keys[f.Key] = true
+	}
+	for _, want := range []string{"tools", "max_time", "profile", "provider"} {
+		if !keys[want] {
+			t.Fatalf("schema 缺少 %s", want)
+		}
+	}
+	if got := a.Docs(); got != "https://omp.sh/docs" {
+		t.Fatalf("Docs=%q", got)
+	}
+	_, args, _, err := a.Build(RunOptions{Prompt: "p", Perm: "review", Role: store.RoleConfig{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(args, " "), "--auto-approve") {
+		t.Fatal("review 权限不应带 --auto-approve")
 	}
 }

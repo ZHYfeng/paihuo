@@ -155,6 +155,24 @@ func (a *ompAdapter) Models() []string {
 			}
 		}
 
+		// models.yml：providers: 块（官方新格式，README "Custom OpenAI-compatible providers"）
+		if b, err := os.ReadFile(filepath.Join(agentDir, "models.yml")); err == nil {
+			cur := ""
+			idRe := regexp.MustCompile(`^-\s*id:\s*(\S+)`)
+			for _, line := range strings.Split(string(b), "\n") {
+				trimmed := strings.TrimSpace(line)
+				if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+					continue
+				}
+				// 2 空格缩进且以冒号结尾 = provider 名；6 空格缩进 "- id: xxx" = 模型
+				if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "    ") && strings.HasSuffix(trimmed, ":") {
+					cur = strings.TrimSuffix(trimmed, ":")
+				} else if m := idRe.FindStringSubmatch(trimmed); m != nil && strings.HasPrefix(line, "      ") && cur != "" {
+					add(cur + "/" + m[1])
+				}
+			}
+		}
+
 		// models.db：model_cache 表，逐单元格尝试解析为模型 JSON 数组
 		if db, err := sql.Open("sqlite", filepath.Join(agentDir, "models.db")); err == nil {
 			defer db.Close()
