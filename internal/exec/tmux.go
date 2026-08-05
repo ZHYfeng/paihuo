@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"os"
 	osexec "os/exec"
@@ -104,6 +105,19 @@ func (r *tmuxRunner) runnerCgroupPath(taskID int64) string {
 	return filepath.Join(r.taskDir(taskID), "runner-cgroup")
 }
 
+func (r *tmuxRunner) agentUnitPath(taskID int64) string {
+	return filepath.Join(r.taskDir(taskID), "agent-unit")
+}
+
+// agentUnitName 是按运行根目录和 task ID 推导的稳定 unit 名。稳定名称让取消、
+// 重试与服务恢复都能精确停止对应的 transient service，又避免不同 paihuo 实例
+// 的 task ID 相撞。
+func (r *tmuxRunner) agentUnitName(taskID int64) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(r.root))
+	return fmt.Sprintf("paihuo-%08x-task-%d-agent", h.Sum32(), taskID)
+}
+
 func (r *tmuxRunner) taskBinDir(taskID int64) string {
 	return filepath.Join(r.taskDir(taskID), "bin")
 }
@@ -176,7 +190,7 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, op
 	if err := os.Chmod(taskDir, 0o700); err != nil {
 		return fmt.Errorf("设置任务 tmux 目录权限失败: %w", err)
 	}
-	for _, path := range []string{r.exitPath(taskID), r.gatePath(taskID), r.agentOutputPath(taskID), r.runnerCgroupPath(taskID)} {
+	for _, path := range []string{r.exitPath(taskID), r.gatePath(taskID), r.agentOutputPath(taskID), r.runnerCgroupPath(taskID), r.agentUnitPath(taskID)} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("重置 tmux 任务状态失败: %w", err)
 		}
@@ -192,8 +206,13 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, op
 	if _, err := r.writeTmuxWrapper(taskID); err != nil {
 		return err
 	}
-	if err := r.writeScript(taskID, bin, args, options); err != nil {
+	if err := r.writeScript(taskID, dir, bin, args, options); err != nil {
 		return err
+	}
+	if options.IsolateCgroup {
+		if err := os.WriteFile(r.agentUnitPath(taskID), []byte(r.agentUnitName(taskID)+"\n"), 0o600); err != nil {
+			return fmt.Errorf("记录 Codex agent service 失败: %w", err)
+		}
 	}
 	taskEnv := r.taskShellEnvironment(taskID, env)
 
@@ -276,7 +295,7 @@ func isTmuxInternalEnv(key string) bool {
 	return key == "TMUX" || key == "TMUX_PANE"
 }
 
-func (r *tmuxRunner) writeScript(taskID int64, bin string, args []string, options tmuxStartOptions) error {
+func (r *tmuxRunner) writeScript(taskID int64, dir, bin string, args []string, options tmuxStartOptions) error {
 	if options.IsolateCgroup && !options.DetachTerminal {
 		return errors.New("cgroup 隔离需要同时脱离终端，以便可靠保存 agent 输出")
 	}
@@ -305,6 +324,8 @@ func (r *tmuxRunner) writeScript(taskID int64, bin string, args []string, option
 		// unified exec 终止自己的 cgroup，run.sh 和 pipe-pane 也不会被波及。
 		// 标准流由 user manager 直接追加到文件；外层 tail 再将其转发给终端。
 		invocation = shQuote(systemdRun) + " --user --quiet --wait --collect" +
+			" --unit=" + shQuote(r.agentUnitName(taskID)) +
+			" --working-directory=" + shQuote(dir) +
 			" --property=" + shQuote("StandardInput=null") +
 			" --property=" + shQuote("StandardOutput=append:"+output) +
 			" --property=" + shQuote("StandardError=append:"+output) +
@@ -444,6 +465,9 @@ func (r *tmuxRunner) Stop(taskID int64) error {
 // stopLocked 与 Start/SendText 共用同一把锁，避免取消恰好发生在 new-window
 // 与 pipe-pane 建立之间时相互抢占。调用方必须已持有 r.mu。
 func (r *tmuxRunner) stopLocked(taskID int64) error {
+	if err := r.stopAgentService(taskID); err != nil {
+		return err
+	}
 	if !r.hasWindow(taskID) {
 		return nil
 	}
@@ -454,6 +478,39 @@ func (r *tmuxRunner) stopLocked(taskID int64) error {
 		return nil
 	}
 	return err
+}
+
+// stopAgentService 处理 Codex batch 从 tmux pane 迁出的 transient service。
+// tmux kill-window 只会结束 pane scope，不能保证结束同级 systemd service；因此
+// 这里必须先按 task 的稳定 unit 名停止 agent，避免取消或异常后留下孤儿进程。
+func (r *tmuxRunner) stopAgentService(taskID int64) error {
+	b, err := os.ReadFile(r.agentUnitPath(taskID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("读取 Codex agent service 记录失败: %w", err)
+	}
+	unit := strings.TrimSpace(string(b))
+	if unit != r.agentUnitName(taskID) {
+		return fmt.Errorf("Codex agent service 记录非法: %q", unit)
+	}
+	systemctl, err := osexec.LookPath("systemctl")
+	if err != nil {
+		return fmt.Errorf("未找到 systemctl，无法停止 Codex agent service: %w", err)
+	}
+	cmd := osexec.Command(systemctl, "--user", "stop", unit)
+	out, stopErr := cmd.CombinedOutput()
+	if stopErr != nil {
+		msg := strings.TrimSpace(string(out))
+		if !strings.Contains(msg, "not loaded") && !strings.Contains(msg, "not found") {
+			return fmt.Errorf("停止 Codex agent service %s 失败: %w: %s", unit, stopErr, msg)
+		}
+	}
+	if err := os.Remove(r.agentUnitPath(taskID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("清理 Codex agent service 记录失败: %w", err)
+	}
+	return nil
 }
 
 // SendText 向仍在运行的 task pane 注入一条字面消息并确认。它从不经 shell

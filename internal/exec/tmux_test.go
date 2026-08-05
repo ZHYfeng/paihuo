@@ -215,11 +215,12 @@ func TestTmuxRunnerDetachesCodexBatchTerminal(t *testing.T) {
 	r.binary = bin
 	_ = r.command("kill-server")
 	t.Cleanup(func() { _ = r.command("kill-server") })
+	workdir := t.TempDir()
 
 	// 这个断言正好覆盖 Codex 的故障边界：agent 的 stdin/stdout/stderr 都不能
 	// 指向 paihuo task pane 的 pty，但输出仍必须实时回到 terminal.log。
-	if err := r.Start(42, t.TempDir(), "/bin/sh", []string{
-		"-c", `test ! -t 0 && test ! -t 1 && test ! -t 2 || exit 1; printf 'detached agent output\n'; cat /proc/self/cgroup`,
+	if err := r.Start(42, workdir, "/bin/sh", []string{
+		"-c", `test ! -t 0 && test ! -t 1 && test ! -t 2 || exit 1; printf 'detached agent output\n'; printf 'pwd=%s\n' "$PWD"; cat /proc/self/cgroup`,
 	}, os.Environ(), tmuxStartOptions{IsolateProcessGroup: true, DetachTerminal: true, IsolateCgroup: true}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -248,6 +249,9 @@ func TestTmuxRunnerDetachesCodexBatchTerminal(t *testing.T) {
 		if err != nil || !strings.Contains(string(raw), "detached agent output") {
 			t.Fatalf("agent 原始输出不完整: %q err=%v", raw, err)
 		}
+		if !strings.Contains(string(raw), "pwd="+workdir) {
+			t.Fatalf("agent 未在任务工作目录执行: %q", raw)
+		}
 		outer, err := os.ReadFile(r.runnerCgroupPath(42))
 		if err != nil {
 			t.Fatalf("读取 pane cgroup: %v", err)
@@ -268,6 +272,50 @@ func TestTmuxRunnerDetachesCodexBatchTerminal(t *testing.T) {
 		return
 	}
 	t.Fatal("等待脱离终端的 batch 任务结束超时")
+}
+
+func TestTmuxRunnerStopTerminatesIsolatedAgentService(t *testing.T) {
+	bin := requireTmuxIntegration(t)
+	if _, err := osexec.LookPath("setsid"); err != nil {
+		t.Skip("setsid 未安装")
+	}
+	if _, err := osexec.LookPath("tail"); err != nil {
+		t.Skip("tail 未安装")
+	}
+	requireUserSystemdRun(t)
+	systemctl, err := osexec.LookPath("systemctl")
+	if err != nil {
+		t.Skip("systemctl 未安装")
+	}
+	r := newTmuxRunnerAt(t.TempDir(), fmt.Sprintf("paihuo-stop-service-test-%d", os.Getpid()))
+	r.binary = bin
+	_ = r.command("kill-server")
+	t.Cleanup(func() {
+		r.Cleanup(42)
+		_ = r.command("kill-server")
+	})
+	if err := r.Start(42, t.TempDir(), "/bin/sh", []string{
+		"-c", "sleep 2147483647",
+	}, os.Environ(), tmuxStartOptions{IsolateProcessGroup: true, DetachTerminal: true, IsolateCgroup: true}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if osexec.Command(systemctl, "--user", "is-active", "--quiet", r.agentUnitName(42)).Run() == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if osexec.Command(systemctl, "--user", "is-active", "--quiet", r.agentUnitName(42)).Run() != nil {
+		t.Fatalf("等待 agent service %s 启动超时", r.agentUnitName(42))
+	}
+	if err := r.Stop(42); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if osexec.Command(systemctl, "--user", "is-active", "--quiet", r.agentUnitName(42)).Run() == nil {
+		t.Fatalf("Stop 后 agent service %s 仍在运行", r.agentUnitName(42))
+	}
 }
 
 func TestTmuxRunnerArchivesFailureArtifacts(t *testing.T) {
