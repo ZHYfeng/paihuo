@@ -114,7 +114,7 @@ func TestTmuxRunnerTaskTmuxWrapperIgnoresUserConfig(t *testing.T) {
 	})
 	if err := r.Start(42, t.TempDir(), "/bin/bash", []string{
 		"-lc",
-		`tmux -L "$1" new-session -d -s nested -- sleep 2147483647; created=$?; option="$(tmux -L "$1" show-options -gqv @paihuo_task_wrapper_test)"; shown=$?; tmux -L "$1" kill-server; stopped=$?; test "$created" -eq 0 && test "$shown" -eq 0 && test "$stopped" -eq 0 && test -z "$option" && printf 'nested config clean\n'`,
+		`test -z "$TMUX" && test -z "$TMUX_PANE" && tmux -L "$1" new-session -d -s nested -- sleep 2147483647; created=$?; option="$(tmux -L "$1" show-options -gqv @paihuo_task_wrapper_test)"; shown=$?; tmux -L "$1" kill-server; stopped=$?; test "$created" -eq 0 && test "$shown" -eq 0 && test "$stopped" -eq 0 && test -z "$option" && printf 'nested config clean\n'`,
 		"wrapper-test", nestedSocket,
 	}, os.Environ()); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -142,6 +142,9 @@ func TestTmuxRunnerTaskTmuxWrapperIgnoresUserConfig(t *testing.T) {
 	}
 	if !finished || !strings.Contains(strings.Join(output, "\n"), "nested config clean") {
 		t.Fatalf("任务内 tmux 包装器未隔离用户配置，output=%q", output)
+	}
+	if err := osexec.Command(bin, "-f", tmuxConfigFile, "-L", nestedSocket, "has-session", "-t", "nested").Run(); err == nil {
+		t.Fatal("任务内 cleanup 应只销毁嵌套 tmux server")
 	}
 }
 

@@ -251,6 +251,10 @@ func (r *tmuxRunner) writeScript(taskID int64, bin string, args []string) error 
 	// POSIX sh 只负责等待 gate、执行精确 argv、写退出码；实际参数均由安全
 	// 单引号编码，支持空格、引号和换行，不依赖用户 shell 的历史或配置。
 	src := "#!/bin/sh\n" +
+		// tmux 会向 pane 注入自身的 TMUX/TMUX_PANE。任务里的测试可能另起
+		// `tmux -L <socket>` 并在 cleanup 时 kill-server；不能让它们继承父
+		// paihuo socket，否则可能误操作父 task window 或 server。
+		"unset TMUX TMUX_PANE\n" +
 		"export PATH=" + shQuote(r.taskBinDir(taskID)) + ":\"$PATH\"\n" +
 		"while [ ! -f " + shQuote(r.gatePath(taskID)) + " ]; do sleep 0.05; done\n" +
 		strings.Join(quoted, " ") + "\n" +
