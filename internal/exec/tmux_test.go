@@ -35,7 +35,7 @@ func TestTmuxRunnerPersistsOutputAndExit(t *testing.T) {
 	if err := r.Start(taskID, t.TempDir(), "/bin/sh", []string{
 		"-c", `printf 'first\n'; printf 'arg=%s\n' "$1"; printf 'env=%s\n' "$PAIHUO_TMUX_TEST"; sleep 0.1; printf 'last'`,
 		"probe", "quote'\nline",
-	}, []string{"PAIHUO_TMUX_TEST=ok"}); err != nil {
+	}, []string{"PAIHUO_TMUX_TEST=ok"}, false); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -119,7 +119,7 @@ func TestTmuxRunnerTaskTmuxWrapperIgnoresUserConfig(t *testing.T) {
 		"-lc",
 		`test -z "$TMUX" && test -z "$TMUX_PANE" && tmux -L "$1" new-session -d -s nested -- sleep 2147483647; created=$?; option="$(tmux -L "$1" show-options -gqv @paihuo_task_wrapper_test)"; shown=$?; tmux -L "$1" kill-server; stopped=$?; test "$created" -eq 0 && test "$shown" -eq 0 && test "$stopped" -eq 0 && test -z "$option" && printf 'nested config clean\n'`,
 		"wrapper-test", nestedSocket,
-	}, os.Environ()); err != nil {
+	}, os.Environ(), false); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -149,6 +149,45 @@ func TestTmuxRunnerTaskTmuxWrapperIgnoresUserConfig(t *testing.T) {
 	if err := osexec.Command(bin, "-f", tmuxConfigFile, "-L", nestedSocket, "has-session", "-t", "nested").Run(); err == nil {
 		t.Fatal("任务内 cleanup 应只销毁嵌套 tmux server")
 	}
+}
+
+func TestTmuxRunnerIsolatesBatchAgentProcessGroup(t *testing.T) {
+	bin := requireTmuxIntegration(t)
+	if _, err := osexec.LookPath("setsid"); err != nil {
+		t.Skip("setsid 未安装")
+	}
+	r := newTmuxRunnerAt(t.TempDir(), fmt.Sprintf("paihuo-setsid-test-%d", os.Getpid()))
+	r.binary = bin
+	_ = r.command("kill-server")
+	t.Cleanup(func() { _ = r.command("kill-server") })
+
+	// 模拟 agent 错误地杀掉自身所属进程组。未隔离时这会带走 run.sh，导致
+	// task window 消失却没有 exit-code；隔离后 setsid 只返回 137 给 run.sh。
+	if err := r.Start(42, t.TempDir(), "/bin/sh", []string{
+		"-c", "kill -KILL -$$",
+	}, os.Environ(), true); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		obs, err := r.Poll(42, 0)
+		if err != nil {
+			t.Fatalf("Poll: %v", err)
+		}
+		if !obs.Done {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		if obs.ExitCode != 137 {
+			t.Fatalf("ExitCode=%d，want 137", obs.ExitCode)
+		}
+		if !r.hasWindow(42) {
+			t.Fatal("隔离后的 run.sh 应写入退出码并保留 task window")
+		}
+		return
+	}
+	t.Fatal("等待隔离任务结束超时")
 }
 
 func TestTmuxRunnerArchivesFailureArtifacts(t *testing.T) {

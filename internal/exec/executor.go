@@ -434,7 +434,7 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	}
 	tk.TmuxLogOffset = 0
 	e.log(tk.ID, "sys", fmt.Sprintf("▣ 专用 tmux：server=paihuo window=task-%d", tk.ID))
-	if err := e.runner.Start(tk.ID, dir, bin, args, env); err != nil {
+	if err := e.runner.Start(tk.ID, dir, bin, args, env, tk.RunMode != store.RunModeInteractive); err != nil {
 		fail(err.Error())
 		return
 	}

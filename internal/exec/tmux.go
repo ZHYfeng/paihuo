@@ -138,7 +138,12 @@ func (r *tmuxRunner) paneDead(taskID int64) (bool, error) {
 
 // Start 创建一个暂停在 gate 文件前的 task window，先接好 pipe-pane 再放行，
 // 从而不会遗漏启动瞬间的终端输出。
-func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string) error {
+//
+// batch 任务会把 agent 放到独立 session。部分 CLI 会在结束工具子进程时向其
+// 进程组发送信号；若 agent 与本脚本共用 pane 的进程组，信号会让 run.sh 来不及
+// 写入 exit-code，执行器只能看到“window 消失”。交互式 Pi 则保留原进程组，
+// 以维持它所需的终端会话语义。
+func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, isolateAgentProcessGroup bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.ensureSession(); err != nil {
@@ -166,7 +171,7 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string) er
 	if _, err := r.writeTmuxWrapper(taskID); err != nil {
 		return err
 	}
-	if err := r.writeScript(taskID, bin, args); err != nil {
+	if err := r.writeScript(taskID, bin, args, isolateAgentProcessGroup); err != nil {
 		return err
 	}
 	taskEnv := r.taskShellEnvironment(taskID, env)
@@ -250,11 +255,21 @@ func isTmuxInternalEnv(key string) bool {
 	return key == "TMUX" || key == "TMUX_PANE"
 }
 
-func (r *tmuxRunner) writeScript(taskID int64, bin string, args []string) error {
+func (r *tmuxRunner) writeScript(taskID int64, bin string, args []string, isolateAgentProcessGroup bool) error {
 	command := append([]string{bin}, args...)
 	quoted := make([]string, 0, len(command))
 	for _, arg := range command {
 		quoted = append(quoted, shQuote(arg))
+	}
+	invocation := strings.Join(quoted, " ")
+	if isolateAgentProcessGroup {
+		setsid, err := osexec.LookPath("setsid")
+		if err != nil {
+			return fmt.Errorf("未找到 setsid；batch 任务需要独立进程组以保留退出码: %w", err)
+		}
+		// --wait 让 setsid 返回 agent 的真实退出状态；否则 run.sh 会过早写出
+		// 成功，-- 则避免 agent 可执行文件被解释为 setsid 的选项。
+		invocation = shQuote(setsid) + " --wait -- " + invocation
 	}
 	// POSIX sh 只负责等待 gate、执行精确 argv、写退出码；实际参数均由安全
 	// 单引号编码，支持空格、引号和换行，不依赖用户 shell 的历史或配置。
@@ -265,7 +280,7 @@ func (r *tmuxRunner) writeScript(taskID int64, bin string, args []string) error 
 		"unset TMUX TMUX_PANE\n" +
 		"export PATH=" + shQuote(r.taskBinDir(taskID)) + ":\"$PATH\"\n" +
 		"while [ ! -f " + shQuote(r.gatePath(taskID)) + " ]; do sleep 0.05; done\n" +
-		strings.Join(quoted, " ") + "\n" +
+		invocation + "\n" +
 		"status=$?\n" +
 		"printf '%s\\n' \"$status\" > " + shQuote(r.exitPath(taskID)) + "\n" +
 		"exit \"$status\"\n"
