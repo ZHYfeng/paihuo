@@ -11,13 +11,15 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // tmuxRunner 把 tmux 的 server、window、pipe-pane、退出码文件和日志偏移
 // 收敛在一个模块中。执行器只需启动、轮询和停止任务，不需要了解 tmux 命令细节。
 //
-// 所有任务共用一个专用 server/socket（tmux -L paihuo）与一个 paihuo session；
-// 每个活动任务占用一个名为 task-<id> 的 window。不会接管用户的默认 tmux server。
+// 所有任务共用一个专用 server/socket（tmux -f /dev/null -L paihuo）与一个 paihuo
+// session；每个活动任务占用一个名为 task-<id> 的 window。不会接管用户的默认
+// tmux server，也绝不能读取用户 ~/.tmux.conf 中的恢复插件或 hook。
 type tmuxRunner struct {
 	mu      sync.Mutex
 	binary  string
@@ -25,6 +27,10 @@ type tmuxRunner struct {
 	session string
 	root    string
 }
+
+// tmuxConfigFile 让专用 server 不加载用户全局配置。paihuo 任务 window 的生命周期
+// 必须只由执行器管理，不能受 tmux-resurrect、tmux-continuum 等用户插件影响。
+const tmuxConfigFile = "/dev/null"
 
 type tmuxObservation struct {
 	Lines    []string
@@ -95,17 +101,17 @@ func (r *tmuxRunner) ensureSession() error {
 }
 
 func (r *tmuxRunner) hasSession() bool {
-	cmd := osexec.Command(r.binary, "-L", r.socket, "has-session", "-t", r.session)
+	cmd := osexec.Command(r.binary, r.commandArgs("has-session", "-t", r.session)...)
 	return cmd.Run() == nil
 }
 
 func (r *tmuxRunner) hasWindow(taskID int64) bool {
-	cmd := osexec.Command(r.binary, "-L", r.socket, "list-panes", "-t", r.target(taskID), "-F", "#{pane_id}")
+	cmd := osexec.Command(r.binary, r.commandArgs("list-panes", "-t", r.target(taskID), "-F", "#{pane_id}")...)
 	return cmd.Run() == nil
 }
 
 func (r *tmuxRunner) paneDead(taskID int64) (bool, error) {
-	cmd := osexec.Command(r.binary, "-L", r.socket, "display-message", "-p", "-t", r.target(taskID), "#{pane_dead}")
+	cmd := osexec.Command(r.binary, r.commandArgs("display-message", "-p", "-t", r.target(taskID), "#{pane_dead}")...)
 	out, err := cmd.Output()
 	if err != nil {
 		return false, err
@@ -331,14 +337,49 @@ func (r *tmuxRunner) SendText(taskID int64, text string) error {
 	return nil
 }
 
-// Cleanup 只清理该任务的 window 与运行时文件；control window / 专用 server 会保留。
+// ArchiveFailureArtifacts 将异常中断前留下的运行文件移入当前任务目录中的独立
+// failure-* 子目录。下一次续跑同一任务时可以安全地创建新的 terminal.log/run.sh，
+// 而这份证据会保留到任务被删除为止。
+func (r *tmuxRunner) ArchiveFailureArtifacts(taskID int64, reason string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	taskDir := r.taskDir(taskID)
+	if _, err := os.Stat(taskDir); errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	} else if err != nil {
+		return "", fmt.Errorf("读取 tmux 任务目录失败: %w", err)
+	}
+	archiveDir := filepath.Join(taskDir, "failure-"+time.Now().UTC().Format("20060102T150405.000000000Z"))
+	if err := os.Mkdir(archiveDir, 0o700); err != nil {
+		return "", fmt.Errorf("创建 tmux 故障归档失败: %w", err)
+	}
+	for _, name := range []string{"terminal.log", "run.sh", "exit-code", "start"} {
+		from := filepath.Join(taskDir, name)
+		to := filepath.Join(archiveDir, name)
+		if err := os.Rename(from, to); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return "", fmt.Errorf("归档 tmux 运行文件 %s 失败: %w", name, err)
+		}
+	}
+	if reason = strings.TrimSpace(reason); reason != "" {
+		if err := os.WriteFile(filepath.Join(archiveDir, "reason.txt"), []byte(reason+"\n"), 0o600); err != nil {
+			return "", fmt.Errorf("写入 tmux 故障原因失败: %w", err)
+		}
+	}
+	return archiveDir, nil
+}
+
+// Cleanup 只清理该任务的 window 与运行时文件（包括 failure-* 归档）；control
+// window / 专用 server 会保留。调用它意味着任务已被正常结算或显式删除。
 func (r *tmuxRunner) Cleanup(taskID int64) {
 	_ = r.Stop(taskID)
 	_ = os.RemoveAll(r.taskDir(taskID))
 }
 
 func (r *tmuxRunner) command(args ...string) error {
-	cmd := osexec.Command(r.binary, append([]string{"-L", r.socket}, args...)...)
+	cmd := osexec.Command(r.binary, r.commandArgs(args...)...)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return nil
@@ -348,6 +389,12 @@ func (r *tmuxRunner) command(args ...string) error {
 		return fmt.Errorf("tmux 操作失败: %w", err)
 	}
 	return fmt.Errorf("tmux 操作失败: %w: %s", err, msg)
+}
+
+func (r *tmuxRunner) commandArgs(args ...string) []string {
+	cmdArgs := make([]string, 0, len(args)+4)
+	cmdArgs = append(cmdArgs, "-f", tmuxConfigFile, "-L", r.socket)
+	return append(cmdArgs, args...)
 }
 
 // shQuote 返回可嵌入 POSIX sh 脚本的单个精确参数；NUL 本就不能存在于 argv。

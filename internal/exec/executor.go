@@ -37,6 +37,19 @@ type Executor struct {
 }
 
 var errExecutorStopping = errors.New("paihuo 正在停止")
+var errTmuxWindowLost = errors.New("专用 tmux window 已消失，且未留下退出码")
+
+type tmuxWindowLostError struct {
+	taskID int64
+}
+
+func (e tmuxWindowLostError) Error() string {
+	return fmt.Sprintf("专用 tmux window task-%d 已消失，且未留下退出码", e.taskID)
+}
+
+func (e tmuxWindowLostError) Is(target error) bool {
+	return target == errTmuxWindowLost
+}
 
 // New 创建执行器。instanceID 必须稳定标识当前派活数据库，用于把 agent
 // CLI 的会话文件和同机其他 paihuo 实例隔离开。
@@ -102,7 +115,7 @@ func (e *Executor) recoverInterrupted(ctx context.Context) {
 }
 
 func (e *Executor) markInterrupted(tk store.Task, msg string) {
-	e.runner.Cleanup(tk.ID)
+	e.preserveTmuxFailureArtifacts(tk.ID, msg)
 	_ = e.st.UpdateTask(tk.ID, map[string]any{
 		"status": store.StatusFailed, "finished_at": store.Now(), "error": msg,
 	})
@@ -528,7 +541,7 @@ func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task)
 			return obs.ExitCode, exitError(obs.ExitCode)
 		}
 		if !obs.Alive {
-			return -1, fmt.Errorf("专用 tmux window task-%d 已消失，且未留下退出码", tk.ID)
+			return -1, tmuxWindowLostError{taskID: tk.ID}
 		}
 		select {
 		case <-serviceCtx.Done():
@@ -568,7 +581,11 @@ func (e *Executor) finishRun(tk store.Task, code int, runErr error, canceled boo
 		e.log(tk.ID, "sys", "⏸ paihuo 正在停止，专用 tmux 任务将继续运行并在下次启动后接管")
 		return
 	}
-	defer e.runner.Cleanup(tk.ID)
+	if errors.Is(runErr, errTmuxWindowLost) {
+		e.preserveTmuxFailureArtifacts(tk.ID, runErr.Error())
+	} else {
+		defer e.runner.Cleanup(tk.ID)
+	}
 	cur, _ := e.st.GetTask(tk.ID)
 	if cur != nil && cur.Status == store.StatusCancelled {
 		e.log(tk.ID, "sys", "■ 已取消")
@@ -658,6 +675,22 @@ func (e *Executor) finishRun(tk store.Task, code int, runErr error, canceled boo
 		e.log(tk.ID, "sys", "✓ 完成")
 	}
 	e.publishTask(tk.ID)
+}
+
+// preserveTmuxFailureArtifacts 在 tmux window 非正常消失时留下 run.sh、终端输出
+// 和原因文件；任务续跑会建立新的运行文件，删除任务才会一并删除这些归档。
+func (e *Executor) preserveTmuxFailureArtifacts(taskID int64, reason string) {
+	// 如果异常发生在 Poll 失败而非窗口已消失的边界，先停止残留 window，避免一个
+	// 已标记失败的 task 继续在后台执行。
+	_ = e.runner.Stop(taskID)
+	archive, err := e.runner.ArchiveFailureArtifacts(taskID, reason)
+	if err != nil {
+		e.log(taskID, "sys", "⚠ 保留 tmux 异常运行证据失败: "+err.Error())
+		return
+	}
+	if archive != "" {
+		e.log(taskID, "sys", "⚠ 专用 tmux 异常退出，运行证据已归档；删除任务时会一并清理")
+	}
 }
 
 func (e *Executor) log(taskID int64, stream, content string) {

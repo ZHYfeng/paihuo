@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	osexec "os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +62,73 @@ func TestTmuxRunnerPersistsOutputAndExit(t *testing.T) {
 	recovered.Cleanup(taskID)
 	if recovered.hasWindow(taskID) {
 		t.Fatal("Cleanup 后 task window 应被移除")
+	}
+}
+
+func TestTmuxRunnerIgnoresUserConfig(t *testing.T) {
+	bin, err := osexec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux 未安装")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, ".tmux.conf"), []byte("set -g @paihuo_config_isolation_test loaded\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r := newTmuxRunnerAt(t.TempDir(), fmt.Sprintf("paihuo-config-test-%d", os.Getpid()))
+	r.binary = bin
+	_ = r.command("kill-server")
+	t.Cleanup(func() { _ = r.command("kill-server") })
+	if err := r.ensureSession(); err != nil {
+		t.Fatalf("ensureSession: %v", err)
+	}
+
+	out, err := osexec.Command(bin, "-L", r.socket, "show-options", "-gqv", "@paihuo_config_isolation_test").Output()
+	if err != nil {
+		t.Fatalf("读取专用 tmux 配置: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "" {
+		t.Fatalf("专用 tmux 不应加载用户 ~/.tmux.conf，得到 %q", got)
+	}
+}
+
+func TestTmuxRunnerArchivesFailureArtifacts(t *testing.T) {
+	r := newTmuxRunnerAt(t.TempDir(), "paihuo-archive-test")
+	const taskID = int64(42)
+	if err := os.MkdirAll(r.taskDir(taskID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{
+		"terminal.log": "partial output\n",
+		"run.sh":       "#!/bin/sh\n",
+		"start":        "start\n",
+	} {
+		if err := os.WriteFile(filepath.Join(r.taskDir(taskID), name), []byte(want), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archive, err := r.ArchiveFailureArtifacts(taskID, "window vanished")
+	if err != nil {
+		t.Fatalf("ArchiveFailureArtifacts: %v", err)
+	}
+	for name, want := range map[string]string{
+		"terminal.log": "partial output\n",
+		"run.sh":       "#!/bin/sh\n",
+		"start":        "start\n",
+		"reason.txt":   "window vanished\n",
+	} {
+		got, err := os.ReadFile(filepath.Join(archive, name))
+		if err != nil || string(got) != want {
+			t.Fatalf("归档文件 %s = %q err=%v，want %q", name, got, err, want)
+		}
+	}
+	if _, err := os.Stat(r.logPath(taskID)); !os.IsNotExist(err) {
+		t.Fatalf("归档后当前 terminal.log 应不存在，err=%v", err)
+	}
+	r.Cleanup(taskID)
+	if _, err := os.Stat(r.taskDir(taskID)); !os.IsNotExist(err) {
+		t.Fatalf("清理任务后归档也应删除，err=%v", err)
 	}
 }
 
