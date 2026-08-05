@@ -3,7 +3,6 @@ package server
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -1428,7 +1427,10 @@ func (s *Server) fsMkdir(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Path string `json:"path"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Path) == "" {
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.Path) == "" {
 		writeErr(w, http.StatusBadRequest, "需要 path")
 		return
 	}

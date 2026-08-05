@@ -2,13 +2,16 @@ package server
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"log"
 	"mime"
 	"net/http"
@@ -35,6 +38,7 @@ type Server struct {
 	sessionsRoot string                        // 任务 worktree 根目录（<db目录>/sessions）
 	pages        map[string]*template.Template // 每页一个模板集（base + 页面，避免 content 冲突）
 	mux          *http.ServeMux
+	secureCookie bool            // only set during startup for TLS-terminating reverse proxies
 	provMu       sync.Mutex      // 安装互斥锁
 	provBusy     map[string]bool // 正在安装的 CLI
 }
@@ -42,40 +46,68 @@ type Server struct {
 const (
 	sessionCookie = "paihuo_session"
 	sessionTTL    = 30 * 24 * time.Hour
+	maxJSONBody   = 1 << 20 // 1 MiB
 )
 
-// sessionValue 用令牌做 HMAC 签名会话（expiry.sig）：服务重启不失效，改令牌即全体失效。
-func (s *Server) sessionValue() string {
+// sessionValue creates an opaque, stateless session token. The expiry and a
+// cryptographically random nonce are HMAC-signed with the configured token,
+// so sessions survive restarts but are invalidated when that token changes.
+func (s *Server) sessionValue() (string, error) {
 	exp := time.Now().Add(sessionTTL).Unix()
+	nonce := make([]byte, 32)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", fmt.Errorf("生成会话随机数: %w", err)
+	}
+	payload := fmt.Sprintf("%d.%s", exp, base64.RawURLEncoding.EncodeToString(nonce))
 	mac := hmac.New(sha256.New, []byte(s.token))
-	fmt.Fprintf(mac, "%d", exp)
-	return fmt.Sprintf("%d.%x", exp, mac.Sum(nil)[:16])
+	_, _ = mac.Write([]byte(payload))
+	return payload + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
 }
 
-func (s *Server) setSessionCookie(w http.ResponseWriter) {
+func (s *Server) setSessionCookie(w http.ResponseWriter) bool {
+	value, err := s.sessionValue()
+	if err != nil {
+		log.Printf("签发会话失败: %v", err)
+		http.Error(w, "无法创建会话", http.StatusInternalServerError)
+		return false
+	}
 	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: s.sessionValue(), Path: "/",
-		HttpOnly: true, SameSite: http.SameSiteLaxMode,
+		Name: sessionCookie, Value: value, Path: "/",
+		HttpOnly: true, Secure: s.secureCookie, SameSite: http.SameSiteLaxMode,
 		MaxAge: int(sessionTTL.Seconds()),
 	})
+	return true
 }
+
+// SetSecureCookies marks session cookies as Secure. Call it once during
+// startup when HTTPS is terminated by a reverse proxy; leave it disabled for
+// direct local HTTP development.
+func (s *Server) SetSecureCookies(secure bool) { s.secureCookie = secure }
 
 func (s *Server) validSession(r *http.Request) bool {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
 		return false
 	}
-	parts := strings.SplitN(c.Value, ".", 2)
-	if len(parts) != 2 {
+	parts := strings.Split(c.Value, ".")
+	if len(parts) != 3 {
 		return false
 	}
 	exp, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil || time.Now().Unix() > exp {
 		return false
 	}
+	nonce, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil || len(nonce) != 32 {
+		return false
+	}
+	got, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return false
+	}
 	mac := hmac.New(sha256.New, []byte(s.token))
-	fmt.Fprintf(mac, "%d", exp)
-	return subtle.ConstantTimeCompare([]byte(parts[1]), []byte(hex.EncodeToString(mac.Sum(nil)[:16]))) == 1
+	_, _ = mac.Write([]byte(parts[0] + "." + parts[1]))
+	return subtle.ConstantTimeCompare(got, mac.Sum(nil)) == 1
 }
 
 func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Scheduler, token, skillsDir string) *Server {
@@ -120,7 +152,12 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 		// 内嵌资源随二进制更新：内容 hash 作 ETag，浏览器每次 revalidate。
 		// 二进制更新后 hash 变化，客户端必然拿到新版前端（旧实现无 ETag，
 		// 浏览器可能长期复用缓存的旧 app.js 导致页面脚本缺失）。
-		f, err := web.FS.Open(strings.TrimPrefix(r.URL.Path, "/"))
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if !fs.ValidPath(name) {
+			http.NotFound(w, r)
+			return
+		}
+		f, err := web.FS.Open(name)
 		if err != nil {
 			http.NotFound(w, r)
 			return
@@ -206,25 +243,50 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 // cookie，之后所有请求（含 SSE 的 EventSource）凭 cookie 访问，令牌不再
 // 出现在 URL / 前端代码里。
 func (s *Server) Handler() http.Handler {
+	var next http.Handler
 	if s.token == "" {
-		return s.mux
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := r.URL.Path
-		if strings.HasPrefix(p, "/static/") || p == "/login" {
-			s.mux.ServeHTTP(w, r)
-			return
-		}
-		if !s.validSession(r) {
-			if strings.HasPrefix(p, "/api/") {
-				writeErr(w, http.StatusUnauthorized, "未登录")
+		next = s.mux
+	} else {
+		next = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p := r.URL.Path
+			if strings.HasPrefix(p, "/static/") || p == "/login" {
+				s.mux.ServeHTTP(w, r)
 				return
 			}
-			http.Redirect(w, r, "/login", http.StatusFound)
-			return
+			if !s.validSession(r) {
+				if strings.HasPrefix(p, "/api/") {
+					writeErr(w, http.StatusUnauthorized, "未登录")
+					return
+				}
+				http.Redirect(w, r, "/login", http.StatusFound)
+				return
+			}
+			if !s.setSessionCookie(w) {
+				return
+			}
+			s.mux.ServeHTTP(w, r)
+		})
+	}
+	return securityHeaders(next)
+}
+
+// securityHeaders applies a conservative browser-security baseline. A strict
+// script-src CSP cannot be enabled yet because templates intentionally use
+// inline event handlers; the remaining directives still protect framing,
+// object embedding, referrers and cross-origin resource loading.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=(), payment=(), usb=()")
+		w.Header().Set("Content-Security-Policy", "base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'")
+		if !strings.HasPrefix(r.URL.Path, "/static/") {
+			w.Header().Set("Cache-Control", "no-store")
 		}
-		s.setSessionCookie(w) // 滑动续期
-		s.mux.ServeHTTP(w, r)
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -279,12 +341,25 @@ func (s *Server) pageLogin(w http.ResponseWriter, r *http.Request) {
 // login 一次性验证令牌：正确则签发会话 cookie。
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	got := r.FormValue("token")
-	if s.token == "" || subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
+	if !s.validToken(got) {
 		s.render(w, "login", pageData{LoginError: "令牌不正确"})
 		return
 	}
-	s.setSessionCookie(w)
+	if !s.setSessionCookie(w) {
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// validToken compares fixed-size SHA-256 digests so a rejected login does not
+// reveal the configured token length through the comparison itself.
+func (s *Server) validToken(got string) bool {
+	if s.token == "" {
+		return false
+	}
+	wantSum := sha256.Sum256([]byte(s.token))
+	gotSum := sha256.Sum256([]byte(got))
+	return subtle.ConstantTimeCompare(gotSum[:], wantSum[:]) == 1
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -353,13 +428,23 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "读取请求失败: "+err.Error())
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		var maxErr *http.MaxBytesError
+		switch {
+		case errors.As(err, &maxErr):
+			writeErr(w, http.StatusRequestEntityTooLarge, "请求体过大（最大 1 MiB）")
+		case errors.Is(err, io.EOF):
+			writeErr(w, http.StatusBadRequest, "请求体不能为空")
+		default:
+			writeErr(w, http.StatusBadRequest, "请求不是合法 JSON: "+err.Error())
+		}
 		return false
 	}
-	if err := json.Unmarshal(body, v); err != nil {
-		writeErr(w, http.StatusBadRequest, "请求不是合法 JSON: "+err.Error())
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		writeErr(w, http.StatusBadRequest, "请求体只能包含一个 JSON 对象")
 		return false
 	}
 	return true

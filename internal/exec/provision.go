@@ -5,8 +5,8 @@ package exec
 import (
 	"context"
 	"os"
-	"path/filepath"
 	osexec "os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"

@@ -1,34 +1,58 @@
 # 派活（paihuo）
 
+[![CI](https://github.com/ZHYfeng/paihuo/actions/workflows/ci.yml/badge.svg)](https://github.com/ZHYfeng/paihuo/actions/workflows/ci.yml)
+
 个人自托管的 agent 调度平台：把各类任务派给你指定的 agent 角色（omp / opencode / pi / claude / codex），看板实时跟踪进度，审批关卡、定时任务、技能模板、数据可删，全部装在一个单二进制里。
 
 **部署形态**：服务运行在你的常开 Linux 机器（服务器 / NAS / 家里的主机）上，浏览器从任何设备访问操作。任务直接在服务器本地执行，agent 直接操作服务器上**已部署运行的项目目录**——无需重新部署环境。
 
 任务执行依赖 `tmux`（每个任务会在 paihuo 专用 tmux server 中运行；不会复用或修改你的默认 tmux 会话）。
 
+> **安全边界**：PaiHuo 是主机管理工具，不是多租户沙箱。获授权的用户可以创建任务、浏览目录、安装 CLI，并让 agent 以服务进程的系统权限执行命令。请只部署给受信任的管理员使用。
+
 ## 快速开始
 
+运行环境：Linux、Go 1.24+、`tmux`；若要使用 Git worktree 隔离，还需要 `git`。各 agent CLI 可按需在 Web 的 Agents 页面安装。
+
 ```bash
-# 构建（需要 Go 1.24+）
+# 构建
 cd paihuo && go build -o paihuo ./cmd/paihuo
 
-# 部署到服务器：上传二进制，然后
-./paihuo --addr 0.0.0.0:8080 --token 你的访问令牌
-# 或 export PAIHUO_TOKEN=xxx 后直接 ./paihuo
+# 推荐：令牌不出现在进程参数或 shell 历史中
+export PAIHUO_TOKEN="$(openssl rand -hex 32)"
+./paihuo
 ```
 
-**前端开发**：前端源码为 `internal/web/static/src/` 下的 ES 模块（核心逻辑按 12 个模块拆分：core/task/terminal/projects/agents/skills/dashboard/provision 等）。修改后需先打包再编译：
+默认仅监听 `127.0.0.1:8080`。若通过反向代理暴露服务，请在代理处配置 HTTPS，并显式监听公开地址：
 
 ```bash
-scripts/build-frontend.sh        # 打包 app.bundle.js（--minify 可压缩）
-go build -o paihuo ./cmd/paihuo
+./paihuo --addr 0.0.0.0:8080 --secure-cookie
 ```
 
-打包产物 `app.bundle.js`（单文件、无外部依赖）与模板、CSS、vendor 一起 embed 进 Go 二进制，部署仍是单文件。构建脚本内置校验：模板 `onclick` 引用的全局函数必须由 `main.js` 挂到 `window`，漏挂会直接报错。`scripts/split-frontend.py` 为模块化拆分工具（可重入）。
+`--secure-cookie` 适用于 TLS 在反向代理处终止的部署；直接 HTTP 本地开发不要开启它。公开监听未设置令牌会被程序拒绝启动；本机监听时不设置令牌仅适用于本机受信任的开发环境。执行 `./paihuo --version` 可查看构建版本。
 
 - 浏览器访问 `http://服务器IP:8080`，**输入令牌登录**（一次性验证：令牌只用于登录这一次，之后浏览器持有 HttpOnly 会话 cookie，30 天滑动有效；顶栏可登出。服务重启不丢会话）
 - 数据库默认 `paihuo.db`（单文件，直接 `cp` 即可备份）；老库自动迁移（新增项目列/表，无需手工操作）
-- **务必设置 `--token`**：服务暴露在网络上时没有令牌等于裸奔
+- **务必设置 `PAIHUO_TOKEN`**：服务暴露在网络上时，没有令牌就不应启动
+
+### 生产部署建议
+
+- 将服务置于受信任网络或 TLS 反向代理之后；不要把未受保护的端口直接暴露到公网。
+- 使用高熵、专用于 PaiHuo 的令牌，并以环境变量或密钥管理工具注入，而非写入 shell 历史或截图。
+- 用运行 PaiHuo 的同一系统用户安装 agent CLI；它能访问的文件与凭据就是任务可触及的边界。
+- 定期备份 `paihuo.db`，升级前先验证备份可恢复。更多威胁模型与披露方式见 [SECURITY.md](SECURITY.md)。
+
+### 前端构建
+
+前端源码位于 `internal/web/static/src/`，生成的 `app.bundle.js` 与模板、CSS、vendor 一起嵌入 Go 二进制，部署仍为单文件。开发时先安装锁定的工具链：
+
+```bash
+npm ci
+scripts/build-frontend.sh        # 打包 app.bundle.js；--minify 可压缩
+go build -o paihuo ./cmd/paihuo
+```
+
+构建脚本会校验模板动态事件所需的全局导出。修改前端源码后，务必提交生成的 `app.bundle.js`；`make frontend-check` 会检查二者是否同步。
 
 ## 使用流程
 
@@ -116,7 +140,18 @@ go build -o paihuo ./cmd/paihuo
 产品规划与分阶段实施计划见 [docs/PLAN.md](docs/PLAN.md)（Agent 安装管理 / worktree 任务空间 / 终端式观察）。
 
 ```bash
-go build -o paihuo ./cmd/paihuo
+npm ci                    # 前端构建与浏览器测试工具
+make check                # 格式、依赖整洁度、前端同步、vet、单测、构建
+make test-race            # 并发回归
+make build VERSION=dev    # 产物：bin/paihuo
+```
+
+浏览器端到端回归需要先下载 Chromium，并针对一个已启动的实例运行：
+
+```bash
+npx playwright install chromium
+PAIHUO_TOKEN=t ./bin/paihuo --addr 127.0.0.1:8099
+E2E_URL=http://127.0.0.1:8099 E2E_TOKEN=t make e2e
 ```
 
 架构：Go 单二进制 + SQLite（纯 Go 驱动，无 CGO）+ 内嵌前端（Go 模板 + 原生 JS + SSE 实时推送）+ 一个专用 tmux server。执行器按角色最大并发数派发，并对未勾选并发的任务施加项目级串行门禁（同一项目一次一个）；任务取消时只终止对应 tmux window，服务重启不影响仍在运行的任务。
@@ -127,3 +162,15 @@ go build -o paihuo ./cmd/paihuo
 - `internal/store/store.go`：项目 / 任务 / 统计查询（维度二的核心）
 - `internal/server/handlers.go`：`/api/projects`、`/api/agents/schema`、`/api/stats/*`
 - `internal/web/`：前端（模板 + app.js + app.css）
+
+## 参与和支持
+
+- [贡献指南](CONTRIBUTING.md)：本地环境、质量门禁、数据库和前端改动约定
+- [安全策略](SECURITY.md)：安全边界和私密漏洞披露方式
+- [行为准则](CODE_OF_CONDUCT.md)：社区协作规范
+- [支持指南](SUPPORT.md)：提问、问题报告与功能建议的渠道
+- [变更日志](CHANGELOG.md)：版本发布时的兼容性与升级说明
+
+## 许可证
+
+当前仓库尚未附带开源许可证。许可证会决定代码的复用、再分发和商业使用权；维护者应在首次公开发行前明确选择并添加许可证（例如 MIT、Apache-2.0 或 GPL-3.0-only）。在此之前，请勿假定代码已获复用授权。

@@ -2,9 +2,20 @@
 // 1) 登录 → 遍历全部页面，收集 pageerror/console.error 与横向溢出
 // 2) 关键交互：角色弹窗、任务弹窗、项目弹窗 + 目录选择器、安装面板、技能双 tab
 // 退出码：0 = 全部通过；1 = 有错误
-const { chromium } = require("playwright-core");
 const path = require("path");
 const os = require("os");
+const fs = require("fs");
+
+let chromium;
+try {
+  ({ chromium } = require("playwright"));
+} catch (_) {
+  try {
+    ({ chromium } = require("playwright-core"));
+  } catch (_) {
+    throw new Error("未找到 Playwright。请执行 npm ci && npx playwright install chromium，或安装 playwright-core。\n");
+  }
+}
 
 const URL = process.env.E2E_URL || "http://127.0.0.1:8099";
 const TOKEN = process.env.E2E_TOKEN || "t";
@@ -13,6 +24,8 @@ const PAGES = ["/", "/board", "/roles", "/agents", "/projects", "/skills", "/his
 
 function findChrome() {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+  const bundled = chromium.executablePath();
+  if (bundled && fs.existsSync(bundled)) return bundled;
   const base = path.join(os.homedir(), ".cache", "ms-playwright");
   const candidates = [];
   try {

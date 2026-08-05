@@ -5,12 +5,15 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,18 +25,31 @@ import (
 	"paihuo/internal/workspace"
 )
 
+// version is set at release build time with -ldflags "-X main.version=<version>".
+var version = "dev"
+
 func main() {
 	var addr, db, token string
-	flag.StringVar(&addr, "addr", "0.0.0.0:8080", "监听地址（部署在服务器时保持 0.0.0.0 供浏览器访问）")
+	var showVersion, secureCookie bool
+	flag.StringVar(&addr, "addr", "127.0.0.1:8080", "监听地址（公开监听时必须设置访问令牌）")
 	flag.StringVar(&db, "db", "paihuo.db", "SQLite 数据库路径")
-	flag.StringVar(&token, "token", "", "访问令牌（空则不鉴权；也可用环境变量 PAIHUO_TOKEN）")
+	flag.StringVar(&token, "token", "", "访问令牌（也可用环境变量 PAIHUO_TOKEN）")
+	flag.BoolVar(&secureCookie, "secure-cookie", false, "为 HTTPS 反向代理部署将会话 cookie 标记为 Secure")
+	flag.BoolVar(&showVersion, "version", false, "输出版本后退出")
 	flag.Parse()
+	if showVersion {
+		fmt.Println(version)
+		return
+	}
 
 	if token == "" {
 		token = os.Getenv("PAIHUO_TOKEN")
 	}
 	if token == "" {
-		log.Printf("⚠ 警告：未设置访问令牌（--token 或 PAIHUO_TOKEN）。服务暴露在网络上时任何人都能操作，强烈建议设置。")
+		if err := validateListenSecurity(addr, token); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("⚠ 未设置访问令牌：仅允许来自本机的访问。若需公开监听，请设置 --token 或 PAIHUO_TOKEN。")
 	}
 
 	st, err := store.Open(db)
@@ -54,27 +70,64 @@ func main() {
 	go autoCleanup(ctx, st, ex, sessionsRoot)
 
 	srv := server.New(st, hub, ex, sc, token, filepath.Join(filepath.Dir(db), "skills"))
-	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
+	srv.SetSecureCookies(secureCookie)
+	// 不设置 WriteTimeout：SSE 是长连接，写超时会中断正常的实时日志流。
+	httpSrv := &http.Server{
+		Addr:              addr,
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 
 	// 模型/能力目录属于当前 Linux 主机，而非角色数据库：每次服务启动
 	// （即重新部署）立即重查，此后每 7 天重查一次。角色选择的 model /
 	// thinking 仍只保存在 SQLite，不会被发现结果覆盖。
 	go refreshModelCatalogs(ctx)
 
+	serveErr := make(chan error, 1)
 	go func() {
 		log.Printf("派活已启动: http://%s（数据库 %s%s）", addr, db, map[bool]string{true: "，已开启鉴权", false: ""}[token != ""])
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("服务异常: %v", err)
+			serveErr <- err
 		}
 	}()
 
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case err := <-serveErr:
+		log.Printf("服务异常: %v", err)
+		stop()
+	}
 	log.Println("正在关闭...")
 	// 带超时关闭：SSE 等长连接不会自己结束，超时后强制退出
 	shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shCtx)
 	log.Println("已关闭")
+}
+
+// isLoopbackAddr reports whether an HTTP listen address only accepts local
+// connections. An empty host (":8080") and unspecified addresses are public.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func validateListenSecurity(addr, token string) error {
+	if token == "" && !isLoopbackAddr(addr) {
+		return fmt.Errorf("拒绝在公开地址 %q 无鉴权启动；请设置 --token 或 PAIHUO_TOKEN", addr)
+	}
+	return nil
 }
 
 // refreshModelCatalogs 在启动和固定周期从本机各 CLI 探测模型/能力。手动刷新
