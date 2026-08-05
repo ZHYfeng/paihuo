@@ -98,9 +98,7 @@ func (tmuxReviewMergeTestAdapter) Models() []string             { return nil }
 func (tmuxReviewMergeTestAdapter) Docs() string                 { return "" }
 
 func TestExecutorQueuesMergeTaskAfterSuccessfulFullTask(t *testing.T) {
-	if _, err := osexec.LookPath("tmux"); err != nil {
-		t.Skip("tmux 未安装")
-	}
+	requireTmuxIntegration(t)
 	registry[tmuxAutoMergeTestCLI] = tmuxAutoMergeTestAdapter{}
 	t.Cleanup(func() { delete(registry, tmuxAutoMergeTestCLI) })
 
@@ -179,9 +177,7 @@ func TestExecutorQueuesMergeTaskAfterSuccessfulFullTask(t *testing.T) {
 }
 
 func TestExecutorPreparesAndAutoMergesReviewMergeTask(t *testing.T) {
-	if _, err := osexec.LookPath("tmux"); err != nil {
-		t.Skip("tmux 未安装")
-	}
+	requireTmuxIntegration(t)
 	registry[tmuxReviewMergeTestCLI] = tmuxReviewMergeTestAdapter{}
 	t.Cleanup(func() { delete(registry, tmuxReviewMergeTestCLI) })
 	projectDir := initExecutorGitProject(t)
@@ -280,9 +276,7 @@ func initExecutorGitProject(t *testing.T) string {
 }
 
 func TestExecutorRecoversRunningTmuxTaskAfterServiceRestart(t *testing.T) {
-	if _, err := osexec.LookPath("tmux"); err != nil {
-		t.Skip("tmux 未安装")
-	}
+	requireTmuxIntegration(t)
 	registry[tmuxExecutorTestCLI] = tmuxExecutorTestAdapter{}
 	t.Cleanup(func() { delete(registry, tmuxExecutorTestCLI) })
 
@@ -355,9 +349,7 @@ func TestExecutorRecoversRunningTmuxTaskAfterServiceRestart(t *testing.T) {
 }
 
 func TestExecutorDispatchesSameRoleUpToConfiguredConcurrency(t *testing.T) {
-	if _, err := osexec.LookPath("tmux"); err != nil {
-		t.Skip("tmux 未安装")
-	}
+	requireTmuxIntegration(t)
 	registry[tmuxConcurrencyTestCLI] = tmuxConcurrencyTestAdapter{}
 	t.Cleanup(func() { delete(registry, tmuxConcurrencyTestCLI) })
 

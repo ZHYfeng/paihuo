@@ -39,9 +39,7 @@ func TestPiAdapterInteractiveOmitsPrintFlag(t *testing.T) {
 }
 
 func TestExecutorSendsLiteralInputToInteractiveTask(t *testing.T) {
-	if _, err := osexec.LookPath("tmux"); err != nil {
-		t.Skip("tmux 未安装")
-	}
+	requireTmuxIntegration(t)
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)

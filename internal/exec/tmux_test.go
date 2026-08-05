@@ -10,11 +10,20 @@ import (
 	"time"
 )
 
-func TestTmuxRunnerPersistsOutputAndExit(t *testing.T) {
+func requireTmuxIntegration(t *testing.T) string {
+	t.Helper()
+	if os.Getenv(taskNestedTmuxSkipEnv) == "1" {
+		t.Skip("派活任务内跳过嵌套 tmux 集成测试；本地与 CI 仍完整执行")
+	}
 	bin, err := osexec.LookPath("tmux")
 	if err != nil {
 		t.Skip("tmux 未安装")
 	}
+	return bin
+}
+
+func TestTmuxRunnerPersistsOutputAndExit(t *testing.T) {
+	bin := requireTmuxIntegration(t)
 	sessionsRoot := t.TempDir()
 	r := newTmuxRunnerAt(sessionsRoot, fmt.Sprintf("paihuo-test-%d", os.Getpid()))
 	r.binary = bin
@@ -66,10 +75,7 @@ func TestTmuxRunnerPersistsOutputAndExit(t *testing.T) {
 }
 
 func TestTmuxRunnerIgnoresUserConfig(t *testing.T) {
-	bin, err := osexec.LookPath("tmux")
-	if err != nil {
-		t.Skip("tmux 未安装")
-	}
+	bin := requireTmuxIntegration(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	if err := os.WriteFile(filepath.Join(home, ".tmux.conf"), []byte("set -g @paihuo_config_isolation_test loaded\n"), 0o600); err != nil {
@@ -94,10 +100,7 @@ func TestTmuxRunnerIgnoresUserConfig(t *testing.T) {
 }
 
 func TestTmuxRunnerTaskTmuxWrapperIgnoresUserConfig(t *testing.T) {
-	bin, err := osexec.LookPath("tmux")
-	if err != nil {
-		t.Skip("tmux 未安装")
-	}
+	bin := requireTmuxIntegration(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	if err := os.WriteFile(filepath.Join(home, ".tmux.conf"), []byte("set -g @paihuo_task_wrapper_test loaded\n"), 0o600); err != nil {

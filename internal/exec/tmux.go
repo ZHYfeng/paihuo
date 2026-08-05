@@ -32,6 +32,11 @@ type tmuxRunner struct {
 // 必须只由执行器管理，不能受 tmux-resurrect、tmux-continuum 等用户插件影响。
 const tmuxConfigFile = "/dev/null"
 
+// taskNestedTmuxSkipEnv 仅在派活任务进程内设置。tmux 集成测试会再创建多个
+// tmux server/pane；在任务本身已运行于 tmux pane 时，systemd scope 会相互竞争。
+// 常规本地与 CI 测试不设置它，仍完整覆盖这些集成场景。
+const taskNestedTmuxSkipEnv = "PAIHUO_SKIP_NESTED_TMUX_TESTS"
+
 type tmuxObservation struct {
 	Lines    []string
 	Offset   int64
@@ -202,12 +207,15 @@ func (r *tmuxRunner) taskShellEnvironment(taskID int64, env []string) []string {
 	taskEnv := make([]string, 0, len(env)+1)
 	for _, item := range env {
 		key, _, ok := strings.Cut(item, "=")
-		if ok && key == "BASH_ENV" {
+		if ok && (key == "BASH_ENV" || key == taskNestedTmuxSkipEnv) {
 			continue
 		}
 		taskEnv = append(taskEnv, item)
 	}
-	return append(taskEnv, "BASH_ENV="+r.shellInitPath(taskID))
+	return append(taskEnv,
+		"BASH_ENV="+r.shellInitPath(taskID),
+		taskNestedTmuxSkipEnv+"=1",
+	)
 }
 
 func (r *tmuxRunner) writeTmuxWrapper(taskID int64) (string, error) {
