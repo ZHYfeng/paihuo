@@ -68,7 +68,7 @@ export function renderAgentGrid() {
   grid.innerHTML = list.map(a => {
     const rc = a.role_config || {};
     const st = agentTaskStats(a);
-    return `<article class="agent-card" data-agent-id="${a.id}" onclick="openAgentDetail(${a.id})">
+    return `<article class="agent-card" data-agent-id="${a.id}" tabindex="0" onclick="openAgentDetail(${a.id})" onkeydown="if(event.target.closest('a,button'))return;if(event.key==='Enter'||event.key===' '){event.preventDefault();openAgentDetail(${a.id})}">
       <div class="ac-top">
         <span class="avatar lg av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
         <div class="ac-id">
@@ -101,17 +101,21 @@ export function renderAgentTable() {
   const { list, query } = filteredAgents();
   body.innerHTML = list.map(a => {
     const rc = a.role_config || {};
-    return `<tr onclick="openAgentDetail(${a.id})">
-      <td><span style="display:flex;align-items:center;gap:8px">
-        <span class="avatar av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
-        <a class="table-primary-action" href="#/agent/${a.id}" onclick="event.stopPropagation()">${esc(a.name)}</a>
-        <span style="font-size:11px;color:var(--fg-faint)">${esc(a.description || "")}</span>
-      </span></td>
-      <td><span class="badge">${esc(a.cli)}</span></td>
-      <td>${esc(rc.model || "默认")}</td>
-      <td class="num">${esc(String(a.max_concurrency || 1))}</td>
-      <td><span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "启用" : "停用"}</span></td>
-      <td>
+    return `<tr class="agent-list-row" tabindex="0" onclick="openAgentDetail(${a.id})" onkeydown="if(event.target.closest('a,button'))return;if(event.key==='Enter'||event.key===' '){event.preventDefault();openAgentDetail(${a.id})}">
+      <td class="agent-list-identity">
+        <span class="agent-list-main">
+          <span class="avatar av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
+          <span class="agent-list-copy">
+            <a class="table-primary-action" href="#/agent/${a.id}" onclick="event.stopPropagation()">${esc(a.name)}</a>
+            <span class="agent-list-description">${esc(a.description || "未设置描述")}</span>
+          </span>
+        </span>
+      </td>
+      <td class="agent-list-cli" data-label="CLI"><span class="badge">${esc(a.cli)}</span></td>
+      <td class="agent-list-model" data-label="模型">${esc(rc.model || "默认")}</td>
+      <td class="agent-list-concurrency num" data-label="最大并发">${esc(String(a.max_concurrency || 1))}</td>
+      <td class="agent-list-status" data-label="状态"><span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "启用" : "停用"}</span></td>
+      <td class="agent-list-actions" data-label="操作">
         <span class="ops">${agentActionsHTML(a)}</span>
       </td>
     </tr>`;

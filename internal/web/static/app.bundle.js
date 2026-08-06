@@ -2586,7 +2586,7 @@
     grid.innerHTML = list.map((a) => {
       const rc = a.role_config || {};
       const st = agentTaskStats(a);
-      return `<article class="agent-card" data-agent-id="${a.id}" onclick="openAgentDetail(${a.id})">
+      return `<article class="agent-card" data-agent-id="${a.id}" tabindex="0" onclick="openAgentDetail(${a.id})" onkeydown="if(event.target.closest('a,button'))return;if(event.key==='Enter'||event.key===' '){event.preventDefault();openAgentDetail(${a.id})}">
       <div class="ac-top">
         <span class="avatar lg av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
         <div class="ac-id">
@@ -2618,17 +2618,21 @@
     const { list, query } = filteredAgents();
     body.innerHTML = list.map((a) => {
       const rc = a.role_config || {};
-      return `<tr onclick="openAgentDetail(${a.id})">
-      <td><span style="display:flex;align-items:center;gap:8px">
-        <span class="avatar av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
-        <a class="table-primary-action" href="#/agent/${a.id}" onclick="event.stopPropagation()">${esc(a.name)}</a>
-        <span style="font-size:11px;color:var(--fg-faint)">${esc(a.description || "")}</span>
-      </span></td>
-      <td><span class="badge">${esc(a.cli)}</span></td>
-      <td>${esc(rc.model || "\u9ED8\u8BA4")}</td>
-      <td class="num">${esc(String(a.max_concurrency || 1))}</td>
-      <td><span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "\u542F\u7528" : "\u505C\u7528"}</span></td>
-      <td>
+      return `<tr class="agent-list-row" tabindex="0" onclick="openAgentDetail(${a.id})" onkeydown="if(event.target.closest('a,button'))return;if(event.key==='Enter'||event.key===' '){event.preventDefault();openAgentDetail(${a.id})}">
+      <td class="agent-list-identity">
+        <span class="agent-list-main">
+          <span class="avatar av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
+          <span class="agent-list-copy">
+            <a class="table-primary-action" href="#/agent/${a.id}" onclick="event.stopPropagation()">${esc(a.name)}</a>
+            <span class="agent-list-description">${esc(a.description || "\u672A\u8BBE\u7F6E\u63CF\u8FF0")}</span>
+          </span>
+        </span>
+      </td>
+      <td class="agent-list-cli" data-label="CLI"><span class="badge">${esc(a.cli)}</span></td>
+      <td class="agent-list-model" data-label="\u6A21\u578B">${esc(rc.model || "\u9ED8\u8BA4")}</td>
+      <td class="agent-list-concurrency num" data-label="\u6700\u5927\u5E76\u53D1">${esc(String(a.max_concurrency || 1))}</td>
+      <td class="agent-list-status" data-label="\u72B6\u6001"><span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "\u542F\u7528" : "\u505C\u7528"}</span></td>
+      <td class="agent-list-actions" data-label="\u64CD\u4F5C">
         <span class="ops">${agentActionsHTML(a)}</span>
       </td>
     </tr>`;

@@ -2834,3 +2834,96 @@ a.project-card:hover { color: inherit; text-decoration: none; }
   }
   .board-list-empty { width: calc(100% - 24px); margin: auto 12px; padding: 24px 18px; }
 }
+
+/* ============================================================
+   V8 · ROLE LIST
+   表格在窄容器中转换为可扫读的角色行，避免桌面列在移动端逐字换行或被裁掉。
+   ============================================================ */
+.agent-list-wrap {
+  min-width: 0; overflow: auto; overscroll-behavior: contain;
+  container: agent-list / inline-size;
+}
+.agent-list-grid {
+  width: 100%; min-width: 760px; table-layout: fixed; border-spacing: 0;
+}
+.agent-list-grid thead th { white-space: nowrap; }
+.agent-list-grid thead th:nth-child(2) { width: 88px; }
+.agent-list-grid thead th:nth-child(3) { width: 220px; }
+.agent-list-grid thead th:nth-child(4) { width: 78px; }
+.agent-list-grid thead th:nth-child(5) { width: 84px; }
+.agent-list-grid .agent-list-actions-head { width: 230px; }
+.agent-list-grid tbody td { min-width: 0; vertical-align: middle; }
+.agent-list-identity, .agent-list-main, .agent-list-copy { min-width: 0; }
+.agent-list-main { display: flex; align-items: center; gap: 8px; }
+.agent-list-copy { display: flex; flex-direction: column; overflow: hidden; }
+.agent-list-copy .table-primary-action {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 650;
+}
+.agent-list-description {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--fg-faint); font-size: 11px; line-height: 16px;
+}
+.agent-list-model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-list-actions .ops {
+  display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 4px;
+}
+.agent-card .ac-top { align-items: flex-start; }
+.agent-card .ac-id { display: block; overflow: hidden; }
+.agent-card .ac-name { display: block; width: 100%; max-width: 100%; }
+.agent-card .badge { flex-shrink: 0; margin-top: 1px; }
+
+@container agent-list (max-width: 900px) {
+  .agent-list-grid {
+    display: block; width: 100%; min-width: 0; table-layout: auto;
+  }
+  .agent-list-grid thead {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  .agent-list-grid tbody { display: grid; gap: 10px; padding: 12px; }
+  .agent-list-grid tbody tr {
+    display: grid; width: 100%; min-width: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "identity actions"
+      "cli status"
+      "model concurrency";
+    gap: 10px 12px; padding: 14px;
+    border: 1px solid var(--border); border-radius: 14px;
+    background: linear-gradient(145deg, rgba(255,255,255,.026), transparent 60%), var(--surface);
+  }
+  .agent-list-grid tbody tr:hover,
+  .agent-list-grid tbody tr:focus-visible { background: var(--raised); }
+  .agent-list-grid tbody td {
+    display: block; min-width: 0; min-height: 0; padding: 0;
+    border: 0; vertical-align: initial; overflow: hidden;
+  }
+  .agent-list-identity { grid-area: identity; }
+  .agent-list-cli { grid-area: cli; }
+  .agent-list-model { grid-area: model; padding-top: 10px !important; border-top: 1px solid var(--border) !important; }
+  .agent-list-concurrency { grid-area: concurrency; align-self: end; justify-self: end; text-align: right; }
+  .agent-list-status { grid-area: status; align-self: end; justify-self: end; text-align: right; }
+  .agent-list-actions { grid-area: actions; align-self: start; overflow: visible !important; }
+  .agent-list-main { align-items: flex-start; }
+  .agent-list-copy .table-primary-action {
+    white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .agent-list-description {
+    white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .agent-list-cli::before, .agent-list-model::before,
+  .agent-list-concurrency::before, .agent-list-status::before {
+    content: attr(data-label); display: block; margin-bottom: 3px;
+    color: var(--fg-faint); font: 9px/12px var(--font-mono); letter-spacing: .05em;
+  }
+  .agent-list-actions .ops { justify-content: flex-end; gap: 8px; }
+  .agent-list-actions .btn {
+    min-width: 44px; min-height: 44px; height: 44px; padding-inline: 10px;
+  }
+}
+
+@media (max-width: 900px) {
+  /* 最终页头样式在上方覆盖了早期移动端规则；给汉字标题留出菜单按钮安全区。 */
+  .main > .page-header { padding-left: 56px; }
+}
