@@ -556,10 +556,6 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		}
 	}
 
-	if tk.RunMode == store.RunModeInteractive && agent.CLI != "pi" {
-		fail("交互式任务目前只支持 Pi 角色")
-		return
-	}
 	preparedSkills, err := prepareRoleSkills(tk.ID, dir, agent.CLI, e.runner.skillManifestPath(tk.ID), agent.RoleConfig.Skills)
 	if err != nil {
 		fail("加载角色技能失败: " + err.Error())
@@ -673,23 +669,19 @@ func (e *Executor) validateInteractiveInputTarget(taskID int64) error {
 		return fmt.Errorf("任务当前不是运行状态")
 	}
 	if tk.RunMode != store.RunModeInteractive {
-		return fmt.Errorf("任务不是交互式 Pi 会话")
+		return fmt.Errorf("任务不是交互式会话")
 	}
 	if tk.AgentID == nil {
 		return fmt.Errorf("任务未指派角色")
 	}
-	agent, err := e.st.GetAgent(*tk.AgentID)
-	if err != nil {
+	if _, err := e.st.GetAgent(*tk.AgentID); err != nil {
 		return fmt.Errorf("读取角色失败: %w", err)
-	}
-	if agent.CLI != "pi" {
-		return fmt.Errorf("交互式任务目前只支持 Pi 角色")
 	}
 	return nil
 }
 
-// SendInput 将一条人工消息送入正在运行的 Pi 交互式任务。输入必须是单行，
-// 以保证它在 Pi TUI 中是一条原子消息；复杂的初始指令仍由任务内容承载。
+// SendInput 将一条人工消息送入正在运行的交互式任务。输入必须是单行，
+// 以保证它在 agent TUI 中是一条原子消息；复杂的初始指令仍由任务内容承载。
 func (e *Executor) SendInput(taskID int64, text string) error {
 	if strings.TrimSpace(text) == "" {
 		return fmt.Errorf("消息不能为空")
@@ -710,9 +702,9 @@ func (e *Executor) SendInput(taskID int64, text string) error {
 	return nil
 }
 
-// SendKeystrokes 把浏览器 xterm 产生的原始按键序列送入 Pi TUI。与 SendInput
+// SendKeystrokes 把浏览器 xterm 产生的原始按键序列送入 agent TUI。与 SendInput
 // 不同，它不会自动补 Enter，也不会逐键写入任务日志；这样 Tab、方向键、Esc
-// 和组合键仍由 Pi 自己解释，命令补全及选择器可以按原生方式工作。
+// 和组合键仍由当前 CLI 自己解释，命令补全及选择器可以按原生方式工作。
 func (e *Executor) SendKeystrokes(taskID int64, keys string) error {
 	if keys == "" {
 		return fmt.Errorf("按键内容不能为空")

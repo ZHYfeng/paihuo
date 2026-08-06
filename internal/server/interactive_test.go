@@ -14,7 +14,7 @@ import (
 	"paihuo/internal/store"
 )
 
-func TestCreateInteractiveTaskRequiresPiAndDefaultsRemainBatch(t *testing.T) {
+func TestCreateInteractiveTaskSupportsEveryAgentAndDefaultsRemainBatch(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -24,49 +24,66 @@ func TestCreateInteractiveTaskRequiresPiAndDefaultsRemainBatch(t *testing.T) {
 	executor := exec.New(st, hub, t.TempDir(), "server-input-test.db")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
 
-	codexID, err := st.CreateAgent(store.Agent{Name: "codex", CLI: "codex", Enabled: true})
-	if err != nil {
-		t.Fatal(err)
+	agentIDs := make(map[string]int64)
+	for _, cli := range []string{"omp", "opencode", "pi", "claude", "codex"} {
+		id, err := st.CreateAgent(store.Agent{Name: cli, CLI: cli, Enabled: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		agentIDs[cli] = id
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks", strings.NewReader(`{"title":"bad","agent_id":`+itoa(codexID)+`,"run_mode":"interactive"}`))
+
+	var codexTask store.Task
+	for _, cli := range []string{"omp", "opencode", "pi", "claude", "codex"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/tasks", strings.NewReader(`{"title":"interactive `+cli+`","agent_id":`+itoa(agentIDs[cli])+`,"run_mode":"interactive"}`))
+		resp := httptest.NewRecorder()
+		s.createTask(resp, req)
+		if resp.Code != http.StatusCreated {
+			t.Fatalf("%s 交互任务创建失败: code=%d body=%s", cli, resp.Code, resp.Body.String())
+		}
+		var tk store.Task
+		if err := json.Unmarshal(resp.Body.Bytes(), &tk); err != nil {
+			t.Fatal(err)
+		}
+		if tk.RunMode != store.RunModeInteractive {
+			t.Fatalf("%s 创建响应应保留 interactive，得到 %q", cli, tk.RunMode)
+		}
+		if cli == "codex" {
+			codexTask = tk
+		}
+	}
+
+	// 交互式任务可以在不同 CLI 的角色之间改派，但仍不能清空角色。
+	req := httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(codexTask.ID), strings.NewReader(`{"agent_id":`+itoa(agentIDs["pi"])+`}`))
+	req.SetPathValue("id", itoa(codexTask.ID))
 	resp := httptest.NewRecorder()
-	s.createTask(resp, req)
-	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "Pi") {
-		t.Fatalf("非 Pi 交互任务应被拒绝: code=%d body=%s", resp.Code, resp.Body.String())
+	s.patchTask(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("交互式任务改派到另一 CLI 失败: code=%d body=%s", resp.Code, resp.Body.String())
 	}
 
-	piID, err := st.CreateAgent(store.Agent{Name: "pi", CLI: "pi", Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks", strings.NewReader(`{"title":"interactive","agent_id":`+itoa(piID)+`,"run_mode":"interactive"}`))
-	resp = httptest.NewRecorder()
-	s.createTask(resp, req)
-	if resp.Code != http.StatusCreated {
-		t.Fatalf("Pi 交互任务创建失败: code=%d body=%s", resp.Code, resp.Body.String())
-	}
-	var tk store.Task
-	if err := json.Unmarshal(resp.Body.Bytes(), &tk); err != nil {
-		t.Fatal(err)
-	}
-	if tk.RunMode != store.RunModeInteractive {
-		t.Fatalf("创建响应应保留 interactive，得到 %q", tk.RunMode)
-	}
-
-	req = httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(tk.ID), strings.NewReader(`{"agent_id":`+itoa(codexID)+`}`))
-	req.SetPathValue("id", itoa(tk.ID))
+	req = httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(codexTask.ID), strings.NewReader(`{"agent_id":null}`))
+	req.SetPathValue("id", itoa(codexTask.ID))
 	resp = httptest.NewRecorder()
 	s.patchTask(resp, req)
-	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "Pi") {
-		t.Fatalf("交互式任务不应允许改派非 Pi: code=%d body=%s", resp.Code, resp.Body.String())
+	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "必须指派角色") {
+		t.Fatalf("交互式任务不应允许清空角色: code=%d body=%s", resp.Code, resp.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks", strings.NewReader(`{"title":"batch","agent_id":`+itoa(piID)+`}`))
+	req = httptest.NewRequest(http.MethodPost, "/api/tasks", strings.NewReader(`{"title":"missing agent","run_mode":"interactive"}`))
+	resp = httptest.NewRecorder()
+	s.createTask(resp, req)
+	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "必须指派角色") {
+		t.Fatalf("无角色交互任务应被拒绝: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/tasks", strings.NewReader(`{"title":"batch","agent_id":`+itoa(agentIDs["pi"])+`}`))
 	resp = httptest.NewRecorder()
 	s.createTask(resp, req)
 	if resp.Code != http.StatusCreated {
 		t.Fatalf("默认批处理任务创建失败: code=%d body=%s", resp.Code, resp.Body.String())
 	}
+	var tk store.Task
 	if err := json.Unmarshal(resp.Body.Bytes(), &tk); err != nil {
 		t.Fatal(err)
 	}

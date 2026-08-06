@@ -1150,7 +1150,7 @@
     target.options.cursorBlink = enabled;
     target.element?.classList.toggle("terminal-writable", enabled);
     if (target.textarea) {
-      target.textarea.setAttribute("aria-label", enabled ? "Pi \u4EA4\u4E92\u5F0F\u7EC8\u7AEF\u8F93\u5165" : "\u53EA\u8BFB\u7EC8\u7AEF\u8F93\u51FA");
+      target.textarea.setAttribute("aria-label", enabled ? "Agent \u4EA4\u4E92\u5F0F\u7EC8\u7AEF\u8F93\u5165" : "\u53EA\u8BFB\u7EC8\u7AEF\u8F93\u51FA");
       target.textarea.setAttribute("aria-disabled", String(!enabled));
     }
     if (!enabled) target.blur();
@@ -1713,7 +1713,7 @@
     const logMeta = interactive ? `${isLive ? "\u5B9E\u65F6\u753B\u9762" : "\u5DF2\u5F52\u6863\u753B\u9762"} \xB7 ${INTERACTIVE_TERM_COLS} \xD7 ${INTERACTIVE_TERM_ROWS}` : state.logsHasMore ? `\u5DF2\u52A0\u8F7D ${visibleLogs}/${state.logsTotal} \u6761` : `${visibleLogs} \u6761`;
     const dependencyAlert = !mergeTask && t.status === "queued" && dependency.state !== "ready" ? `<div class="task-alert"><span class="task-alert-title">${dependency.state === "skipped" ? "\u524D\u5E8F\u4EA4\u4ED8\u5DF2\u8DF3\u8FC7" : "\u7B49\u5F85\u524D\u7F6E\u4EA4\u4ED8"}</span><span>${esc(dependency.reason || "\u7B49\u5F85\u8C03\u5EA6")}</span></div>` : "";
     const input = isInteractive ? `<div class="term-input detail-input terminal-input-help">
-      <span>\u70B9\u51FB\u7EC8\u7AEF\u76F4\u63A5\u8F93\u5165 \xB7 Tab / \u2191 / \u2193 \u4F7F\u7528 Pi \u547D\u4EE4\u8054\u60F3 \xB7 <code>/quit</code> \u7ED3\u675F</span>
+      <span>\u70B9\u51FB\u7EC8\u7AEF\u76F4\u63A5\u8F93\u5165 \xB7 Tab / \u2191 / \u2193 \u7531\u5F53\u524D CLI \u5904\u7406 \xB7 <code>/exit</code> \u7ED3\u675F</span>
       <button class="btn sm" onclick="focusTaskTerminal()">\u805A\u7126\u8F93\u5165</button>
     </div>` : "";
     main.innerHTML = `
@@ -1755,7 +1755,7 @@
         <span class="term-dots"><i></i><i></i><i></i></span>
         <span class="t-title" title="${esc(t.project_dir || "")}">${esc(agentName)} \xB7 ${runMode}</span>
       </div>
-      ${interactive ? `<div class="term-body interactive-term-body" id="logBox" role="region" aria-label="Pi \u4EA4\u4E92\u5F0F\u7EC8\u7AEF\u753B\u9762"><div class="interactive-term-canvas" id="taskTermX"></div></div>` : `<div class="term-body" id="logBox">${logsHTML()}</div>`}
+      ${interactive ? `<div class="term-body interactive-term-body" id="logBox" role="region" aria-label="${esc(agentName)} \u4EA4\u4E92\u5F0F\u7EC8\u7AEF\u753B\u9762"><div class="interactive-term-canvas" id="taskTermX"></div></div>` : `<div class="term-body" id="logBox">${logsHTML()}</div>`}
       ${input}
       </div>
     </details>
@@ -1980,9 +1980,9 @@
     }
   }
   async function endInteractiveTask(id) {
-    if (!confirm("\u5411 Pi \u53D1\u9001 /quit \u5E76\u7ED3\u675F\u4EA4\u4E92\u4F1A\u8BDD\uFF1F\u4EFB\u52A1\u4F1A\u6309\u6B63\u5E38\u9000\u51FA\u7ED3\u679C\u7ED3\u7B97\u3002")) return;
-    if (await sendTaskInput(id, "", "/quit")) {
-      toast("\u5DF2\u53D1\u9001 /quit\uFF0C\u7B49\u5F85 Pi \u9000\u51FA");
+    if (!confirm("\u5411\u5F53\u524D\u7EC8\u7AEF\u53D1\u9001 /exit \u5E76\u7ED3\u675F\u4EA4\u4E92\u4F1A\u8BDD\uFF1F\u4EFB\u52A1\u4F1A\u6309\u6B63\u5E38\u9000\u51FA\u7ED3\u679C\u7ED3\u7B97\u3002")) return;
+    if (await sendTaskInput(id, "", "/exit")) {
+      toast("\u5DF2\u53D1\u9001 /exit\uFF0C\u7B49\u5F85\u5F53\u524D CLI \u9000\u51FA");
     }
   }
   async function rejectTask(id) {
@@ -2255,15 +2255,14 @@
   function syncTaskRunMode() {
     const agentID = Number(document.getElementById("tAgent")?.value) || 0;
     const agent = state.agents.find((a) => a.id === agentID);
-    const isPi = agent?.cli === "pi";
     const select = document.getElementById("tRunMode");
     const help = document.getElementById("tRunModeHelp");
     if (!select) return;
     const interactive = select.querySelector('option[value="interactive"]');
-    if (interactive) interactive.disabled = !isPi;
-    if (!isPi && select.value === "interactive") select.value = "batch";
+    if (interactive) interactive.disabled = !agent;
+    if (!agent && select.value === "interactive") select.value = "batch";
     if (help) {
-      help.textContent = isPi ? "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u4EA4\u4E92\u5F0F\u4F1A\u4FDD\u7559 Pi \u7EC8\u7AEF\uFF0C\u76F4\u5230\u4F60\u53D1\u9001 /quit\u3002" : "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u4EA4\u4E92\u5F0F\u76EE\u524D\u4EC5\u652F\u6301 Pi \u89D2\u8272\u3002";
+      help.textContent = agent ? `\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u4EA4\u4E92\u5F0F\u4F1A\u4FDD\u7559 ${agent.name} \u7684\u539F\u751F\u7EC8\u7AEF\uFF0C\u76F4\u5230\u4F60\u53D1\u9001 /exit\u3002` : "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u9009\u62E9\u89D2\u8272\u540E\u53EF\u542F\u7528\u5176\u4EA4\u4E92\u5F0F\u7EC8\u7AEF\u3002";
     }
   }
   function syncTaskDependency() {

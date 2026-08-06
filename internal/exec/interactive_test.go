@@ -13,30 +13,98 @@ import (
 	"paihuo/internal/store"
 )
 
-func TestPiAdapterInteractiveOmitsPrintFlag(t *testing.T) {
-	a := &piAdapter{baseAdapter{id: "pi", name: "Pi Agent", bin: "pi"}}
-	_, args, _, err := a.Build(RunOptions{
-		Prompt:     "从这里开始交互",
-		SessionDir: "/tmp/pi-session",
-		RunMode:    store.RunModeInteractive,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(strings.Join(args, "\x00"), "-p") {
-		t.Fatalf("交互式 Pi 不应带 -p: %#v", args)
-	}
-	if got := args[len(args)-1]; got != "从这里开始交互" {
-		t.Fatalf("初始消息应作为最后一个位置参数，得到 %#v", args)
+func TestAdaptersBuildNativeInteractiveCommands(t *testing.T) {
+	type buildFunc func(RunOptions) (string, []string, []string, error)
+	tests := []struct {
+		name                 string
+		build                buildFunc
+		role                 store.RoleConfig
+		interactiveRequired  []string
+		interactiveForbidden []string
+		batchRequired        []string
+		batchForbidden       []string
+	}{
+		{
+			name: "omp", build: (&ompAdapter{baseAdapter{id: "omp", name: "OMP", bin: "omp"}}).Build,
+			interactiveForbidden: []string{"-p", "--no-pty"},
+			batchRequired:        []string{"-p", "--no-pty"},
+		},
+		{
+			name: "opencode", build: (&openCodeAdapter{baseAdapter{id: "opencode", name: "OpenCode", bin: "opencode"}}).Build,
+			interactiveRequired: []string{"run", "--interactive", "--dir"},
+			batchRequired:       []string{"run", "--dir"},
+			batchForbidden:      []string{"--interactive"},
+		},
+		{
+			name: "pi", build: (&piAdapter{baseAdapter{id: "pi", name: "Pi Agent", bin: "pi"}}).Build,
+			interactiveForbidden: []string{"-p"},
+			batchRequired:        []string{"-p"},
+		},
+		{
+			name: "claude", build: (&claudeAdapter{baseAdapter{id: "claude", name: "Claude Code", bin: "claude"}}).Build,
+			interactiveForbidden: []string{"-p"},
+			batchRequired:        []string{"-p"},
+		},
+		{
+			name: "codex", build: (&codexAdapter{baseAdapter{id: "codex", name: "Codex", bin: "codex"}}).Build,
+			role:                 store.RoleConfig{Custom: map[string]string{"execution_mode": "yolo"}},
+			interactiveRequired:  []string{"--disable", "code_mode_host", "--dangerously-bypass-approvals-and-sandbox"},
+			interactiveForbidden: []string{"exec", "--skip-git-repo-check"},
+			batchRequired:        []string{"exec", "--skip-git-repo-check"},
+		},
 	}
 
-	_, batchArgs, _, err := a.Build(RunOptions{Prompt: "批处理"})
-	if err != nil {
-		t.Fatal(err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const prompt = "从这里开始交互"
+			_, args, _, err := tt.build(RunOptions{
+				Dir: "/tmp/project", Prompt: prompt, SessionDir: "/tmp/agent-session",
+				RunMode: store.RunModeInteractive, Role: tt.role,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(args) == 0 || args[len(args)-1] != prompt {
+				t.Fatalf("交互初始消息应作为最后一个位置参数，得到 %#v", args)
+			}
+			for _, want := range tt.interactiveRequired {
+				if !hasArg(args, want) {
+					t.Fatalf("交互命令缺少参数 %q: %#v", want, args)
+				}
+			}
+			for _, unwanted := range tt.interactiveForbidden {
+				if hasArg(args, unwanted) {
+					t.Fatalf("交互命令不应包含批处理参数 %q: %#v", unwanted, args)
+				}
+			}
+
+			_, batchArgs, _, err := tt.build(RunOptions{
+				Dir: "/tmp/project", Prompt: "批处理", SessionDir: "/tmp/agent-session", Role: tt.role,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range tt.batchRequired {
+				if !hasArg(batchArgs, want) {
+					t.Fatalf("批处理命令缺少参数 %q: %#v", want, batchArgs)
+				}
+			}
+			for _, unwanted := range tt.batchForbidden {
+				if hasArg(batchArgs, unwanted) {
+					t.Fatalf("批处理命令不应包含交互参数 %q: %#v", unwanted, batchArgs)
+				}
+			}
+		})
 	}
-	if !strings.Contains(strings.Join(batchArgs, "\x00"), "-p") {
-		t.Fatalf("默认 Pi 任务应保持 -p: %#v", batchArgs)
+}
+
+func hasArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
 	}
+	return false
 }
 
 func TestExecutorSendsLiteralInputToInteractiveTask(t *testing.T) {
@@ -46,7 +114,8 @@ func TestExecutorSendsLiteralInputToInteractiveTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	agentID, err := st.CreateAgent(store.Agent{Name: "pi", CLI: "pi", Enabled: true})
+	// 使用非 Pi 角色覆盖通用交互输入校验；pane 本身由下面的测试 shell 提供。
+	agentID, err := st.CreateAgent(store.Agent{Name: "codex", CLI: "codex", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

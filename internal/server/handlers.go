@@ -212,15 +212,11 @@ func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agen
 			writeErr(w, http.StatusBadRequest, "角色不存在")
 			return
 		}
-		if runMode == store.RunModeInteractive && a.CLI != "pi" {
-			writeErr(w, http.StatusBadRequest, "交互式执行目前只支持 Pi 角色")
-			return
-		}
 		if tk.ProjectDir == "" {
 			tk.ProjectDir = a.ProjectDir // 兼容旧数据：角色级目录
 		}
 	} else if runMode == store.RunModeInteractive {
-		writeErr(w, http.StatusBadRequest, "交互式任务必须指派 Pi 角色")
+		writeErr(w, http.StatusBadRequest, "交互式任务必须指派角色")
 		return
 	}
 	if err := normalizeNewTaskDependency(&tk); err != nil {
@@ -278,7 +274,7 @@ func normalizeNewTaskDependency(tk *store.Task) error {
 	}
 }
 
-// sendTaskInput 把已登录用户的整行消息或 xterm 原始按键送进运行中的 Pi
+// sendTaskInput 把已登录用户的整行消息或 xterm 原始按键送进运行中的 agent
 // 交互式 pane；两种模式互斥，避免同一请求被重复提交。
 func (s *Server) sendTaskInput(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
@@ -413,17 +409,13 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusBadRequest, "角色不存在")
 				return
 			}
-			if cur.RunMode == store.RunModeInteractive && a.CLI != "pi" {
-				writeErr(w, http.StatusBadRequest, "交互式执行目前只支持 Pi 角色")
-				return
-			}
 			set["agent_id"] = int64(aid)
 			if cur.ProjectID == nil {
 				set["project_dir"] = a.ProjectDir
 			}
 		} else {
 			if cur.RunMode == store.RunModeInteractive {
-				writeErr(w, http.StatusBadRequest, "交互式任务必须指派 Pi 角色")
+				writeErr(w, http.StatusBadRequest, "交互式任务必须指派角色")
 				return
 			}
 			set["agent_id"] = nil

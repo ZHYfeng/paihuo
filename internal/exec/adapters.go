@@ -1,5 +1,5 @@
 // Package exec 实现 CLI 适配器层与任务执行器。
-// 适配器把「角色配置 + 任务」翻译为各 CLI 的原生非交互命令。
+// 适配器把「角色配置 + 任务」翻译为各 CLI 的原生批处理或交互命令。
 package exec
 
 import (
@@ -18,7 +18,7 @@ type RunOptions struct {
 	Prompt     string // 任务提示词（已含权限模式修饰）
 	Role       store.RoleConfig
 	Perm       string // 任务权限模式：full | review
-	RunMode    string // batch | interactive（交互式目前仅 Pi 支持）
+	RunMode    string // batch | interactive
 	SessionDir string // 任务专属会话目录（会话隔离，互不干扰）
 	// SkillDirs 是执行器为本次任务准备的技能副本目录。它们位于任务
 	// 工作空间内，避免 CLI 因沙箱/工作目录限制读不到角色选择的源目录。
@@ -136,7 +136,11 @@ func shellJoin(parts []string) string {
 type ompAdapter struct{ baseAdapter }
 
 func (a *ompAdapter) Build(o RunOptions) (string, []string, []string, error) {
-	args := []string{"-p", o.Prompt, "--no-pty"}
+	interactive := o.RunMode == store.RunModeInteractive
+	args := []string{}
+	if !interactive {
+		args = append(args, "-p", o.Prompt, "--no-pty")
+	}
 	if o.SessionDir != "" {
 		args = append(args, "--session-dir", o.SessionDir)
 	}
@@ -181,6 +185,10 @@ func (a *ompAdapter) Build(o RunOptions) (string, []string, []string, error) {
 		args = append(args, "--auto-approve")
 	}
 	args = append(args, o.Role.ExtraArgs...)
+	if interactive {
+		// OMP 与 Pi 一样用位置参数接收交互会话的初始消息。
+		args = append(args, o.Prompt)
+	}
 	return a.bin, args, mergeEnv(o.Role.Env), nil
 }
 
@@ -223,7 +231,13 @@ func (a *ompAdapter) Docs() string { return "https://omp.sh/docs" }
 type openCodeAdapter struct{ baseAdapter }
 
 func (a *openCodeAdapter) Build(o RunOptions) (string, []string, []string, error) {
-	args := []string{"run", "--dir", o.Dir}
+	args := []string{"run"}
+	if o.RunMode == store.RunModeInteractive {
+		// run --interactive 保留 run 子命令的 --variant/--dir 等参数，同时
+		// 在初始消息完成后继续显示可输入的 split-footer 终端。
+		args = append(args, "--interactive")
+	}
+	args = append(args, "--dir", o.Dir)
 	if m := o.Role.Model; m != "" {
 		args = append(args, "--model", m)
 	}
@@ -395,7 +409,11 @@ func (a *piAdapter) Docs() string { return "https://pi.dev/docs" }
 type claudeAdapter struct{ baseAdapter }
 
 func (a *claudeAdapter) Build(o RunOptions) (string, []string, []string, error) {
-	args := []string{"-p", o.Prompt}
+	interactive := o.RunMode == store.RunModeInteractive
+	args := []string{}
+	if !interactive {
+		args = append(args, "-p", o.Prompt)
+	}
 	if m := o.Role.Model; m != "" {
 		args = append(args, "--model", m)
 	}
@@ -412,6 +430,10 @@ func (a *claudeAdapter) Build(o RunOptions) (string, []string, []string, error) 
 		args = append(args, "--settings", settings)
 	}
 	args = append(args, o.Role.ExtraArgs...)
+	if interactive {
+		// Claude Code 不带 -p 时启动交互 REPL，位置参数作为初始消息。
+		args = append(args, o.Prompt)
+	}
 	return a.bin, args, mergeEnv(o.Role.Env), nil
 }
 
@@ -456,15 +478,24 @@ func (a *claudeAdapter) Docs() string {
 type codexAdapter struct{ baseAdapter }
 
 func (a *codexAdapter) Build(o RunOptions) (string, []string, []string, error) {
+	interactive := o.RunMode == store.RunModeInteractive
 	// 本机 Codex 0.146 的 code-mode-host 在工具命令非零退出时会错误终止外层
-	// task pane。关闭它会回退到 CLI 自身稳定的执行路径；任务仍使用 Codex 的
-	// 官方 exec 模式与全部权限/模型配置。
-	args := []string{"exec", "--disable", "code_mode_host"}
+	// task pane。关闭它会回退到 CLI 自身稳定的执行路径；批处理使用 exec，
+	// 交互任务则不带子命令启动官方 TUI。
+	args := []string{}
+	if !interactive {
+		args = append(args, "exec")
+	}
+	args = append(args, "--disable", "code_mode_host")
 	// YOLO 对应本机 Codex CLI 的完整绕过模式：不等待批准、不启用 sandbox，
 	// 并允许在非 Git 目录执行。它必须由角色配置显式开启，普通 Codex 仍保留
 	// 官方默认保护。
 	if o.Role.Custom["execution_mode"] == "yolo" {
-		args = append(args, "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check")
+		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
+		if !interactive {
+			// --skip-git-repo-check 是 exec 子命令参数；交互 TUI 不接受它。
+			args = append(args, "--skip-git-repo-check")
+		}
 	}
 	if m := o.Role.Model; m != "" {
 		args = append(args, "-c", "model="+tomlQuote(m))

@@ -400,7 +400,7 @@ export function renderDetail(t) {
   const dependencyAlert = !mergeTask && t.status === "queued" && dependency.state !== "ready"
     ? `<div class="task-alert"><span class="task-alert-title">${dependency.state === "skipped" ? "前序交付已跳过" : "等待前置交付"}</span><span>${esc(dependency.reason || "等待调度")}</span></div>` : "";
   const input = isInteractive ? `<div class="term-input detail-input terminal-input-help">
-      <span>点击终端直接输入 · Tab / ↑ / ↓ 使用 Pi 命令联想 · <code>/quit</code> 结束</span>
+      <span>点击终端直接输入 · Tab / ↑ / ↓ 由当前 CLI 处理 · <code>/exit</code> 结束</span>
       <button class="btn sm" onclick="focusTaskTerminal()">聚焦输入</button>
     </div>` : "";
   main.innerHTML = `
@@ -443,7 +443,7 @@ export function renderDetail(t) {
         <span class="t-title" title="${esc(t.project_dir || "")}">${esc(agentName)} · ${runMode}</span>
       </div>
       ${interactive
-        ? `<div class="term-body interactive-term-body" id="logBox" role="region" aria-label="Pi 交互式终端画面"><div class="interactive-term-canvas" id="taskTermX"></div></div>`
+        ? `<div class="term-body interactive-term-body" id="logBox" role="region" aria-label="${esc(agentName)} 交互式终端画面"><div class="interactive-term-canvas" id="taskTermX"></div></div>`
         : `<div class="term-body" id="logBox">${logsHTML()}</div>`}
       ${input}
       </div>
@@ -681,9 +681,9 @@ export async function setTaskStatus(id, status) {
 }
 
 export async function endInteractiveTask(id) {
-  if (!confirm("向 Pi 发送 /quit 并结束交互会话？任务会按正常退出结果结算。")) return;
-  if (await sendTaskInput(id, "", "/quit")) {
-    toast("已发送 /quit，等待 Pi 退出");
+  if (!confirm("向当前终端发送 /exit 并结束交互会话？任务会按正常退出结果结算。")) return;
+  if (await sendTaskInput(id, "", "/exit")) {
+    toast("已发送 /exit，等待当前 CLI 退出");
   }
 }
 
@@ -981,22 +981,21 @@ export function openProjectTask(projectId) {
   openModal("taskModal");
 }
 
-// 交互式是任务级能力，但当前仅 Pi 支持。前端即时说明限制，服务端会再次
-// 验证，避免手写请求绕过。
+// 交互式是任务级能力，必须先指派角色。前端即时说明限制，服务端会再次
+// 验证，避免手写请求创建没有执行目标的交互任务。
 export function syncTaskRunMode() {
   const agentID = Number(document.getElementById("tAgent")?.value) || 0;
   const agent = state.agents.find(a => a.id === agentID);
-  const isPi = agent?.cli === "pi";
   const select = document.getElementById("tRunMode");
   const help = document.getElementById("tRunModeHelp");
   if (!select) return;
   const interactive = select.querySelector('option[value="interactive"]');
-  if (interactive) interactive.disabled = !isPi;
-  if (!isPi && select.value === "interactive") select.value = "batch";
+  if (interactive) interactive.disabled = !agent;
+  if (!agent && select.value === "interactive") select.value = "batch";
   if (help) {
-    help.textContent = isPi
-      ? "批处理会自动结算；交互式会保留 Pi 终端，直到你发送 /quit。"
-      : "批处理会自动结算；交互式目前仅支持 Pi 角色。";
+    help.textContent = agent
+      ? `批处理会自动结算；交互式会保留 ${agent.name} 的原生终端，直到你发送 /exit。`
+      : "批处理会自动结算；选择角色后可启用其交互式终端。";
   }
 }
 

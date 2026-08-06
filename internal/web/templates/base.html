@@ -139,8 +139,8 @@
     </label>
     <label class="field">执行方式
       <select id="tRunMode" onchange="syncTaskRunMode()">
-        <option value="batch">批处理（默认，Pi 使用 -p）</option>
-        <option value="interactive">交互式 Pi 终端</option>
+        <option value="batch">批处理（默认，完成后自动结算）</option>
+        <option value="interactive">交互式终端</option>
       </select>
       <span class="field-help" id="tRunModeHelp">批处理会在完成后自动结算。</span>
     </label>
@@ -247,7 +247,7 @@
       <div class="term-body term-full" id="termX" style="padding:0"></div>
     </div>
     <div class="term-input terminal-input-help hidden" id="termInputBar">
-      <span>点击终端直接输入 · Tab / ↑ / ↓ 使用 Pi 命令联想 · <code>/quit</code> 结束</span>
+      <span>点击终端直接输入 · Tab / ↑ / ↓ 由当前 CLI 处理 · <code>/exit</code> 结束</span>
       <button class="btn sm" onclick="focusFullscreenTerminal()">聚焦输入</button>
     </div>
   </div>

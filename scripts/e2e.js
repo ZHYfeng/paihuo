@@ -367,18 +367,20 @@ function findChrome() {
     document.getElementById("tRunMode")?.value === "batch");
   taskModal ? ok("任务弹窗（默认批处理）") : fail("任务弹窗未打开或默认执行方式异常");
   if (process.env.E2E_EXPECT_INTERACTIVE === "1") {
-    const interactive = await page.evaluate(() => {
+    const interactive = await page.evaluate(async () => {
+      const agents = await (await fetch("/api/agents")).json();
+      const target = agents.find(a => a.enabled && a.cli !== "pi") || agents.find(a => a.enabled);
       const agent = document.getElementById("tAgent");
-      const pi = [...agent.options].find(o => o.textContent.includes("Pi smoke"));
-      if (!pi) return false;
-      agent.value = pi.value;
+      const optionForAgent = target && [...agent.options].find(o => Number(o.value) === target.id);
+      if (!optionForAgent) return false;
+      agent.value = optionForAgent.value;
       syncTaskRunMode();
       const mode = document.getElementById("tRunMode");
       const option = mode.querySelector('option[value="interactive"]');
       mode.value = "interactive";
       return !option.disabled && mode.value === "interactive";
     });
-    interactive ? ok("Pi 手工交互方式") : fail("Pi 交互方式未启用");
+    interactive ? ok("角色手工交互方式") : fail("角色交互方式未启用");
   }
   await page.evaluate(() => closeModal("taskModal"));
 

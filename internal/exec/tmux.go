@@ -52,7 +52,7 @@ type tmuxStartOptions struct {
 }
 
 const (
-	// Pi 的 TUI 会把光标位置和分隔线写入输出流。固定 pane 画布后，浏览器可按
+	// 交互式 TUI 会把光标位置和分隔线写入输出流。固定 pane 画布后，浏览器可按
 	// 同一尺寸重放控制序列；否则 tmux attach 或浏览器宽度变化会破坏画面。
 	interactiveTerminalColumns = 80
 	interactiveTerminalRows    = 24
@@ -254,7 +254,7 @@ func (r *tmuxRunner) ensureSession() error {
 			return err
 		}
 	}
-	// 专用 server 明确不读取用户 tmux.conf，因此 Pi 需要的扩展按键能力必须
+	// 专用 server 明确不读取用户 tmux.conf，因此 TUI 需要的扩展按键能力必须
 	// 由 PaiHuo 自己开启；否则每个交互会话都会显示警告，组合键也可能失效。
 	return r.command("set-option", "-s", "extended-keys", "on")
 }
@@ -282,7 +282,7 @@ func (r *tmuxRunner) paneDead(taskID int64) (bool, error) {
 // 从而不会遗漏启动瞬间的终端输出。
 //
 // batch 任务可把 agent 放到独立 session。若 CLI 在结束工具子进程时向其进程组
-// 发送信号，run.sh 仍能写入 exit-code；交互式 Pi 则保留原进程组，以维持终端
+// 发送信号，run.sh 仍能写入 exit-code；交互式任务则保留原进程组，以维持终端
 // 会话语义。Codex 另会按选项脱离 pane TTY，避免它的工具收尾误操作 pane。
 func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, options tmuxStartOptions) error {
 	r.mu.Lock()

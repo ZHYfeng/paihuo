@@ -15,7 +15,7 @@ let taskTermTask = null;
 let taskTermLogs = [];
 const terminalKeyQueues = new Map();
 
-// PaiHuo 的交互式 Pi pane 使用固定画布，避免浏览器宽度变化后重放 TUI
+// PaiHuo 的交互式 agent pane 使用固定画布，避免浏览器宽度变化后重放 TUI
 // 控制序列时把光标、分隔线和输入区重新换行。该尺寸与执行器创建的 tmux
 // window 保持一致；窄屏通过横向滚动查看，不压缩或破坏终端坐标。
 export const INTERACTIVE_TERM_COLS = 80;
@@ -93,7 +93,7 @@ function configureTerminalInput(target, enabled) {
   target.options.cursorBlink = enabled;
   target.element?.classList.toggle("terminal-writable", enabled);
   if (target.textarea) {
-    target.textarea.setAttribute("aria-label", enabled ? "Pi 交互式终端输入" : "只读终端输出");
+    target.textarea.setAttribute("aria-label", enabled ? "Agent 交互式终端输入" : "只读终端输出");
     target.textarea.setAttribute("aria-disabled", String(!enabled));
   }
   if (!enabled) target.blur();
@@ -248,7 +248,7 @@ export function closeTerminal() {
   termInteractive = false;
 }
 
-// 详情页中的交互式任务不能按普通日志逐行排版。Pi 输出的是带光标移动、
+// 详情页中的交互式任务不能按普通日志逐行排版。TUI 输出的是带光标移动、
 // 擦除和同步刷新指令的 80×24 TUI；用第二个只读 xterm 按原始尺寸重放，
 // 才能得到与 tmux pane 一致的画面。
 export function closeTaskTerminal() {
@@ -298,7 +298,7 @@ export function taskTerminalText() {
   return lines.join("\n");
 }
 
-// syncTerminalInput 与任务 SSE 同步：只有正在运行的交互式 Pi 任务才能收到
+// syncTerminalInput 与任务 SSE 同步：只有正在运行的交互式任务才能收到
 // 原始按键，任务退出后立即收起提示栏并把终端切回只读。
 export function syncTerminalInput(t) {
   const bar = document.getElementById("termInputBar");
@@ -308,7 +308,7 @@ export function syncTerminalInput(t) {
 }
 
 // sendTaskInput 通过服务端再转交给专用 tmux；浏览器不接触 tmux socket，也不
-// 能把文本解释成 shell 命令。inputID 为空时使用 explicitMessage（/quit 按钮）。
+// 能把文本解释成 shell 命令。inputID 为空时使用 explicitMessage（/exit 按钮）。
 export async function sendTaskInput(id, inputID, explicitMessage) {
   const input = inputID ? document.getElementById(inputID) : null;
   const message = explicitMessage ?? input?.value ?? "";

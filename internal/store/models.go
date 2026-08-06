@@ -37,8 +37,8 @@ const (
 	DependencyStrong = "strong"
 )
 
-// 任务执行方式。默认 batch 保持现有的一次性 CLI 语义；interactive 目前只
-// 供 Pi 的手工任务使用，它会留在 tmux TTY 中等待用户继续发消息。
+// 任务执行方式。默认 batch 保持现有的一次性 CLI 语义；interactive 会让
+// 手工任务留在 tmux TTY 中，等待用户继续发消息或退出会话。
 const (
 	RunModeBatch       = "batch"
 	RunModeInteractive = "interactive"
