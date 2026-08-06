@@ -7,7 +7,7 @@ import { closeProjectDetail, deleteProject, dirLoad, hideProjectDetail, mkdirCur
 import { appendInstLine, closeInstTerminal, copyText, createDefaultRole, installProvision, loadProvision, provState, refreshProvision } from "./provision.js";
 import { deleteSchedule, openScheduleModal, renderScheduleList, submitSchedule, toggleSchedule } from "./schedules.js";
 import { loadSettings, runCleanup, saveRetention, saveWtRetention } from "./settings.js";
-import { deleteSkill, deleteTemplate, loadSkillLib, loadTemplates, openExtModal, openSkillModal, removeExt, renderSkillLib, setSkillTab, submitExt, submitSkill } from "./skills.js";
+import { deleteSkill, deleteTemplate, loadSkillLib, loadTemplates, openExtModal, openSkillModal, removeExt, renderSkillLib, scanSkills, setSkillTab, submitExt, submitSkill } from "./skills.js";
 import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskRunMode, wsDiscard, wsMerge } from "./task.js";
 import { closeTerminal, openTerminal, sendTaskInput, sendTerminalInput, syncTerminalInput } from "./terminal.js";
 
@@ -442,6 +442,7 @@ window.saveAgentConfig = saveAgentConfig;
 window.saveAsTemplate = saveAsTemplate;
 window.saveRetention = saveRetention;
 window.saveWtRetention = saveWtRetention;
+window.scanSkills = scanSkills;
 window.sendTaskInput = sendTaskInput;
 window.sendTerminalInput = sendTerminalInput;
 window.setAgentView = setAgentView;

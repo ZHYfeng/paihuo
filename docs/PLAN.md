@@ -38,7 +38,7 @@
 |---|---|---|
 | CLI 适配器层 | ✅ | omp/opencode/pi/claude/codex，schema 按官方文档声明 |
 | 模型候选（实例探测） | ✅ | opencode models 命令、pi/omp models-store、codex cache、claude settings |
-| 技能库（定向添加） | ✅ | SKILL.md frontmatter 解析、复制到工作目录、按名称勾选 |
+| 技能库（定向添加 / 目录扫描） | ✅ | SKILL.md frontmatter 解析、递归发现、复制到工作目录、按名称勾选 |
 | 角色卡片/表格双视图 | ✅ | CLI 色头像、任务统计、配置 tab |
 | 项目 + 工作目录 | ✅ | 项目弹窗/卡片/详情、目录选择器 |
 | 任务看板/列表/详情 | ✅ | 三列看板、SSE 实时日志、审批 diff、子任务 |

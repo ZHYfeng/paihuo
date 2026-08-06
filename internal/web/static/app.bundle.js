@@ -413,6 +413,25 @@
       toast(e.message, true);
     }
   }
+  async function scanSkills() {
+    const path = document.getElementById("sSkillPath").value.trim();
+    if (!path) return toast("\u9700\u8981\u626B\u63CF\u6839\u76EE\u5F55\u8DEF\u5F84", true);
+    try {
+      const result = await api("/api/skills/scan", { method: "POST", body: JSON.stringify({ source_path: path }) });
+      closeModal("skillModal");
+      const imported = (result.imported || []).length;
+      const skipped = (result.skipped || []).length;
+      const failed = (result.errors || []).length;
+      let summary = `\u53D1\u73B0 ${result.found || 0} \u4E2A skill\uFF0C\u5DF2\u5BFC\u5165 ${imported} \u4E2A`;
+      if (skipped) summary += `\uFF0C\u8DF3\u8FC7\u5DF2\u5BFC\u5165 ${skipped} \u4E2A`;
+      if (failed) summary += `\uFF0C\u5931\u8D25 ${failed} \u4E2A`;
+      toast(summary, failed > 0);
+      await loadSkillLib();
+      renderSkillLib();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
   async function deleteSkill(id) {
     const s = state.skillLib.find((x) => x.id === id);
     if (!confirm(`\u5220\u9664 skill\u300C${s ? s.name : id}\u300D\uFF1F\u5C06\u540C\u65F6\u79FB\u9664\u5DE5\u4F5C\u76EE\u5F55\u4E2D\u7684\u526F\u672C\uFF0C\u5DF2\u5F15\u7528\u5B83\u7684\u89D2\u8272\u914D\u7F6E\u4F1A\u5931\u6548\u3002`)) return;
@@ -2747,6 +2766,7 @@
   window.saveAsTemplate = saveAsTemplate;
   window.saveRetention = saveRetention;
   window.saveWtRetention = saveWtRetention;
+  window.scanSkills = scanSkills;
   window.sendTaskInput = sendTaskInput;
   window.sendTerminalInput = sendTerminalInput;
   window.setAgentView = setAgentView;

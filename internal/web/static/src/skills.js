@@ -102,6 +102,24 @@ export async function submitSkill() {
   } catch (e) { toast(e.message, true); }
 }
 
+export async function scanSkills() {
+  const path = document.getElementById("sSkillPath").value.trim();
+  if (!path) return toast("需要扫描根目录路径", true);
+  try {
+    const result = await api("/api/skills/scan", { method: "POST", body: JSON.stringify({ source_path: path }) });
+    closeModal("skillModal");
+    const imported = (result.imported || []).length;
+    const skipped = (result.skipped || []).length;
+    const failed = (result.errors || []).length;
+    let summary = `发现 ${result.found || 0} 个 skill，已导入 ${imported} 个`;
+    if (skipped) summary += `，跳过已导入 ${skipped} 个`;
+    if (failed) summary += `，失败 ${failed} 个`;
+    toast(summary, failed > 0);
+    await loadSkillLib();
+    renderSkillLib();
+  } catch (e) { toast(e.message, true); }
+}
+
 export async function deleteSkill(id) {
   const s = state.skillLib.find(x => x.id === id);
   if (!confirm(`删除 skill「${s ? s.name : id}」？将同时移除工作目录中的副本，已引用它的角色配置会失效。`)) return;
