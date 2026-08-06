@@ -137,7 +137,7 @@ go build -o paihuo ./cmd/paihuo
 └── manifest.json            # 挂载清单（幂等对账依据）
 ```
 
-- 各 CLI 的加载方式：pi `--skill` 逐目录；omp `--config overlay.yml`；opencode 注入 `OPENCODE_CONFIG_CONTENT`；claude `--plugin-dir`；codex 任务级把技能 symlink 到 `$HOME/.agents/skills/paihuo-*`（USER scope，任务结束即删）
+- 各 CLI 的加载方式：pi `--skill` 逐目录；omp `--config overlay.yml`；opencode 注入 `OPENCODE_CONFIG_CONTENT`；claude `--plugin-dir`；codex 任务级把技能 symlink 到 `$CODEX_HOME/skills`（未设置时回退 `$HOME/.agents/skills`；该位置只被 codex 扫描，不混入 pi/omp 上下文，任务结束即删）
 - SKILL.md frontmatter `name` 与目录名不一致/非法的技能自动**回退为副本并改写 name**（满足 opencode 的目录=name 约束）；缺 description 仅告警不阻断（omp 下不可见）
 - 技能目录永远在 worktree / 用户项目目录**之外**：不会被 agent `git add -A` 提交，也不会污染非 git 项目目录；同名技能按 `-2` 递增命名
 - 角色技能变更（配置保存）与服务启动都会**幂等对账**：新增即挂载、移除即清理、源目录失效自动剔除并告警、恢复后自动重建；角色删除后目录进 `.stale` 保留 7 天

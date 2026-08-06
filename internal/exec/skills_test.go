@@ -148,6 +148,9 @@ func TestEnsureRoleSkillsBuildsSymlinkMountAndIsIdempotent(t *testing.T) {
 	if err != nil || filepath.Clean(got) != filepath.Clean(src) {
 		t.Fatalf("symlink 应指向技能库: %q %v", got, err)
 	}
+	if mount.Bindings[0].OriginalName != "design" {
+		t.Fatalf("提示词技能名应与挂载 slug 一致（各 CLI 可见名）: %+v", mount.Bindings[0])
+	}
 	// claude 镜像 + 插件清单 + omp overlay + opencode env
 	if _, err := os.Stat(filepath.Join(roleDir, "skills", "design")); err != nil {
 		t.Fatalf("claude 镜像缺失: %v", err)
@@ -356,9 +359,15 @@ func TestMountCodexSkillsAndCleanup(t *testing.T) {
 		t.Skip("需要 HOME")
 	}
 	origHome := os.Getenv("HOME")
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	defer t.Setenv("HOME", origHome)
+	origCodexHome, hadCodexHome := os.LookupEnv("CODEX_HOME")
+	defer os.Setenv("HOME", origHome)
+	defer func() {
+		if hadCodexHome {
+			os.Setenv("CODEX_HOME", origCodexHome)
+		} else {
+			os.Unsetenv("CODEX_HOME")
+		}
+	}()
 
 	src := writeSkill(t, "alpha", "a")
 	roleDir := filepath.Join(t.TempDir(), ".role-agents", "11")
@@ -367,37 +376,72 @@ func TestMountCodexSkillsAndCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := filepath.Join(t.TempDir(), "run", "role-skills.json")
-	if err := MountCodexSkills(42, mount, manifest); err != nil {
-		t.Fatal(err)
-	}
-	userRoot := filepath.Join(home, ".agents", "skills")
-	entries, err := os.ReadDir(userRoot)
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("codex 挂载点应只有一个 symlink: %v %v", entries, err)
-	}
-	link := filepath.Join(userRoot, entries[0].Name())
-	if !strings.HasPrefix(entries[0].Name(), "paihuo-42-1-") {
-		t.Fatalf("挂载名应为 paihuo-<taskID>-<n>-<slug>: %s", entries[0].Name())
-	}
-	if fi, _ := os.Lstat(link); fi.Mode()&os.ModeSymlink == 0 {
-		t.Fatal("codex 挂载应为 symlink")
-	}
-	if got, err := filepath.EvalSymlinks(link); err != nil || filepath.Clean(got) != filepath.Clean(src) {
-		t.Fatalf("两级 symlink 应解析到技能库: %q %v", got, err)
-	}
 
-	if err := cleanupRoleSkills(manifest); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Lstat(link); !os.IsNotExist(err) {
-		t.Fatalf("结算后 codex 挂载点应被删除: %v", err)
-	}
-	// 不删用户自己的技能（未登记路径）
-	own := filepath.Join(userRoot, "my-own-skill")
-	if err := os.MkdirAll(own, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(userRoot)
+	t.Run("CODEX_HOME 优先", func(t *testing.T) {
+		codexHome := t.TempDir()
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("CODEX_HOME", codexHome)
+		if err := MountCodexSkills(42, mount, manifest); err != nil {
+			t.Fatal(err)
+		}
+		userRoot := filepath.Join(codexHome, "skills")
+		entries, err := os.ReadDir(userRoot)
+		if err != nil || len(entries) != 1 {
+			t.Fatalf("codex 挂载点应落在 $CODEX_HOME/skills: %v %v", entries, err)
+		}
+		if !strings.HasPrefix(entries[0].Name(), "paihuo-42-1-") {
+			t.Fatalf("挂载名应为 paihuo-<taskID>-<n>-<slug>: %s", entries[0].Name())
+		}
+		link := filepath.Join(userRoot, entries[0].Name())
+		if fi, _ := os.Lstat(link); fi.Mode()&os.ModeSymlink == 0 {
+			t.Fatal("codex 挂载应为 symlink")
+		}
+		if got, err := filepath.EvalSymlinks(link); err != nil || filepath.Clean(got) != filepath.Clean(src) {
+			t.Fatalf("两级 symlink 应解析到技能库: %q %v", got, err)
+		}
+		if err := cleanupRoleSkills(manifest); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Lstat(link); !os.IsNotExist(err) {
+			t.Fatalf("结算后 codex 挂载点应被删除: %v", err)
+		}
+	})
+
+	t.Run("无 CODEX_HOME 回退 $HOME/.agents/skills", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("CODEX_HOME", "")
+		if err := MountCodexSkills(43, mount, manifest); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(home, ".agents", "skills", "paihuo-43-1-alpha")
+		if fi, _ := os.Lstat(link); fi.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("应回退到 $HOME/.agents/skills: %v", fi)
+		}
+		if err := cleanupRoleSkills(manifest); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("不删用户自己的技能", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("CODEX_HOME", "")
+		userRoot := filepath.Join(home, ".agents", "skills")
+		own := filepath.Join(userRoot, "my-own-skill")
+		if err := os.MkdirAll(own, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := MountCodexSkills(44, mount, manifest); err != nil {
+			t.Fatal(err)
+		}
+		if err := cleanupRoleSkills(manifest); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(own); err != nil {
+			t.Fatalf("用户自己的技能不能被误删: %v", err)
+		}
+	})
 }
 
 func TestPrepareRoleSkillsStandalone(t *testing.T) {

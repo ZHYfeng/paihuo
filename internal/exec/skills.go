@@ -560,14 +560,14 @@ func reconcileRoleMountEntries(agentID int64, roleDir string, selected []string,
 }
 
 func (m *RoleSkillMount) addEntry(e roleMountEntry, roleDir string) {
-	name := e.Name
-	original := skillName(filepath.Join(e.Target, "SKILL.md"))
-	if original == "" {
-		original = filepath.Base(e.Target)
-	}
-	m.SkillNames = append(m.SkillNames, name)
-	m.SkillPaths = append(m.SkillPaths, filepath.Join(roleDir, ".agents", "skills", name))
-	m.Bindings = append(m.Bindings, roleSkillBinding{OriginalName: original, NativeName: name, Dir: filepath.Join(roleDir, ".agents", "skills", name)})
+	// 提示词显示挂载 slug：与所有 CLI 的可见名一致。
+	// - symlink 形态：frontmatter name 合规即 == slug（codex 按 frontmatter 显示）；
+	// - copy 形态：SKILL.md name 已被改写为 slug，各 CLI（含 codex）都显示 slug。
+	m.SkillNames = append(m.SkillNames, e.Name)
+	m.SkillPaths = append(m.SkillPaths, filepath.Join(roleDir, ".agents", "skills", e.Name))
+	m.Bindings = append(m.Bindings, roleSkillBinding{
+		OriginalName: e.Name, NativeName: e.Name, Dir: filepath.Join(roleDir, ".agents", "skills", e.Name),
+	})
 }
 
 func loadRoleMountManifest(path string) (roleMountManifest, bool, error) {
@@ -771,20 +771,34 @@ func writeJSONAtomic(path string, v any) error {
 	return nil
 }
 
-// MountCodexSkills 把角色技能视图以 symlink 挂到 $HOME/.agents/skills（USER
-// scope，官方支持 symlink），供 codex 原生发现。挂载名 paihuo-<taskID>-<n>-<slug>
-// 与旧副本命名一致；清单先写后建链，任务结算时由 cleanupRoleSkills 按清单删除。
+// codexSkillsRoot 返回 codex 的 USER scope 技能目录：优先 $CODEX_HOME/skills
+// （codex 配置目录下的 skills/，只被 codex 扫描，不会混入 pi/omp 等其它
+// CLI 的上下文），否则回退 $HOME/.agents/skills。
+func codexSkillsRoot() (string, error) {
+	if home := strings.TrimSpace(os.Getenv("CODEX_HOME")); home != "" {
+		return filepath.Join(home, "skills"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", fmt.Errorf("无法确定用户主目录（%v），不能挂载 codex 技能", err)
+	}
+	return filepath.Join(home, ".agents", "skills"), nil
+}
+
+// MountCodexSkills 把角色技能视图以 symlink 挂到 codex 的 USER scope 技能
+// 目录（$CODEX_HOME/skills，回退 $HOME/.agents/skills；官方支持 symlink），
+// 供 codex 原生发现。挂载名 paihuo-<taskID>-<n>-<slug> 与旧副本命名一致；
+// 清单先写后建链，任务结算时由 cleanupRoleSkills 按清单删除。
 func MountCodexSkills(taskID int64, mount *RoleSkillMount, manifestPath string) error {
 	if mount == nil || len(mount.SkillPaths) == 0 {
 		return nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return fmt.Errorf("无法确定用户主目录（%v），不能挂载 codex 技能", err)
+	userRoot, err := codexSkillsRoot()
+	if err != nil {
+		return err
 	}
-	userRoot := filepath.Join(home, ".agents", "skills")
 	if err := os.MkdirAll(userRoot, 0o755); err != nil {
-		return fmt.Errorf("创建 %s 失败: %w", userRoot, err)
+		return fmt.Errorf("创建 codex 技能挂载目录 %s 失败（请确认 CODEX_HOME/HOME 可写）: %w", userRoot, err)
 	}
 	manifest := roleSkillsManifest{Version: roleSkillsManifestVersion, TaskID: taskID}
 	for i, path := range mount.SkillPaths {
@@ -848,12 +862,7 @@ func PrepareRoleSkillsStandalone(workdir, cli string, selected []string) (*RoleS
 		}
 		mount.SkillNames = append(mount.SkillNames, name)
 		mount.SkillPaths = append(mount.SkillPaths, p)
-		mount.Bindings = append(mount.Bindings, roleSkillBinding{
-			OriginalName: skillName(filepath.Join(src, "SKILL.md")), NativeName: name, Dir: p,
-		})
-		if mount.Bindings[len(mount.Bindings)-1].OriginalName == "" {
-			mount.Bindings[len(mount.Bindings)-1].OriginalName = filepath.Base(src)
-		}
+		mount.Bindings = append(mount.Bindings, roleSkillBinding{OriginalName: name, NativeName: name, Dir: p})
 	}
 	mount.SkillsRoot = roleSkills
 	switch cli {
