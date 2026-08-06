@@ -2193,6 +2193,19 @@ a.project-card:hover { color: inherit; text-decoration: none; }
 .term-modal::before { display: none; }
 .modal-box h3 { font-size: 19px; }
 .modal-actions { margin-top: 18px; padding-top: 16px; }
+.task-modal-box::before { margin-bottom: 11px; }
+.task-modal-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; margin-bottom: 14px;
+}
+.task-modal-heading { min-width: 0; }
+.task-modal-heading h3 { margin-bottom: 0; }
+.task-modal-heading .sub { margin: 4px 0 0; }
+.task-modal-actions {
+  flex-shrink: 0; align-items: center; gap: 8px;
+  margin: 0; padding: 0; border: 0;
+}
+.task-modal-actions .btn { flex: 0 0 auto; }
 .toast { z-index: 80; border: 1px solid var(--border-strong); box-shadow: var(--sh-menu); }
 
 /* Login hero: banner principles applied to the authenticated entry point */
@@ -2491,5 +2504,13 @@ a.project-card:hover { color: inherit; text-decoration: none; }
   #projectEmpty:not(.hidden), #agentEmpty:not(.hidden), #skillEmpty:not(.hidden),
   #scheduleEmpty:not(.hidden), #historyEmpty:not(.hidden) {
     width: calc(100% - 24px); margin: 16px 12px !important; padding: 22px 20px;
+  }
+}
+
+@media (max-width: 520px) {
+  .task-modal-head { gap: 10px; }
+  .task-modal-actions { flex-wrap: nowrap; }
+  .task-modal-actions .btn {
+    flex: 0 0 auto; min-width: 0; padding-left: 11px; padding-right: 11px;
   }
 }

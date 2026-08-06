@@ -108,12 +108,16 @@
 
 <!-- 新建任务弹窗（全站共享） -->
 <div class="modal hidden" id="taskModal">
-  <div class="modal-box">
-    <h3 id="taskModalTitle">新建任务</h3>
-    <div class="sub">指派给角色执行，可选用模板填充提示词</div>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeModal('taskModal')">取消</button>
-      <button class="btn primary" onclick="submitTask()">创建</button>
+  <div class="modal-box task-modal-box">
+    <div class="task-modal-head">
+      <div class="task-modal-heading">
+        <h3 id="taskModalTitle">新建任务</h3>
+        <div class="sub">指派给角色执行，可选用模板填充提示词</div>
+      </div>
+      <div class="modal-actions task-modal-actions">
+        <button class="btn" onclick="closeModal('taskModal')">取消</button>
+        <button class="btn primary" onclick="submitTask()">创建</button>
+      </div>
     </div>
     <input type="hidden" id="tParentId">
     <label class="field">从模板填充
