@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS skills (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
+  tags        TEXT NOT NULL DEFAULT '[]', -- JSON array of labels
   dir         TEXT NOT NULL UNIQUE,      -- 复制到 paihuo 工作目录后的技能目录（绝对路径）
   source_path TEXT NOT NULL DEFAULT '',  -- 添加时的来源路径
   created_at  TEXT NOT NULL
@@ -144,6 +145,7 @@ func migrate(db *sql.DB) error {
 	}
 	for _, stmt := range []string{
 		"ALTER TABLE agents ADD COLUMN max_concurrency INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE skills ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
 		"ALTER TABLE tasks ADD COLUMN review_rounds INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE tasks ADD COLUMN tmux_log_offset INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE tasks ADD COLUMN run_mode TEXT NOT NULL DEFAULT 'batch'",
@@ -1894,11 +1896,16 @@ func (s *Store) OverviewStatsOf() (*OverviewStats, error) {
 // ---------------------------------------------------------------------------
 // 技能库（注册到 paihuo 工作目录，角色配置时按名称勾选）
 
-const skillCols = "id, name, description, dir, source_path, created_at"
+const skillCols = "id, name, description, tags, dir, source_path, created_at"
 
 func scanSkill(rows scanner) (Skill, error) {
 	var s Skill
-	err := rows.Scan(&s.ID, &s.Name, &s.Description, &s.Dir, &s.SourcePath, &s.CreatedAt)
+	var tagsJSON string
+	err := rows.Scan(&s.ID, &s.Name, &s.Description, &tagsJSON, &s.Dir, &s.SourcePath, &s.CreatedAt)
+	if err != nil {
+		return s, err
+	}
+	s.Tags = decodeSkillTags(tagsJSON)
 	return s, err
 }
 
@@ -1932,12 +1939,56 @@ func (s *Store) CreateSkill(sk Skill) (int64, error) {
 	if sk.CreatedAt == "" {
 		sk.CreatedAt = Now()
 	}
-	res, err := s.db.Exec("INSERT INTO skills (name, description, dir, source_path, created_at) VALUES (?, ?, ?, ?, ?)",
-		sk.Name, sk.Description, sk.Dir, sk.SourcePath, sk.CreatedAt)
+	tagsJSON, err := json.Marshal(normalizeSkillTags(sk.Tags))
+	if err != nil {
+		return 0, err
+	}
+	res, err := s.db.Exec("INSERT INTO skills (name, description, tags, dir, source_path, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		sk.Name, sk.Description, string(tagsJSON), sk.Dir, sk.SourcePath, sk.CreatedAt)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// UpdateSkillTags replaces the labels attached to a skill. Labels are stored
+// as JSON so existing role configurations can continue to reference the same
+// skill directory without any schema coupling.
+func (s *Store) UpdateSkillTags(id int64, tags []string) error {
+	tagsJSON, err := json.Marshal(normalizeSkillTags(tags))
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec("UPDATE skills SET tags=? WHERE id=?", string(tagsJSON), id)
+	return err
+}
+
+func normalizeSkillTags(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	seen := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		key := strings.ToLower(tag)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, tag)
+	}
+	return out
+}
+
+func decodeSkillTags(raw string) []string {
+	var tags []string
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &tags); err == nil {
+			return normalizeSkillTags(tags)
+		}
+	}
+	return []string{}
 }
 
 func (s *Store) DeleteSkill(id int64) error {

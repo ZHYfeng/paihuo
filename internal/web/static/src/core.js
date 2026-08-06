@@ -18,9 +18,10 @@ export const state = {
   agentModalRC: {},  // 新建/编辑弹窗中的临时 role_config
   projectView: null, // 项目详情中的项目 id
   agentView: "grid",
-  skillLib: [],      // 注册到 paihuo 工作目录的技能库 [{id,name,description,dir}]
+  skillLib: [],      // 注册到 paihuo 工作目录的技能库 [{id,name,description,tags,dir}]
   skillSelected: new Set(), // Skills 管理页当前勾选的技能 id
   skillDetail: null, // 当前打开的技能详情（含 SKILL.md 内容）
+  skillView: "grid", // Skills 管理页显示模式：grid | list
 };
 
 export const STATUS_LABEL = {

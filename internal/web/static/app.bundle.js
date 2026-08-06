@@ -30,11 +30,13 @@
     // 项目详情中的项目 id
     agentView: "grid",
     skillLib: [],
-    // 注册到 paihuo 工作目录的技能库 [{id,name,description,dir}]
+    // 注册到 paihuo 工作目录的技能库 [{id,name,description,tags,dir}]
     skillSelected: /* @__PURE__ */ new Set(),
     // Skills 管理页当前勾选的技能 id
-    skillDetail: null
+    skillDetail: null,
     // 当前打开的技能详情（含 SKILL.md 内容）
+    skillView: "grid"
+    // Skills 管理页显示模式：grid | list
   };
   var STATUS_LABEL = {
     queued: "\u5F85\u6267\u884C",
@@ -338,6 +340,10 @@
   // internal/web/static/src/skills.js
   function setSkillTab(tab) {
     const skills = tab === "skills";
+    if (skills && state.skillDetail !== null) {
+      hideSkillDetail();
+      if (/^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
+    }
     if (!skills && /^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
     if (!skills) hideSkillDetail();
     document.getElementById("segSkillLib").classList.toggle("active", skills);
@@ -346,8 +352,22 @@
     document.getElementById("extShell").classList.toggle("hidden", skills);
     document.getElementById("btnAddSkill").classList.toggle("hidden", !skills);
     document.getElementById("btnAddExt").classList.toggle("hidden", skills);
+    const detail = state.skillDetail !== null;
+    document.getElementById("skillDisplaySeg")?.classList.toggle("hidden", !skills || detail);
+    document.getElementById("skillFilterControls")?.classList.toggle("hidden", !skills || detail);
     document.getElementById("skillManageControls")?.classList.toggle("hidden", !skills || state.skillDetail !== null);
     if (!skills) loadExtensions();
+  }
+  function setSkillView(view) {
+    state.skillView = view === "list" ? "list" : "grid";
+    document.getElementById("skillDisplaySeg")?.classList.remove("hidden");
+    document.getElementById("segSkillGrid")?.classList.toggle("active", state.skillView === "grid");
+    document.getElementById("segSkillList")?.classList.toggle("active", state.skillView === "list");
+    try {
+      localStorage.setItem("paihuo.skillView", state.skillView);
+    } catch (_) {
+    }
+    renderSkillLib();
   }
   async function loadExtensions() {
     const raw = document.getElementById("extRaw");
@@ -394,10 +414,60 @@
       state.skillSelected.forEach((id) => {
         if (!known.has(id)) state.skillSelected.delete(id);
       });
+      syncSkillTagFilter();
     } catch (_) {
       state.skillLib = [];
       state.skillSelected.clear();
+      syncSkillTagFilter();
     }
+  }
+  function skillTags(skill) {
+    return Array.isArray(skill?.tags) ? skill.tags.filter(Boolean).map(String) : [];
+  }
+  function skillTagsHTML(skill) {
+    const tags = skillTags(skill);
+    return tags.length ? tags.map((tag) => `<span class="skill-tag">${esc(tag)}</span>`).join("") : `<span class="skill-tag muted">\u672A\u5206\u7C7B</span>`;
+  }
+  function parseTagInput(raw) {
+    const seen = /* @__PURE__ */ new Set();
+    return String(raw || "").split(/[,，\n]/).map((tag) => tag.trim()).filter((tag) => {
+      if (!tag) return false;
+      const key = tag.toLocaleLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+  function allSkillTags() {
+    const tags = /* @__PURE__ */ new Map();
+    state.skillLib.forEach((skill) => skillTags(skill).forEach((tag) => {
+      const key = tag.toLocaleLowerCase();
+      if (!tags.has(key)) tags.set(key, tag);
+    }));
+    return [...tags.values()].sort((a, b) => a.localeCompare(b));
+  }
+  function syncSkillTagFilter() {
+    const select = document.getElementById("skillTagFilter");
+    if (!select) return;
+    const current = select.value;
+    const options = [`<option value="">\u5168\u90E8\u6807\u7B7E</option>`].concat(allSkillTags().map((tag) => `<option value="${esc(tag)}">${esc(tag)}</option>`));
+    if (state.skillLib.some((skill) => !skillTags(skill).length)) {
+      options.push(`<option value="__untagged__">\u672A\u5206\u7C7B</option>`);
+    }
+    select.innerHTML = options.join("");
+    if ([...select.options].some((option) => option.value === current)) select.value = current;
+  }
+  function filteredSkills() {
+    const query = (document.getElementById("skillSearch")?.value || "").trim().toLocaleLowerCase();
+    const tag = document.getElementById("skillTagFilter")?.value || "";
+    const list = state.skillLib.filter((skill) => {
+      const tags = skillTags(skill);
+      const matchesTag = !tag || (tag === "__untagged__" ? tags.length === 0 : tags.some((item) => item.toLocaleLowerCase() === tag.toLocaleLowerCase()));
+      if (!matchesTag) return false;
+      if (!query) return true;
+      return [skill.name, skill.description, skill.dir, skill.source_path, ...tags].some((value) => String(value || "").toLocaleLowerCase().includes(query));
+    });
+    return { list, query, tag };
   }
   function skillGroupDirectory(skill) {
     const raw = String(skill.source_path || skill.dir || "").trim().replace(/[\\/]+$/, "");
@@ -408,9 +478,9 @@
     if (slash === 2 && raw[1] === ":") return raw.slice(0, 3);
     return raw.slice(0, slash) || "\u6839\u76EE\u5F55";
   }
-  function skillGroups() {
+  function skillGroups(skills = state.skillLib) {
     const groups = /* @__PURE__ */ new Map();
-    state.skillLib.forEach((skill) => {
+    skills.forEach((skill) => {
       const directory = skillGroupDirectory(skill);
       let group = groups.get(directory);
       if (!group) {
@@ -436,6 +506,7 @@
         </div>
       </div>
       <div class="sk-meta">
+        <div class="skill-tags">${skillTagsHTML(s)}</div>
         <span class="chip" title="${esc(s.dir)}">\u526F\u672C\uFF1A${esc(s.dir)}</span>
       </div>
       <div class="sk-foot">
@@ -447,7 +518,20 @@
       </div>
     </article>`;
   }
-  function syncSkillSelectionControls(groups = skillGroups()) {
+  function skillListRowHTML(s) {
+    const selected = state.skillSelected.has(s.id);
+    return `<tr onclick="openSkillDetail(${s.id})">
+    <td class="skill-list-check"><label class="skill-select" onclick="event.stopPropagation()" title="\u9009\u62E9 ${esc(s.name)}">
+      <input type="checkbox" data-skill-id="${s.id}" ${selected ? "checked" : ""} aria-label="\u9009\u62E9\u6280\u80FD ${esc(s.name)}" onchange="toggleSkillSelection(${s.id}, this.checked)">
+    </label></td>
+    <td><span class="skill-list-name"><span class="avatar">${esc((s.name || "?").slice(0, 1))}</span><span><b>${esc(s.name)}</b><small>${esc(s.description || "\u65E0\u63CF\u8FF0")}</small></span></span></td>
+    <td><div class="skill-tags">${skillTagsHTML(s)}</div></td>
+    <td><code class="skill-list-dir" title="${esc(s.source_path || s.dir || "-")}">${esc(skillGroupDirectory(s))}</code></td>
+    <td class="num">${esc((s.created_at || "").slice(0, 10))}</td>
+    <td><span class="ops"><button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s.id})">\u8BE6\u60C5${icon("expand")}</button><button class="btn xs danger" onclick="event.stopPropagation();deleteSkill(${s.id})">${icon("trash")}\u5220\u9664</button></span></td>
+  </tr>`;
+  }
+  function syncSkillSelectionControls(groups = skillGroups(filteredSkills().list)) {
     const lib = state.skillLib;
     const selected = state.skillSelected;
     const selectedCount = selected.size;
@@ -461,6 +545,7 @@
       const on = selected.has(Number(cb.dataset.skillId));
       cb.checked = on;
       cb.closest(".skill-card")?.classList.toggle("selected", on);
+      cb.closest("tr")?.classList.toggle("selected", on);
     });
     groups.forEach((group, i) => {
       const groupSelected = group.skills.filter((s) => selected.has(s.id)).length;
@@ -478,26 +563,38 @@
     const grid = document.getElementById("skillGrid");
     if (!grid) return;
     const lib = state.skillLib;
-    const groups = skillGroups();
-    grid.innerHTML = groups.map((group, i) => `
-    <section class="skill-group">
-      <header class="skill-group-head">
-        <label class="skill-group-select" title="\u9009\u62E9\u76EE\u5F55 ${esc(group.directory)}">
-          <input type="checkbox" data-skill-group="${i}" aria-label="\u9009\u62E9\u76EE\u5F55 ${esc(group.directory)}" onchange="toggleSkillGroup(${i}, this.checked)">
-        </label>
-        ${icon("folder")}
-        <div class="skill-group-title">
-          <b>\u6765\u6E90\u76EE\u5F55</b>
-          <code title="${esc(group.directory)}">${esc(group.directory)}</code>
-        </div>
-        <span class="count-info">${group.skills.length} \u4E2A\u6280\u80FD</span>
-      </header>
-      <div class="skill-group-grid">${group.skills.map(skillCardHTML).join("")}</div>
-    </section>`).join("");
+    const { list, query, tag } = filteredSkills();
+    const groups = skillGroups(list);
+    grid.className = state.skillView === "list" ? "skill-list-shell" : "skill-groups";
+    if (state.skillView === "list") {
+      grid.innerHTML = `<div class="list-wrap skill-list-wrap"><table class="list-grid skill-list-grid">
+      <thead><tr><th class="skill-list-check">\u9009\u62E9</th><th>\u6280\u80FD</th><th>\u6807\u7B7E</th><th>\u6765\u6E90\u76EE\u5F55</th><th>\u6DFB\u52A0\u65F6\u95F4</th><th style="width:190px">\u64CD\u4F5C</th></tr></thead>
+      <tbody>${list.map(skillListRowHTML).join("")}</tbody>
+    </table></div>`;
+    } else {
+      grid.innerHTML = groups.map((group, i) => `
+      <section class="skill-group">
+        <header class="skill-group-head">
+          <label class="skill-group-select" title="\u9009\u62E9\u76EE\u5F55 ${esc(group.directory)}">
+            <input type="checkbox" data-skill-group="${i}" aria-label="\u9009\u62E9\u76EE\u5F55 ${esc(group.directory)}" onchange="toggleSkillGroup(${i}, this.checked)">
+          </label>
+          ${icon("folder")}
+          <div class="skill-group-title">
+            <b>\u6765\u6E90\u76EE\u5F55</b>
+            <code title="${esc(group.directory)}">${esc(group.directory)}</code>
+          </div>
+          <span class="count-info">${group.skills.length} \u4E2A\u6280\u80FD</span>
+        </header>
+        <div class="skill-group-grid">${group.skills.map(skillCardHTML).join("")}</div>
+      </section>`).join("");
+    }
     const empty = document.getElementById("skillEmpty");
-    if (empty) empty.classList.toggle("hidden", lib.length > 0);
+    if (empty) {
+      empty.textContent = lib.length === 0 ? "\u6280\u80FD\u5E93\u4E3A\u7A7A\u3002\u70B9\u51FB\u53F3\u4E0A\u89D2\u300C\u6DFB\u52A0\u6280\u80FD\u300D\uFF0C\u53EF\u5BFC\u5165\u5355\u4E2A\u76EE\u5F55\u6216\u626B\u63CF\u4E00\u4E2A\u76EE\u5F55\u6811\u4E2D\u7684\u5168\u90E8 skills\u3002" : `\u6CA1\u6709\u7B26\u5408\u5F53\u524D\u7B5B\u9009\u6761\u4EF6\u7684\u6280\u80FD${query || tag ? "\uFF0C\u53EF\u4EE5\u6E05\u9664\u641C\u7D22\u6216\u6807\u7B7E\u7B5B\u9009" : ""}`;
+      empty.classList.toggle("hidden", list.length > 0);
+    }
     const cnt = document.getElementById("skillCount");
-    if (cnt) cnt.textContent = `${lib.length} \u4E2A\u6280\u80FD`;
+    if (cnt) cnt.textContent = list.length === lib.length ? `${lib.length} \u4E2A\u6280\u80FD` : `${list.length} / ${lib.length} \u4E2A\u6280\u80FD`;
     syncSkillSelectionControls(groups);
   }
   function toggleSkillSelection(id, checked) {
@@ -506,7 +603,7 @@
     syncSkillSelectionControls();
   }
   function toggleSkillGroup(groupIndex, checked) {
-    const group = skillGroups()[groupIndex];
+    const group = skillGroups(filteredSkills().list)[groupIndex];
     if (!group) return;
     group.skills.forEach((skill) => {
       if (checked) state.skillSelected.add(skill.id);
@@ -549,11 +646,18 @@
     <section class="side-panel">
       <div class="side-heading">\u6280\u80FD\u4FE1\u606F</div>
       <div class="prop-row"><span class="k">\u540D\u79F0</span><span class="v" title="${esc(skill.name)}">${esc(skill.name)}</span></div>
+      <div class="prop-row"><span class="k">\u6807\u7B7E</span><span class="skill-tags">${skillTagsHTML(skill)}</span></div>
       <div class="prop-row"><span class="k">\u6280\u80FD\u76EE\u5F55</span><code class="prop-mono" title="${esc(skill.dir)}">${esc(skill.dir)}</code></div>
       <div class="prop-row"><span class="k">\u6765\u6E90\u8DEF\u5F84</span><code class="prop-mono" title="${esc(skill.source_path || "-")}">${esc(skill.source_path || "-")}</code></div>
       <div class="prop-row"><span class="k">\u521B\u5EFA\u65F6\u95F4</span><span class="v">${esc((skill.created_at || "").slice(0, 16).replace("T", " ") || "-")}</span></div>
       <div class="prop-row"><span class="k">\u8BF4\u660E\u6587\u4EF6</span><span class="v">SKILL.md${skill.size_bytes !== void 0 ? ` \xB7 ${formatSkillBytes(skill.size_bytes)}` : ""}</span></div>
     </section>
+    <div class="side-actions">
+      <div class="side-heading">\u6807\u7B7E\u7BA1\u7406</div>
+      <input id="sdTags" class="skill-tags-input" value="${esc(skillTags(skill).join(", "))}" placeholder="\u5982\uFF1A\u7F16\u7A0B, \u6587\u6863, \u4EE3\u7801\u5BA1\u67E5">
+      <div class="field-help">\u591A\u4E2A\u6807\u7B7E\u7528\u9017\u53F7\u5206\u9694\uFF0C\u4FDD\u5B58\u540E\u53EF\u5728\u89D2\u8272\u521B\u5EFA\u65F6\u6309\u6807\u7B7E\u7B5B\u9009\u3002</div>
+      <button class="btn sm primary" onclick="saveSkillTags()">\u4FDD\u5B58\u6807\u7B7E</button>
+    </div>
     <div class="side-actions">
       <div class="side-heading">\u64CD\u4F5C</div>
       <div class="detail-actions">
@@ -575,6 +679,7 @@
         <div class="detail-id">\u6280\u80FD\u8BF4\u660E \xB7 Markdown</div>
         <h2>${esc(skill.name)}</h2>
         ${skill.description ? `<div class="skill-hero-desc">${esc(skill.description)}</div>` : ""}
+        <div id="sdTagsDisplay" class="skill-tags skill-hero-tags">${skillTagsHTML(skill)}</div>
       </div>
     </section>
     <div class="skill-doc-head">
@@ -608,6 +713,8 @@
     document.getElementById("skillDetailShell")?.classList.add("hidden");
     document.getElementById("skillShell")?.classList.remove("hidden");
     state.skillDetail = null;
+    document.getElementById("skillDisplaySeg")?.classList.remove("hidden");
+    document.getElementById("skillFilterControls")?.classList.remove("hidden");
     document.getElementById("skillManageControls")?.classList.remove("hidden");
   }
   async function showSkillDetail(id) {
@@ -624,6 +731,8 @@
     state.skillDetail = skill;
     document.getElementById("skillShell")?.classList.add("hidden");
     document.getElementById("skillDetailShell")?.classList.remove("hidden");
+    document.getElementById("skillDisplaySeg")?.classList.add("hidden");
+    document.getElementById("skillFilterControls")?.classList.add("hidden");
     document.getElementById("skillManageControls")?.classList.add("hidden");
     renderSkillDetailShell(skill);
     try {
@@ -652,20 +761,45 @@
       toast("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u9009\u62E9\u5185\u5BB9", true);
     }
   }
+  async function saveSkillTags() {
+    const skill = state.skillDetail;
+    if (!skill) return;
+    const input = document.getElementById("sdTags");
+    const tags = parseTagInput(input?.value || "");
+    try {
+      const updated = await api(`/api/skills/${skill.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ tags })
+      });
+      const index = state.skillLib.findIndex((item) => item.id === skill.id);
+      if (index >= 0) state.skillLib[index] = { ...state.skillLib[index], ...updated };
+      state.skillDetail = { ...skill, ...updated };
+      const side = document.getElementById("sdSide");
+      if (side) side.innerHTML = skillDetailSideHTML(state.skillDetail);
+      const display = document.getElementById("sdTagsDisplay");
+      if (display) display.innerHTML = skillTagsHTML(state.skillDetail);
+      syncSkillTagFilter();
+      toast(tags.length ? "\u6807\u7B7E\u5DF2\u4FDD\u5B58" : "\u5DF2\u6E05\u9664\u6807\u7B7E");
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
   function deleteSkillFromDetail() {
     const id = state.skillDetail?.id;
     if (id !== void 0) deleteSkill(id);
   }
   function openSkillModal() {
     document.getElementById("sSkillPath").value = "";
+    document.getElementById("sSkillTags").value = "";
     loadProjDatalist();
     openModal("skillModal");
   }
   async function submitSkill() {
     const path = document.getElementById("sSkillPath").value.trim();
     if (!path) return toast("\u9700\u8981\u6280\u80FD\u76EE\u5F55\u8DEF\u5F84", true);
+    const tags = parseTagInput(document.getElementById("sSkillTags")?.value || "");
     try {
-      const sk = await api("/api/skills", { method: "POST", body: JSON.stringify({ source_path: path }) });
+      const sk = await api("/api/skills", { method: "POST", body: JSON.stringify({ source_path: path, tags }) });
       closeModal("skillModal");
       toast(`\u5DF2\u5BFC\u5165 skill: ${sk.name}`);
       await loadSkillLib();
@@ -677,8 +811,9 @@
   async function scanSkills() {
     const path = document.getElementById("sSkillPath").value.trim();
     if (!path) return toast("\u9700\u8981\u626B\u63CF\u6839\u76EE\u5F55\u8DEF\u5F84", true);
+    const tags = parseTagInput(document.getElementById("sSkillTags")?.value || "");
     try {
-      const result = await api("/api/skills/scan", { method: "POST", body: JSON.stringify({ source_path: path }) });
+      const result = await api("/api/skills/scan", { method: "POST", body: JSON.stringify({ source_path: path, tags }) });
       closeModal("skillModal");
       const imported = (result.imported || []).length;
       const skipped = (result.skipped || []).length;
@@ -2414,16 +2549,46 @@
     hidden.value = items.join(",");
     syncChips(box, key);
   }
+  function filterSkillOptions(control) {
+    const box = control?.closest?.(".chip-editor");
+    if (!box) return;
+    const tag = box.querySelector("[data-skill-tag-filter]")?.value || "";
+    const query = (box.querySelector("[data-skill-search]")?.value || "").trim().toLocaleLowerCase();
+    box.querySelectorAll(".skill-opt").forEach((option) => {
+      const tags = (option.dataset.tags || "").split("|").filter(Boolean);
+      const text = option.dataset.search || "";
+      const matchesTag = !tag || (tag === "__untagged__" ? tags.length === 0 : tags.includes(tag.toLocaleLowerCase()));
+      option.hidden = !matchesTag || !!query && !text.includes(query);
+    });
+  }
   function skillsControlHTML(f, val) {
     const items = val ? String(val).split(",").map((s) => s.trim()).filter(Boolean) : [];
     const lib = state.skillLib || [];
+    const tagMap = /* @__PURE__ */ new Map();
+    lib.forEach((s) => (Array.isArray(s.tags) ? s.tags : []).forEach((tag) => {
+      const key = String(tag).trim().toLocaleLowerCase();
+      if (key && !tagMap.has(key)) tagMap.set(key, String(tag).trim());
+    }));
+    const tagOptions = [...tagMap.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([key, label]) => `<option value="${esc(key)}">${esc(label)}</option>`).join("");
+    const hasUntagged = lib.some((s) => !(Array.isArray(s.tags) && s.tags.length));
     const opts = lib.map((s) => {
       const on = items.includes(s.dir);
-      return `<label class="skill-opt"><input type="checkbox" data-v="${esc(s.dir)}" ${on ? "checked" : ""} onchange="toggleSkill('${f.key}', this)"><span title="${esc(s.description || s.dir)}">${esc(s.name)}</span></label>`;
+      const rawTags = (Array.isArray(s.tags) ? s.tags : []).map(String).map((tag) => tag.trim()).filter(Boolean);
+      const tags = rawTags.map((tag) => tag.toLocaleLowerCase());
+      const search = [s.name, s.description, ...rawTags].join(" ").toLocaleLowerCase();
+      return `<label class="skill-opt" data-tags="${esc(tags.join("|"))}" data-search="${esc(search)}"><input type="checkbox" data-v="${esc(s.dir)}" ${on ? "checked" : ""} onchange="toggleSkill('${f.key}', this)"><span class="skill-opt-copy" title="${esc(s.description || s.dir)}"><span class="skill-opt-name">${esc(s.name)}</span>${rawTags.length ? `<small>${rawTags.map((tag) => esc(tag)).join(" \xB7 ")}</small>` : `<small>\u672A\u5206\u7C7B</small>`}</span></label>`;
     }).join("");
     return `<div class="chip-editor">
     <input type="hidden" data-key="${f.key}" data-type="list" value="${esc(items.join(","))}">
     <div class="chips">${items.map((p) => chipHTML(f.key, p)).join("")}</div>
+    <div class="skill-filter-row">
+      <label>\u6309\u6807\u7B7E
+        <select data-skill-tag-filter onchange="filterSkillOptions(this)">
+          <option value="">\u5168\u90E8\u6807\u7B7E</option>${tagOptions}${hasUntagged ? `<option value="__untagged__">\u672A\u5206\u7C7B</option>` : ""}
+        </select>
+      </label>
+      <input data-skill-search placeholder="\u641C\u7D22\u6280\u80FD\u540D\u79F0\u6216\u8BF4\u660E" oninput="filterSkillOptions(this)">
+    </div>
     <div class="skill-opts">${opts || `<div class="empty">\u6280\u80FD\u5E93\u4E3A\u7A7A\uFF1A\u5230 Skills \u9875\u6DFB\u52A0\u6280\u80FD\uFF08\u542B SKILL.md \u7684\u76EE\u5F55\uFF09</div>`}</div>
     <div class="chip-add">
       <input placeholder="\u81EA\u5B9A\u4E49\u6280\u80FD\u76EE\u5F55\u8DEF\u5F84\uFF0C\u56DE\u8F66\u6DFB\u52A0" onkeydown="if(event.key==='Enter'){event.preventDefault();addChip('${f.key}', this)}">
@@ -3336,6 +3501,13 @@
     } else if (path === "/autopilots") {
       renderScheduleList();
     } else if (path === "/skills") {
+      let sv = "grid";
+      try {
+        sv = localStorage.getItem("paihuo.skillView") || "grid";
+      } catch (_) {
+      }
+      setSkillView(sv === "list" ? "list" : "grid");
+      setSkillTab("skills");
       await loadSkillLib();
       renderSkillLib();
     } else if (path === "/settings") {
@@ -3373,6 +3545,7 @@
   window.deleteTask = deleteTask;
   window.deleteTemplate = deleteTemplate;
   window.endInteractiveTask = endInteractiveTask;
+  window.filterSkillOptions = filterSkillOptions;
   window.gitInitProject = gitInitProject;
   window.installProvision = installProvision;
   window.loadHistory = loadHistory;
@@ -3403,12 +3576,14 @@
   window.renderAgentList = renderAgentList;
   window.renderAgentModalSchema = renderAgentModalSchema;
   window.renderProjectList = renderProjectList;
+  window.renderSkillLib = renderSkillLib;
   window.resumeTask = resumeTask;
   window.runCleanup = runCleanup;
   window.saveAgentConcurrency = saveAgentConcurrency;
   window.saveAgentConfig = saveAgentConfig;
   window.saveAsTemplate = saveAsTemplate;
   window.saveRetention = saveRetention;
+  window.saveSkillTags = saveSkillTags;
   window.saveWtRetention = saveWtRetention;
   window.scanSkills = scanSkills;
   window.selectAllNonMergeTasks = selectAllNonMergeTasks;
@@ -3416,6 +3591,7 @@
   window.sendTerminalInput = sendTerminalInput;
   window.setAgentView = setAgentView;
   window.setSkillTab = setSkillTab;
+  window.setSkillView = setSkillView;
   window.setTaskStatus = setTaskStatus;
   window.setView = setView;
   window.submitAgent = submitAgent;

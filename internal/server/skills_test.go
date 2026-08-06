@@ -53,6 +53,55 @@ func TestGetSkillReturnsMarkdownDetail(t *testing.T) {
 	}
 }
 
+func TestSkillImportReadsTagsAndPatchUpdatesThem(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "reviewer")
+	writeTestSkill(t, source, "---\nname: reviewer\ndescription: review code\ntags:\n  - coding\n  - review\n---\n")
+
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	s := New(st, events.NewHub(), nil, nil, "", filepath.Join(root, "managed-skills"))
+
+	body, err := json.Marshal(map[string]any{"source_path": source, "tags": []string{"team-a", "coding"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/skills", bytes.NewReader(body))
+	resp := httptest.NewRecorder()
+	s.Handler().ServeHTTP(resp, req)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("导入技能状态应为 201，得到 %d: %s", resp.Code, resp.Body.String())
+	}
+	var imported store.Skill
+	if err := json.Unmarshal(resp.Body.Bytes(), &imported); err != nil {
+		t.Fatal(err)
+	}
+	if len(imported.Tags) != 3 || imported.Tags[0] != "coding" || imported.Tags[1] != "review" || imported.Tags[2] != "team-a" {
+		t.Fatalf("导入标签错误: %+v", imported.Tags)
+	}
+
+	body, err = json.Marshal(map[string]any{"tags": []string{"production", "production"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPatch, "/api/skills/"+strconv.FormatInt(imported.ID, 10), bytes.NewReader(body))
+	resp = httptest.NewRecorder()
+	s.Handler().ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("更新技能标签状态应为 200，得到 %d: %s", resp.Code, resp.Body.String())
+	}
+	var updated store.Skill
+	if err := json.Unmarshal(resp.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Tags) != 1 || updated.Tags[0] != "production" {
+		t.Fatalf("更新后的标签错误: %+v", updated.Tags)
+	}
+}
+
 func TestScanSkillsDiscoversRootAndNestedSkillsWithoutReimportingManagedCopies(t *testing.T) {
 	root := t.TempDir()
 	writeTestSkill(t, root, "---\nname: root-skill\ndescription: root description\n---\n")

@@ -1,5 +1,5 @@
 // 模块 main（由 scripts/split-frontend.py 生成）
-import { addChip, agentTab, agentTabFromCard, closeAgentDetail, deleteAgent, hideAgentDetail, openAgentDetail, openAgentModal, refreshAgentCatalog, removeChip, renderAgentList, renderAgentModalSchema, renderAgentOverview, saveAgentConcurrency, saveAgentConfig, setAgentView, showAgentDetail, submitAgent, syncModelThinking, toggleAgent, toggleSkill } from "./agents.js";
+import { addChip, agentTab, agentTabFromCard, closeAgentDetail, deleteAgent, filterSkillOptions, hideAgentDetail, openAgentDetail, openAgentModal, refreshAgentCatalog, removeChip, renderAgentList, renderAgentModalSchema, renderAgentOverview, saveAgentConcurrency, saveAgentConfig, setAgentView, showAgentDetail, submitAgent, syncModelThinking, toggleAgent, toggleSkill } from "./agents.js";
 import { api, closeModal, esc, fmtDur, fmtPct, logout, state, toast } from "./core.js";
 import { loadDashboard } from "./dashboard.js";
 import { cleanupHistory, deleteSelected, loadHistory, selectAllNonMergeTasks, toggleAll, toggleRow } from "./history.js";
@@ -7,7 +7,7 @@ import { closeProjectDetail, deleteProject, dirLoad, hideProjectDetail, mkdirCur
 import { appendInstLine, closeInstTerminal, copyText, createDefaultRole, installProvision, loadProvision, provState, refreshProvision } from "./provision.js";
 import { deleteSchedule, openScheduleModal, renderScheduleList, submitSchedule, syncScheduleFields, toggleSchedule } from "./schedules.js";
 import { loadSettings, runCleanup, saveRetention, saveWtRetention } from "./settings.js";
-import { closeSkillDetail, copySkillContent, deleteSelectedSkills, deleteSkill, deleteSkillFromDetail, deleteTemplate, hideSkillDetail, loadSkillLib, loadTemplates, openExtModal, openSkillDetail, openSkillModal, removeExt, renderSkillLib, scanSkills, setSkillTab, showSkillDetail, submitExt, submitSkill, toggleAllSkills, toggleSkillGroup, toggleSkillSelection } from "./skills.js";
+import { closeSkillDetail, copySkillContent, deleteSelectedSkills, deleteSkill, deleteSkillFromDetail, deleteTemplate, hideSkillDetail, loadSkillLib, loadTemplates, openExtModal, openSkillDetail, openSkillModal, removeExt, renderSkillLib, saveSkillTags, scanSkills, setSkillTab, setSkillView, showSkillDetail, submitExt, submitSkill, toggleAllSkills, toggleSkillGroup, toggleSkillSelection } from "./skills.js";
 import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskConcurrency, syncTaskDependency, syncTaskRunMode, wsDiscard } from "./task.js";
 import { closeTerminal, openTerminal, sendTaskInput, sendTerminalInput, syncTerminalInput } from "./terminal.js";
 
@@ -381,6 +381,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   } else if (path === "/autopilots") {
     renderScheduleList();
   } else if (path === "/skills") {
+    let sv = "grid";
+    try { sv = localStorage.getItem("paihuo.skillView") || "grid"; } catch (_) {}
+    setSkillView(sv === "list" ? "list" : "grid");
+    setSkillTab("skills");
     await loadSkillLib();
     renderSkillLib();
   } else if (path === "/settings") {
@@ -422,6 +426,7 @@ window.deleteSkillFromDetail = deleteSkillFromDetail;
 window.deleteTask = deleteTask;
 window.deleteTemplate = deleteTemplate;
 window.endInteractiveTask = endInteractiveTask;
+window.filterSkillOptions = filterSkillOptions;
 window.gitInitProject = gitInitProject;
 window.installProvision = installProvision;
 window.loadHistory = loadHistory;
@@ -452,12 +457,14 @@ window.removeExt = removeExt;
 window.renderAgentList = renderAgentList;
 window.renderAgentModalSchema = renderAgentModalSchema;
 window.renderProjectList = renderProjectList;
+window.renderSkillLib = renderSkillLib;
 window.resumeTask = resumeTask;
 window.runCleanup = runCleanup;
 window.saveAgentConcurrency = saveAgentConcurrency;
 window.saveAgentConfig = saveAgentConfig;
 window.saveAsTemplate = saveAsTemplate;
 window.saveRetention = saveRetention;
+window.saveSkillTags = saveSkillTags;
 window.saveWtRetention = saveWtRetention;
 window.scanSkills = scanSkills;
 window.selectAllNonMergeTasks = selectAllNonMergeTasks;
@@ -465,6 +472,7 @@ window.sendTaskInput = sendTaskInput;
 window.sendTerminalInput = sendTerminalInput;
 window.setAgentView = setAgentView;
 window.setSkillTab = setSkillTab;
+window.setSkillView = setSkillView;
 window.setTaskStatus = setTaskStatus;
 window.setView = setView;
 window.submitAgent = submitAgent;

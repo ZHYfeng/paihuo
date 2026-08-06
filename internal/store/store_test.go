@@ -619,6 +619,33 @@ func TestCleanupTasksOnlyTerminal(t *testing.T) {
 	}
 }
 
+func TestSkillTagsRoundTripAndNormalize(t *testing.T) {
+	s := openTest(t)
+	id, err := s.CreateSkill(Skill{
+		Name: "tagged", Dir: t.TempDir(), Tags: []string{" 编程 ", "文档", "编程", "DOCS"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sk, err := s.GetSkill(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sk.Tags) != 3 || sk.Tags[0] != "编程" || sk.Tags[1] != "文档" || sk.Tags[2] != "DOCS" {
+		t.Fatalf("技能标签未按预期规范化: %+v", sk.Tags)
+	}
+	if err := s.UpdateSkillTags(id, []string{"审查", "审查", " 文档 "}); err != nil {
+		t.Fatal(err)
+	}
+	sk, err = s.GetSkill(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sk.Tags) != 2 || sk.Tags[0] != "审查" || sk.Tags[1] != "文档" {
+		t.Fatalf("技能标签更新未持久化: %+v", sk.Tags)
+	}
+}
+
 // 迁移完整性：模拟老库（缺新列）→ 重新 Open 后 migrate 应补齐所有新列。
 func TestMigrateAddsNewColumns(t *testing.T) {
 	path := t.TempDir() + "/mig.db"
@@ -648,6 +675,10 @@ func TestMigrateAddsNewColumns(t *testing.T) {
 			s.Close()
 			t.Fatalf("drop schedules.%s: %v", col, err)
 		}
+	}
+	if _, err := s.db.Exec("ALTER TABLE skills DROP COLUMN tags"); err != nil {
+		s.Close()
+		t.Fatalf("drop skills.tags: %v", err)
 	}
 	if _, err := s.db.Exec("ALTER TABLE agents DROP COLUMN max_concurrency"); err != nil {
 		s.Close()
@@ -684,6 +715,13 @@ func TestMigrateAddsNewColumns(t *testing.T) {
 		if !scheduleCols[want] {
 			t.Fatalf("迁移后 schedules 缺少列 %s（现有列: %v）", want, scheduleCols)
 		}
+	}
+	skillCols := map[string]bool{}
+	for _, r := range mustRows(t, s2, "PRAGMA table_info(skills)") {
+		skillCols[r[1]] = true
+	}
+	if !skillCols["tags"] {
+		t.Fatalf("迁移后 skills 缺少 tags 列（现有列: %v）", skillCols)
 	}
 	// 迁移后应能正常读写
 	id, err := s2.CreateTask(Task{Title: "t", Status: StatusQueued})

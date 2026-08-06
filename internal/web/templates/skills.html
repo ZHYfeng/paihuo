@@ -17,6 +17,16 @@
       <button id="segSkillLib" class="active" onclick="setSkillTab('skills')">技能</button>
       <button id="segExt" onclick="setSkillTab('ext')">扩展（pi）</button>
     </div>
+    <div class="seg hidden" id="skillDisplaySeg" aria-label="技能显示模式">
+      <button id="segSkillGrid" class="active" onclick="setSkillView('grid')">卡片</button>
+      <button id="segSkillList" onclick="setSkillView('list')">列表</button>
+    </div>
+    <div class="skill-filter-controls hidden" id="skillFilterControls">
+      <input id="skillSearch" class="inp" placeholder="搜索技能…" oninput="renderSkillLib()">
+      <select id="skillTagFilter" onchange="renderSkillLib()" aria-label="按标签筛选技能">
+        <option value="">全部标签</option>
+      </select>
+    </div>
     <span class="spacer"></span>
     <div class="skill-manage-controls" id="skillManageControls">
       <label class="skill-check-all"><input type="checkbox" id="skillCheckAll" onchange="toggleAllSkills(this.checked)">全选</label>
@@ -76,6 +86,9 @@
           Browse…
         </button>
       </span>
+    </label>
+    <label class="field">标签（可选）
+      <input id="sSkillTags" placeholder="多个标签用逗号分隔；扫描时会应用到本次导入的所有技能">
     </label>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal('skillModal')">取消</button>

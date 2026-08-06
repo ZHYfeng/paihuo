@@ -1154,8 +1154,33 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   max-height: 46vh; overflow-y: auto; margin-bottom: 10px;
 }
 .ext-actions { display: flex; align-items: center; gap: 10px; }
+.skill-filter-controls {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+}
+.skill-filter-controls.hidden { display: none; }
+.skill-filter-controls .inp { width: 180px; }
+.skill-filter-controls select { max-width: 150px; }
 .skill-groups {
   flex: 1; min-width: 0; overflow-y: auto; padding: 14px 16px;
+}
+.skill-list-shell {
+  flex: 1; min-width: 0; overflow-y: auto; padding: 14px 16px;
+}
+.skill-list-wrap { min-width: 0; }
+.skill-list-grid { min-width: 900px; }
+.skill-list-grid .skill-list-check { width: 54px; text-align: center; }
+.skill-list-grid .skill-list-check .skill-select { justify-content: center; }
+.skill-list-grid tbody td { padding-top: 8px; padding-bottom: 8px; }
+.skill-list-name { display: flex; align-items: center; gap: 9px; min-width: 220px; }
+.skill-list-name > span:last-child { display: flex; flex-direction: column; min-width: 0; }
+.skill-list-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-list-name small {
+  color: var(--fg-muted); font-size: 11px; max-width: 300px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px;
+}
+.skill-list-dir {
+  display: block; max-width: 230px; color: var(--fg-muted); font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .skill-group { min-width: 0; }
 .skill-group + .skill-group { margin-top: 18px; }
@@ -1205,6 +1230,14 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .sk-meta { margin-top: 10px; }
+.skill-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.skill-tag {
+  display: inline-block; max-width: 150px; padding: 2px 7px; border-radius: 999px;
+  color: var(--brand); background: var(--brand-dim); border: 1px solid rgba(56, 189, 248, .24);
+  font-size: 10.5px; line-height: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.skill-tag.muted { color: var(--fg-faint); background: var(--raised); border-color: var(--border); }
+.skill-hero-tags { margin-top: 8px; }
 .sk-meta .chip {
   font-size: 10.5px; padding: 2px 8px; border-radius: 20px; font-family: var(--font-mono);
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block;
@@ -1232,6 +1265,8 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 }
 .skill-doc.is-empty { color: var(--fg-faint); }
 .skill-doc.is-error { color: var(--danger); border-color: rgba(248, 113, 113, .3); }
+.skill-tags-input { width: 100%; margin: 6px 0 6px; }
+.side-actions .skill-tags + .skill-tags-input { margin-top: 6px; }
 
 /* 项目卡片目录 chip */
 .pc-meta .pc-dir {
@@ -1258,6 +1293,12 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 .chip-x:hover { color: var(--danger); background: var(--danger-dim); }
 .chip-add { display: flex; gap: 6px; }
 .chip-add input { flex: 1; }
+.skill-filter-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.skill-filter-row label {
+  display: flex; align-items: center; gap: 6px; color: var(--fg-faint); font-size: 11px; white-space: nowrap;
+}
+.skill-filter-row select { min-width: 120px; width: auto; }
+.skill-filter-row > input { min-width: 0; flex: 1; }
 .skill-opts {
   display: grid; grid-template-columns: 1fr 1fr; gap: 2px;
   max-height: 170px; overflow-y: auto; padding: 4px; margin-bottom: 8px;
@@ -1270,9 +1311,12 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 }
 .skill-opt:hover { background: var(--hover); color: var(--fg); }
 .skill-opt input { width: auto; flex-shrink: 0; }
-.skill-opt span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+.skill-opt-copy { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.skill-opt-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+.skill-opt-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-faint); font-size: 10px; }
 .skill-opt:has(input:checked) { color: var(--fg); background: var(--brand-dim); }
-.skill-opt:has(input:checked) span { color: var(--brand); }
+.skill-opt:has(input:checked) .skill-opt-name { color: var(--brand); }
+.skill-opt[hidden] { display: none; }
 
 /* ============================================================
    目录选择器
@@ -1415,6 +1459,8 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   .toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
   .toolbar > .seg { flex: 1 0 100%; }
   .toolbar > .seg button { flex: 1; min-height: 32px; }
+  .skill-filter-controls { flex: 1 1 100%; }
+  .skill-filter-controls .inp, .skill-filter-controls select { flex: 1; width: auto; max-width: none; }
   .toolbar > select, .toolbar > input:not([type="checkbox"]) {
     flex: 1 1 calc(50% - 4px); width: auto !important; min-width: 0;
   }
@@ -1473,6 +1519,9 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 
   .dir-input-row, .dir-new { align-items: stretch; }
   .dir-input-row .btn, .dir-new .btn { min-height: 40px; }
+  .skill-filter-row { flex-direction: column; align-items: stretch; }
+  .skill-filter-row label { justify-content: space-between; }
+  .skill-filter-row select { flex: 1; }
   .skill-opts { grid-template-columns: 1fr; }
   .prov-actions .btn { flex: 1 1 calc(50% - 6px); }
   .toast { left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); transform: none; justify-content: center; text-align: center; }

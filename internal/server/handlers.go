@@ -1429,7 +1429,8 @@ func (s *Server) getSkill(w http.ResponseWriter, r *http.Request) {
 // createSkill 定向添加：把源目录（含 SKILL.md）复制到 paihuo 工作目录并登记。
 func (s *Server) createSkill(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		SourcePath string `json:"source_path"`
+		SourcePath string   `json:"source_path"`
+		Tags       []string `json:"tags"`
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -1447,7 +1448,7 @@ func (s *Server) createSkill(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "该目录没有 SKILL.md，不是技能")
 		return
 	}
-	sk, err := s.importSkill(src)
+	sk, err := s.importSkillWithTags(src, in.Tags)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1473,7 +1474,8 @@ type skillScanError struct {
 // 单个技能导入失败不会中断其它技能，结果会在 errors 中返回给前端。
 func (s *Server) scanSkills(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		SourcePath string `json:"source_path"`
+		SourcePath string   `json:"source_path"`
+		Tags       []string `json:"tags"`
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -1521,7 +1523,7 @@ func (s *Server) scanSkills(w http.ResponseWriter, r *http.Request) {
 			result.Skipped = append(result.Skipped, src)
 			continue
 		}
-		sk, err := s.importSkill(src)
+		sk, err := s.importSkillWithTags(src, in.Tags)
 		if err != nil {
 			result.Errors = append(result.Errors, skillScanError{SourcePath: src, Error: err.Error()})
 			continue
@@ -1604,6 +1606,12 @@ func isPathWithin(path, dir string) bool {
 
 // importSkill 把一个已经校验过的技能目录复制到 paihuo 的工作目录并登记。
 func (s *Server) importSkill(src string) (store.Skill, error) {
+	return s.importSkillWithTags(src, nil)
+}
+
+// importSkillWithTags 把 frontmatter 中的标签与本次导入附加的标签合并，
+// 这样扫描导入既能保留技能自带的元数据，也能一次给一批技能打上业务标签。
+func (s *Server) importSkillWithTags(src string, extraTags []string) (store.Skill, error) {
 	if isPathWithin(src, s.skillsDir) {
 		return store.Skill{}, fmt.Errorf("不能导入 paihuo 管理的技能库目录")
 	}
@@ -1612,7 +1620,8 @@ func (s *Server) importSkill(src string) (store.Skill, error) {
 	if err != nil || fi.IsDir() {
 		return store.Skill{}, fmt.Errorf("该目录没有 SKILL.md，不是技能")
 	}
-	name, desc := parseSkillFrontmatter(skillmd)
+	name, desc, tags := parseSkillFrontmatter(skillmd)
+	tags = append(tags, extraTags...)
 	if name == "" {
 		name = filepath.Base(src)
 	}
@@ -1636,7 +1645,7 @@ func (s *Server) importSkill(src string) (store.Skill, error) {
 		return store.Skill{}, fmt.Errorf("复制技能目录失败: %w", err)
 	}
 	id, err := s.st.CreateSkill(store.Skill{
-		Name: name, Description: desc, Dir: dst, SourcePath: src,
+		Name: name, Description: desc, Tags: tags, Dir: dst, SourcePath: src,
 	})
 	if err != nil {
 		_ = os.RemoveAll(dst)
@@ -1647,6 +1656,33 @@ func (s *Server) importSkill(src string) (store.Skill, error) {
 		return store.Skill{}, err
 	}
 	return *sk, nil
+}
+
+func (s *Server) patchSkill(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if _, err := s.st.GetSkill(id); err != nil {
+		writeErr(w, http.StatusNotFound, "技能不存在")
+		return
+	}
+	var in struct {
+		Tags []string `json:"tags"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := s.st.UpdateSkillTags(id, in.Tags); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	sk, err := s.st.GetSkill(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, sk)
 }
 
 func (s *Server) deleteSkill(w http.ResponseWriter, r *http.Request) {
@@ -1713,9 +1749,9 @@ func (s *Server) deleteSkills(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": ids, "count": len(ids)})
 }
 
-// parseSkillFrontmatter 解析 SKILL.md 头部 YAML frontmatter 的 name / description。
+// parseSkillFrontmatter 解析 SKILL.md 头部 YAML frontmatter 的 name / description / tags。
 // 解析失败或没有 frontmatter 时返回空，由调用方用目录名兜底。
-func parseSkillFrontmatter(path string) (name, desc string) {
+func parseSkillFrontmatter(path string) (name, desc string, tags []string) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return
@@ -1729,19 +1765,54 @@ func parseSkillFrontmatter(path string) (name, desc string) {
 	if end < 0 {
 		return
 	}
-	for _, line := range strings.Split(rest[:end], "\n") {
+	frontmatter := strings.Split(rest[:end], "\n")
+	readingTags := false
+	for _, line := range frontmatter {
 		k, v, ok := strings.Cut(line, ":")
 		if !ok {
+			// 兼容最常见的多行 YAML 标签：
+			// tags:\n  - coding\n  - review
+			if readingTags && strings.HasPrefix(strings.TrimSpace(line), "-") {
+				tags = append(tags, strings.Trim(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-")), `"'`))
+			}
 			continue
 		}
+		readingTags = false
 		switch strings.TrimSpace(k) {
 		case "name":
 			name = strings.Trim(strings.TrimSpace(v), `"'`)
 		case "description":
 			desc = strings.Trim(strings.TrimSpace(v), `"'`)
+		case "tags":
+			tags = parseSkillTagsValue(v)
+			// Inline tags are complete on this line. For a YAML list, the
+			// following indented dash items are picked up above.
+			readingTags = strings.TrimSpace(v) == ""
 		}
 	}
 	return
+}
+
+func parseSkillTagsValue(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "[]" {
+		return []string{}
+	}
+	if strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]") {
+		raw = strings.TrimSpace(raw[1 : len(raw)-1])
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == '，' })
+	if len(parts) == 0 {
+		parts = []string{raw}
+	}
+	tags := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.Trim(strings.TrimSpace(part), `"'`)
+		if part != "" {
+			tags = append(tags, part)
+		}
+	}
+	return tags
 }
 
 func skillSlug(s string) string {

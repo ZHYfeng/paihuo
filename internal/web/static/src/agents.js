@@ -381,18 +381,50 @@ export function toggleSkill(key, cb) {
   syncChips(box, key);
 }
 
-/* ---- 技能多选：paihuo 技能库（按名称勾选，值=工作目录实际路径） ---- */
+export function filterSkillOptions(control) {
+  const box = control?.closest?.(".chip-editor");
+  if (!box) return;
+  const tag = box.querySelector("[data-skill-tag-filter]")?.value || "";
+  const query = (box.querySelector("[data-skill-search]")?.value || "").trim().toLocaleLowerCase();
+  box.querySelectorAll(".skill-opt").forEach(option => {
+    const tags = (option.dataset.tags || "").split("|").filter(Boolean);
+    const text = option.dataset.search || "";
+    const matchesTag = !tag || (tag === "__untagged__" ? tags.length === 0 : tags.includes(tag.toLocaleLowerCase()));
+    option.hidden = !matchesTag || (!!query && !text.includes(query));
+  });
+}
+
+/* ---- 技能多选：paihuo 技能库（按标签筛选后勾选，值=工作目录实际路径） ---- */
 
 export function skillsControlHTML(f, val) {
   const items = val ? String(val).split(",").map(s => s.trim()).filter(Boolean) : [];
   const lib = state.skillLib || [];
+  const tagMap = new Map();
+  lib.forEach(s => (Array.isArray(s.tags) ? s.tags : []).forEach(tag => {
+    const key = String(tag).trim().toLocaleLowerCase();
+    if (key && !tagMap.has(key)) tagMap.set(key, String(tag).trim());
+  }));
+  const tagOptions = [...tagMap.entries()].sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([key, label]) => `<option value="${esc(key)}">${esc(label)}</option>`).join("");
+  const hasUntagged = lib.some(s => !(Array.isArray(s.tags) && s.tags.length));
   const opts = lib.map(s => {
     const on = items.includes(s.dir);
-    return `<label class="skill-opt"><input type="checkbox" data-v="${esc(s.dir)}" ${on ? "checked" : ""} onchange="toggleSkill('${f.key}', this)"><span title="${esc(s.description || s.dir)}">${esc(s.name)}</span></label>`;
+    const rawTags = (Array.isArray(s.tags) ? s.tags : []).map(String).map(tag => tag.trim()).filter(Boolean);
+    const tags = rawTags.map(tag => tag.toLocaleLowerCase());
+    const search = [s.name, s.description, ...rawTags].join(" ").toLocaleLowerCase();
+    return `<label class="skill-opt" data-tags="${esc(tags.join("|"))}" data-search="${esc(search)}"><input type="checkbox" data-v="${esc(s.dir)}" ${on ? "checked" : ""} onchange="toggleSkill('${f.key}', this)"><span class="skill-opt-copy" title="${esc(s.description || s.dir)}"><span class="skill-opt-name">${esc(s.name)}</span>${rawTags.length ? `<small>${rawTags.map(tag => esc(tag)).join(" · ")}</small>` : `<small>未分类</small>`}</span></label>`;
   }).join("");
   return `<div class="chip-editor">
     <input type="hidden" data-key="${f.key}" data-type="list" value="${esc(items.join(","))}">
     <div class="chips">${items.map(p => chipHTML(f.key, p)).join("")}</div>
+    <div class="skill-filter-row">
+      <label>按标签
+        <select data-skill-tag-filter onchange="filterSkillOptions(this)">
+          <option value="">全部标签</option>${tagOptions}${hasUntagged ? `<option value="__untagged__">未分类</option>` : ""}
+        </select>
+      </label>
+      <input data-skill-search placeholder="搜索技能名称或说明" oninput="filterSkillOptions(this)">
+    </div>
     <div class="skill-opts">${opts || `<div class="empty">技能库为空：到 Skills 页添加技能（含 SKILL.md 的目录）</div>`}</div>
     <div class="chip-add">
       <input placeholder="自定义技能目录路径，回车添加" onkeydown="if(event.key==='Enter'){event.preventDefault();addChip('${f.key}', this)}">

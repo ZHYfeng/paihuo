@@ -182,12 +182,13 @@ type Project struct {
 
 // Skill 是注册到 paihuo 工作目录的技能（角色配置时按名称勾选，执行时注入目录）。
 type Skill struct {
-	ID          int64  `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Dir         string `json:"dir"` // 复制后的实际目录（--add-dir 传这个）
-	SourcePath  string `json:"source_path"`
-	CreatedAt   string `json:"created_at"`
+	ID          int64    `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Tags        []string `json:"tags"`
+	Dir         string   `json:"dir"` // 复制后的实际目录（--add-dir 传这个）
+	SourcePath  string   `json:"source_path"`
+	CreatedAt   string   `json:"created_at"`
 }
 
 // ---------------------------------------------------------------------------
