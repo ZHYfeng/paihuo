@@ -8,7 +8,7 @@ import { appendInstLine, closeInstTerminal, copyText, createDefaultRole, install
 import { deleteSchedule, openScheduleModal, renderScheduleList, submitSchedule, toggleSchedule } from "./schedules.js";
 import { loadSettings, runCleanup, saveRetention, saveWtRetention } from "./settings.js";
 import { closeSkillDetail, copySkillContent, deleteSkill, deleteSkillFromDetail, deleteTemplate, hideSkillDetail, loadSkillLib, loadTemplates, openExtModal, openSkillDetail, openSkillModal, removeExt, renderSkillLib, scanSkills, setSkillTab, showSkillDetail, submitExt, submitSkill } from "./skills.js";
-import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskRunMode, wsDiscard } from "./task.js";
+import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskConcurrency, syncTaskDependency, syncTaskRunMode, wsDiscard } from "./task.js";
 import { closeTerminal, openTerminal, sendTaskInput, sendTerminalInput, syncTerminalInput } from "./terminal.js";
 
 export async function loadAll() {
@@ -57,9 +57,13 @@ export function fillSelects() {
     if (el) el.innerHTML = `<option value="">全部角色</option>` + opts(state.agents);
   }
   const pOpts = state.projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
-  for (const id of ["fProject", "tProject"]) {
+  for (const id of ["fProject", "tProject", "sProject"]) {
     const el = document.getElementById(id);
-    if (el) el.innerHTML = (id === "tProject" ? `<option value="">无项目</option>` : `<option value="">全部项目</option>`) + pOpts;
+    if (!el) continue;
+    const empty = id === "fProject"
+      ? "全部项目"
+      : id === "sProject" ? "无项目（通用定时任务）" : "无项目";
+    el.innerHTML = `<option value="">${empty}</option>` + pOpts;
   }
   const cnt = document.getElementById("sbBoardCount");
   if (cnt) cnt.textContent = state.tasks.filter(t =>
@@ -467,6 +471,8 @@ window.submitSchedule = submitSchedule;
 window.submitSkill = submitSkill;
 window.submitTask = submitTask;
 window.syncModelThinking = syncModelThinking;
+window.syncTaskConcurrency = syncTaskConcurrency;
+window.syncTaskDependency = syncTaskDependency;
 window.syncTaskRunMode = syncTaskRunMode;
 window.toggleAll = toggleAll;
 window.toggleRow = toggleRow;

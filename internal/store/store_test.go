@@ -239,7 +239,7 @@ func TestCompleteTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 	}
 	sourceID, err := s.CreateTask(Task{
 		Title: "finish me", Status: StatusRunning, Perm: PermFull,
-		AgentID: &agentID, ProjectID: &projectID, ProjectDir: t.TempDir(),
+		AgentID: &agentID, ProjectID: &projectID, ProjectDir: t.TempDir(), BlockOnFailure: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +248,9 @@ func TestCompleteTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mergeID, err := s.CompleteTaskAndCreateMerge(sourceID, NewMergeTask(*source))
+	mergeInput := NewMergeTask(*source)
+	mergeInput.BlockOnFailure = false // 模拟调用方持有了过期快照
+	mergeID, err := s.CompleteTaskAndCreateMerge(sourceID, mergeInput)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +265,7 @@ func TestCompleteTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 	if merge.MergeOf == nil || *merge.MergeOf != sourceID || merge.ParentID == nil || *merge.ParentID != sourceID {
 		t.Fatalf("合并任务来源关系未保存: %+v", merge)
 	}
-	if merge.Status != StatusQueued || merge.Perm != PermFull || merge.Concurrent {
+	if merge.Status != StatusQueued || merge.Perm != PermFull || merge.Concurrent || !merge.BlockOnFailure {
 		t.Fatalf("自动合并任务执行配置异常: %+v", merge)
 	}
 	if _, err := s.CompleteTaskAndCreateMerge(sourceID, NewMergeTask(*source)); err == nil {
@@ -406,6 +408,200 @@ func TestTaskConcurrentDefaultsFalseAndRoundTrips(t *testing.T) {
 	}
 }
 
+// 项目任务默认采用按创建时间连接的弱依赖；用户选择前置任务时则保存为强
+// 依赖。后续自动任务仍以前一条“实现任务”为前序，而不是以合并子任务为前序。
+func TestCreateProjectTaskDependencies(t *testing.T) {
+	s := openTest(t)
+	p1, err := s.CreateProject(Project{Name: "p1", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := s.CreateProject(Project{Name: "p2", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstID, err := s.CreateTaskWithProjectDependency(Task{
+		Title: "first", Status: StatusQueued, ProjectID: &p1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.GetTask(firstID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.DependencyMode != DependencyWeak || first.DependsOn != nil {
+		t.Fatalf("项目首项应为无前置的弱依赖，得到 %+v", first)
+	}
+	secondID, err := s.CreateTaskWithProjectDependency(Task{
+		Title: "second", Status: StatusQueued, ProjectID: &p1, DependencyMode: DependencyWeak,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.GetTask(secondID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.DependencyMode != DependencyWeak || second.DependsOn == nil || *second.DependsOn != firstID {
+		t.Fatalf("第二项应弱依赖第一项，得到 %+v", second)
+	}
+	strongID, err := s.CreateTaskWithProjectDependency(Task{
+		Title: "strong", Status: StatusQueued, ProjectID: &p1, DependencyMode: DependencyStrong, DependsOn: &firstID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	strong, err := s.GetTask(strongID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strong.DependencyMode != DependencyStrong || strong.DependsOn == nil || *strong.DependsOn != firstID {
+		t.Fatalf("明确前置应保存为强依赖，得到 %+v", strong)
+	}
+	fourthID, err := s.CreateTaskWithProjectDependency(Task{
+		Title: "after strong", Status: StatusQueued, ProjectID: &p1, DependencyMode: DependencyWeak,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fourth, err := s.GetTask(fourthID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fourth.DependsOn == nil || *fourth.DependsOn != strongID {
+		t.Fatalf("后续自动任务应依赖最近创建的实现任务 #%d，得到 %+v", strongID, fourth)
+	}
+	if _, err := s.CreateTaskWithProjectDependency(Task{
+		Title: "cross project", Status: StatusQueued, ProjectID: &p2, DependencyMode: DependencyStrong, DependsOn: &firstID,
+	}); err == nil {
+		t.Fatal("跨项目的强依赖应被拒绝")
+	}
+	if _, err := s.CreateTaskWithProjectDependency(Task{
+		Title: "no project", Status: StatusQueued, DependencyMode: DependencyWeak,
+	}); err == nil {
+		t.Fatal("无项目任务不应允许弱依赖")
+	}
+}
+
+// 弱依赖在非阻塞失败时放行，强依赖始终等待成功交付；Git 任务的交付还包括
+// 它专属的代码合并任务。该测试同时覆盖“合并任务优先于后续实现任务”的队列顺序。
+func TestTaskDependencyFailureAndMergeDelivery(t *testing.T) {
+	s := openTest(t)
+	agentID := mustAgent(t, s, "dependency-agent", true)
+	projectID, err := s.CreateProject(Project{Name: "dependency-project", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceID, err := s.CreateTask(Task{
+		Title: "source", Status: StatusFailed, AgentID: &agentID, ProjectID: &projectID, BlockOnFailure: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	weakID, err := s.CreateTaskWithProjectDependency(Task{
+		Title: "weak", Status: StatusQueued, AgentID: &agentID, ProjectID: &projectID, DependencyMode: DependencyWeak,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	strongID, err := s.CreateTaskWithProjectDependency(Task{
+		Title: "strong", Status: StatusQueued, AgentID: &agentID, ProjectID: &projectID, DependencyMode: DependencyStrong, DependsOn: &sourceID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	weak, err := s.GetTask(weakID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check, err := s.CheckTaskDependency(*weak)
+	if err != nil || !check.Ready || !check.Skipped {
+		t.Fatalf("非阻塞失败应放行弱依赖: check=%+v err=%v", check, err)
+	}
+	strong, err := s.GetTask(strongID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check, err = s.CheckTaskDependency(*strong)
+	if err != nil || check.Ready {
+		t.Fatalf("失败的强依赖必须阻塞: check=%+v err=%v", check, err)
+	}
+	if err := s.UpdateTask(sourceID, map[string]any{"block_on_failure": true}); err != nil {
+		t.Fatal(err)
+	}
+	check, err = s.CheckTaskDependency(*weak)
+	if err != nil || check.Ready {
+		t.Fatalf("阻塞失败应阻塞弱依赖: check=%+v err=%v", check, err)
+	}
+
+	if err := s.UpdateTask(sourceID, map[string]any{
+		"status": StatusSucceeded, "block_on_failure": false, "worktree_branch": "paihuo/task-source",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := s.GetTask(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mergeID, err := s.CreateTask(NewMergeTask(*source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	merge, err := s.GetTask(mergeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merge.BlockOnFailure {
+		t.Fatal("合并任务应继承源任务当前的非阻塞策略")
+	}
+	check, err = s.CheckTaskDependency(*weak)
+	if err != nil || check.Ready {
+		t.Fatalf("源任务成功但合并尚未成功时不应放行: check=%+v err=%v", check, err)
+	}
+	queued, err := s.ListQueuedTasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(queued) == 0 || queued[0].ID != mergeID {
+		t.Fatalf("合并任务必须排在后续实现任务之前，得到 %+v", queued)
+	}
+	if err := s.UpdateTask(mergeID, map[string]any{"status": StatusSucceeded}); err != nil {
+		t.Fatal(err)
+	}
+	check, err = s.CheckTaskDependency(*weak)
+	if err != nil || !check.Ready {
+		t.Fatalf("合并成功后应放行弱依赖: check=%+v err=%v", check, err)
+	}
+	check, err = s.CheckTaskDependency(*strong)
+	if err != nil || !check.Ready {
+		t.Fatalf("合并成功后应放行强依赖: check=%+v err=%v", check, err)
+	}
+}
+
+func TestScheduleProjectAndFailurePolicyRoundTrip(t *testing.T) {
+	s := openTest(t)
+	agentID := mustAgent(t, s, "schedule-agent", true)
+	projectID, err := s.CreateProject(Project{Name: "schedule-project", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := s.CreateSchedule(Schedule{
+		Name: "project schedule", Cron: "0 * * * *", TitleTemplate: "tick", AgentID: agentID,
+		ProjectID: &projectID, BlockOnFailure: true, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc, err := s.GetSchedule(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc.ProjectID == nil || *sc.ProjectID != projectID || !sc.BlockOnFailure || sc.ProjectName != "schedule-project" {
+		t.Fatalf("项目定时任务字段未完整往返: %+v", sc)
+	}
+}
+
 // CleanupTasks 只删终态任务。
 func TestCleanupTasksOnlyTerminal(t *testing.T) {
 	s := openTest(t)
@@ -435,10 +631,22 @@ func TestMigrateAddsNewColumns(t *testing.T) {
 		s.Close()
 		t.Fatalf("drop merge index: %v", err)
 	}
-	for _, col := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "tmux_log_offset", "run_mode", "concurrent"} {
+	for _, index := range []string{"idx_tasks_depends_on", "idx_schedules_project"} {
+		if _, err := s.db.Exec("DROP INDEX IF EXISTS " + index); err != nil {
+			s.Close()
+			t.Fatalf("drop %s: %v", index, err)
+		}
+	}
+	for _, col := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "tmux_log_offset", "run_mode", "concurrent", "depends_on", "dependency_mode", "block_on_failure"} {
 		if _, err := s.db.Exec("ALTER TABLE tasks DROP COLUMN " + col); err != nil {
 			s.Close()
 			t.Fatalf("drop %s: %v", col, err)
+		}
+	}
+	for _, col := range []string{"project_id", "block_on_failure"} {
+		if _, err := s.db.Exec("ALTER TABLE schedules DROP COLUMN " + col); err != nil {
+			s.Close()
+			t.Fatalf("drop schedules.%s: %v", col, err)
 		}
 	}
 	if _, err := s.db.Exec("ALTER TABLE agents DROP COLUMN max_concurrency"); err != nil {
@@ -456,7 +664,7 @@ func TestMigrateAddsNewColumns(t *testing.T) {
 	for _, r := range mustRows(t, s2, "PRAGMA table_info(tasks)") {
 		cols[r[1]] = true
 	}
-	for _, want := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "project_dir", "tmux_log_offset", "run_mode", "concurrent"} {
+	for _, want := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "project_dir", "tmux_log_offset", "run_mode", "concurrent", "depends_on", "dependency_mode", "block_on_failure"} {
 		if !cols[want] {
 			t.Fatalf("迁移后缺少列 %s（现有列: %v）", want, cols)
 		}
@@ -467,6 +675,15 @@ func TestMigrateAddsNewColumns(t *testing.T) {
 	}
 	if !agentCols["max_concurrency"] {
 		t.Fatalf("迁移后 agents 缺少 max_concurrency（现有列: %v）", agentCols)
+	}
+	scheduleCols := map[string]bool{}
+	for _, r := range mustRows(t, s2, "PRAGMA table_info(schedules)") {
+		scheduleCols[r[1]] = true
+	}
+	for _, want := range []string{"project_id", "block_on_failure"} {
+		if !scheduleCols[want] {
+			t.Fatalf("迁移后 schedules 缺少列 %s（现有列: %v）", want, scheduleCols)
+		}
 	}
 	// 迁移后应能正常读写
 	id, err := s2.CreateTask(Task{Title: "t", Status: StatusQueued})

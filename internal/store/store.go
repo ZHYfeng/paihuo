@@ -50,6 +50,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   project_id  INTEGER REFERENCES projects(id),
   project_dir TEXT NOT NULL DEFAULT '',
   parent_id   INTEGER REFERENCES tasks(id),
+  depends_on  INTEGER REFERENCES tasks(id),
+  dependency_mode TEXT NOT NULL DEFAULT 'none',
+  block_on_failure INTEGER NOT NULL DEFAULT 0,
   schedule_id INTEGER,
   error       TEXT NOT NULL DEFAULT '',
   exit_code   INTEGER,
@@ -85,7 +88,9 @@ CREATE TABLE IF NOT EXISTS schedules (
   title_template TEXT NOT NULL,
   body_template  TEXT NOT NULL DEFAULT '',
   agent_id       INTEGER NOT NULL REFERENCES agents(id),
+  project_id     INTEGER REFERENCES projects(id) ON DELETE SET NULL,
   perm           TEXT NOT NULL DEFAULT 'full',
+  block_on_failure INTEGER NOT NULL DEFAULT 0,
   enabled        INTEGER NOT NULL DEFAULT 1,
   last_run_at    TEXT,
   next_run_at    TEXT,
@@ -149,6 +154,9 @@ func migrate(db *sql.DB) error {
 		"ALTER TABLE tasks ADD COLUMN base_commit TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE tasks ADD COLUMN resume_of INTEGER REFERENCES tasks(id)",
 		"ALTER TABLE tasks ADD COLUMN merge_of INTEGER",
+		"ALTER TABLE tasks ADD COLUMN depends_on INTEGER REFERENCES tasks(id)",
+		"ALTER TABLE tasks ADD COLUMN dependency_mode TEXT NOT NULL DEFAULT 'none'",
+		"ALTER TABLE tasks ADD COLUMN block_on_failure INTEGER NOT NULL DEFAULT 0",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)",
 	} {
@@ -164,6 +172,18 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec("ALTER TABLE schedules ADD COLUMN perm TEXT NOT NULL DEFAULT 'full'"); err != nil {
 		if !strings.Contains(err.Error(), "duplicate column name") {
 			return err
+		}
+	}
+	for _, stmt := range []string{
+		"ALTER TABLE schedules ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
+		"ALTER TABLE schedules ADD COLUMN block_on_failure INTEGER NOT NULL DEFAULT 0",
+		"CREATE INDEX IF NOT EXISTS idx_tasks_depends_on ON tasks(depends_on)",
+		"CREATE INDEX IF NOT EXISTS idx_schedules_project ON schedules(project_id)",
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return err
+			}
 		}
 	}
 	if have, err := columnExists(db, "agents", "default_perm"); err != nil {
@@ -409,24 +429,24 @@ func (s *Store) DeleteAgent(id int64) error {
 
 // taskCols 完整列（详情页用：含完整 body，驳回重做会追加修改意见）。
 const taskCols = `t.id, t.title, t.body, t.status, t.perm, t.run_mode, t.concurrent, t.agent_id, COALESCE(a.name, ''),
-	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.schedule_id, t.error, t.exit_code,
+	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
 	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.created_at, t.started_at, t.finished_at, t.updated_at`
 
 // taskColsBrief 列表列（看板/历史/项目页用）：body 截断到 400 字符，
 // 避免大提示词把列表接口载荷撑爆。列序与 taskCols 完全一致（scanTask 共用）。
 const taskColsBrief = `t.id, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.run_mode, t.concurrent, t.agent_id, COALESCE(a.name, ''),
-	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.schedule_id, t.error, t.exit_code,
+	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
 	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.created_at, t.started_at, t.finished_at, t.updated_at`
 
 func scanTask(rows scanner) (Task, error) {
 	var tk Task
-	var agentID, projectID, parentID, scheduleID, exitCode sql.NullInt64
+	var agentID, projectID, parentID, dependsOn, scheduleID, exitCode sql.NullInt64
 	var agentName, projectName string
-	var concurrent int64
+	var concurrent, blockOnFailure int64
 	var started, finished sql.NullString
 	var resumeOf, mergeOf sql.NullInt64
 	err := rows.Scan(&tk.ID, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &tk.RunMode, &concurrent, &agentID, &agentName,
-		&projectID, &projectName, &tk.ProjectDir, &parentID, &scheduleID, &tk.Error, &exitCode,
+		&projectID, &projectName, &tk.ProjectDir, &parentID, &dependsOn, &tk.DependencyMode, &blockOnFailure, &scheduleID, &tk.Error, &exitCode,
 		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt)
 	if err != nil {
 		return tk, err
@@ -434,7 +454,11 @@ func scanTask(rows scanner) (Task, error) {
 	if tk.RunMode == "" {
 		tk.RunMode = RunModeBatch
 	}
+	if tk.DependencyMode == "" {
+		tk.DependencyMode = DependencyNone
+	}
 	tk.Concurrent = concurrent != 0
+	tk.BlockOnFailure = blockOnFailure != 0
 	if agentID.Valid {
 		tk.AgentID = &agentID.Int64
 	}
@@ -451,6 +475,9 @@ func scanTask(rows scanner) (Task, error) {
 	tk.ProjectName = projectName
 	if parentID.Valid {
 		tk.ParentID = &parentID.Int64
+	}
+	if dependsOn.Valid {
+		tk.DependsOn = &dependsOn.Int64
 	}
 	if scheduleID.Valid {
 		tk.ScheduleID = &scheduleID.Int64
@@ -517,7 +544,9 @@ func (s *Store) ListTasksFiltered(f TaskFilter) ([]Task, error) {
 // ListQueuedTasks 返回可派发的排队任务：已指派角色且角色处于启用状态
 // （停用角色不再接收新任务，队列中的任务保持 queued 等待重新启用）。
 func (s *Store) ListQueuedTasks() ([]Task, error) {
-	rows, err := s.db.Query("SELECT " + taskColsBrief + taskFrom + " WHERE t.status='queued' AND t.agent_id IS NOT NULL AND a.enabled=1 ORDER BY t.created_at")
+	// 合并子任务属于其源任务的交付链，必须先于已排队的后续实现任务；否则
+	// 后项会从尚未写入源代码的主分支建立 worktree。
+	rows, err := s.db.Query("SELECT " + taskColsBrief + taskFrom + " WHERE t.status='queued' AND t.agent_id IS NOT NULL AND a.enabled=1 ORDER BY CASE WHEN t.merge_of IS NOT NULL THEN 0 ELSE 1 END, t.created_at, t.id")
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +598,25 @@ func boolInt(b bool) int {
 	return 0
 }
 
-func (s *Store) CreateTask(t Task) (int64, error) {
+func validDependencyMode(mode string) bool {
+	return mode == DependencyNone || mode == DependencyWeak || mode == DependencyStrong
+}
+
+func normalizeDependencyMode(t *Task) {
+	if t.DependencyMode == "" {
+		if t.DependsOn != nil {
+			t.DependencyMode = DependencyStrong
+		} else {
+			t.DependencyMode = DependencyNone
+		}
+	}
+}
+
+type sqlExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func prepareTaskForInsert(t *Task) {
 	if t.CreatedAt == "" {
 		t.CreatedAt = Now()
 	}
@@ -579,14 +626,117 @@ func (s *Store) CreateTask(t Task) (int64, error) {
 	if t.RunMode == "" {
 		t.RunMode = RunModeBatch
 	}
-	res, err := s.db.Exec(`INSERT INTO tasks (title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, schedule_id, resume_of, merge_of, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	normalizeDependencyMode(t)
+}
+
+func insertTask(execer sqlExecer, t Task) (int64, error) {
+	res, err := execer.Exec(`INSERT INTO tasks (title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.Title, t.Body, t.Status, t.Perm, t.RunMode, boolInt(t.Concurrent), nullInt64(t.AgentID), nullInt64(t.ProjectID), t.ProjectDir,
-		nullInt64(t.ParentID), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), t.CreatedAt, t.UpdatedAt)
+		nullInt64(t.ParentID), nullInt64(t.DependsOn), t.DependencyMode, boolInt(t.BlockOnFailure), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), t.CreatedAt, t.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+func (s *Store) CreateTask(t Task) (int64, error) {
+	prepareTaskForInsert(&t)
+	return insertTask(s.db, t)
+}
+
+// CreateTaskWithProjectDependency 创建用户或定时任务，并在同一事务中确定前置
+// 交付。weak 会按创建时间选取同项目上一条实现任务；strong 只接受用户指定的
+// 前置实现任务；none 表示独立执行。合并子任务永远不进入用户依赖链。
+func (s *Store) CreateTaskWithProjectDependency(t Task) (int64, error) {
+	// 此入口代表面向调度的“新普通任务”。调用方没有指定模式时，项目
+	// 任务必须默认进入创建时间弱依赖链；保留 CreateTask 的原始语义，
+	// 以便恢复、测试和历史导入能按需直接构造记录。
+	if t.MergeOf == nil && t.ProjectID != nil && t.DependencyMode == "" && t.DependsOn == nil {
+		t.DependencyMode = DependencyWeak
+	}
+	prepareTaskForInsert(&t)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	if err := resolveNewTaskDependency(tx, &t); err != nil {
+		return 0, err
+	}
+	id, err := insertTask(tx, t)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func resolveNewTaskDependency(tx *sql.Tx, t *Task) error {
+	if t.MergeOf != nil {
+		t.DependsOn = nil
+		t.DependencyMode = DependencyNone
+		return nil
+	}
+	normalizeDependencyMode(t)
+	if !validDependencyMode(t.DependencyMode) {
+		return errors.New("非法依赖模式")
+	}
+	if t.ProjectID == nil {
+		if t.DependsOn != nil || t.DependencyMode != DependencyNone {
+			return errors.New("只有项目任务可以设置前置依赖")
+		}
+		return nil
+	}
+	switch t.DependencyMode {
+	case DependencyNone:
+		t.DependsOn = nil
+		return nil
+	case DependencyStrong:
+		if t.DependsOn == nil {
+			return errors.New("明确依赖必须指定前置任务")
+		}
+		return validateDependencyTarget(tx, *t.ProjectID, *t.DependsOn)
+	case DependencyWeak:
+		// 弱依赖由系统根据创建顺序决定，不能被客户端伪造为任意目标。
+		t.DependsOn = nil
+		var predecessor int64
+		err := tx.QueryRow(`SELECT id FROM tasks
+			WHERE project_id=? AND merge_of IS NULL
+			ORDER BY created_at DESC, id DESC LIMIT 1`, *t.ProjectID).Scan(&predecessor)
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		t.DependsOn = &predecessor
+		return nil
+	}
+	return errors.New("非法依赖模式")
+}
+
+func validateDependencyTarget(tx *sql.Tx, projectID, dependencyID int64) error {
+	if dependencyID <= 0 {
+		return errors.New("前置任务 ID 非法")
+	}
+	var dependencyProject, mergeOf sql.NullInt64
+	err := tx.QueryRow("SELECT project_id, merge_of FROM tasks WHERE id=?", dependencyID).Scan(&dependencyProject, &mergeOf)
+	if err == sql.ErrNoRows {
+		return errors.New("前置任务不存在")
+	}
+	if err != nil {
+		return err
+	}
+	if mergeOf.Valid {
+		return errors.New("前置任务必须是实现任务，不能直接依赖代码合并任务")
+	}
+	if !dependencyProject.Valid || dependencyProject.Int64 != projectID {
+		return errors.New("前置任务必须属于同一项目")
+	}
+	return nil
 }
 
 // CompleteTaskAndCreateMerge 原子地完成一个普通任务并创建唯一的代码合并
@@ -608,6 +758,9 @@ func (s *Store) CompleteTaskAndCreateMerge(sourceID int64, merge Task) (int64, e
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return 0, errors.New("任务已完成、已取消，或已创建代码合并任务")
+	}
+	if err := inheritMergeFailurePolicy(tx, sourceID, &merge); err != nil {
+		return 0, err
 	}
 	mergeID, err := insertMergeTask(tx, merge)
 	if err != nil {
@@ -639,6 +792,9 @@ func (s *Store) RecoverLostTaskAndCreateMerge(sourceID int64, merge Task) (int64
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return 0, errors.New("任务不再是可恢复的 pane 丢失失败")
+	}
+	if err := inheritMergeFailurePolicy(tx, sourceID, &merge); err != nil {
+		return 0, err
 	}
 	mergeID, err := insertMergeTask(tx, merge)
 	if err != nil {
@@ -695,6 +851,9 @@ func (s *Store) ApproveTaskAndCreateMerge(sourceID int64, merge Task) (int64, er
 	if n, _ := res.RowsAffected(); n != 1 {
 		return 0, errors.New("任务已审批或当前不在待审批状态")
 	}
+	if err := inheritMergeFailurePolicy(tx, sourceID, &merge); err != nil {
+		return 0, err
+	}
 	id, err := insertMergeTask(tx, merge)
 	if err != nil {
 		return 0, err
@@ -715,6 +874,8 @@ func prepareMergeTask(sourceID int64, merge *Task) {
 	merge.Perm = PermFull
 	merge.RunMode = RunModeBatch
 	merge.Concurrent = false
+	merge.DependsOn = nil
+	merge.DependencyMode = DependencyNone
 	merge.ScheduleID = nil
 	merge.ResumeOf = nil
 	if merge.CreatedAt == "" {
@@ -725,12 +886,24 @@ func prepareMergeTask(sourceID int64, merge *Task) {
 	}
 }
 
+// inheritMergeFailurePolicy 让合并子任务从数据库中的源任务继承失败阻塞
+// 策略。不能只信任调用方传入的 Task 快照：用户可能恰好在源任务完成与创建
+// 合并任务之间修改了该开关，而后续弱依赖应始终以源任务的最终策略为准。
+func inheritMergeFailurePolicy(tx *sql.Tx, sourceID int64, merge *Task) error {
+	var block int64
+	if err := tx.QueryRow("SELECT block_on_failure FROM tasks WHERE id=?", sourceID).Scan(&block); err != nil {
+		return err
+	}
+	merge.BlockOnFailure = block != 0
+	return nil
+}
+
 func insertMergeTask(tx *sql.Tx, merge Task) (int64, error) {
 	res, err := tx.Exec(`INSERT INTO tasks
-		(title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, schedule_id, resume_of, merge_of, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		merge.Title, merge.Body, merge.Status, merge.Perm, merge.RunMode, boolInt(merge.Concurrent), nullInt64(merge.AgentID), nullInt64(merge.ProjectID), merge.ProjectDir,
-		nullInt64(merge.ParentID), nullInt64(merge.ScheduleID), nullInt64(merge.ResumeOf), nullInt64(merge.MergeOf), merge.CreatedAt, merge.UpdatedAt)
+		nullInt64(merge.ParentID), nullInt64(merge.DependsOn), merge.DependencyMode, boolInt(merge.BlockOnFailure), nullInt64(merge.ScheduleID), nullInt64(merge.ResumeOf), nullInt64(merge.MergeOf), merge.CreatedAt, merge.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -765,6 +938,131 @@ func (s *Store) HasMergeTaskForSource(sourceID int64) (bool, error) {
 		return false, err
 	}
 	return exists, nil
+}
+
+// GetMergeTaskForSource 读取一个实现任务对应的唯一代码合并子任务。
+func (s *Store) GetMergeTaskForSource(sourceID int64) (*Task, error) {
+	row := s.db.QueryRow("SELECT "+taskCols+taskFrom+" WHERE t.merge_of=?", sourceID)
+	tk, err := scanTask(row)
+	if err != nil {
+		return nil, err
+	}
+	return &tk, nil
+}
+
+// FirstTaskDependent 返回直接把 sourceID 作为前置任务的第一条任务。删除源
+// 任务前调用它，可以在外键约束报错之前给调用方一个可操作的提示；依赖关系
+// 不会被静默清掉，因为那会把强依赖任务意外变成可执行状态。
+func (s *Store) FirstTaskDependent(sourceID int64) (*Task, error) {
+	row := s.db.QueryRow("SELECT "+taskCols+taskFrom+" WHERE t.depends_on=? ORDER BY t.created_at, t.id LIMIT 1", sourceID)
+	tk, err := scanTask(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &tk, nil
+}
+
+type deliveryState int
+
+const (
+	deliveryPending deliveryState = iota
+	deliverySucceeded
+	deliveryFailed
+)
+
+// DependencyCheck 是调度器的唯一依赖判定接口。Ready=false 时 Reason 可直接
+// 用于日志或界面；Skipped=true 表示弱依赖碰到非阻塞失败，后项可继续执行。
+type DependencyCheck struct {
+	Ready   bool
+	Skipped bool
+	Reason  string
+}
+
+// CheckTaskDependency 判断任务的前置交付是否已经满足。强依赖只接受成功；
+// 弱依赖在前置失败且前置未勾选“失败时阻塞”时，把该交付视为已跳过。
+func (s *Store) CheckTaskDependency(t Task) (DependencyCheck, error) {
+	if t.MergeOf != nil || t.DependsOn == nil || t.DependencyMode == DependencyNone || t.DependencyMode == "" {
+		return DependencyCheck{Ready: true}, nil
+	}
+	if t.DependencyMode != DependencyWeak && t.DependencyMode != DependencyStrong {
+		return DependencyCheck{Reason: "依赖模式非法"}, nil
+	}
+	dependency, err := s.GetTask(*t.DependsOn)
+	if err == sql.ErrNoRows {
+		if t.DependencyMode == DependencyWeak {
+			return DependencyCheck{Ready: true, Skipped: true, Reason: fmt.Sprintf("前序任务 #%d 已删除，已跳过", *t.DependsOn)}, nil
+		}
+		return DependencyCheck{Reason: fmt.Sprintf("明确依赖的任务 #%d 已删除", *t.DependsOn)}, nil
+	}
+	if err != nil {
+		return DependencyCheck{}, err
+	}
+	state, reason, err := s.deliveryStateOf(*dependency)
+	if err != nil {
+		return DependencyCheck{}, err
+	}
+	switch t.DependencyMode {
+	case DependencyStrong:
+		if state == deliverySucceeded {
+			return DependencyCheck{Ready: true}, nil
+		}
+		return DependencyCheck{Reason: "明确依赖未完成：" + reason}, nil
+	case DependencyWeak:
+		switch state {
+		case deliverySucceeded:
+			return DependencyCheck{Ready: true}, nil
+		case deliveryFailed:
+			if dependency.BlockOnFailure {
+				return DependencyCheck{Reason: "前序阻塞任务未完成：" + reason}, nil
+			}
+			return DependencyCheck{Ready: true, Skipped: true, Reason: "前序任务失败，已跳过：" + reason}, nil
+		default:
+			return DependencyCheck{Reason: "等待前序交付：" + reason}, nil
+		}
+	}
+	return DependencyCheck{Reason: "依赖模式非法"}, nil
+}
+
+func (s *Store) deliveryStateOf(source Task) (deliveryState, string, error) {
+	if source.MergeOf != nil {
+		return deliveryFailed, fmt.Sprintf("任务 #%d 不是实现任务", source.ID), nil
+	}
+	switch source.Status {
+	case StatusQueued, StatusClaimed, StatusRunning:
+		return deliveryPending, fmt.Sprintf("任务 #%d 正在执行", source.ID), nil
+	case StatusAwaitingReview:
+		return deliveryPending, fmt.Sprintf("任务 #%d 等待审批", source.ID), nil
+	case StatusFailed:
+		return deliveryFailed, fmt.Sprintf("任务 #%d 执行失败", source.ID), nil
+	case StatusCancelled:
+		return deliveryFailed, fmt.Sprintf("任务 #%d 已取消", source.ID), nil
+	case StatusSucceeded:
+		merge, err := s.GetMergeTaskForSource(source.ID)
+		if err == sql.ErrNoRows {
+			if source.WorktreeBranch != "" {
+				return deliveryPending, fmt.Sprintf("任务 #%d 正在创建代码合并任务", source.ID), nil
+			}
+			return deliverySucceeded, fmt.Sprintf("任务 #%d 已完成", source.ID), nil
+		}
+		if err != nil {
+			return deliveryPending, "读取代码合并任务失败", err
+		}
+		switch merge.Status {
+		case StatusSucceeded:
+			return deliverySucceeded, fmt.Sprintf("合并任务 #%d 已完成", merge.ID), nil
+		case StatusFailed:
+			return deliveryFailed, fmt.Sprintf("合并任务 #%d 失败", merge.ID), nil
+		case StatusCancelled:
+			return deliveryFailed, fmt.Sprintf("合并任务 #%d 已取消", merge.ID), nil
+		default:
+			return deliveryPending, fmt.Sprintf("合并任务 #%d 正在处理", merge.ID), nil
+		}
+	default:
+		return deliveryPending, fmt.Sprintf("任务 #%d 状态未知", source.ID), nil
+	}
 }
 
 // ListCompletedGitTasksWithoutMerge 返回已经完成、拥有 Git worktree、但还
@@ -835,6 +1133,9 @@ func (s *Store) EnsureMergeTask(source Task) (id int64, created bool, err error)
 	}
 	if !eligible {
 		return 0, false, errors.New("源任务当前不需要创建代码合并任务")
+	}
+	if err := inheritMergeFailurePolicy(tx, source.ID, &merge); err != nil {
+		return 0, false, err
 	}
 
 	id, err = insertMergeTask(tx, merge)
@@ -1055,11 +1356,11 @@ func (s *Store) ListLogs(taskID int64) ([]TaskLog, error) {
 // ---------------------------------------------------------------------------
 // 定时任务
 
-const schedCols = `s.id, s.name, s.cron, s.title_template, s.body_template, s.agent_id, s.perm,
-	s.enabled, s.last_run_at, s.next_run_at, s.created_at, a.name`
+const schedCols = `s.id, s.name, s.cron, s.title_template, s.body_template, s.agent_id, s.project_id,
+	s.perm, s.block_on_failure, s.enabled, s.last_run_at, s.next_run_at, s.created_at, a.name, COALESCE(p.name, '')`
 
 func (s *Store) ListSchedules() ([]Schedule, error) {
-	rows, err := s.db.Query("SELECT " + schedCols + " FROM schedules s JOIN agents a ON a.id=s.agent_id ORDER BY s.id")
+	rows, err := s.db.Query("SELECT " + schedCols + " FROM schedules s JOIN agents a ON a.id=s.agent_id LEFT JOIN projects p ON p.id=s.project_id ORDER BY s.id")
 	if err != nil {
 		return nil, err
 	}
@@ -1067,10 +1368,14 @@ func (s *Store) ListSchedules() ([]Schedule, error) {
 	var out = make([]Schedule, 0)
 	for rows.Next() {
 		var sc Schedule
+		var projectID sql.NullInt64
 		var lastRun, nextRun sql.NullString
 		if err := rows.Scan(&sc.ID, &sc.Name, &sc.Cron, &sc.TitleTemplate, &sc.BodyTemplate,
-			&sc.AgentID, &sc.Perm, &sc.Enabled, &lastRun, &nextRun, &sc.CreatedAt, &sc.AgentName); err != nil {
+			&sc.AgentID, &projectID, &sc.Perm, &sc.BlockOnFailure, &sc.Enabled, &lastRun, &nextRun, &sc.CreatedAt, &sc.AgentName, &sc.ProjectName); err != nil {
 			return nil, err
+		}
+		if projectID.Valid {
+			sc.ProjectID = &projectID.Int64
 		}
 		sc.LastRunAt = strPtr(lastRun)
 		sc.NextRunAt = strPtr(nextRun)
@@ -1080,12 +1385,16 @@ func (s *Store) ListSchedules() ([]Schedule, error) {
 }
 
 func (s *Store) GetSchedule(id int64) (*Schedule, error) {
-	row := s.db.QueryRow("SELECT "+schedCols+" FROM schedules s JOIN agents a ON a.id=s.agent_id WHERE s.id=?", id)
+	row := s.db.QueryRow("SELECT "+schedCols+" FROM schedules s JOIN agents a ON a.id=s.agent_id LEFT JOIN projects p ON p.id=s.project_id WHERE s.id=?", id)
 	var sc Schedule
+	var projectID sql.NullInt64
 	var lastRun, nextRun sql.NullString
 	if err := row.Scan(&sc.ID, &sc.Name, &sc.Cron, &sc.TitleTemplate, &sc.BodyTemplate,
-		&sc.AgentID, &sc.Perm, &sc.Enabled, &lastRun, &nextRun, &sc.CreatedAt, &sc.AgentName); err != nil {
+		&sc.AgentID, &projectID, &sc.Perm, &sc.BlockOnFailure, &sc.Enabled, &lastRun, &nextRun, &sc.CreatedAt, &sc.AgentName, &sc.ProjectName); err != nil {
 		return nil, err
+	}
+	if projectID.Valid {
+		sc.ProjectID = &projectID.Int64
 	}
 	sc.LastRunAt = strPtr(lastRun)
 	sc.NextRunAt = strPtr(nextRun)
@@ -1099,9 +1408,9 @@ func (s *Store) CreateSchedule(sc Schedule) (int64, error) {
 	if sc.Perm == "" {
 		sc.Perm = PermFull
 	}
-	res, err := s.db.Exec(`INSERT INTO schedules (name, cron, title_template, body_template, agent_id, perm, enabled, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		sc.Name, sc.Cron, sc.TitleTemplate, sc.BodyTemplate, sc.AgentID, sc.Perm, sc.Enabled, sc.CreatedAt)
+	res, err := s.db.Exec(`INSERT INTO schedules (name, cron, title_template, body_template, agent_id, project_id, perm, block_on_failure, enabled, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sc.Name, sc.Cron, sc.TitleTemplate, sc.BodyTemplate, sc.AgentID, nullInt64(sc.ProjectID), sc.Perm, boolInt(sc.BlockOnFailure), sc.Enabled, sc.CreatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -1137,7 +1446,10 @@ func (s *Store) DeleteSchedule(id int64) error {
 //
 // 只删除终态任务（succeeded/failed/cancelled），进行中的任务不动。
 func (s *Store) CleanupTasks(agentID *int64, before string) (int64, error) {
-	q := "DELETE FROM tasks WHERE status IN ('succeeded','failed','cancelled')"
+	// 保留仍被后项引用的记录。否则 SQLite 会拒绝删除，且更重要的是，
+	// 清理不能把强依赖悄悄变成“无依赖即可执行”。下次清理会自然处理
+	// 已没有后项引用的终态记录。
+	q := "DELETE FROM tasks WHERE status IN ('succeeded','failed','cancelled') AND NOT EXISTS (SELECT 1 FROM tasks d WHERE d.depends_on=tasks.id)"
 	args := []any{}
 	if agentID != nil {
 		q += " AND agent_id=?"

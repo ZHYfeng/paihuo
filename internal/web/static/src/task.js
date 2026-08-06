@@ -63,6 +63,84 @@ function sourceMergeChip(t) {
   return `<span class="chip merge-state ${merge.status}" title="代码合并任务 #${merge.id}">合并：${STATUS_LABEL[merge.status] || merge.status}</span>`;
 }
 
+// 一个项目任务的“完成”是交付完成：源任务本身成功还不够，Git 项目还要等
+// 它的系统合并任务成功写入主分支。这里和 Store.CheckTaskDependency 使用
+// 相同的判定，让看板能准确解释为何一个 queued 任务还没有启动。
+function sourceDeliveryInfo(source) {
+  if (!source) return { state: "missing", reason: "前置任务已不存在" };
+  if (isMergeTask(source)) return { state: "failed", reason: `任务 #${source.id} 是合并任务，不能作为前置` };
+  switch (source.status) {
+    case "queued": case "claimed": case "running":
+      return { state: "pending", reason: `任务 #${source.id} 正在执行` };
+    case "awaiting_review":
+      return { state: "pending", reason: `任务 #${source.id} 等待审批` };
+    case "failed":
+      return { state: "failed", reason: `任务 #${source.id} 执行失败` };
+    case "cancelled":
+      return { state: "failed", reason: `任务 #${source.id} 已取消` };
+    case "succeeded": {
+      const merge = mergeTaskFor(source);
+      if (!merge) {
+        return source.worktree_branch
+          ? { state: "pending", reason: `任务 #${source.id} 正在创建代码合并任务` }
+          : { state: "succeeded", reason: `任务 #${source.id} 已完成` };
+      }
+      if (merge.status === "succeeded") return { state: "succeeded", reason: `合并任务 #${merge.id} 已完成` };
+      if (merge.status === "failed") return { state: "failed", reason: `合并任务 #${merge.id} 失败` };
+      if (merge.status === "cancelled") return { state: "failed", reason: `合并任务 #${merge.id} 已取消` };
+      return { state: "pending", reason: `合并任务 #${merge.id} 正在处理` };
+    }
+    default:
+      return { state: "pending", reason: `任务 #${source.id} 状态未知` };
+  }
+}
+
+// dependencyInfo 将“弱依赖可跳过 / 强依赖必须成功”的后端调度规则翻译为
+// 统一的界面信息。它只依赖已经加载的任务列表；真正是否领取仍以后端为准。
+export function dependencyInfo(t) {
+  if (isMergeTask(t)) return { mode: "system", state: "ready", label: "系统合并" };
+  const mode = t.dependency_mode || "none";
+  if (mode === "none") return { mode, state: "ready", label: "独立任务", reason: "不等待项目中的其他交付" };
+  if (mode === "weak" && !t.depends_on) {
+    return { mode, state: "ready", label: "自动顺序 · 首项", reason: "当前项目创建顺序中的第一项" };
+  }
+  const source = state.tasks.find(x => x.id === t.depends_on);
+  const prefix = mode === "strong" ? "强依赖" : "自动顺序";
+  const label = `${prefix} · #${t.depends_on || "?"}`;
+  if (!source) {
+    if (mode === "weak") return { mode, state: "skipped", label, reason: `前序任务 #${t.depends_on} 已删除，已跳过`, stateLabel: "前序已跳过" };
+    return { mode, state: "blocked", label, reason: `明确依赖的任务 #${t.depends_on} 已删除`, stateLabel: "前序不存在" };
+  }
+  const delivery = sourceDeliveryInfo(source);
+  if (mode === "strong") {
+    if (delivery.state === "succeeded") return { mode, state: "ready", label, reason: delivery.reason };
+    return { mode, state: "blocked", label, reason: `明确依赖未成功：${delivery.reason}`, stateLabel: `等待 #${source.id}` };
+  }
+  if (delivery.state === "succeeded") return { mode, state: "ready", label, reason: delivery.reason };
+  if (delivery.state === "failed" || delivery.state === "missing") {
+    if (!source.block_on_failure) {
+      return { mode, state: "skipped", label, reason: `前序失败，已跳过：${delivery.reason}`, stateLabel: `#${source.id} 失败已跳过` };
+    }
+    return { mode, state: "blocked", label, reason: `前序阻塞任务未完成：${delivery.reason}`, stateLabel: `#${source.id} 失败阻塞` };
+  }
+  return { mode, state: "blocked", label, reason: `等待前序交付：${delivery.reason}`, stateLabel: `等待 #${source.id}` };
+}
+
+export function dependencyChip(t) {
+  const info = dependencyInfo(t);
+  if (info.mode === "system") return "";
+  const kind = info.mode === "strong" ? "strong" : info.mode === "weak" ? "weak" : "none";
+  return `<span class="chip dependency ${kind}" title="${esc(info.reason || info.label)}">${esc(info.label)}</span>`;
+}
+
+function dependencyStateChip(t) {
+  if (t.status !== "queued") return "";
+  const info = dependencyInfo(t);
+  if (info.state === "blocked") return `<span class="chip dependency blocked" title="${esc(info.reason)}">${esc(info.stateLabel || "等待前序")}</span>`;
+  if (info.state === "skipped") return `<span class="chip dependency skipped" title="${esc(info.reason)}">${esc(info.stateLabel || "前序已跳过")}</span>`;
+  return "";
+}
+
 function boardColumnsHTML(tasks, mergeSection) {
   // 合并任务的失败/取消意味着源代码尚未进入主分支，不能像普通历史任务
   // 一样从看板中消失；单列保留它们，直接提供“重试合并”入口。
@@ -105,7 +183,7 @@ export function renderBoard() {
   const sourceTasks = tasks.filter(t => !isMergeTask(t));
   const mergeTasks = tasks.filter(isMergeTask);
   el.innerHTML =
-    boardSectionHTML("source", "实现任务", "角色执行的原始工作项；完成后会自动创建代码合并任务。", sourceTasks) +
+    boardSectionHTML("source", "实现任务", "项目任务默认按创建时间顺序交付；每项完成后会先处理自己的代码合并。", sourceTasks) +
     boardSectionHTML("merge", "代码合并", "使用新的独立 worktree 验证、解决冲突并自动写入主分支。", mergeTasks);
   const c = document.getElementById("viewCount");
   if (c) c.textContent = `${sourceTasks.length} 个实现 · ${mergeTasks.length} 个合并`;
@@ -118,6 +196,8 @@ export function cardHTML(t) {
       <span class="st-dot"></span><span class="c-id">#${t.id}</span>
       <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
       ${taskKindChip(t)}
+      ${dependencyChip(t)}
+      ${dependencyStateChip(t)}
       ${sourceMergeChip(t)}
       ${blocked ? `<span class="chip merge-blocked">${blocked}</span>` : ""}
       ${t.perm === "review" ? `<span class="chip review">审批</span>` : ""}
@@ -145,7 +225,7 @@ export function renderList() {
     <tr onclick="openTask(${t.id})">
       <td class="num">#${t.id}</td>
       <td class="t-title">${esc(t.title)}</td>
-      <td>${taskKindChip(t)}${mergeBlockReason(t) ? `<span class="chip merge-blocked">${mergeBlockReason(t)}</span>` : ""}</td>
+      <td>${taskKindChip(t)}${dependencyChip(t)}${dependencyStateChip(t)}${mergeBlockReason(t) ? `<span class="chip merge-blocked">${mergeBlockReason(t)}</span>` : ""}</td>
       <td>${esc(t.agent_name || "-")}</td>
       <td>${t.project_id ? `<a class="t-link" href="/projects#/project/${t.project_id}" onclick="event.stopPropagation()">${esc(t.project_name || "-")}</a>` : esc(t.project_name || "-")}</td>
       <td><span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span></td>
@@ -251,6 +331,7 @@ export function renderDetail(t) {
   if (!main) return;
   const mergeTask = isMergeTask(t);
   const mergeSource = mergeTask ? state.tasks.find(x => x.id === t.merge_of) : null;
+  const dependency = dependencyInfo(t);
   const isInteractive = t.run_mode === "interactive" && t.status === "running";
   const isLive = ["claimed", "running"].includes(t.status);
   const agent = state.agents.find(a => a.id === t.agent_id);
@@ -261,6 +342,8 @@ export function renderDetail(t) {
   const createdAt = (t.created_at || "").slice(0, 16).replace("T", " ");
   const { visible: visibleLogs, errors: logErrors } = logStats();
   const logMeta = `${visibleLogs} 条${logErrors ? ` · ${logErrors} 个错误` : ""}`;
+  const dependencyAlert = !mergeTask && t.status === "queued" && dependency.state !== "ready"
+    ? `<div class="task-alert"><span class="task-alert-title">${dependency.state === "skipped" ? "前序交付已跳过" : "等待前置交付"}</span><span>${esc(dependency.reason || "等待调度")}</span></div>` : "";
   const input = isInteractive ? `<div class="term-input detail-input">
       <input id="taskInput" autocomplete="off" aria-label="发送给 Pi 的消息" placeholder="发送消息给 Pi（Enter 发送）" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();sendTaskInput(${t.id},'taskInput')}">
       <button class="btn primary" onclick="sendTaskInput(${t.id},'taskInput')">发送</button>
@@ -273,6 +356,8 @@ export function renderDetail(t) {
         <span class="task-meta-item"><span class="avatar sm${agentCli ? ` av-${esc(agentCli)}` : ""}">${esc(agentName.slice(0, 1))}</span>${esc(agentName)}</span>
         ${t.project_name ? `<span class="task-meta-item">${esc(t.project_name)}</span>` : ""}
         <span class="task-meta-item">${runMode}</span>
+        ${mergeTask ? "" : dependencyChip(t)}
+        ${!mergeTask && dependencyStateChip(t)}
         ${mergeTask ? `<span class="task-meta-item task-meta-accent">${mergeSource ? `源任务：#${mergeSource.id}` : `源任务：#${t.merge_of}`}</span>` : sourceMergeChip(t)}
         ${t.resume_of ? `<span class="task-meta-item task-meta-accent">续跑自 #${t.resume_of}</span>` : ""}
       </div>
@@ -281,6 +366,7 @@ export function renderDetail(t) {
       <summary><span>任务说明</span><span class="section-meta">${bodyLength} 字</span></summary>
       <div class="task-prompt-body">${esc(t.body)}</div>
     </details>` : ""}
+    ${dependencyAlert}
     ${t.error ? `<div class="task-alert"><span class="task-alert-title">${mergeTask ? "代码合并失败" : "任务失败"}</span><span>${esc(t.error)}</span></div>` : ""}
     <div id="childrenBox"></div>
     ${t.status === "awaiting_review" ? `<details class="task-section task-diff" open>
@@ -389,6 +475,7 @@ export function renderSide(t) {
   const side = document.getElementById("dSide");
   if (!side) return;
   const mergeTask = isMergeTask(t);
+  const dependency = dependencyInfo(t);
   const mergeBlocked = mergeBlockReason(t);
   const statusOpts = Object.keys(STATUS_LABEL).map(s =>
     `<option value="${s}" ${s === t.status ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("");
@@ -400,6 +487,7 @@ export function renderSide(t) {
     .join("");
   const pOpts = `<option value="">无项目</option>` + state.projects.map(p =>
     `<option value="${p.id}" ${t.project_id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+  const canMoveProject = t.dependency_mode === "none" && !t.depends_on;
   let primaryActions = "";
   let secondaryActions = "";
   if (["queued", "claimed", "running"].includes(t.status)) {
@@ -440,7 +528,7 @@ export function renderSide(t) {
         <div class="prop-row"><span class="k">来源</span><span class="v"><button class="btn xs" onclick="openTask(${t.merge_of})">任务 #${t.merge_of}</button></span></div>
         <div class="prop-row"><span class="k">状态</span><span class="v">${STATUS_LABEL[t.status] || t.status}</span></div>
         <div class="prop-row"><span class="k">角色</span><span class="v">${esc(t.agent_name || "未指派")}${mergeBlocked ? ` · ${mergeBlocked}` : ""}</span></div>
-        <div class="prop-row"><span class="k">策略</span><span class="v">独立 worktree · 串行 · 自动写入主分支</span></div>
+        <div class="prop-row"><span class="k">策略</span><span class="v">独立 worktree · 串行 · 自动写入主分支${mergeSource?.block_on_failure ? " · 失败阻塞后续自动任务" : " · 失败可跳过"}</span></div>
       </div>
     </details>` : `
     <details class="side-collapse side-properties">
@@ -449,15 +537,21 @@ export function renderSide(t) {
         <div class="prop-row"><span class="k">状态</span>
           <span class="v"><select onchange="patchTask(${t.id},{status:this.value})">${statusOpts}</select></span></div>
         <div class="prop-row"><span class="k">项目</span>
-          <span class="v"><select onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
+          <span class="v"><select ${canMoveProject ? "" : "disabled title=\"有前置依赖的任务不能改项目\""} onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
         <div class="prop-row"><span class="k">角色</span>
           <span class="v"><select aria-label="任务角色" onchange="patchTask(${t.id},{agent_id:Number(this.value)||null})">${agentOpts}</select></span></div>
         <div class="prop-row"><span class="k">权限</span><span class="v">${t.perm === "full" ? "自动合并" : "审批后合并"}</span></div>
         <div class="prop-row"><span class="k">方式</span><span class="v">${t.run_mode === "interactive" ? "交互式" : "批处理"}</span></div>
+        <div class="prop-row"><span class="k">前置交付</span><span class="v">${dependencyChip(t)}${dependency.state !== "ready" ? ` <span title="${esc(dependency.reason || "")}">${esc(dependency.stateLabel || dependency.reason || "等待")}</span>` : ""}</span></div>
+        <div class="prop-row"><span class="k">失败后</span>
+          <span class="v"><select onchange="patchTask(${t.id},{block_on_failure:this.value==='1'})">
+            <option value="0" ${t.block_on_failure ? "" : "selected"}>后续弱依赖可跳过</option>
+            <option value="1" ${t.block_on_failure ? "selected" : ""}>阻塞后续弱依赖</option>
+          </select></span></div>
         <div class="prop-row"><span class="k">并发</span>
           <span class="v"><select onchange="patchTask(${t.id},{concurrent:this.value==='1'})">
-            <option value="0" ${t.concurrent ? "" : "selected"}>串行（默认）</option>
-            <option value="1" ${t.concurrent ? "selected" : ""}>并发</option>
+            <option value="0" ${t.concurrent ? "" : "selected"}>不重叠执行（默认）</option>
+            <option value="1" ${t.concurrent ? "selected" : ""}>允许资源并发</option>
           </select></span></div>
       </div>
     </details>`;
@@ -601,9 +695,12 @@ export function openSubTask(parentId) {
   document.getElementById("tRunMode").value = "batch";
   document.getElementById("tConcurrent").checked = false;
   document.getElementById("tProject").value = t && t.project_id ? t.project_id : "";
+  document.getElementById("tDependencyMode").value = t && t.project_id ? "weak" : "none";
+  document.getElementById("tBlockOnFailure").checked = false;
   document.getElementById("tParentId").value = parentId;
   document.getElementById("taskModalTitle").textContent = "拆分子任务";
   syncTaskRunMode();
+  syncTaskDependency();
   openModal("taskModal");
 }
 
@@ -721,9 +818,12 @@ export function openNewTask() {
   document.getElementById("tRunMode").value = "batch";
   document.getElementById("tConcurrent").checked = false;
   document.getElementById("tProject").value = "";
+  document.getElementById("tDependencyMode").value = "none";
+  document.getElementById("tBlockOnFailure").checked = false;
   document.getElementById("tParentId").value = "";
   document.getElementById("taskModalTitle").textContent = "新建任务";
   syncTaskRunMode();
+  syncTaskDependency();
   openModal("taskModal");
 }
 
@@ -738,9 +838,12 @@ export function openProjectTask(projectId) {
   document.getElementById("tRunMode").value = "batch";
   document.getElementById("tConcurrent").checked = false;
   document.getElementById("tProject").value = projectId;
+  document.getElementById("tDependencyMode").value = "weak";
+  document.getElementById("tBlockOnFailure").checked = false;
   document.getElementById("tParentId").value = "";
   document.getElementById("taskModalTitle").textContent = p ? `新建任务 · ${esc(p.name)}` : "新建任务";
   syncTaskRunMode();
+  syncTaskDependency();
   openModal("taskModal");
 }
 
@@ -763,11 +866,63 @@ export function syncTaskRunMode() {
   }
 }
 
+// 项目任务默认采用弱依赖：Store 会在同一事务中把它连到此前创建的实现
+// 任务。强依赖只在这里让用户选择目标；合并子任务不会出现在候选中。
+export function syncTaskDependency() {
+  const projectID = Number(document.getElementById("tProject")?.value) || null;
+  const modeEl = document.getElementById("tDependencyMode");
+  const dependsEl = document.getElementById("tDependsOn");
+  const row = document.getElementById("tDependsOnRow");
+  const help = document.getElementById("tDependencyHelp");
+  if (!modeEl || !dependsEl || !row) return;
+  if (!projectID) modeEl.value = "none";
+  let mode = modeEl.value || (projectID ? "weak" : "none");
+  if (!["none", "weak", "strong"].includes(mode)) mode = projectID ? "weak" : "none";
+  if (!projectID && mode !== "none") mode = "none";
+  modeEl.value = mode;
+
+  const selected = Number(dependsEl.value) || null;
+  const candidates = projectID ? state.tasks
+    .filter(t => t.project_id === projectID && !isMergeTask(t))
+    .sort((a, b) => b.id - a.id) : [];
+  dependsEl.innerHTML = `<option value="">选择前置实现任务</option>` + candidates.map(t =>
+    `<option value="${t.id}">#${t.id} · ${esc(t.title)}</option>`).join("");
+  if (selected && candidates.some(t => t.id === selected)) dependsEl.value = selected;
+
+  const strong = projectID && mode === "strong";
+  row.classList.toggle("hidden", !strong);
+  dependsEl.disabled = !strong;
+  if (help) {
+    if (!projectID) {
+      help.textContent = "无项目任务默认独立执行；如需按代码基线顺序，请先选择项目。";
+    } else if (mode === "strong") {
+      help.textContent = "明确前置是强依赖：无论前置是否设置失败可跳过，本任务都必须等它和其合并任务成功。";
+    } else if (mode === "none") {
+      help.textContent = "独立任务不等待此前交付；后续默认任务仍会按创建顺序以本任务为前序。";
+    } else {
+      help.textContent = "自动弱依赖：等待当前项目此前创建的交付；若前序失败且未设置阻塞，会跳过它继续执行。";
+    }
+  }
+}
+
+// “允许资源并发”不等于“忽略代码基线”。为避免新建时误以为已并行，勾选
+// 它会把默认弱依赖改为独立；用户若随后明确选择强依赖，强依赖仍优先。
+export function syncTaskConcurrency() {
+  const concurrent = document.getElementById("tConcurrent")?.checked;
+  const modeEl = document.getElementById("tDependencyMode");
+  if (concurrent && modeEl?.value === "weak") modeEl.value = "none";
+  syncTaskDependency();
+}
+
 export async function submitTask() {
   const title = document.getElementById("tTitle").value.trim();
   if (!title) return toast("标题不能为空", true);
   const parentId = Number(document.getElementById("tParentId").value) || null;
   const projectId = Number(document.getElementById("tProject").value) || null;
+  let dependencyMode = document.getElementById("tDependencyMode").value || "none";
+  if (!projectId) dependencyMode = "none";
+  const dependsOn = dependencyMode === "strong" ? Number(document.getElementById("tDependsOn").value) || null : null;
+  if (dependencyMode === "strong" && !dependsOn) return toast("请选择明确前置任务", true);
   try {
     await api("/api/tasks", {
       method: "POST",
@@ -779,6 +934,9 @@ export async function submitTask() {
         perm: document.getElementById("tPerm").value,
         run_mode: document.getElementById("tRunMode").value,
         concurrent: document.getElementById("tConcurrent").checked,
+        dependency_mode: dependencyMode,
+        depends_on: dependsOn,
+        block_on_failure: document.getElementById("tBlockOnFailure").checked,
         parent_id: parentId,
       }),
     });

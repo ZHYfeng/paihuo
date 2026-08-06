@@ -10,6 +10,9 @@ export function renderScheduleList() {
       <td class="t-name"><b>${esc(sc.name)}</b></td>
       <td><span class="cron-chip">${icon("clock")}${esc(sc.cron)}</span></td>
       <td>${esc(sc.agent_name || "-")}</td>
+      <td>${sc.project_id
+        ? `<span class="chip" title="项目定时任务：创建后按项目顺序执行">项目 · ${esc(sc.project_name || "#" + sc.project_id)}</span>${sc.block_on_failure ? `<span class="chip merge-blocked">失败阻塞</span>` : ""}`
+        : `<span class="chip">通用</span>`}</td>
       <td class="t-tpl">${esc(sc.title_template || "-")}</td>
       <td class="num">${esc((sc.last_run_at || "-").slice(0, 16).replace("T", " "))}</td>
       <td><label class="sw" title="${sc.enabled ? "停用" : "启用"}"><input type="checkbox" ${sc.enabled ? "checked" : ""} onchange="toggleSchedule(${sc.id})"><span class="sw-slider"></span></label></td>
@@ -43,6 +46,8 @@ export function openScheduleModal(id) {
   document.getElementById("sTitle").value = sc ? sc.title_template : "";
   document.getElementById("sBody").value = sc ? sc.body_template : "";
   document.getElementById("sPerm").value = sc ? (sc.perm || "full") : "full";
+  document.getElementById("sProject").value = sc && sc.project_id ? sc.project_id : "";
+  document.getElementById("sBlockOnFailure").checked = !!sc?.block_on_failure;
   document.getElementById("sEnabled").checked = sc ? sc.enabled : true;
   if (sc) document.getElementById("sAgent").value = sc.agent_id;
   openModal("scheduleModal");
@@ -56,7 +61,9 @@ export async function submitSchedule() {
     title_template: document.getElementById("sTitle").value.trim(),
     body_template: document.getElementById("sBody").value,
     agent_id: Number(document.getElementById("sAgent").value),
+    project_id: Number(document.getElementById("sProject").value) || null,
     perm: document.getElementById("sPerm").value,
+    block_on_failure: document.getElementById("sBlockOnFailure").checked,
     enabled: document.getElementById("sEnabled").checked,
   };
   try {

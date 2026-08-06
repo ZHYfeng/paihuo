@@ -107,20 +107,38 @@ func (j *scheduleJob) Run() {
 		return
 	}
 	now := store.Now()
-	id, err := j.s.st.CreateTask(store.Task{
+	tk := store.Task{
 		Title: title, Body: body, Status: store.StatusQueued,
 		Perm: sc.Perm, RunMode: store.RunModeBatch, AgentID: &agent.ID, ProjectDir: agent.ProjectDir,
+		ProjectID: sc.ProjectID, DependencyMode: store.DependencyNone, BlockOnFailure: sc.BlockOnFailure,
 		ScheduleID: &sc.ID, CreatedAt: now, UpdatedAt: now,
-	})
+	}
+	if sc.ProjectID != nil {
+		project, err := j.s.st.GetProject(*sc.ProjectID)
+		if err != nil {
+			// 正常删除项目会由外键把 schedule.project_id 置空；这里仍保留
+			// 防御性检查，避免一个过期调度进入无法解释的项目依赖链。
+			log.Printf("定时任务 %s 的项目不存在，跳过: %v", sc.Name, err)
+			return
+		}
+		tk.ProjectDir = project.ProjectDir
+		if tk.ProjectDir == "" {
+			tk.ProjectDir = agent.ProjectDir // 与手工创建任务保持兼容回退
+		}
+		// 项目定时任务只是“按时创建新的普通任务”；真正的执行仍按该项目
+		// 的创建顺序弱依赖链排队，且完成后必须先走自己的合并子任务。
+		tk.DependencyMode = store.DependencyWeak
+	}
+	id, err := j.s.st.CreateTaskWithProjectDependency(tk)
 	if err != nil {
 		log.Printf("定时任务 %s 创建任务失败: %v", sc.Name, err)
 		return
 	}
 	_ = j.s.st.UpdateSchedule(sc.ID, map[string]any{"last_run_at": now})
 	j.s.ex.Wake()
-	tk, err := j.s.st.GetTask(id)
+	createdTask, err := j.s.st.GetTask(id)
 	if err == nil {
-		j.s.hub.Publish(events.Event{Type: "task", TaskID: id, Payload: tk})
+		j.s.hub.Publish(events.Event{Type: "task", TaskID: id, Payload: createdTask})
 	}
 	log.Printf("定时任务 %s 已派发任务 #%d", sc.Name, id)
 }

@@ -1,7 +1,7 @@
 // 模块 projects（由 scripts/split-frontend.py 生成）
 import { STATUS_LABEL, ST_COLOR, api, closeModal, esc, fmtDur, fmtPct, icon, openModal, state, toast } from "./core.js";
 import { loadAll } from "./main.js";
-import { canDeleteTask, canRetryTask, deleteTask, isMergeTask, openTask, retryTaskLabel, setTaskStatus } from "./task.js";
+import { canDeleteTask, canRetryTask, deleteTask, dependencyChip, dependencyInfo, isMergeTask, openTask, retryTaskLabel, setTaskStatus } from "./task.js";
 
 export function renderProjectList() {
   const grid = document.getElementById("projectGrid");
@@ -88,6 +88,8 @@ export function renderProjectDetail(p, s, tasks) {
       <span class="num">#${t.id}</span>
       <span class="t">${esc(t.title)}</span>
       ${merge ? `<span class="chip merge">合并 #${t.merge_of}</span>` : ""}
+      ${merge ? "" : dependencyChip(t)}
+      ${!merge && t.status === "queued" && dependencyInfo(t).state === "blocked" ? `<span class="chip dependency blocked" title="${esc(dependencyInfo(t).reason)}">${esc(dependencyInfo(t).stateLabel || "等待前序")}</span>` : ""}
       <span class="a">${t.agent_name ? `<span class="avatar sm">${esc(t.agent_name.slice(0, 1))}</span>${esc(t.agent_name)}` : "-"}</span>
       <span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>
       <span class="ops">

@@ -28,6 +28,15 @@ const (
 	PermReview = "review" // 人工审批：通过后创建同角色的代码合并任务
 )
 
+// 依赖模式。弱依赖由项目创建顺序自动形成；前置失败且没有要求阻塞时可
+// 跳过。强依赖是用户明确指定的前置交付，只有成功交付（Git 项目还要完成
+// 合并）才会放行。none 用于无项目或显式独立/并行任务。
+const (
+	DependencyNone   = "none"
+	DependencyWeak   = "weak"
+	DependencyStrong = "strong"
+)
+
 // 任务执行方式。默认 batch 保持现有的一次性 CLI 语义；interactive 目前只
 // 供 Pi 的手工任务使用，它会留在 tmux TTY 中等待用户继续发消息。
 const (
@@ -86,6 +95,9 @@ type Task struct {
 	ProjectName    string  `json:"project_name,omitempty"`
 	ProjectDir     string  `json:"project_dir"`
 	ParentID       *int64  `json:"parent_id"`
+	DependsOn      *int64  `json:"depends_on"`       // 前置实现任务（不直接指向合并子任务）
+	DependencyMode string  `json:"dependency_mode"`  // none | weak（自动顺序）| strong（明确前置）
+	BlockOnFailure bool    `json:"block_on_failure"` // 本交付失败时是否阻塞其弱依赖后项
 	ScheduleID     *int64  `json:"schedule_id"`
 	Error          string  `json:"error"`
 	ExitCode       *int    `json:"exit_code"`
@@ -119,14 +131,16 @@ func NewMergeTask(source Task) Task {
 3. 运行与改动相关的测试或构建，修复发现的问题；
 4. 不要直接操作主工作区或手工合并 main。完成退出后，平台会自动 squash 合并本任务分支。`,
 			source.ID, source.Title, source.WorktreeBranch),
-		Status:     StatusQueued,
-		Perm:       PermFull,
-		RunMode:    RunModeBatch,
-		AgentID:    source.AgentID,
-		ProjectID:  source.ProjectID,
-		ProjectDir: source.ProjectDir,
-		ParentID:   &sourceID,
-		MergeOf:    &sourceID,
+		Status:         StatusQueued,
+		Perm:           PermFull,
+		RunMode:        RunModeBatch,
+		AgentID:        source.AgentID,
+		ProjectID:      source.ProjectID,
+		ProjectDir:     source.ProjectDir,
+		ParentID:       &sourceID,
+		MergeOf:        &sourceID,
+		DependencyMode: DependencyNone,
+		BlockOnFailure: source.BlockOnFailure,
 	}
 }
 
@@ -262,16 +276,19 @@ type TaskLog struct {
 }
 
 type Schedule struct {
-	ID            int64   `json:"id"`
-	Name          string  `json:"name"`
-	Cron          string  `json:"cron"`
-	TitleTemplate string  `json:"title_template"`
-	BodyTemplate  string  `json:"body_template"`
-	AgentID       int64   `json:"agent_id"`
-	AgentName     string  `json:"agent_name,omitempty"`
-	Perm          string  `json:"perm"` // 每次触发时写入新建任务的权限模式
-	Enabled       bool    `json:"enabled"`
-	LastRunAt     *string `json:"last_run_at"`
-	NextRunAt     *string `json:"next_run_at"`
-	CreatedAt     string  `json:"created_at"`
+	ID             int64   `json:"id"`
+	Name           string  `json:"name"`
+	Cron           string  `json:"cron"`
+	TitleTemplate  string  `json:"title_template"`
+	BodyTemplate   string  `json:"body_template"`
+	AgentID        int64   `json:"agent_id"`
+	AgentName      string  `json:"agent_name,omitempty"`
+	ProjectID      *int64  `json:"project_id"`
+	ProjectName    string  `json:"project_name,omitempty"`
+	Perm           string  `json:"perm"` // 每次触发时写入新建任务的权限模式
+	BlockOnFailure bool    `json:"block_on_failure"`
+	Enabled        bool    `json:"enabled"`
+	LastRunAt      *string `json:"last_run_at"`
+	NextRunAt      *string `json:"next_run_at"`
+	CreatedAt      string  `json:"created_at"`
 }

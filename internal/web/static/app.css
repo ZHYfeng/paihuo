@@ -400,6 +400,11 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 .chip.task-kind { color: var(--fg-faint); }
 .chip.merge-pending { color: var(--warning); border-color: rgba(251, 191, 36, .34); background: rgba(251, 191, 36, .09); }
 .chip.merge-blocked { color: var(--danger); border-color: rgba(248, 113, 113, .36); background: rgba(248, 113, 113, .09); }
+.chip.dependency.weak { color: var(--info); border-color: rgba(56, 189, 248, .34); background: rgba(56, 189, 248, .08); }
+.chip.dependency.strong { color: var(--warning); border-color: rgba(251, 191, 36, .36); background: rgba(251, 191, 36, .09); }
+.chip.dependency.none { color: var(--fg-faint); }
+.chip.dependency.blocked { color: var(--warning); border-color: rgba(251, 191, 36, .4); background: rgba(251, 191, 36, .12); }
+.chip.dependency.skipped { color: var(--fg-muted); border-style: dashed; }
 .chip.merge-state.queued, .chip.merge-state.claimed { color: var(--fg-faint); }
 .chip.merge-state.running { color: var(--info); border-color: rgba(56, 189, 248, .35); background: rgba(56, 189, 248, .1); }
 .chip.merge-state.awaiting_review { color: var(--warning); border-color: rgba(251, 191, 36, .35); background: rgba(251, 191, 36, .1); }

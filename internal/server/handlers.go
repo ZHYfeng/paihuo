@@ -79,12 +79,17 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		Perm       string `json:"perm"`
 		RunMode    string `json:"run_mode"`
 		Concurrent bool   `json:"concurrent"` // 是否并发执行（默认串行：同一项目同时只跑一个任务）
-		ParentID   *int64 `json:"parent_id"`
+		// dependency_mode: weak=按项目创建顺序自动依赖；strong=明确前置；none=独立。
+		DependencyMode string `json:"dependency_mode"`
+		DependsOn      *int64 `json:"depends_on"`
+		BlockOnFailure bool   `json:"block_on_failure"`
+		ParentID       *int64 `json:"parent_id"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	s.createTaskInner(w, in.Title, in.Body, in.AgentID, in.ProjectID, in.Perm, in.RunMode, in.Concurrent, in.ParentID, nil)
+	s.createTaskInner(w, in.Title, in.Body, in.AgentID, in.ProjectID, in.Perm, in.RunMode, in.Concurrent,
+		in.DependencyMode, in.DependsOn, in.BlockOnFailure, in.ParentID, nil)
 }
 
 // resumeTask 在原任务上续跑。任务 ID 同时绑定 agent 会话目录和 git worktree，
@@ -165,7 +170,7 @@ func (s *Server) sourceHasOrNeedsMerge(tk store.Task) (bool, error) {
 	return s.st.HasMergeTaskForSource(tk.ID)
 }
 
-func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agentID, projectID *int64, perm, runMode string, concurrent bool, parentID, resumeOf *int64) {
+func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agentID, projectID *int64, perm, runMode string, concurrent bool, dependencyMode string, dependsOn *int64, blockOnFailure bool, parentID, resumeOf *int64) {
 	if title == "" {
 		writeErr(w, http.StatusBadRequest, "标题不能为空")
 		return
@@ -184,7 +189,11 @@ func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agen
 		writeErr(w, http.StatusBadRequest, "非法执行方式: "+runMode)
 		return
 	}
-	tk := store.Task{Title: title, Body: body, Status: store.StatusQueued, Perm: perm, RunMode: runMode, Concurrent: concurrent, AgentID: agentID, ParentID: parentID, ResumeOf: resumeOf}
+	tk := store.Task{
+		Title: title, Body: body, Status: store.StatusQueued, Perm: perm, RunMode: runMode,
+		Concurrent: concurrent, AgentID: agentID, ParentID: parentID, ResumeOf: resumeOf,
+		DependencyMode: dependencyMode, DependsOn: dependsOn, BlockOnFailure: blockOnFailure,
+	}
 	// 工作目录属于项目：快照项目目录（历史记录不随配置漂移）；
 	// 老数据兼容：项目未设目录时回退角色的旧 project_dir。
 	if projectID != nil {
@@ -213,9 +222,15 @@ func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agen
 		writeErr(w, http.StatusBadRequest, "交互式任务必须指派 Pi 角色")
 		return
 	}
-	id, err := s.st.CreateTask(tk)
+	if err := normalizeNewTaskDependency(&tk); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id, err := s.st.CreateTaskWithProjectDependency(tk)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		// 此处错误来自同一事务中的前置目标校验（不存在、跨项目、合并
+		// 子任务等），属于创建参数问题而不是服务故障。
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	s.ex.Wake()
@@ -225,6 +240,41 @@ func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agen
 		return
 	}
 	writeJSON(w, http.StatusCreated, tk2)
+}
+
+// normalizeNewTaskDependency 收敛 HTTP 创建任务的依赖契约。项目任务若未
+// 显式选择，默认进入按创建时间排列的弱依赖链；无项目任务默认独立。强依赖
+// 只接受明确的源任务 ID，具体存在性和同项目校验由 Store 在事务内完成。
+func normalizeNewTaskDependency(tk *store.Task) error {
+	if tk.DependencyMode == "" {
+		if tk.ProjectID != nil {
+			tk.DependencyMode = store.DependencyWeak
+		} else {
+			tk.DependencyMode = store.DependencyNone
+		}
+	}
+	switch tk.DependencyMode {
+	case store.DependencyNone:
+		tk.DependsOn = nil
+		return nil
+	case store.DependencyWeak:
+		if tk.ProjectID == nil {
+			return fmt.Errorf("无项目任务不能使用自动前置依赖")
+		}
+		// 弱依赖的实际前置由 Store 以创建顺序确定，客户端不能指定。
+		tk.DependsOn = nil
+		return nil
+	case store.DependencyStrong:
+		if tk.ProjectID == nil {
+			return fmt.Errorf("明确前置依赖只能用于项目任务")
+		}
+		if tk.DependsOn == nil || *tk.DependsOn <= 0 {
+			return fmt.Errorf("明确依赖必须指定前置任务")
+		}
+		return nil
+	default:
+		return fmt.Errorf("非法依赖模式")
+	}
 }
 
 // sendTaskInput 把已登录用户的一条人工消息送进运行中的 Pi 交互式 pane。
@@ -268,7 +318,7 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "title", "body", "agent_id", "perm", "status", "review_note", "parent_id", "project_id", "concurrent")
+	set, ok := patchMap(w, r, "title", "body", "agent_id", "perm", "status", "review_note", "parent_id", "project_id", "concurrent", "block_on_failure")
 	if !ok {
 		return
 	}
@@ -385,7 +435,31 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		}
 		set["concurrent"] = b
 	}
+	if v, ok := set["block_on_failure"]; ok {
+		b, isBool := v.(bool)
+		if !isBool {
+			writeErr(w, http.StatusBadRequest, "block_on_failure 必须是布尔值")
+			return
+		}
+		set["block_on_failure"] = b
+	}
 	if v, ok := set["project_id"]; ok {
+		// 依赖目标必须和任务处于同一项目。为避免把一个已有弱/强依赖
+		// 的任务悄悄移到另一条链，要求先在任务创建时选好项目；这也让
+		// 历史依赖保持可解释。
+		if cur.DependencyMode != store.DependencyNone || cur.DependsOn != nil {
+			writeErr(w, http.StatusConflict, "带有前置依赖的任务不能修改项目")
+			return
+		}
+		dependent, err := s.st.FirstTaskDependent(id)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if dependent != nil {
+			writeErr(w, http.StatusConflict, fmt.Sprintf("任务 #%d 以本任务为前置，不能修改项目", dependent.ID))
+			return
+		}
 		if v == nil {
 			set["project_id"] = nil
 		} else if pid, isNum := v.(float64); isNum && pid > 0 {
@@ -423,6 +497,10 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if v, ok := set["status"]; ok && v == store.StatusQueued {
+		s.ex.Wake()
+	}
+	if _, ok := set["block_on_failure"]; ok {
+		// 修改失败阻塞策略后，等待中的弱依赖任务应立即重新判定。
 		s.ex.Wake()
 	}
 	tk, err := s.st.GetTask(id)
@@ -490,6 +568,15 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if target.MergeOf != nil {
 		writeErr(w, http.StatusConflict, "代码合并任务不能单独删除；请重试它，或删除源任务以放弃整组代码")
+		return
+	}
+	dependent, err := s.st.FirstTaskDependent(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if dependent != nil {
+		writeErr(w, http.StatusConflict, fmt.Sprintf("任务 #%d 仍以前置任务 #%d 为依赖；请先处理或删除后项", dependent.ID, id))
 		return
 	}
 	if err := s.st.UpdateTask(id, map[string]any{"status": store.StatusCancelled, "finished_at": store.Now(), "error": "任务已删除"}); err != nil {
@@ -976,6 +1063,10 @@ func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "角色不存在")
 		return
 	}
+	if err := s.validateScheduleProject(in.ProjectID); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if in.Perm == "" {
 		in.Perm = store.PermFull
 	}
@@ -1002,7 +1093,7 @@ func (s *Server) patchSchedule(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "name", "cron", "title_template", "body_template", "agent_id", "perm", "enabled", "next_run_at", "last_run_at")
+	set, ok := patchMap(w, r, "name", "cron", "title_template", "body_template", "agent_id", "project_id", "perm", "block_on_failure", "enabled", "next_run_at", "last_run_at")
 	if !ok {
 		return
 	}
@@ -1025,6 +1116,29 @@ func (s *Server) patchSchedule(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if v, ok := set["project_id"]; ok {
+		if v == nil {
+			set["project_id"] = nil
+		} else if pid, isNum := v.(float64); isNum && pid > 0 {
+			projectID := int64(pid)
+			if err := s.validateScheduleProject(&projectID); err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			set["project_id"] = projectID
+		} else {
+			writeErr(w, http.StatusBadRequest, "project_id 非法")
+			return
+		}
+	}
+	if v, ok := set["block_on_failure"]; ok {
+		b, isBool := v.(bool)
+		if !isBool {
+			writeErr(w, http.StatusBadRequest, "block_on_failure 必须是布尔值")
+			return
+		}
+		set["block_on_failure"] = b
+	}
 	if err := s.st.UpdateSchedule(id, set); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1036,6 +1150,19 @@ func (s *Server) patchSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, sc)
+}
+
+func (s *Server) validateScheduleProject(projectID *int64) error {
+	if projectID == nil {
+		return nil
+	}
+	if *projectID <= 0 {
+		return fmt.Errorf("project_id 非法")
+	}
+	if _, err := s.st.GetProject(*projectID); err != nil {
+		return fmt.Errorf("项目不存在")
+	}
+	return nil
 }
 
 func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {

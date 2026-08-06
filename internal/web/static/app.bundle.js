@@ -763,6 +763,75 @@
     }
     return `<span class="chip merge-state ${merge.status}" title="\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1 #${merge.id}">\u5408\u5E76\uFF1A${STATUS_LABEL[merge.status] || merge.status}</span>`;
   }
+  function sourceDeliveryInfo(source) {
+    if (!source) return { state: "missing", reason: "\u524D\u7F6E\u4EFB\u52A1\u5DF2\u4E0D\u5B58\u5728" };
+    if (isMergeTask(source)) return { state: "failed", reason: `\u4EFB\u52A1 #${source.id} \u662F\u5408\u5E76\u4EFB\u52A1\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u524D\u7F6E` };
+    switch (source.status) {
+      case "queued":
+      case "claimed":
+      case "running":
+        return { state: "pending", reason: `\u4EFB\u52A1 #${source.id} \u6B63\u5728\u6267\u884C` };
+      case "awaiting_review":
+        return { state: "pending", reason: `\u4EFB\u52A1 #${source.id} \u7B49\u5F85\u5BA1\u6279` };
+      case "failed":
+        return { state: "failed", reason: `\u4EFB\u52A1 #${source.id} \u6267\u884C\u5931\u8D25` };
+      case "cancelled":
+        return { state: "failed", reason: `\u4EFB\u52A1 #${source.id} \u5DF2\u53D6\u6D88` };
+      case "succeeded": {
+        const merge = mergeTaskFor(source);
+        if (!merge) {
+          return source.worktree_branch ? { state: "pending", reason: `\u4EFB\u52A1 #${source.id} \u6B63\u5728\u521B\u5EFA\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1` } : { state: "succeeded", reason: `\u4EFB\u52A1 #${source.id} \u5DF2\u5B8C\u6210` };
+        }
+        if (merge.status === "succeeded") return { state: "succeeded", reason: `\u5408\u5E76\u4EFB\u52A1 #${merge.id} \u5DF2\u5B8C\u6210` };
+        if (merge.status === "failed") return { state: "failed", reason: `\u5408\u5E76\u4EFB\u52A1 #${merge.id} \u5931\u8D25` };
+        if (merge.status === "cancelled") return { state: "failed", reason: `\u5408\u5E76\u4EFB\u52A1 #${merge.id} \u5DF2\u53D6\u6D88` };
+        return { state: "pending", reason: `\u5408\u5E76\u4EFB\u52A1 #${merge.id} \u6B63\u5728\u5904\u7406` };
+      }
+      default:
+        return { state: "pending", reason: `\u4EFB\u52A1 #${source.id} \u72B6\u6001\u672A\u77E5` };
+    }
+  }
+  function dependencyInfo(t) {
+    if (isMergeTask(t)) return { mode: "system", state: "ready", label: "\u7CFB\u7EDF\u5408\u5E76" };
+    const mode = t.dependency_mode || "none";
+    if (mode === "none") return { mode, state: "ready", label: "\u72EC\u7ACB\u4EFB\u52A1", reason: "\u4E0D\u7B49\u5F85\u9879\u76EE\u4E2D\u7684\u5176\u4ED6\u4EA4\u4ED8" };
+    if (mode === "weak" && !t.depends_on) {
+      return { mode, state: "ready", label: "\u81EA\u52A8\u987A\u5E8F \xB7 \u9996\u9879", reason: "\u5F53\u524D\u9879\u76EE\u521B\u5EFA\u987A\u5E8F\u4E2D\u7684\u7B2C\u4E00\u9879" };
+    }
+    const source = state.tasks.find((x) => x.id === t.depends_on);
+    const prefix = mode === "strong" ? "\u5F3A\u4F9D\u8D56" : "\u81EA\u52A8\u987A\u5E8F";
+    const label = `${prefix} \xB7 #${t.depends_on || "?"}`;
+    if (!source) {
+      if (mode === "weak") return { mode, state: "skipped", label, reason: `\u524D\u5E8F\u4EFB\u52A1 #${t.depends_on} \u5DF2\u5220\u9664\uFF0C\u5DF2\u8DF3\u8FC7`, stateLabel: "\u524D\u5E8F\u5DF2\u8DF3\u8FC7" };
+      return { mode, state: "blocked", label, reason: `\u660E\u786E\u4F9D\u8D56\u7684\u4EFB\u52A1 #${t.depends_on} \u5DF2\u5220\u9664`, stateLabel: "\u524D\u5E8F\u4E0D\u5B58\u5728" };
+    }
+    const delivery = sourceDeliveryInfo(source);
+    if (mode === "strong") {
+      if (delivery.state === "succeeded") return { mode, state: "ready", label, reason: delivery.reason };
+      return { mode, state: "blocked", label, reason: `\u660E\u786E\u4F9D\u8D56\u672A\u6210\u529F\uFF1A${delivery.reason}`, stateLabel: `\u7B49\u5F85 #${source.id}` };
+    }
+    if (delivery.state === "succeeded") return { mode, state: "ready", label, reason: delivery.reason };
+    if (delivery.state === "failed" || delivery.state === "missing") {
+      if (!source.block_on_failure) {
+        return { mode, state: "skipped", label, reason: `\u524D\u5E8F\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\uFF1A${delivery.reason}`, stateLabel: `#${source.id} \u5931\u8D25\u5DF2\u8DF3\u8FC7` };
+      }
+      return { mode, state: "blocked", label, reason: `\u524D\u5E8F\u963B\u585E\u4EFB\u52A1\u672A\u5B8C\u6210\uFF1A${delivery.reason}`, stateLabel: `#${source.id} \u5931\u8D25\u963B\u585E` };
+    }
+    return { mode, state: "blocked", label, reason: `\u7B49\u5F85\u524D\u5E8F\u4EA4\u4ED8\uFF1A${delivery.reason}`, stateLabel: `\u7B49\u5F85 #${source.id}` };
+  }
+  function dependencyChip(t) {
+    const info = dependencyInfo(t);
+    if (info.mode === "system") return "";
+    const kind = info.mode === "strong" ? "strong" : info.mode === "weak" ? "weak" : "none";
+    return `<span class="chip dependency ${kind}" title="${esc(info.reason || info.label)}">${esc(info.label)}</span>`;
+  }
+  function dependencyStateChip(t) {
+    if (t.status !== "queued") return "";
+    const info = dependencyInfo(t);
+    if (info.state === "blocked") return `<span class="chip dependency blocked" title="${esc(info.reason)}">${esc(info.stateLabel || "\u7B49\u5F85\u524D\u5E8F")}</span>`;
+    if (info.state === "skipped") return `<span class="chip dependency skipped" title="${esc(info.reason)}">${esc(info.stateLabel || "\u524D\u5E8F\u5DF2\u8DF3\u8FC7")}</span>`;
+    return "";
+  }
   function boardColumnsHTML(tasks, mergeSection) {
     const columns = mergeSection ? [...BOARD_COLS, ["merge-attention", "\u9700\u5904\u7406", ["failed", "cancelled"]]] : BOARD_COLS;
     return columns.map(([key, label, statuses]) => {
@@ -798,7 +867,7 @@
     const tasks = filteredTasks();
     const sourceTasks = tasks.filter((t) => !isMergeTask(t));
     const mergeTasks = tasks.filter(isMergeTask);
-    el.innerHTML = boardSectionHTML("source", "\u5B9E\u73B0\u4EFB\u52A1", "\u89D2\u8272\u6267\u884C\u7684\u539F\u59CB\u5DE5\u4F5C\u9879\uFF1B\u5B8C\u6210\u540E\u4F1A\u81EA\u52A8\u521B\u5EFA\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1\u3002", sourceTasks) + boardSectionHTML("merge", "\u4EE3\u7801\u5408\u5E76", "\u4F7F\u7528\u65B0\u7684\u72EC\u7ACB worktree \u9A8C\u8BC1\u3001\u89E3\u51B3\u51B2\u7A81\u5E76\u81EA\u52A8\u5199\u5165\u4E3B\u5206\u652F\u3002", mergeTasks);
+    el.innerHTML = boardSectionHTML("source", "\u5B9E\u73B0\u4EFB\u52A1", "\u9879\u76EE\u4EFB\u52A1\u9ED8\u8BA4\u6309\u521B\u5EFA\u65F6\u95F4\u987A\u5E8F\u4EA4\u4ED8\uFF1B\u6BCF\u9879\u5B8C\u6210\u540E\u4F1A\u5148\u5904\u7406\u81EA\u5DF1\u7684\u4EE3\u7801\u5408\u5E76\u3002", sourceTasks) + boardSectionHTML("merge", "\u4EE3\u7801\u5408\u5E76", "\u4F7F\u7528\u65B0\u7684\u72EC\u7ACB worktree \u9A8C\u8BC1\u3001\u89E3\u51B3\u51B2\u7A81\u5E76\u81EA\u52A8\u5199\u5165\u4E3B\u5206\u652F\u3002", mergeTasks);
     const c = document.getElementById("viewCount");
     if (c) c.textContent = `${sourceTasks.length} \u4E2A\u5B9E\u73B0 \xB7 ${mergeTasks.length} \u4E2A\u5408\u5E76`;
   }
@@ -809,6 +878,8 @@
       <span class="st-dot"></span><span class="c-id">#${t.id}</span>
       <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
       ${taskKindChip(t)}
+      ${dependencyChip(t)}
+      ${dependencyStateChip(t)}
       ${sourceMergeChip(t)}
       ${blocked ? `<span class="chip merge-blocked">${blocked}</span>` : ""}
       ${t.perm === "review" ? `<span class="chip review">\u5BA1\u6279</span>` : ""}
@@ -835,7 +906,7 @@
     <tr onclick="openTask(${t.id})">
       <td class="num">#${t.id}</td>
       <td class="t-title">${esc(t.title)}</td>
-      <td>${taskKindChip(t)}${mergeBlockReason(t) ? `<span class="chip merge-blocked">${mergeBlockReason(t)}</span>` : ""}</td>
+      <td>${taskKindChip(t)}${dependencyChip(t)}${dependencyStateChip(t)}${mergeBlockReason(t) ? `<span class="chip merge-blocked">${mergeBlockReason(t)}</span>` : ""}</td>
       <td>${esc(t.agent_name || "-")}</td>
       <td>${t.project_id ? `<a class="t-link" href="/projects#/project/${t.project_id}" onclick="event.stopPropagation()">${esc(t.project_name || "-")}</a>` : esc(t.project_name || "-")}</td>
       <td><span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span></td>
@@ -930,7 +1001,8 @@
     const main = document.getElementById("dMain");
     if (!main) return;
     const mergeTask = isMergeTask(t);
-    const mergeSource = mergeTask ? state.tasks.find((x) => x.id === t.merge_of) : null;
+    const mergeSource2 = mergeTask ? state.tasks.find((x) => x.id === t.merge_of) : null;
+    const dependency = dependencyInfo(t);
     const isInteractive = t.run_mode === "interactive" && t.status === "running";
     const isLive = ["claimed", "running"].includes(t.status);
     const agent = state.agents.find((a) => a.id === t.agent_id);
@@ -941,6 +1013,7 @@
     const createdAt = (t.created_at || "").slice(0, 16).replace("T", " ");
     const { visible: visibleLogs, errors: logErrors } = logStats();
     const logMeta = `${visibleLogs} \u6761${logErrors ? ` \xB7 ${logErrors} \u4E2A\u9519\u8BEF` : ""}`;
+    const dependencyAlert = !mergeTask && t.status === "queued" && dependency.state !== "ready" ? `<div class="task-alert"><span class="task-alert-title">${dependency.state === "skipped" ? "\u524D\u5E8F\u4EA4\u4ED8\u5DF2\u8DF3\u8FC7" : "\u7B49\u5F85\u524D\u7F6E\u4EA4\u4ED8"}</span><span>${esc(dependency.reason || "\u7B49\u5F85\u8C03\u5EA6")}</span></div>` : "";
     const input = isInteractive ? `<div class="term-input detail-input">
       <input id="taskInput" autocomplete="off" aria-label="\u53D1\u9001\u7ED9 Pi \u7684\u6D88\u606F" placeholder="\u53D1\u9001\u6D88\u606F\u7ED9 Pi\uFF08Enter \u53D1\u9001\uFF09" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();sendTaskInput(${t.id},'taskInput')}">
       <button class="btn primary" onclick="sendTaskInput(${t.id},'taskInput')">\u53D1\u9001</button>
@@ -953,7 +1026,9 @@
         <span class="task-meta-item"><span class="avatar sm${agentCli ? ` av-${esc(agentCli)}` : ""}">${esc(agentName.slice(0, 1))}</span>${esc(agentName)}</span>
         ${t.project_name ? `<span class="task-meta-item">${esc(t.project_name)}</span>` : ""}
         <span class="task-meta-item">${runMode}</span>
-        ${mergeTask ? `<span class="task-meta-item task-meta-accent">${mergeSource ? `\u6E90\u4EFB\u52A1\uFF1A#${mergeSource.id}` : `\u6E90\u4EFB\u52A1\uFF1A#${t.merge_of}`}</span>` : sourceMergeChip(t)}
+        ${mergeTask ? "" : dependencyChip(t)}
+        ${!mergeTask && dependencyStateChip(t)}
+        ${mergeTask ? `<span class="task-meta-item task-meta-accent">${mergeSource2 ? `\u6E90\u4EFB\u52A1\uFF1A#${mergeSource2.id}` : `\u6E90\u4EFB\u52A1\uFF1A#${t.merge_of}`}</span>` : sourceMergeChip(t)}
         ${t.resume_of ? `<span class="task-meta-item task-meta-accent">\u7EED\u8DD1\u81EA #${t.resume_of}</span>` : ""}
       </div>
     </section>
@@ -961,6 +1036,7 @@
       <summary><span>\u4EFB\u52A1\u8BF4\u660E</span><span class="section-meta">${bodyLength} \u5B57</span></summary>
       <div class="task-prompt-body">${esc(t.body)}</div>
     </details>` : ""}
+    ${dependencyAlert}
     ${t.error ? `<div class="task-alert"><span class="task-alert-title">${mergeTask ? "\u4EE3\u7801\u5408\u5E76\u5931\u8D25" : "\u4EFB\u52A1\u5931\u8D25"}</span><span>${esc(t.error)}</span></div>` : ""}
     <div id="childrenBox"></div>
     ${t.status === "awaiting_review" ? `<details class="task-section task-diff" open>
@@ -1062,10 +1138,12 @@
     const side = document.getElementById("dSide");
     if (!side) return;
     const mergeTask = isMergeTask(t);
+    const dependency = dependencyInfo(t);
     const mergeBlocked = mergeBlockReason(t);
     const statusOpts = Object.keys(STATUS_LABEL).map((s) => `<option value="${s}" ${s === t.status ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("");
     const agentOpts = `<option value="">\u4E0D\u6307\u6D3E</option>` + state.agents.filter((a) => a.enabled || a.id === t.agent_id).map((a) => `<option value="${a.id}" ${a.id === t.agent_id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
     const pOpts = `<option value="">\u65E0\u9879\u76EE</option>` + state.projects.map((p) => `<option value="${p.id}" ${t.project_id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+    const canMoveProject = t.dependency_mode === "none" && !t.depends_on;
     let primaryActions = "";
     let secondaryActions = "";
     if (["queued", "claimed", "running"].includes(t.status)) {
@@ -1104,7 +1182,7 @@
         <div class="prop-row"><span class="k">\u6765\u6E90</span><span class="v"><button class="btn xs" onclick="openTask(${t.merge_of})">\u4EFB\u52A1 #${t.merge_of}</button></span></div>
         <div class="prop-row"><span class="k">\u72B6\u6001</span><span class="v">${STATUS_LABEL[t.status] || t.status}</span></div>
         <div class="prop-row"><span class="k">\u89D2\u8272</span><span class="v">${esc(t.agent_name || "\u672A\u6307\u6D3E")}${mergeBlocked ? ` \xB7 ${mergeBlocked}` : ""}</span></div>
-        <div class="prop-row"><span class="k">\u7B56\u7565</span><span class="v">\u72EC\u7ACB worktree \xB7 \u4E32\u884C \xB7 \u81EA\u52A8\u5199\u5165\u4E3B\u5206\u652F</span></div>
+        <div class="prop-row"><span class="k">\u7B56\u7565</span><span class="v">\u72EC\u7ACB worktree \xB7 \u4E32\u884C \xB7 \u81EA\u52A8\u5199\u5165\u4E3B\u5206\u652F${mergeSource?.block_on_failure ? " \xB7 \u5931\u8D25\u963B\u585E\u540E\u7EED\u81EA\u52A8\u4EFB\u52A1" : " \xB7 \u5931\u8D25\u53EF\u8DF3\u8FC7"}</span></div>
       </div>
     </details>` : `
     <details class="side-collapse side-properties">
@@ -1113,15 +1191,21 @@
         <div class="prop-row"><span class="k">\u72B6\u6001</span>
           <span class="v"><select onchange="patchTask(${t.id},{status:this.value})">${statusOpts}</select></span></div>
         <div class="prop-row"><span class="k">\u9879\u76EE</span>
-          <span class="v"><select onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
+          <span class="v"><select ${canMoveProject ? "" : 'disabled title="\u6709\u524D\u7F6E\u4F9D\u8D56\u7684\u4EFB\u52A1\u4E0D\u80FD\u6539\u9879\u76EE"'} onchange="patchTask(${t.id},{project_id:this.value||null})">${pOpts}</select></span></div>
         <div class="prop-row"><span class="k">\u89D2\u8272</span>
           <span class="v"><select aria-label="\u4EFB\u52A1\u89D2\u8272" onchange="patchTask(${t.id},{agent_id:Number(this.value)||null})">${agentOpts}</select></span></div>
         <div class="prop-row"><span class="k">\u6743\u9650</span><span class="v">${t.perm === "full" ? "\u81EA\u52A8\u5408\u5E76" : "\u5BA1\u6279\u540E\u5408\u5E76"}</span></div>
         <div class="prop-row"><span class="k">\u65B9\u5F0F</span><span class="v">${t.run_mode === "interactive" ? "\u4EA4\u4E92\u5F0F" : "\u6279\u5904\u7406"}</span></div>
+        <div class="prop-row"><span class="k">\u524D\u7F6E\u4EA4\u4ED8</span><span class="v">${dependencyChip(t)}${dependency.state !== "ready" ? ` <span title="${esc(dependency.reason || "")}">${esc(dependency.stateLabel || dependency.reason || "\u7B49\u5F85")}</span>` : ""}</span></div>
+        <div class="prop-row"><span class="k">\u5931\u8D25\u540E</span>
+          <span class="v"><select onchange="patchTask(${t.id},{block_on_failure:this.value==='1'})">
+            <option value="0" ${t.block_on_failure ? "" : "selected"}>\u540E\u7EED\u5F31\u4F9D\u8D56\u53EF\u8DF3\u8FC7</option>
+            <option value="1" ${t.block_on_failure ? "selected" : ""}>\u963B\u585E\u540E\u7EED\u5F31\u4F9D\u8D56</option>
+          </select></span></div>
         <div class="prop-row"><span class="k">\u5E76\u53D1</span>
           <span class="v"><select onchange="patchTask(${t.id},{concurrent:this.value==='1'})">
-            <option value="0" ${t.concurrent ? "" : "selected"}>\u4E32\u884C\uFF08\u9ED8\u8BA4\uFF09</option>
-            <option value="1" ${t.concurrent ? "selected" : ""}>\u5E76\u53D1</option>
+            <option value="0" ${t.concurrent ? "" : "selected"}>\u4E0D\u91CD\u53E0\u6267\u884C\uFF08\u9ED8\u8BA4\uFF09</option>
+            <option value="1" ${t.concurrent ? "selected" : ""}>\u5141\u8BB8\u8D44\u6E90\u5E76\u53D1</option>
           </select></span></div>
       </div>
     </details>`;
@@ -1269,9 +1353,12 @@
     document.getElementById("tRunMode").value = "batch";
     document.getElementById("tConcurrent").checked = false;
     document.getElementById("tProject").value = t && t.project_id ? t.project_id : "";
+    document.getElementById("tDependencyMode").value = t && t.project_id ? "weak" : "none";
+    document.getElementById("tBlockOnFailure").checked = false;
     document.getElementById("tParentId").value = parentId;
     document.getElementById("taskModalTitle").textContent = "\u62C6\u5206\u5B50\u4EFB\u52A1";
     syncTaskRunMode();
+    syncTaskDependency();
     openModal("taskModal");
   }
   async function resumeTask(id) {
@@ -1368,9 +1455,12 @@
     document.getElementById("tRunMode").value = "batch";
     document.getElementById("tConcurrent").checked = false;
     document.getElementById("tProject").value = "";
+    document.getElementById("tDependencyMode").value = "none";
+    document.getElementById("tBlockOnFailure").checked = false;
     document.getElementById("tParentId").value = "";
     document.getElementById("taskModalTitle").textContent = "\u65B0\u5EFA\u4EFB\u52A1";
     syncTaskRunMode();
+    syncTaskDependency();
     openModal("taskModal");
   }
   function openProjectTask(projectId) {
@@ -1382,9 +1472,12 @@
     document.getElementById("tRunMode").value = "batch";
     document.getElementById("tConcurrent").checked = false;
     document.getElementById("tProject").value = projectId;
+    document.getElementById("tDependencyMode").value = "weak";
+    document.getElementById("tBlockOnFailure").checked = false;
     document.getElementById("tParentId").value = "";
     document.getElementById("taskModalTitle").textContent = p ? `\u65B0\u5EFA\u4EFB\u52A1 \xB7 ${esc(p.name)}` : "\u65B0\u5EFA\u4EFB\u52A1";
     syncTaskRunMode();
+    syncTaskDependency();
     openModal("taskModal");
   }
   function syncTaskRunMode() {
@@ -1401,11 +1494,52 @@
       help.textContent = isPi ? "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u4EA4\u4E92\u5F0F\u4F1A\u4FDD\u7559 Pi \u7EC8\u7AEF\uFF0C\u76F4\u5230\u4F60\u53D1\u9001 /exit\u3002" : "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u4EA4\u4E92\u5F0F\u76EE\u524D\u4EC5\u652F\u6301 Pi \u89D2\u8272\u3002";
     }
   }
+  function syncTaskDependency() {
+    const projectID = Number(document.getElementById("tProject")?.value) || null;
+    const modeEl = document.getElementById("tDependencyMode");
+    const dependsEl = document.getElementById("tDependsOn");
+    const row = document.getElementById("tDependsOnRow");
+    const help = document.getElementById("tDependencyHelp");
+    if (!modeEl || !dependsEl || !row) return;
+    if (!projectID) modeEl.value = "none";
+    let mode = modeEl.value || (projectID ? "weak" : "none");
+    if (!["none", "weak", "strong"].includes(mode)) mode = projectID ? "weak" : "none";
+    if (!projectID && mode !== "none") mode = "none";
+    modeEl.value = mode;
+    const selected = Number(dependsEl.value) || null;
+    const candidates = projectID ? state.tasks.filter((t) => t.project_id === projectID && !isMergeTask(t)).sort((a, b) => b.id - a.id) : [];
+    dependsEl.innerHTML = `<option value="">\u9009\u62E9\u524D\u7F6E\u5B9E\u73B0\u4EFB\u52A1</option>` + candidates.map((t) => `<option value="${t.id}">#${t.id} \xB7 ${esc(t.title)}</option>`).join("");
+    if (selected && candidates.some((t) => t.id === selected)) dependsEl.value = selected;
+    const strong = projectID && mode === "strong";
+    row.classList.toggle("hidden", !strong);
+    dependsEl.disabled = !strong;
+    if (help) {
+      if (!projectID) {
+        help.textContent = "\u65E0\u9879\u76EE\u4EFB\u52A1\u9ED8\u8BA4\u72EC\u7ACB\u6267\u884C\uFF1B\u5982\u9700\u6309\u4EE3\u7801\u57FA\u7EBF\u987A\u5E8F\uFF0C\u8BF7\u5148\u9009\u62E9\u9879\u76EE\u3002";
+      } else if (mode === "strong") {
+        help.textContent = "\u660E\u786E\u524D\u7F6E\u662F\u5F3A\u4F9D\u8D56\uFF1A\u65E0\u8BBA\u524D\u7F6E\u662F\u5426\u8BBE\u7F6E\u5931\u8D25\u53EF\u8DF3\u8FC7\uFF0C\u672C\u4EFB\u52A1\u90FD\u5FC5\u987B\u7B49\u5B83\u548C\u5176\u5408\u5E76\u4EFB\u52A1\u6210\u529F\u3002";
+      } else if (mode === "none") {
+        help.textContent = "\u72EC\u7ACB\u4EFB\u52A1\u4E0D\u7B49\u5F85\u6B64\u524D\u4EA4\u4ED8\uFF1B\u540E\u7EED\u9ED8\u8BA4\u4EFB\u52A1\u4ECD\u4F1A\u6309\u521B\u5EFA\u987A\u5E8F\u4EE5\u672C\u4EFB\u52A1\u4E3A\u524D\u5E8F\u3002";
+      } else {
+        help.textContent = "\u81EA\u52A8\u5F31\u4F9D\u8D56\uFF1A\u7B49\u5F85\u5F53\u524D\u9879\u76EE\u6B64\u524D\u521B\u5EFA\u7684\u4EA4\u4ED8\uFF1B\u82E5\u524D\u5E8F\u5931\u8D25\u4E14\u672A\u8BBE\u7F6E\u963B\u585E\uFF0C\u4F1A\u8DF3\u8FC7\u5B83\u7EE7\u7EED\u6267\u884C\u3002";
+      }
+    }
+  }
+  function syncTaskConcurrency() {
+    const concurrent = document.getElementById("tConcurrent")?.checked;
+    const modeEl = document.getElementById("tDependencyMode");
+    if (concurrent && modeEl?.value === "weak") modeEl.value = "none";
+    syncTaskDependency();
+  }
   async function submitTask() {
     const title = document.getElementById("tTitle").value.trim();
     if (!title) return toast("\u6807\u9898\u4E0D\u80FD\u4E3A\u7A7A", true);
     const parentId = Number(document.getElementById("tParentId").value) || null;
     const projectId = Number(document.getElementById("tProject").value) || null;
+    let dependencyMode = document.getElementById("tDependencyMode").value || "none";
+    if (!projectId) dependencyMode = "none";
+    const dependsOn = dependencyMode === "strong" ? Number(document.getElementById("tDependsOn").value) || null : null;
+    if (dependencyMode === "strong" && !dependsOn) return toast("\u8BF7\u9009\u62E9\u660E\u786E\u524D\u7F6E\u4EFB\u52A1", true);
     try {
       await api("/api/tasks", {
         method: "POST",
@@ -1417,6 +1551,9 @@
           perm: document.getElementById("tPerm").value,
           run_mode: document.getElementById("tRunMode").value,
           concurrent: document.getElementById("tConcurrent").checked,
+          dependency_mode: dependencyMode,
+          depends_on: dependsOn,
+          block_on_failure: document.getElementById("tBlockOnFailure").checked,
           parent_id: parentId
         })
       });
@@ -1541,6 +1678,8 @@
       <span class="num">#${t.id}</span>
       <span class="t">${esc(t.title)}</span>
       ${merge ? `<span class="chip merge">\u5408\u5E76 #${t.merge_of}</span>` : ""}
+      ${merge ? "" : dependencyChip(t)}
+      ${!merge && t.status === "queued" && dependencyInfo(t).state === "blocked" ? `<span class="chip dependency blocked" title="${esc(dependencyInfo(t).reason)}">${esc(dependencyInfo(t).stateLabel || "\u7B49\u5F85\u524D\u5E8F")}</span>` : ""}
       <span class="a">${t.agent_name ? `<span class="avatar sm">${esc(t.agent_name.slice(0, 1))}</span>${esc(t.agent_name)}` : "-"}</span>
       <span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>
       <span class="ops">
@@ -2455,6 +2594,7 @@
       <td class="t-name"><b>${esc(sc.name)}</b></td>
       <td><span class="cron-chip">${icon("clock")}${esc(sc.cron)}</span></td>
       <td>${esc(sc.agent_name || "-")}</td>
+      <td>${sc.project_id ? `<span class="chip" title="\u9879\u76EE\u5B9A\u65F6\u4EFB\u52A1\uFF1A\u521B\u5EFA\u540E\u6309\u9879\u76EE\u987A\u5E8F\u6267\u884C">\u9879\u76EE \xB7 ${esc(sc.project_name || "#" + sc.project_id)}</span>${sc.block_on_failure ? `<span class="chip merge-blocked">\u5931\u8D25\u963B\u585E</span>` : ""}` : `<span class="chip">\u901A\u7528</span>`}</td>
       <td class="t-tpl">${esc(sc.title_template || "-")}</td>
       <td class="num">${esc((sc.last_run_at || "-").slice(0, 16).replace("T", " "))}</td>
       <td><label class="sw" title="${sc.enabled ? "\u505C\u7528" : "\u542F\u7528"}"><input type="checkbox" ${sc.enabled ? "checked" : ""} onchange="toggleSchedule(${sc.id})"><span class="sw-slider"></span></label></td>
@@ -2488,6 +2628,8 @@
     document.getElementById("sTitle").value = sc ? sc.title_template : "";
     document.getElementById("sBody").value = sc ? sc.body_template : "";
     document.getElementById("sPerm").value = sc ? sc.perm || "full" : "full";
+    document.getElementById("sProject").value = sc && sc.project_id ? sc.project_id : "";
+    document.getElementById("sBlockOnFailure").checked = !!sc?.block_on_failure;
     document.getElementById("sEnabled").checked = sc ? sc.enabled : true;
     if (sc) document.getElementById("sAgent").value = sc.agent_id;
     openModal("scheduleModal");
@@ -2500,7 +2642,9 @@
       title_template: document.getElementById("sTitle").value.trim(),
       body_template: document.getElementById("sBody").value,
       agent_id: Number(document.getElementById("sAgent").value),
+      project_id: Number(document.getElementById("sProject").value) || null,
       perm: document.getElementById("sPerm").value,
+      block_on_failure: document.getElementById("sBlockOnFailure").checked,
       enabled: document.getElementById("sEnabled").checked
     };
     try {
@@ -2610,9 +2754,11 @@
       if (el) el.innerHTML = `<option value="">\u5168\u90E8\u89D2\u8272</option>` + opts(state.agents);
     }
     const pOpts = state.projects.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
-    for (const id of ["fProject", "tProject"]) {
+    for (const id of ["fProject", "tProject", "sProject"]) {
       const el = document.getElementById(id);
-      if (el) el.innerHTML = (id === "tProject" ? `<option value="">\u65E0\u9879\u76EE</option>` : `<option value="">\u5168\u90E8\u9879\u76EE</option>`) + pOpts;
+      if (!el) continue;
+      const empty = id === "fProject" ? "\u5168\u90E8\u9879\u76EE" : id === "sProject" ? "\u65E0\u9879\u76EE\uFF08\u901A\u7528\u5B9A\u65F6\u4EFB\u52A1\uFF09" : "\u65E0\u9879\u76EE";
+      el.innerHTML = `<option value="">${empty}</option>` + pOpts;
     }
     const cnt = document.getElementById("sbBoardCount");
     if (cnt) cnt.textContent = state.tasks.filter((t) => ["queued", "claimed", "running", "awaiting_review"].includes(t.status)).length;
@@ -3028,6 +3174,8 @@
   window.submitSkill = submitSkill;
   window.submitTask = submitTask;
   window.syncModelThinking = syncModelThinking;
+  window.syncTaskConcurrency = syncTaskConcurrency;
+  window.syncTaskDependency = syncTaskDependency;
   window.syncTaskRunMode = syncTaskRunMode;
   window.toggleAll = toggleAll;
   window.toggleRow = toggleRow;

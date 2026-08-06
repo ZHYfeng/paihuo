@@ -112,7 +112,7 @@
     </label>
     <div class="row">
       <label class="field">角色 <select id="tAgent" onchange="syncTaskRunMode()"></select></label>
-      <label class="field">项目 <select id="tProject"></select></label>
+      <label class="field">项目 <select id="tProject" onchange="syncTaskDependency()"></select></label>
     </div>
     <label class="field">权限
       <select id="tPerm">
@@ -127,12 +127,31 @@
       </select>
       <span class="field-help" id="tRunModeHelp">批处理会在完成后自动结算。</span>
     </label>
+    <label class="field">前置交付
+      <select id="tDependencyMode" onchange="syncTaskDependency()">
+        <option value="weak">自动：按项目创建顺序（弱依赖）</option>
+        <option value="strong">明确指定前置任务（强依赖）</option>
+        <option value="none">无前置（独立任务）</option>
+      </select>
+      <span class="field-help" id="tDependencyHelp">项目任务默认等待此前创建的任务及其代码合并完成。</span>
+    </label>
+    <label class="field hidden" id="tDependsOnRow">明确前置任务
+      <select id="tDependsOn"></select>
+      <span class="field-help">前置任务未成功交付时，本任务会一直等待，不受“失败时阻塞”开关影响。</span>
+    </label>
+    <label class="field">失败处理
+      <span style="display:flex;gap:8px;align-items:center;padding-top:4px">
+        <input type="checkbox" id="tBlockOnFailure" style="width:auto">
+        <span>本交付失败时阻塞后续自动任务</span>
+      </span>
+      <span class="field-help">默认不阻塞：失败的任务和合并任务会保留供重试，后续弱依赖任务跳过它继续执行；明确前置依赖始终等待成功。</span>
+    </label>
     <label class="field">并发执行
       <span style="display:flex;gap:8px;align-items:center;padding-top:4px">
-        <input type="checkbox" id="tConcurrent" style="width:auto">
+        <input type="checkbox" id="tConcurrent" onchange="syncTaskConcurrency()" style="width:auto">
         <span>允许本任务与同项目其他任务并行执行</span>
       </span>
-      <span class="field-help">默认不勾选：同一项目的任务串行执行（一次一个）。勾选后本任务跳过项目串行队列，仅受角色最大并发数约束。</span>
+      <span class="field-help">仅控制运行资源是否重叠；勾选时会默认改为独立任务。若选择明确前置，仍必须等待前置成功交付。</span>
     </label>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal('taskModal')">取消</button>

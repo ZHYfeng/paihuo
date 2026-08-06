@@ -19,9 +19,8 @@ import (
 // 每个任务独立拥有 tmux window、agent 会话目录和（Git 项目时）worktree，
 // 因而同一角色可以并行；MaxConcurrency 只负责控制资源与上游配额占用。
 //
-// 项目级并发门禁：任务默认不并发——未勾选「并发执行」的任务要求所在项目
-// 当前没有任何活跃任务才允许启动（同一项目同时只执行一个任务）；勾选了
-// 并发的任务跳过门禁，只受角色并发上限约束。
+// 项目级并发门禁只管理物理执行重叠；代码基线顺序由 Store 的依赖交付判定
+// 管理。弱依赖会按创建顺序串起项目任务，强依赖只在前置交付成功后放行。
 type Executor struct {
 	st           *store.Store
 	hub          *events.Hub
@@ -332,6 +331,13 @@ func (e *Executor) dispatch(ctx context.Context) {
 	limits := make(map[int64]int)
 	for _, tk := range tasks {
 		if tk.AgentID == nil {
+			continue
+		}
+		// 先在持久化状态机中判断前置交付，避免源任务刚结束、合并子任务尚未
+		// 写入主分支时让后续 worktree 从旧 HEAD 分叉。合并子任务没有用户依赖，
+		// 且 ListQueuedTasks 已将它们排在实现任务之前。
+		dependency, err := e.st.CheckTaskDependency(tk)
+		if err != nil || !dependency.Ready {
 			continue
 		}
 		agentID := *tk.AgentID
