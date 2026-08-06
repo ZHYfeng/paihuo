@@ -166,6 +166,17 @@ function skillGroupDirectory(skill) {
   return raw.slice(0, slash) || "根目录";
 }
 
+function skillPathName(path) {
+  const raw = String(path || "").trim().replace(/[\\/]+$/, "");
+  if (!raw) return "未指定";
+  const slash = Math.max(raw.lastIndexOf("/"), raw.lastIndexOf("\\"));
+  return slash >= 0 ? raw.slice(slash + 1) || raw : raw;
+}
+
+function skillCreatedDate(skill) {
+  return String(skill.created_at || "").slice(0, 10) || "—";
+}
+
 function skillGroups(skills = state.skillLib) {
   const groups = new Map();
   skills.forEach(skill => {
@@ -182,8 +193,13 @@ function skillGroups(skills = state.skillLib) {
 
 function skillCardHTML(s) {
   const selected = state.skillSelected.has(s.id);
+  const sourcePath = s.source_path || s.dir || "";
+  const sourceName = skillPathName(sourcePath);
+  const copyName = skillPathName(s.dir);
   return `
-    <article class="skill-card${selected ? " selected" : ""}" onclick="openSkillDetail(${s.id})">
+    <article class="skill-card${selected ? " selected" : ""}" tabindex="0" aria-label="打开技能 ${esc(s.name)}"
+      onclick="openSkillDetail(${s.id})"
+      onkeydown="if (!event.target.closest('a,button,input,select,textarea') && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openSkillDetail(${s.id}); }">
       <div class="sk-top">
         <label class="skill-select" onclick="event.stopPropagation()" title="选择 ${esc(s.name)}">
           <input type="checkbox" data-skill-id="${s.id}" ${selected ? "checked" : ""} aria-label="选择技能 ${esc(s.name)}" onchange="toggleSkillSelection(${s.id}, this.checked)">
@@ -196,13 +212,20 @@ function skillCardHTML(s) {
       </div>
       <div class="sk-meta">
         ${skillTagsEditorHTML(s)}
-        <span class="chip" title="${esc(s.dir)}">副本：${esc(s.dir)}</span>
+        <div class="skill-card-context">
+          <span class="skill-card-context-item" title="${esc(sourcePath || "未指定来源路径")}">
+            ${icon("folder")}<span><small>来源目录</small><b>${esc(sourceName)}</b></span>
+          </span>
+          <span class="skill-card-context-item">
+            ${icon("clock")}<span><small>添加时间</small><time>${esc(skillCreatedDate(s))}</time></span>
+          </span>
+        </div>
       </div>
       <div class="sk-foot">
-        <span class="count-info">来源：${esc(s.source_path || "-")} · ${(s.created_at || "").slice(0, 10)}</span>
+        <span class="skill-copy-path" title="${esc(s.dir || "未指定副本路径")}">${icon("copy")}<span>副本</span><code>${esc(copyName)}</code></span>
         <span class="ac-ops">
-          <button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s.id})">详情${icon("expand")}</button>
-          <button class="btn xs danger" onclick="deleteSkill(${s.id});event.stopPropagation()">${icon("trash")}删除</button>
+          <button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s.id})">打开详情${icon("expand")}</button>
+          <button class="btn xs danger" onclick="event.stopPropagation();deleteSkill(${s.id})">${icon("trash")}删除</button>
         </span>
       </div>
     </article>`;
@@ -210,15 +233,23 @@ function skillCardHTML(s) {
 
 function skillListRowHTML(s) {
   const selected = state.skillSelected.has(s.id);
-  return `<tr onclick="openSkillDetail(${s.id})">
-    <td class="skill-list-check"><label class="skill-select" onclick="event.stopPropagation()" title="选择 ${esc(s.name)}">
+  const sourcePath = s.source_path || s.dir || "";
+  const sourceName = skillPathName(sourcePath);
+  return `<tr class="skill-list-row${selected ? " selected" : ""}" tabindex="0" aria-label="打开技能 ${esc(s.name)}"
+    onclick="openSkillDetail(${s.id})"
+    onkeydown="if (!event.target.closest('a,button,input,select,textarea') && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openSkillDetail(${s.id}); }">
+    <td class="skill-list-check" data-label="选择"><label class="skill-select" onclick="event.stopPropagation()" title="选择 ${esc(s.name)}">
       <input type="checkbox" data-skill-id="${s.id}" ${selected ? "checked" : ""} aria-label="选择技能 ${esc(s.name)}" onchange="toggleSkillSelection(${s.id}, this.checked)">
     </label></td>
-    <td><span class="skill-list-name"><span class="avatar">${esc((s.name || "?").slice(0, 1))}</span><span><a class="table-primary-action" href="#/skill/${s.id}" onclick="event.stopPropagation()">${esc(s.name)}</a><small>${esc(s.description || "无描述")}</small></span></span></td>
-    <td>${skillTagsEditorHTML(s)}</td>
-    <td><code class="skill-list-dir" title="${esc(s.source_path || s.dir || "-")}">${esc(skillGroupDirectory(s))}</code></td>
-    <td class="num">${esc((s.created_at || "").slice(0, 10))}</td>
-    <td><span class="ops"><button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s.id})">详情${icon("expand")}</button><button class="btn xs danger" onclick="event.stopPropagation();deleteSkill(${s.id})">${icon("trash")}删除</button></span></td>
+    <td class="skill-list-main-cell" data-label="技能"><span class="skill-list-name"><span class="avatar">${esc((s.name || "?").slice(0, 1))}</span><span><a class="table-primary-action" href="#/skill/${s.id}" onclick="event.stopPropagation()">${esc(s.name)}</a><small>${esc(s.description || "无描述")}</small></span></span></td>
+    <td class="skill-list-tags-cell" data-label="标签">${skillTagsEditorHTML(s)}</td>
+    <td class="skill-list-source-cell" data-label="来源目录">
+      <span class="skill-list-source" title="${esc(sourcePath || "未指定来源路径")}">
+        <b>${esc(sourceName)}</b><code>${esc(skillGroupDirectory(s))}</code>
+      </span>
+    </td>
+    <td class="skill-list-date-cell num" data-label="添加时间"><time>${esc(skillCreatedDate(s))}</time></td>
+    <td class="skill-list-actions-cell" data-label="操作"><span class="ops"><button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s.id})">打开详情${icon("expand")}</button><button class="btn xs danger" onclick="event.stopPropagation();deleteSkill(${s.id})">${icon("trash")}删除</button></span></td>
   </tr>`;
 }
 
@@ -259,8 +290,9 @@ export function renderSkillLib() {
   const groups = skillGroups(list);
   grid.className = state.skillView === "list" ? "skill-list-shell" : "skill-groups";
   if (state.skillView === "list") {
-    grid.innerHTML = `<div class="list-wrap skill-list-wrap"><table class="list-grid skill-list-grid">
-      <thead><tr><th class="skill-list-check">选择</th><th>技能</th><th>标签</th><th>来源目录</th><th>添加时间</th><th style="width:190px">操作</th></tr></thead>
+    grid.innerHTML = `<div class="list-wrap skill-list-wrap"><table class="list-grid skill-list-grid" aria-label="技能列表">
+      <caption class="sr-only">技能列表，共 ${list.length} 个技能</caption>
+      <thead><tr><th class="skill-list-check">选择</th><th>技能</th><th>标签</th><th>来源目录</th><th>添加时间</th><th class="skill-list-actions-head">操作</th></tr></thead>
       <tbody>${list.map(skillListRowHTML).join("")}</tbody>
     </table></div>`;
   } else {

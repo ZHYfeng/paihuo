@@ -570,6 +570,15 @@
     if (slash === 2 && raw[1] === ":") return raw.slice(0, 3);
     return raw.slice(0, slash) || "\u6839\u76EE\u5F55";
   }
+  function skillPathName(path) {
+    const raw = String(path || "").trim().replace(/[\\/]+$/, "");
+    if (!raw) return "\u672A\u6307\u5B9A";
+    const slash = Math.max(raw.lastIndexOf("/"), raw.lastIndexOf("\\"));
+    return slash >= 0 ? raw.slice(slash + 1) || raw : raw;
+  }
+  function skillCreatedDate(skill) {
+    return String(skill.created_at || "").slice(0, 10) || "\u2014";
+  }
   function skillGroups(skills = state.skillLib) {
     const groups = /* @__PURE__ */ new Map();
     skills.forEach((skill) => {
@@ -585,8 +594,13 @@
   }
   function skillCardHTML(s) {
     const selected = state.skillSelected.has(s.id);
+    const sourcePath = s.source_path || s.dir || "";
+    const sourceName = skillPathName(sourcePath);
+    const copyName = skillPathName(s.dir);
     return `
-    <article class="skill-card${selected ? " selected" : ""}" onclick="openSkillDetail(${s.id})">
+    <article class="skill-card${selected ? " selected" : ""}" tabindex="0" aria-label="\u6253\u5F00\u6280\u80FD ${esc(s.name)}"
+      onclick="openSkillDetail(${s.id})"
+      onkeydown="if (!event.target.closest('a,button,input,select,textarea') && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openSkillDetail(${s.id}); }">
       <div class="sk-top">
         <label class="skill-select" onclick="event.stopPropagation()" title="\u9009\u62E9 ${esc(s.name)}">
           <input type="checkbox" data-skill-id="${s.id}" ${selected ? "checked" : ""} aria-label="\u9009\u62E9\u6280\u80FD ${esc(s.name)}" onchange="toggleSkillSelection(${s.id}, this.checked)">
@@ -599,28 +613,43 @@
       </div>
       <div class="sk-meta">
         ${skillTagsEditorHTML(s)}
-        <span class="chip" title="${esc(s.dir)}">\u526F\u672C\uFF1A${esc(s.dir)}</span>
+        <div class="skill-card-context">
+          <span class="skill-card-context-item" title="${esc(sourcePath || "\u672A\u6307\u5B9A\u6765\u6E90\u8DEF\u5F84")}">
+            ${icon("folder")}<span><small>\u6765\u6E90\u76EE\u5F55</small><b>${esc(sourceName)}</b></span>
+          </span>
+          <span class="skill-card-context-item">
+            ${icon("clock")}<span><small>\u6DFB\u52A0\u65F6\u95F4</small><time>${esc(skillCreatedDate(s))}</time></span>
+          </span>
+        </div>
       </div>
       <div class="sk-foot">
-        <span class="count-info">\u6765\u6E90\uFF1A${esc(s.source_path || "-")} \xB7 ${(s.created_at || "").slice(0, 10)}</span>
+        <span class="skill-copy-path" title="${esc(s.dir || "\u672A\u6307\u5B9A\u526F\u672C\u8DEF\u5F84")}">${icon("copy")}<span>\u526F\u672C</span><code>${esc(copyName)}</code></span>
         <span class="ac-ops">
-          <button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s.id})">\u8BE6\u60C5${icon("expand")}</button>
-          <button class="btn xs danger" onclick="deleteSkill(${s.id});event.stopPropagation()">${icon("trash")}\u5220\u9664</button>
+          <button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s.id})">\u6253\u5F00\u8BE6\u60C5${icon("expand")}</button>
+          <button class="btn xs danger" onclick="event.stopPropagation();deleteSkill(${s.id})">${icon("trash")}\u5220\u9664</button>
         </span>
       </div>
     </article>`;
   }
   function skillListRowHTML(s) {
     const selected = state.skillSelected.has(s.id);
-    return `<tr onclick="openSkillDetail(${s.id})">
-    <td class="skill-list-check"><label class="skill-select" onclick="event.stopPropagation()" title="\u9009\u62E9 ${esc(s.name)}">
+    const sourcePath = s.source_path || s.dir || "";
+    const sourceName = skillPathName(sourcePath);
+    return `<tr class="skill-list-row${selected ? " selected" : ""}" tabindex="0" aria-label="\u6253\u5F00\u6280\u80FD ${esc(s.name)}"
+    onclick="openSkillDetail(${s.id})"
+    onkeydown="if (!event.target.closest('a,button,input,select,textarea') && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openSkillDetail(${s.id}); }">
+    <td class="skill-list-check" data-label="\u9009\u62E9"><label class="skill-select" onclick="event.stopPropagation()" title="\u9009\u62E9 ${esc(s.name)}">
       <input type="checkbox" data-skill-id="${s.id}" ${selected ? "checked" : ""} aria-label="\u9009\u62E9\u6280\u80FD ${esc(s.name)}" onchange="toggleSkillSelection(${s.id}, this.checked)">
     </label></td>
-    <td><span class="skill-list-name"><span class="avatar">${esc((s.name || "?").slice(0, 1))}</span><span><a class="table-primary-action" href="#/skill/${s.id}" onclick="event.stopPropagation()">${esc(s.name)}</a><small>${esc(s.description || "\u65E0\u63CF\u8FF0")}</small></span></span></td>
-    <td>${skillTagsEditorHTML(s)}</td>
-    <td><code class="skill-list-dir" title="${esc(s.source_path || s.dir || "-")}">${esc(skillGroupDirectory(s))}</code></td>
-    <td class="num">${esc((s.created_at || "").slice(0, 10))}</td>
-    <td><span class="ops"><button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s.id})">\u8BE6\u60C5${icon("expand")}</button><button class="btn xs danger" onclick="event.stopPropagation();deleteSkill(${s.id})">${icon("trash")}\u5220\u9664</button></span></td>
+    <td class="skill-list-main-cell" data-label="\u6280\u80FD"><span class="skill-list-name"><span class="avatar">${esc((s.name || "?").slice(0, 1))}</span><span><a class="table-primary-action" href="#/skill/${s.id}" onclick="event.stopPropagation()">${esc(s.name)}</a><small>${esc(s.description || "\u65E0\u63CF\u8FF0")}</small></span></span></td>
+    <td class="skill-list-tags-cell" data-label="\u6807\u7B7E">${skillTagsEditorHTML(s)}</td>
+    <td class="skill-list-source-cell" data-label="\u6765\u6E90\u76EE\u5F55">
+      <span class="skill-list-source" title="${esc(sourcePath || "\u672A\u6307\u5B9A\u6765\u6E90\u8DEF\u5F84")}">
+        <b>${esc(sourceName)}</b><code>${esc(skillGroupDirectory(s))}</code>
+      </span>
+    </td>
+    <td class="skill-list-date-cell num" data-label="\u6DFB\u52A0\u65F6\u95F4"><time>${esc(skillCreatedDate(s))}</time></td>
+    <td class="skill-list-actions-cell" data-label="\u64CD\u4F5C"><span class="ops"><button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s.id})">\u6253\u5F00\u8BE6\u60C5${icon("expand")}</button><button class="btn xs danger" onclick="event.stopPropagation();deleteSkill(${s.id})">${icon("trash")}\u5220\u9664</button></span></td>
   </tr>`;
   }
   function syncSkillSelectionControls(groups = skillGroups(filteredSkills().list)) {
@@ -659,8 +688,9 @@
     const groups = skillGroups(list);
     grid.className = state.skillView === "list" ? "skill-list-shell" : "skill-groups";
     if (state.skillView === "list") {
-      grid.innerHTML = `<div class="list-wrap skill-list-wrap"><table class="list-grid skill-list-grid">
-      <thead><tr><th class="skill-list-check">\u9009\u62E9</th><th>\u6280\u80FD</th><th>\u6807\u7B7E</th><th>\u6765\u6E90\u76EE\u5F55</th><th>\u6DFB\u52A0\u65F6\u95F4</th><th style="width:190px">\u64CD\u4F5C</th></tr></thead>
+      grid.innerHTML = `<div class="list-wrap skill-list-wrap"><table class="list-grid skill-list-grid" aria-label="\u6280\u80FD\u5217\u8868">
+      <caption class="sr-only">\u6280\u80FD\u5217\u8868\uFF0C\u5171 ${list.length} \u4E2A\u6280\u80FD</caption>
+      <thead><tr><th class="skill-list-check">\u9009\u62E9</th><th>\u6280\u80FD</th><th>\u6807\u7B7E</th><th>\u6765\u6E90\u76EE\u5F55</th><th>\u6DFB\u52A0\u65F6\u95F4</th><th class="skill-list-actions-head">\u64CD\u4F5C</th></tr></thead>
       <tbody>${list.map(skillListRowHTML).join("")}</tbody>
     </table></div>`;
     } else {
