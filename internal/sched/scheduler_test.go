@@ -65,3 +65,33 @@ func TestProjectScheduleCreatesWeakDependentTask(t *testing.T) {
 		t.Fatalf("项目定时任务没有进入正确依赖链: %+v", generated)
 	}
 }
+
+func TestReloadAcceptsPickerAndLegacyCronRules(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	hub := events.NewHub()
+	executor := paiexec.New(st, hub, t.TempDir(), "schedule-parser-test.db")
+	s := New(st, hub, executor)
+	agentID, err := st.CreateAgent(store.Agent{Name: "parser-agent", CLI: "pi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ name, expression string }{
+		{name: "legacy", expression: "0 9 * * *"},
+		{name: "picker", expression: "0 30 14 * * 3"},
+	} {
+		if _, err := st.CreateSchedule(store.Schedule{
+			Name: item.name, Cron: item.expression, TitleTemplate: "title", AgentID: agentID, Enabled: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s.Reload()
+	if got := len(s.cron.Entries()); got != 2 {
+		t.Fatalf("定时任务规则未全部加载：got %d, want 2", got)
+	}
+}

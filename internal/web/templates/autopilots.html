@@ -9,12 +9,12 @@
 </header>
 <div class="page-content">
   <div class="toolbar">
-    <span class="toolbar-note">按 cron 周期创建任务。绑定项目后按项目创建顺序执行；不绑定项目则是通用定时任务。（支持秒级，如 <code>0 9 * * *</code>）</span>
+    <span class="toolbar-note">按周期、日期和时间创建任务。绑定项目后按项目创建顺序执行；不绑定项目则是通用定时任务。</span>
     <span class="spacer"></span>
   </div>
   <div class="list-wrap">
     <table class="list-grid">
-      <thead><tr><th>名称</th><th>Cron</th><th>角色</th><th>类型 / 项目</th><th>标题模板</th><th>上次执行</th><th>启用</th><th style="width:100px">操作</th></tr></thead>
+      <thead><tr><th>名称</th><th>执行时间</th><th>角色</th><th>类型 / 项目</th><th>标题模板</th><th>上次执行</th><th>启用</th><th style="width:100px">操作</th></tr></thead>
       <tbody id="scheduleList"></tbody>
     </table>
     <div id="scheduleEmpty" class="empty hidden">还没有定时任务，点击右上角「新建定时任务」</div>
@@ -28,9 +28,39 @@
     <input type="hidden" id="sId">
     <label class="field">名称 <input id="sName" placeholder="每日巡检"></label>
     <div class="row">
-      <label class="field">Cron 表达式 <input id="sCron" placeholder="0 9 * * *" value="0 9 * * *"></label>
       <label class="field">角色 <select id="sAgent"></select></label>
       <label class="field">项目 <select id="sProject"></select></label>
+    </div>
+    <div class="schedule-picker">
+      <div class="schedule-picker-title">执行时间</div>
+      <div class="row">
+        <label class="field schedule-frequency">周期
+          <select id="sFrequency" onchange="syncScheduleFields()">
+            <option value="daily">每天</option>
+            <option value="weekdays">工作日（周一至周五）</option>
+            <option value="weekly">每周</option>
+            <option value="monthly">每月</option>
+          </select>
+        </label>
+        <label class="field schedule-weekday hidden" id="sWeekdayField">星期
+          <select id="sWeekday" onchange="syncScheduleFields()">
+            <option value="1">星期一</option>
+            <option value="2">星期二</option>
+            <option value="3">星期三</option>
+            <option value="4">星期四</option>
+            <option value="5">星期五</option>
+            <option value="6">星期六</option>
+            <option value="7">星期日</option>
+          </select>
+        </label>
+        <label class="field schedule-monthday hidden" id="sMonthdayField">日期
+          <select id="sMonthday" onchange="syncScheduleFields()"></select>
+        </label>
+        <label class="field schedule-time">时间
+          <input id="sTime" type="time" value="09:00" step="60" onchange="syncScheduleFields()">
+        </label>
+      </div>
+      <div class="schedule-preview" id="sSchedulePreview"></div>
     </div>
     <label class="field">生成任务的权限
       <select id="sPerm"><option value="full">自动（完成后派发代码合并任务）</option><option value="review">人工审批（通过后由 Agent 合并）</option></select>

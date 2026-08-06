@@ -26,11 +26,14 @@ type Scheduler struct {
 
 func New(st *store.Store, hub *events.Hub, ex *exec.Executor) *Scheduler {
 	return &Scheduler{
-		st:   st,
-		hub:  hub,
-		ex:   ex,
-		cron: cron.New(cron.WithSeconds(), cron.WithLocation(time.Local)),
-		mu:   make(chan struct{}, 1),
+		st:  st,
+		hub: hub,
+		ex:  ex,
+		// 新面板生成六段 cron；保留五段表达式兼容旧版已保存的任务。
+		cron: cron.New(cron.WithParser(cron.NewParser(
+			cron.SecondOptional|cron.Minute|cron.Hour|cron.Dom|cron.Month|cron.Dow|cron.Descriptor,
+		)), cron.WithLocation(time.Local)),
+		mu: make(chan struct{}, 1),
 	}
 }
 

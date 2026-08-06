@@ -302,8 +302,32 @@ function findChrome() {
   await page.evaluate(() => openScheduleModal());
   await page.waitForTimeout(300);
   const sched = await page.evaluate(() =>
-    !document.getElementById("scheduleModal").classList.contains("hidden") && document.getElementById("sPerm")?.value === "full");
-  sched ? ok("定时任务弹窗") : fail("定时任务弹窗未打开");
+    !document.getElementById("scheduleModal").classList.contains("hidden") &&
+    document.getElementById("sPerm")?.value === "full" &&
+    !document.getElementById("sCron") &&
+    document.getElementById("sFrequency")?.value === "daily" &&
+    document.getElementById("sTime")?.value === "09:00");
+  sched ? ok("定时任务弹窗（周期/日期/时间选项）") : fail("定时任务弹窗未提供周期/日期/时间选项");
+  const scheduleRule = await page.evaluate(async () => {
+    document.getElementById("sFrequency").value = "weekly";
+    document.getElementById("sWeekday").value = "3";
+    document.getElementById("sTime").value = "14:30";
+    syncScheduleFields();
+    let payload = null;
+    const originalFetch = window.fetch;
+    window.fetch = async (url, opts) => {
+      if (String(url).includes("/api/schedules")) {
+        payload = JSON.parse(opts.body);
+        throw new Error("capture schedule payload");
+      }
+      return originalFetch(url, opts);
+    };
+    try { await submitSchedule(); } finally { window.fetch = originalFetch; }
+    return payload;
+  });
+  scheduleRule?.cron === "0 30 14 * * 3"
+    ? ok("定时任务选项生成执行规则")
+    : fail("定时任务选项未生成预期执行规则: " + JSON.stringify(scheduleRule));
   await page.evaluate(() => closeModal("scheduleModal"));
 
   await page.goto(URL + "/skills");

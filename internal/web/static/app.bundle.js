@@ -2756,7 +2756,7 @@
     body.innerHTML = state.schedules.map((sc) => `
     <tr>
       <td class="t-name"><b>${esc(sc.name)}</b></td>
-      <td><span class="cron-chip">${icon("clock")}${esc(sc.cron)}</span></td>
+      <td><span class="cron-chip">${icon("clock")}${esc(scheduleLabel(sc.cron))}</span></td>
       <td>${esc(sc.agent_name || "-")}</td>
       <td>${sc.project_id ? `<span class="chip" title="\u9879\u76EE\u5B9A\u65F6\u4EFB\u52A1\uFF1A\u521B\u5EFA\u540E\u6309\u9879\u76EE\u987A\u5E8F\u6267\u884C">\u9879\u76EE \xB7 ${esc(sc.project_name || "#" + sc.project_id)}</span>${sc.block_on_failure ? `<span class="chip merge-blocked">\u5931\u8D25\u963B\u585E</span>` : ""}` : `<span class="chip">\u901A\u7528</span>`}</td>
       <td class="t-tpl">${esc(sc.title_template || "-")}</td>
@@ -2772,6 +2772,81 @@
     const empty = document.getElementById("scheduleEmpty");
     if (empty) empty.classList.toggle("hidden", state.schedules.length > 0);
   }
+  var WEEKDAYS = ["", "\u5468\u4E00", "\u5468\u4E8C", "\u5468\u4E09", "\u5468\u56DB", "\u5468\u4E94", "\u5468\u516D", "\u5468\u65E5"];
+  var DEFAULT_TIME = "09:00";
+  var scheduleOriginalCron = "";
+  var scheduleUnsupported = false;
+  var scheduleDirty = false;
+  function parseScheduleCron(cron) {
+    const raw = String(cron || "").trim().toLowerCase();
+    if (raw === "@daily") return { frequency: "daily", time: "00:00" };
+    if (raw === "@weekly") return { frequency: "weekly", weekday: "7", time: "00:00" };
+    if (raw === "@monthly") return { frequency: "monthly", monthday: "1", time: "00:00" };
+    const fields = raw.split(/\s+/);
+    if (fields.length !== 5 && fields.length !== 6) return null;
+    const [second, minute, hour, dom, month, dow] = fields.length === 6 ? fields : ["0", fields[0], fields[1], fields[2], fields[3], fields[4]];
+    if (second !== "0" || month !== "*") return null;
+    if (!/^\d{1,2}$/.test(minute) || !/^\d{1,2}$/.test(hour)) return null;
+    const minuteNum = Number(minute), hourNum = Number(hour);
+    if (minuteNum < 0 || minuteNum > 59 || hourNum < 0 || hourNum > 23) return null;
+    const time = `${String(hourNum).padStart(2, "0")}:${String(minuteNum).padStart(2, "0")}`;
+    if (dom === "*" && dow === "*") return { frequency: "daily", time };
+    if (dom === "*" && dow === "1-5") return { frequency: "weekdays", time };
+    if (dom === "*" && /^\d$/.test(dow) && Number(dow) >= 0 && Number(dow) <= 7) {
+      return { frequency: "weekly", weekday: String(Number(dow) === 0 ? 7 : Number(dow)), time };
+    }
+    if (dow === "*" && /^\d{1,2}$/.test(dom) && Number(dom) >= 1 && Number(dom) <= 31) {
+      return { frequency: "monthly", monthday: String(Number(dom)), time };
+    }
+    return null;
+  }
+  function scheduleCronFromFields() {
+    const time = document.getElementById("sTime")?.value || "";
+    const match = /^(\d{2}):(\d{2})$/.exec(time);
+    if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) return "";
+    const frequency = document.getElementById("sFrequency")?.value || "daily";
+    const minute = Number(match[2]);
+    const hour = Number(match[1]);
+    let dom = "*", dow = "*";
+    if (frequency === "weekdays") dow = "1-5";
+    if (frequency === "weekly") {
+      const weekday = Number(document.getElementById("sWeekday")?.value || 1);
+      dow = weekday === 7 ? "0" : String(weekday);
+    }
+    if (frequency === "monthly") dom = String(Number(document.getElementById("sMonthday")?.value || 1));
+    return `0 ${minute} ${hour} ${dom} * ${dow}`;
+  }
+  function scheduleLabel(cron) {
+    const parsed = parseScheduleCron(cron);
+    if (!parsed) return "\u81EA\u5B9A\u4E49\u5468\u671F";
+    if (parsed.frequency === "daily") return `\u6BCF\u5929 ${parsed.time}`;
+    if (parsed.frequency === "weekdays") return `\u5DE5\u4F5C\u65E5 ${parsed.time}`;
+    if (parsed.frequency === "weekly") return `\u6BCF\u5468${WEEKDAYS[Number(parsed.weekday)] || ""} ${parsed.time}`;
+    return `\u6BCF\u6708${parsed.monthday}\u65E5 ${parsed.time}`;
+  }
+  function fillScheduleDays() {
+    const select = document.getElementById("sMonthday");
+    if (!select || select.options.length) return;
+    select.innerHTML = Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${i + 1} \u65E5</option>`).join("");
+  }
+  function updateSchedulePreview() {
+    const preview = document.getElementById("sSchedulePreview");
+    if (!preview) return;
+    if (scheduleUnsupported && !scheduleDirty) {
+      preview.textContent = "\u5F53\u524D\u4EFB\u52A1\u4F7F\u7528\u4E86\u81EA\u5B9A\u4E49\u5468\u671F\uFF1B\u8C03\u6574\u4E0A\u9762\u7684\u9009\u9879\u540E\u4F1A\u8F6C\u6362\u4E3A\u5E38\u7528\u5468\u671F\u3002";
+      preview.classList.add("warning");
+      return;
+    }
+    preview.classList.remove("warning");
+    preview.textContent = `\u5C06\u6309\u201C${scheduleLabel(scheduleCronFromFields())}\u201D\u6267\u884C`;
+  }
+  function syncScheduleFields(markDirty = true) {
+    if (markDirty) scheduleDirty = true;
+    const frequency = document.getElementById("sFrequency")?.value || "daily";
+    document.getElementById("sWeekdayField")?.classList.toggle("hidden", frequency !== "weekly");
+    document.getElementById("sMonthdayField")?.classList.toggle("hidden", frequency !== "monthly");
+    updateSchedulePreview();
+  }
   async function toggleSchedule(id) {
     const sc = state.schedules.find((x) => x.id === id);
     try {
@@ -2784,11 +2859,20 @@
   }
   function openScheduleModal(id) {
     fillSelects();
+    fillScheduleDays();
     const sc = id ? state.schedules.find((x) => x.id === id) : null;
     document.getElementById("scheduleModalTitle").textContent = sc ? "\u7F16\u8F91\u5B9A\u65F6\u4EFB\u52A1" : "\u65B0\u5EFA\u5B9A\u65F6\u4EFB\u52A1";
     document.getElementById("sId").value = sc ? sc.id : "";
     document.getElementById("sName").value = sc ? sc.name : "";
-    document.getElementById("sCron").value = sc ? sc.cron : "0 9 * * *";
+    const parsed = parseScheduleCron(sc?.cron);
+    scheduleOriginalCron = sc?.cron || "";
+    scheduleUnsupported = !!sc && !parsed;
+    scheduleDirty = false;
+    document.getElementById("sFrequency").value = parsed?.frequency || "daily";
+    document.getElementById("sWeekday").value = parsed?.weekday || "1";
+    document.getElementById("sMonthday").value = parsed?.monthday || "1";
+    document.getElementById("sTime").value = parsed?.time || DEFAULT_TIME;
+    syncScheduleFields(false);
     document.getElementById("sTitle").value = sc ? sc.title_template : "";
     document.getElementById("sBody").value = sc ? sc.body_template : "";
     document.getElementById("sPerm").value = sc ? sc.perm || "full" : "full";
@@ -2799,9 +2883,11 @@
   }
   async function submitSchedule() {
     const id = document.getElementById("sId").value;
+    const cron = scheduleUnsupported && !scheduleDirty ? scheduleOriginalCron : scheduleCronFromFields();
+    if (!cron) return toast("\u8BF7\u9009\u62E9\u6709\u6548\u7684\u6267\u884C\u65F6\u95F4", true);
     const body = {
       name: document.getElementById("sName").value.trim(),
-      cron: document.getElementById("sCron").value.trim(),
+      cron,
       title_template: document.getElementById("sTitle").value.trim(),
       body_template: document.getElementById("sBody").value,
       agent_id: Number(document.getElementById("sAgent").value),
@@ -3339,6 +3425,7 @@
   window.submitSkill = submitSkill;
   window.submitTask = submitTask;
   window.syncModelThinking = syncModelThinking;
+  window.syncScheduleFields = syncScheduleFields;
   window.syncTaskConcurrency = syncTaskConcurrency;
   window.syncTaskDependency = syncTaskDependency;
   window.syncTaskRunMode = syncTaskRunMode;
