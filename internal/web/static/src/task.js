@@ -221,30 +221,52 @@ export function renderList() {
   const el = document.getElementById("listBody");
   if (!el) return;
   const tasks = filteredTasks();
-  el.innerHTML = tasks.map(t => `
-    <tr onclick="openTask(${t.id})">
-      <td class="num">#${t.id}</td>
-      <td class="t-title"><a class="table-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a></td>
-      <td>${taskKindChip(t)}${dependencyChip(t)}${dependencyStateChip(t)}${mergeBlockReason(t) ? `<span class="chip merge-blocked">${mergeBlockReason(t)}</span>` : ""}</td>
-      <td>${esc(t.agent_name || "-")}</td>
-      <td>${t.project_id ? `<a class="t-link" href="/projects#/project/${t.project_id}" onclick="event.stopPropagation()">${esc(t.project_name || "-")}</a>` : esc(t.project_name || "-")}</td>
-      <td><span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span></td>
-      <td>${t.review_rounds || ""}</td>
-      <td class="num">${(t.created_at || "").slice(5, 16).replace("T", " ")}</td>
-      <td class="num">${(t.finished_at || "").slice(5, 16).replace("T", " ")}</td>
-      <td>
-        <span class="ops">
-          <button class="btn xs" onclick="event.stopPropagation();openTask(${t.id})">${icon("expand")}详情</button>
-          ${canRetryTask(t)
-            ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}${retryTaskLabel(t)}</button>` : ""}
-          ${canDeleteTask(t) ? `<button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>` : ""}
-        </span>
-      </td>
-    </tr>`).join("");
+  el.innerHTML = tasks.map(taskListRowHTML).join("");
   const empty = document.getElementById("listEmpty");
   if (empty) empty.classList.toggle("hidden", tasks.length > 0);
   const c = document.getElementById("viewCount");
   if (c) c.textContent = `${tasks.filter(t => !isMergeTask(t)).length} 个实现 · ${tasks.filter(isMergeTask).length} 个合并`;
+}
+
+function taskListRowHTML(t) {
+  const blocked = mergeBlockReason(t);
+  const title = esc(t.title);
+  const agent = esc(t.agent_name || "-");
+  const project = esc(t.project_name || "-");
+  const created = (t.created_at || "").slice(5, 16).replace("T", " ") || "—";
+  const finished = (t.finished_at || "").slice(5, 16).replace("T", " ") || "—";
+  const rounds = t.review_rounds || "—";
+  const chips = `${taskKindChip(t)}${dependencyChip(t)}${dependencyStateChip(t)}${blocked ? `<span class="chip merge-blocked">${esc(blocked)}</span>` : ""}`;
+  const status = STATUS_LABEL[t.status] || t.status || "未知";
+  return `
+    <tr class="task-list-row" tabindex="0" aria-label="打开任务 #${t.id}：${title}"
+      onclick="openTask(${t.id})"
+      onkeydown="if (event.target !== this) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openTask(${t.id}); }">
+      <td class="task-list-id num" data-label="ID">#${t.id}</td>
+      <td class="task-list-title t-title" data-label="标题">
+        <a class="table-primary-action" href="#/issue/${t.id}" title="${title}" onclick="event.stopPropagation();openTask(${t.id});return false">${title}</a>
+      </td>
+      <td class="task-list-type" data-label="类型"><span class="task-list-chips">${chips}</span></td>
+      <td class="task-list-agent" data-label="角色"><span class="task-list-text" title="${agent}">${agent}</span></td>
+      <td class="task-list-project" data-label="项目">${t.project_id ? `<a class="t-link task-list-text" href="/projects#/project/${t.project_id}" title="${project}" onclick="event.stopPropagation()">${project}</a>` : `<span class="task-list-text" title="${project}">${project}</span>`}</td>
+      <td class="task-list-status" data-label="状态"><span class="badge ${esc(t.status || "unknown")}" style="--st-color:${ST_COLOR[t.status] || "var(--fg-faint)"}"><span class="st-dot"></span>${esc(status)}</span></td>
+      <td class="task-list-rounds" data-label="轮次">${esc(rounds)}</td>
+      <td class="task-list-date task-list-created num" data-label="创建"><time>${esc(created)}</time></td>
+      <td class="task-list-date task-list-finished num" data-label="结束"><time>${esc(finished)}</time></td>
+      <td class="task-list-actions" data-label="操作">
+        <span class="ops">
+          <button type="button" class="btn xs" title="打开任务详情" aria-label="打开任务详情" onclick="event.stopPropagation();openTask(${t.id})">${icon("expand")}<span class="task-list-action-label">详情</span></button>
+          ${canRetryTask(t)
+            ? `<button type="button" class="btn xs" title="${esc(retryTaskLabel(t))}" aria-label="${esc(retryTaskLabel(t))}" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}<span class="task-list-action-label">${esc(retryTaskLabel(t))}</span></button>` : ""}
+          ${canDeleteTask(t) ? `<button type="button" class="btn xs danger" title="删除任务" aria-label="删除任务" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}<span class="task-list-action-label">删除</span></button>` : ""}
+        </span>
+      </td>
+      <td class="task-list-mobile-meta" colspan="3" aria-label="任务时间与轮次">
+        <span><small>轮次</small><b>${esc(rounds)}</b></span>
+        <span><small>创建</small><b>${esc(created)}</b></span>
+        <span><small>结束</small><b>${esc(finished)}</b></span>
+      </td>
+    </tr>`;
 }
 
 export function setView(v) {

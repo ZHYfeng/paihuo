@@ -2702,3 +2702,135 @@ a.project-card:hover { color: inherit; text-decoration: none; }
   .skill-list-date-cell time { font-size: 10.5px; }
   .skill-card .sk-foot .btn { min-height: 44px; }
 }
+
+/* ============================================================
+   V7 · BOARD TASK LIST
+   看板列表是高密度任务表：桌面端稳定列宽，小屏端转换为可扫读的任务卡片。
+   规则只作用于看板，避免改变历史 / 角色 / 定时任务的表格布局。
+   ============================================================ */
+.board-list-wrap {
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column;
+  background: rgba(5, 7, 5, .24); overscroll-behavior: contain;
+  container: board-list / inline-size;
+}
+.board-list-grid {
+  flex: 0 0 auto; width: 100%; min-width: 1208px; table-layout: fixed;
+  border-spacing: 0;
+}
+.board-list-grid thead th { white-space: nowrap; }
+.board-list-grid thead th:nth-child(1) { width: 52px; }
+.board-list-grid thead th:nth-child(2) { width: 230px; }
+.board-list-grid thead th:nth-child(3) { width: 126px; }
+.board-list-grid thead th:nth-child(4) { width: 100px; }
+.board-list-grid thead th:nth-child(5) { width: 118px; }
+.board-list-grid thead th:nth-child(6) { width: 90px; }
+.board-list-grid thead th:nth-child(7) { width: 48px; }
+.board-list-grid thead th:nth-child(8),
+.board-list-grid thead th:nth-child(9) { width: 110px; }
+.board-list-grid thead th.task-list-actions-head { width: 224px; }
+.board-list-grid tbody td { min-width: 0; vertical-align: middle; }
+.board-list-grid .task-list-id,
+.board-list-grid .task-list-rounds,
+.board-list-grid .task-list-date,
+.board-list-grid .task-list-status { white-space: nowrap; }
+.board-list-grid .task-list-title,
+.board-list-grid .task-list-agent,
+.board-list-grid .task-list-project,
+.board-list-grid .task-list-type { min-width: 0; overflow: hidden; }
+.board-list-grid .task-list-title .table-primary-action,
+.board-list-grid .task-list-text {
+  display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.board-list-grid .task-list-title .table-primary-action { font-weight: 650; }
+.board-list-grid .task-list-chips {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; max-width: 100%;
+}
+.board-list-grid .task-list-chips .chip {
+  display: inline-flex; align-items: center; min-width: 0; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.board-list-grid .task-list-project .t-link { color: var(--brand); }
+.board-list-grid .task-list-date time { white-space: nowrap; }
+.board-list-grid .task-list-actions .ops {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0;
+}
+.board-list-grid .task-list-actions .btn { flex: 0 0 auto; }
+.board-list-grid .task-list-mobile-meta { display: none; }
+.board-list-empty {
+  width: min(520px, calc(100% - 56px)); margin: auto; padding: 28px 24px;
+  text-align: center;
+}
+.board-list-empty .empty-title { display: block; }
+.board-list-empty .empty-copy { display: block; margin-top: 5px; }
+
+@container board-list (max-width: 1207px) {
+  .board-list-grid { display: block; width: 100%; min-width: 0; table-layout: auto; }
+  .board-list-grid thead {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  .board-list-grid tbody { display: grid; gap: 10px; padding: 12px; }
+  .board-list-grid tbody tr {
+    display: grid; width: 100%; min-width: 0;
+    grid-template-columns: 44px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "id title actions"
+      "id status status"
+      "id type type"
+      "id agent project"
+      "id meta meta";
+    gap: 8px; padding: 13px 14px;
+    border: 1px solid var(--border); border-radius: 14px;
+    background: linear-gradient(145deg, rgba(255,255,255,.026), transparent 60%), var(--surface);
+  }
+  .board-list-grid tbody tr:hover,
+  .board-list-grid tbody tr:focus-visible { background: var(--raised); }
+  .board-list-grid tbody td {
+    display: block; min-width: 0; min-height: 0; padding: 0;
+    border: 0; vertical-align: initial; overflow: hidden;
+  }
+  .board-list-grid .task-list-id {
+    grid-area: id; align-self: start; padding-top: 3px; color: var(--brand); font-size: 11px;
+  }
+  .board-list-grid .task-list-title { grid-area: title; overflow: hidden; }
+  .board-list-grid .task-list-title .table-primary-action {
+    display: -webkit-box; white-space: normal; line-height: 18px;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .board-list-grid .task-list-actions { grid-area: actions; align-self: start; overflow: visible; }
+  .board-list-grid .task-list-actions .ops { gap: 4px; }
+  .board-list-grid .task-list-actions .btn {
+    width: 44px; min-width: 44px; height: 44px; min-height: 44px;
+    padding: 0; font-size: 0;
+  }
+  .board-list-grid .task-list-actions .task-list-action-label { display: none; }
+  .board-list-grid .task-list-status {
+    grid-area: status; padding-top: 8px; border-top: 1px solid var(--border);
+  }
+  .board-list-grid .task-list-type {
+    grid-area: type; padding-top: 8px; border-top: 1px solid var(--border);
+  }
+  .board-list-grid .task-list-agent { grid-area: agent; }
+  .board-list-grid .task-list-project { grid-area: project; max-width: 160px; text-align: right; }
+  .board-list-grid .task-list-type::before,
+  .board-list-grid .task-list-agent::before,
+  .board-list-grid .task-list-project::before {
+    content: attr(data-label); display: block; margin-bottom: 2px;
+    color: var(--fg-faint); font: 9px/12px var(--font-mono); letter-spacing: .05em;
+  }
+  .board-list-grid .task-list-chips { align-items: flex-start; }
+  .board-list-grid .task-list-chips .chip { line-height: 16px; }
+  .board-list-grid .task-list-rounds,
+  .board-list-grid .task-list-created,
+  .board-list-grid .task-list-finished { display: none !important; }
+  .board-list-grid .task-list-mobile-meta {
+    grid-area: meta; display: flex !important; align-items: center; flex-wrap: wrap; gap: 5px 14px;
+    padding-top: 9px; border-top: 1px solid var(--border); overflow: visible;
+  }
+  .board-list-grid .task-list-mobile-meta span { display: inline-flex; align-items: baseline; gap: 4px; }
+  .board-list-grid .task-list-mobile-meta small { color: var(--fg-faint); font-size: 9px; }
+  .board-list-grid .task-list-mobile-meta b {
+    color: var(--fg-muted); font: 10px/14px var(--font-mono); font-weight: 500; white-space: nowrap;
+  }
+  .board-list-empty { width: calc(100% - 24px); margin: auto 12px; padding: 24px 18px; }
+}

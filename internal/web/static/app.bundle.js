@@ -1408,29 +1408,50 @@
     const el = document.getElementById("listBody");
     if (!el) return;
     const tasks = filteredTasks();
-    el.innerHTML = tasks.map((t) => `
-    <tr onclick="openTask(${t.id})">
-      <td class="num">#${t.id}</td>
-      <td class="t-title"><a class="table-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a></td>
-      <td>${taskKindChip(t)}${dependencyChip(t)}${dependencyStateChip(t)}${mergeBlockReason(t) ? `<span class="chip merge-blocked">${mergeBlockReason(t)}</span>` : ""}</td>
-      <td>${esc(t.agent_name || "-")}</td>
-      <td>${t.project_id ? `<a class="t-link" href="/projects#/project/${t.project_id}" onclick="event.stopPropagation()">${esc(t.project_name || "-")}</a>` : esc(t.project_name || "-")}</td>
-      <td><span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span></td>
-      <td>${t.review_rounds || ""}</td>
-      <td class="num">${(t.created_at || "").slice(5, 16).replace("T", " ")}</td>
-      <td class="num">${(t.finished_at || "").slice(5, 16).replace("T", " ")}</td>
-      <td>
-        <span class="ops">
-          <button class="btn xs" onclick="event.stopPropagation();openTask(${t.id})">${icon("expand")}\u8BE6\u60C5</button>
-          ${canRetryTask(t) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}${retryTaskLabel(t)}</button>` : ""}
-          ${canDeleteTask(t) ? `<button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}\u5220\u9664</button>` : ""}
-        </span>
-      </td>
-    </tr>`).join("");
+    el.innerHTML = tasks.map(taskListRowHTML).join("");
     const empty = document.getElementById("listEmpty");
     if (empty) empty.classList.toggle("hidden", tasks.length > 0);
     const c = document.getElementById("viewCount");
     if (c) c.textContent = `${tasks.filter((t) => !isMergeTask(t)).length} \u4E2A\u5B9E\u73B0 \xB7 ${tasks.filter(isMergeTask).length} \u4E2A\u5408\u5E76`;
+  }
+  function taskListRowHTML(t) {
+    const blocked = mergeBlockReason(t);
+    const title = esc(t.title);
+    const agent = esc(t.agent_name || "-");
+    const project = esc(t.project_name || "-");
+    const created = (t.created_at || "").slice(5, 16).replace("T", " ") || "\u2014";
+    const finished = (t.finished_at || "").slice(5, 16).replace("T", " ") || "\u2014";
+    const rounds = t.review_rounds || "\u2014";
+    const chips = `${taskKindChip(t)}${dependencyChip(t)}${dependencyStateChip(t)}${blocked ? `<span class="chip merge-blocked">${esc(blocked)}</span>` : ""}`;
+    const status = STATUS_LABEL[t.status] || t.status || "\u672A\u77E5";
+    return `
+    <tr class="task-list-row" tabindex="0" aria-label="\u6253\u5F00\u4EFB\u52A1 #${t.id}\uFF1A${title}"
+      onclick="openTask(${t.id})"
+      onkeydown="if (event.target !== this) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openTask(${t.id}); }">
+      <td class="task-list-id num" data-label="ID">#${t.id}</td>
+      <td class="task-list-title t-title" data-label="\u6807\u9898">
+        <a class="table-primary-action" href="#/issue/${t.id}" title="${title}" onclick="event.stopPropagation();openTask(${t.id});return false">${title}</a>
+      </td>
+      <td class="task-list-type" data-label="\u7C7B\u578B"><span class="task-list-chips">${chips}</span></td>
+      <td class="task-list-agent" data-label="\u89D2\u8272"><span class="task-list-text" title="${agent}">${agent}</span></td>
+      <td class="task-list-project" data-label="\u9879\u76EE">${t.project_id ? `<a class="t-link task-list-text" href="/projects#/project/${t.project_id}" title="${project}" onclick="event.stopPropagation()">${project}</a>` : `<span class="task-list-text" title="${project}">${project}</span>`}</td>
+      <td class="task-list-status" data-label="\u72B6\u6001"><span class="badge ${esc(t.status || "unknown")}" style="--st-color:${ST_COLOR[t.status] || "var(--fg-faint)"}"><span class="st-dot"></span>${esc(status)}</span></td>
+      <td class="task-list-rounds" data-label="\u8F6E\u6B21">${esc(rounds)}</td>
+      <td class="task-list-date task-list-created num" data-label="\u521B\u5EFA"><time>${esc(created)}</time></td>
+      <td class="task-list-date task-list-finished num" data-label="\u7ED3\u675F"><time>${esc(finished)}</time></td>
+      <td class="task-list-actions" data-label="\u64CD\u4F5C">
+        <span class="ops">
+          <button type="button" class="btn xs" title="\u6253\u5F00\u4EFB\u52A1\u8BE6\u60C5" aria-label="\u6253\u5F00\u4EFB\u52A1\u8BE6\u60C5" onclick="event.stopPropagation();openTask(${t.id})">${icon("expand")}<span class="task-list-action-label">\u8BE6\u60C5</span></button>
+          ${canRetryTask(t) ? `<button type="button" class="btn xs" title="${esc(retryTaskLabel(t))}" aria-label="${esc(retryTaskLabel(t))}" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}<span class="task-list-action-label">${esc(retryTaskLabel(t))}</span></button>` : ""}
+          ${canDeleteTask(t) ? `<button type="button" class="btn xs danger" title="\u5220\u9664\u4EFB\u52A1" aria-label="\u5220\u9664\u4EFB\u52A1" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}<span class="task-list-action-label">\u5220\u9664</span></button>` : ""}
+        </span>
+      </td>
+      <td class="task-list-mobile-meta" colspan="3" aria-label="\u4EFB\u52A1\u65F6\u95F4\u4E0E\u8F6E\u6B21">
+        <span><small>\u8F6E\u6B21</small><b>${esc(rounds)}</b></span>
+        <span><small>\u521B\u5EFA</small><b>${esc(created)}</b></span>
+        <span><small>\u7ED3\u675F</small><b>${esc(finished)}</b></span>
+      </td>
+    </tr>`;
   }
   function setView(v) {
     state.view = v;
