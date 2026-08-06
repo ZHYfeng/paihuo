@@ -177,9 +177,9 @@ func TestExecutorQueuesMergeTaskAfterSuccessfulFullTask(t *testing.T) {
 }
 
 // 生产中曾出现过：tmux 日志 pane 先消失，独立 Codex agent 随后才写入成功
-// 退出码。pane 不是 agent 的结果来源，执行器必须给持久退出码一个结算窗口，
-// 不能在第一次观察到 pane 不存在时立即把任务记为 failed/-1。
-func TestExecutorWaitsForDelayedDetachedExitCodeAfterPaneLoss(t *testing.T) {
+// 退出码。即使 systemd 已确认 agent 进入 inactive，pane 也不是 agent 的
+// 结果来源；执行器必须给持久退出码足够的结算窗口。
+func TestExecutorWaitsForDelayedDetachedExitCodeAfterConfirmedAgentEnd(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -202,20 +202,132 @@ func TestExecutorWaitsForDelayedDetachedExitCodeAfterPaneLoss(t *testing.T) {
 	if err := os.WriteFile(r.agentOutputPath(taskID), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	fakeBin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fakeBin, "systemctl"), []byte("#!/bin/sh\nprintf 'inactive\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+":"+os.Getenv("PATH"))
+	if err := os.WriteFile(r.agentUnitPath(taskID), []byte(r.agentUnitName(taskID)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resultWriteErr := make(chan error, 1)
 	go func() {
-		time.Sleep(30 * time.Millisecond)
-		_ = os.WriteFile(r.agentExitPath(taskID), []byte("0\n"), 0o600)
+		time.Sleep(4 * time.Second)
+		resultWriteErr <- writeTestAgentExitCode(r.agentExitPath(taskID), 0)
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
 	defer cancel()
 	code, err := e.waitTmux(ctx, ctx, &store.Task{ID: taskID})
+	if writeErr := <-resultWriteErr; writeErr != nil {
+		t.Fatalf("写入 agent 退出码失败: %v", writeErr)
+	}
 	if err != nil {
 		t.Fatalf("延迟写回 agent 退出码不应被误判为 pane 丢失: %v", err)
 	}
 	if code != 0 {
 		t.Fatalf("code=%d, want 0", code)
 	}
+}
+
+// systemctl 的一次查询失败不能把仍在输出的独立 agent 当作已经结束。这个场景
+// 覆盖 pane 丢失后 service 状态暂时 unknown、但 agent 仍持续运行超过旧 3 秒
+// 结算窗口的情况；最终的持久退出码仍必须被正常接收。
+func TestExecutorKeepsWatchingUnknownDetachedAgentWithOutputHeartbeat(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	taskID, err := st.CreateTask(store.Task{Title: "unknown detached agent", Status: store.StatusRunning})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionsRoot := t.TempDir()
+	e := New(st, events.NewHub(), sessionsRoot, "unknown-detached-result-test.db")
+	r := newTmuxRunnerAt(sessionsRoot, fmt.Sprintf("paihuo-unknown-pane-%d", os.Getpid()))
+	e.runner = r
+	if err := os.MkdirAll(r.taskDir(taskID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.agentOutputPath(taskID), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// 使用会失败的 systemctl 模拟 D-Bus/systemd 查询暂不可用，而非伪造
+	// agent 尚未启动；agent-unit 本身仍存在，正是生产中的观测失败形态。
+	fakeBin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fakeBin, "systemctl"), []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+":"+os.Getenv("PATH"))
+	if err := os.WriteFile(r.agentUnitPath(taskID), []byte(r.agentUnitName(taskID)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stopOutput := make(chan struct{})
+	writerErr := make(chan error, 1)
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopOutput:
+				return
+			case <-ticker.C:
+				f, err := os.OpenFile(r.agentOutputPath(taskID), os.O_WRONLY|os.O_APPEND, 0o600)
+				if err != nil {
+					writerErr <- err
+					return
+				}
+				_, writeErr := f.WriteString(".")
+				closeErr := f.Close()
+				if writeErr != nil {
+					writerErr <- writeErr
+					return
+				}
+				if closeErr != nil {
+					writerErr <- closeErr
+					return
+				}
+			}
+		}
+	}()
+	resultWritten := make(chan struct{})
+	resultWriteErr := make(chan error, 1)
+	go func() {
+		defer close(resultWritten)
+		time.Sleep(4 * time.Second)
+		resultWriteErr <- writeTestAgentExitCode(r.agentExitPath(taskID), 0)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+	defer cancel()
+	code, waitErr := e.waitTmux(ctx, ctx, &store.Task{ID: taskID})
+	<-resultWritten
+	close(stopOutput)
+	if err := <-resultWriteErr; err != nil {
+		t.Fatalf("写入 agent 退出码失败: %v", err)
+	}
+	select {
+	case err := <-writerErr:
+		t.Fatalf("写入 agent 心跳失败: %v", err)
+	default:
+	}
+	if waitErr != nil {
+		t.Fatalf("状态未知但 agent 输出仍在增长时不应在旧结算窗口失败: %v", waitErr)
+	}
+	if code != 0 {
+		t.Fatalf("code=%d, want 0", code)
+	}
+}
+
+func writeTestAgentExitCode(path string, code int) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(fmt.Sprintf("%d\n", code)), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func TestExecutorRecoversArchivedSuccessfulLostTaskIntoMerge(t *testing.T) {

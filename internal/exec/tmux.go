@@ -55,6 +55,9 @@ type tmuxObservation struct {
 	Alive               bool
 	Done                bool
 	ExitCode            int
+	DetachedAgent       bool
+	AgentState          agentServiceState
+	AgentOutputSize     int64
 	AwaitingAgentResult bool
 }
 
@@ -566,7 +569,10 @@ func (r *tmuxRunner) Poll(taskID, offset int64) (tmuxObservation, error) {
 		}
 	}
 
-	detached := r.hasDetachedAgent(taskID)
+	agentOutputSize, detached, err := r.detachedAgentOutputSize(taskID)
+	if err != nil {
+		return tmuxObservation{}, err
+	}
 	agentState := agentServiceUnknown
 	if !done && detached && paneEnded {
 		agentState = r.agentServiceState(taskID)
@@ -590,23 +596,37 @@ func (r *tmuxRunner) Poll(taskID, offset int64) (tmuxObservation, error) {
 	alive := windowExists && !paneEnded
 	awaitingAgentResult := false
 	// Codex batch 的实际 agent 在独立 systemd service 中运行。pane 意外
-	// 消失（或已死）时，active/activating/deactivating 都不能视为任务失败；
-	// deactivating、已收走或查询不到 service 时都进入有限结果结算，不能在
-	// 第一次观察时立刻记为 failed/-1，也不能因卡在收尾态永久等待。
+	// 消失（或已死）时，只有确认 service 已进入收尾或结束状态才开始等待
+	// 持久退出码。查询不到 service 是观测失败，不是 agent 已退出的证据；
+	// 它交由执行器结合原始输出心跳继续观察，不能误走短结算超时。
 	if !done && detached && paneEnded {
-		if agentState == agentServiceActivating || agentState == agentServiceActive {
+		switch agentState {
+		case agentServiceActivating, agentServiceActive:
 			alive = true
-		} else {
+		case agentServiceDeactivating, agentServiceInactive:
 			alive = true
 			awaitingAgentResult = true
 			r.recordLifecycleOnce(taskID, "awaiting_agent_result", "agent_service="+string(agentState))
+		case agentServiceUnknown:
+			alive = true
+			r.recordLifecycleOnce(taskID, "agent_service_unknown", "pane 已结束；继续观察 agent-output.log 与退出码")
 		}
 	}
 	lines, next, err := r.readLines(taskID, offset, done)
 	if err != nil {
 		return tmuxObservation{}, err
 	}
-	obs := tmuxObservation{Lines: lines, Offset: next, Done: done, ExitCode: code, Alive: alive, AwaitingAgentResult: awaitingAgentResult}
+	obs := tmuxObservation{
+		Lines:               lines,
+		Offset:              next,
+		Done:                done,
+		ExitCode:            code,
+		Alive:               alive,
+		DetachedAgent:       detached,
+		AgentState:          agentState,
+		AgentOutputSize:     agentOutputSize,
+		AwaitingAgentResult: awaitingAgentResult,
+	}
 	if done {
 		return obs, nil
 	}
@@ -681,9 +701,23 @@ func (r *tmuxRunner) hasDetachedAgent(taskID int64) bool {
 	return err == nil
 }
 
+// detachedAgentOutputSize 返回 detached agent 原始输出的当前字节数。该文件
+// 单调追加；大小增长因而是 pane 丢失后 agent 仍在工作的独立心跳，哪怕当前
+// 输出还没有换行、无法作为普通终端日志同步。
+func (r *tmuxRunner) detachedAgentOutputSize(taskID int64) (int64, bool, error) {
+	info, err := os.Stat(r.agentOutputPath(taskID))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("读取 agent 原始输出状态失败: %w", err)
+	}
+	return info.Size(), true, nil
+}
+
 // agentServiceAlive 查询独立 Codex agent service，而不是只依赖 tmux pane。
-// 这里故意把查询异常视为未存活：正常启动的 transient service 很快进入 active，
-// 若 service 根本没启动，原有 pane 丢失错误仍会提供清晰的启动失败信号。
+// unknown 在这个便捷谓词中返回 false，但它仅表示“当前无法确认活跃”，不能
+// 作为执行器将 pane 丢失任务结算为失败的依据。
 func (r *tmuxRunner) agentServiceAlive(taskID int64) bool {
 	return r.agentServiceState(taskID).isExecutingOrFinalizing()
 }
