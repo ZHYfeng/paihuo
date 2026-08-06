@@ -1,7 +1,11 @@
 {{define "content"}}
 <header class="page-header">
-  <span class="crumb">派活 / <b>角色</b></span>
+  <div class="page-identity">
+    <span class="page-kicker">AGENT PROFILES</span>
+    <h1>角色</h1>
+  </div>
   <span class="spacer"></span>
+  <span class="header-note">编排模型、能力与并发策略</span>
   <button id="refreshAgentCatalog" class="btn sm" onclick="refreshAgentCatalog()" title="重新从 Linux 主机检测各 CLI 的模型与能力；不会修改角色配置">
     刷新主机能力
   </button>

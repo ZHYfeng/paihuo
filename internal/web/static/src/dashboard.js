@@ -53,11 +53,11 @@ export function renderDashProjects() {
   const active = state.projects.filter(p => p.status === "active");
   if (!active.length) {
     box.innerHTML = `<div class="dash-onboard">
-      <div class="ob-title">快速开始</div>
-      <a class="ob-step" href="/agents">1. 安装 Agent（CLI）</a>
-      <a class="ob-step" href="/roles">2. 创建 Role（角色配置）</a>
-      <a class="ob-step" href="/projects">3. 新建 Project（绑定工作目录）</a>
-      <a class="ob-step" href="/board">4. 在 Board 派发任务</a>
+      <div class="ob-title">开始第一次交付</div>
+      <a class="ob-step" href="/agents"><b>01</b><span>配置本机智能体</span></a>
+      <a class="ob-step" href="/roles"><b>02</b><span>创建任务角色</span></a>
+      <a class="ob-step" href="/projects"><b>03</b><span>建立项目工作区</span></a>
+      <a class="ob-step" href="/board"><b>04</b><span>派发首个任务</span></a>
     </div>`;
     return;
   }

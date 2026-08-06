@@ -185,11 +185,11 @@
     const active = state.projects.filter((p) => p.status === "active");
     if (!active.length) {
       box.innerHTML = `<div class="dash-onboard">
-      <div class="ob-title">\u5FEB\u901F\u5F00\u59CB</div>
-      <a class="ob-step" href="/agents">1. \u5B89\u88C5 Agent\uFF08CLI\uFF09</a>
-      <a class="ob-step" href="/roles">2. \u521B\u5EFA Role\uFF08\u89D2\u8272\u914D\u7F6E\uFF09</a>
-      <a class="ob-step" href="/projects">3. \u65B0\u5EFA Project\uFF08\u7ED1\u5B9A\u5DE5\u4F5C\u76EE\u5F55\uFF09</a>
-      <a class="ob-step" href="/board">4. \u5728 Board \u6D3E\u53D1\u4EFB\u52A1</a>
+      <div class="ob-title">\u5F00\u59CB\u7B2C\u4E00\u6B21\u4EA4\u4ED8</div>
+      <a class="ob-step" href="/agents"><b>01</b><span>\u914D\u7F6E\u672C\u673A\u667A\u80FD\u4F53</span></a>
+      <a class="ob-step" href="/roles"><b>02</b><span>\u521B\u5EFA\u4EFB\u52A1\u89D2\u8272</span></a>
+      <a class="ob-step" href="/projects"><b>03</b><span>\u5EFA\u7ACB\u9879\u76EE\u5DE5\u4F5C\u533A</span></a>
+      <a class="ob-step" href="/board"><b>04</b><span>\u6D3E\u53D1\u9996\u4E2A\u4EFB\u52A1</span></a>
     </div>`;
       return;
     }
