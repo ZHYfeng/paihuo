@@ -1,32 +1,65 @@
 {{define "content"}}
-<div class="board-wrap">
-  <div class="board" id="board"></div>
-  <aside class="detail hidden" id="detail"></aside>
-</div>
+<header class="page-header">
+  <span class="crumb">派活 / <b>工作台</b></span>
+  <span class="spacer"></span>
+  <span class="kbd-hint"><kbd>N</kbd></span>
+  <button class="btn brand sm" onclick="openNewTask()">
+    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    新建任务
+  </button>
+</header>
 
-<div class="modal hidden" id="taskModal">
-  <div class="modal-box">
-    <h3 id="taskModalTitle">新建任务</h3>
-    <input type="hidden" id="tParentId">
-    <label>从模板填充 <select id="tTemplate"><option value="">—</option></select></label>
-    <label>标题 <input id="tTitle" placeholder="要做什么"></label>
-    <label>提示词
-      <textarea id="tBody" rows="6" placeholder="给 agent 的详细指令。留空则由标题生成。"></textarea>
-    </label>
-    <div class="row">
-      <label>角色 <select id="tAgent"></select></label>
-      <label>权限
-        <select id="tPerm">
-          <option value="full">完整（直接读写执行）</option>
-          <option value="review">读 + 每轮确认</option>
-          <option value="readonly">只读</option>
-        </select>
-      </label>
+<div class="page-content" id="dashShell">
+  <!-- ① 统计条 -->
+  <div class="stats-strip" id="dashStats"></div>
+
+  <!-- ②③ 任务执行区 + 项目区 -->
+  <div class="dash-grid">
+    <div class="dash-main">
+      <div class="dash-sec-head">
+        <span class="dash-sec-title">任务执行区</span>
+        <span class="spacer"></span>
+        <a class="sec-link" href="/board">完整看板 <span class="arw">→</span></a>
+      </div>
+      <div class="dash-cols">
+        <div class="dash-col">
+          <div class="dash-col-head">
+            <span class="st-dot" style="background:var(--st-running);box-shadow:0 0 7px var(--st-running)"></span>
+            <span>进行中</span><span class="count" id="dashRunningCount"></span>
+          </div>
+          <div class="dash-list" id="dashRunning"></div>
+        </div>
+        <div class="dash-col">
+          <div class="dash-col-head">
+            <span class="st-dot" style="background:var(--st-review);box-shadow:0 0 7px var(--st-review)"></span>
+            <span>待审批</span><span class="count" id="dashReviewCount"></span>
+          </div>
+          <div class="dash-list" id="dashReview"></div>
+        </div>
+      </div>
     </div>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeModal('taskModal')">取消</button>
-      <button class="btn primary" onclick="submitTask()">创建</button>
-    </div>
+
+    <aside class="dash-side">
+      <div class="dash-sec-head">
+        <span class="dash-sec-title">项目</span>
+        <span class="spacer"></span>
+        <button class="btn xs" onclick="openProjectModal()">新建</button>
+      </div>
+      <div class="dash-projects" id="dashProjects"></div>
+
+      <div class="dash-sec-head dash-sec-gap">
+        <span class="dash-sec-title">智能体</span>
+        <span class="spacer"></span>
+        <a class="sec-link" href="/agents">管理 <span class="arw">→</span></a>
+      </div>
+      <div id="dashAgents" class="dash-agents"></div>
+      <div class="dash-links">
+        <a class="t-link" href="/roles">角色</a>
+        <a class="t-link" href="/skills">技能</a>
+        <a class="t-link" href="/history">历史</a>
+        <a class="t-link" href="/autopilots">定时任务</a>
+      </div>
+    </aside>
   </div>
 </div>
 {{end}}

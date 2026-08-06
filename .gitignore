@@ -1,3 +1,15 @@
 /paihuo
+/paihuo.exe
+/bin/
 paihuo.db*
 *.db-journal
+/sessions/
+/skills/
+/node_modules/
+/playwright-report/
+/test-results/
+/coverage.out
+/coverage.html
+.env
+.env.*
+!.env.example

@@ -1,0 +1,48 @@
+{{define "content"}}
+<header class="page-header">
+  <span class="crumb">派活 / <b>定时任务</b></span>
+  <span class="spacer"></span>
+  <button class="btn brand sm" onclick="openScheduleModal()">
+    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    新建定时任务
+  </button>
+</header>
+<div class="page-content">
+  <div class="toolbar">
+    <span class="toolbar-note">按 cron 表达式周期创建任务并自动指派（支持秒级，如 <code>0 9 * * *</code>）</span>
+    <span class="spacer"></span>
+  </div>
+  <div class="list-wrap">
+    <table class="list-grid">
+      <thead><tr><th>名称</th><th>Cron</th><th>角色</th><th>标题模板</th><th>上次执行</th><th>启用</th><th style="width:100px">操作</th></tr></thead>
+      <tbody id="scheduleList"></tbody>
+    </table>
+    <div id="scheduleEmpty" class="empty hidden">还没有定时任务，点击右上角「新建定时任务」</div>
+  </div>
+</div>
+
+<div class="modal hidden" id="scheduleModal">
+  <div class="modal-box">
+    <h3 id="scheduleModalTitle">新建定时任务</h3>
+    <div class="sub">模板变量：{{"{{.date}}"}} 日期、{{"{{.time}}"}} 时间、{{"{{.name}}"}} 任务名</div>
+    <input type="hidden" id="sId">
+    <label class="field">名称 <input id="sName" placeholder="每日巡检"></label>
+    <div class="row">
+      <label class="field">Cron 表达式 <input id="sCron" placeholder="0 9 * * *" value="0 9 * * *"></label>
+      <label class="field">角色 <select id="sAgent"></select></label>
+    </div>
+    <label class="field">生成任务的权限
+      <select id="sPerm"><option value="full">自动（完成后派发代码合并任务）</option><option value="review">人工审批（通过后由 Agent 合并）</option></select>
+    </label>
+    <label class="field">标题模板 <input id="sTitle" placeholder="每日巡检 {{"{{.date}}"}}"></label>
+    <label class="field">提示词模板 <textarea id="sBody" rows="4" placeholder="检查服务状态并汇报。可用 {{"{{.date}}"}} 变量"></textarea></label>
+    <label class="field" style="display:flex;gap:8px;align-items:center;margin-top:12px">
+      <input type="checkbox" id="sEnabled" checked style="width:auto"> 启用
+    </label>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('scheduleModal')">取消</button>
+      <button class="btn primary" onclick="submitSchedule()">保存</button>
+    </div>
+  </div>
+</div>
+{{end}}

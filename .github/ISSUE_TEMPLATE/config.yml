@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/ZHYfeng/paihuo/security/policy
+    about: Please use the private security-reporting path and do not disclose vulnerabilities in a public issue.
+  - name: Usage and support
+    url: https://github.com/ZHYfeng/paihuo/blob/main/SUPPORT.md
+    about: Read the support guide before opening an issue.

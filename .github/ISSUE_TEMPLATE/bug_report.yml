@@ -1,0 +1,52 @@
+name: Bug report
+description: Report a reproducible problem in PaiHuo.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report a problem. Do not include access tokens, API keys, task prompts containing secrets, or private repository contents.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Tell us what you expected and what actually happened.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      description: Redact secrets and private paths before posting.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: PaiHuo version
+      description: Output of `paihuo --version`, or the commit SHA.
+      placeholder: dev
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include Linux distribution, Go version (if built from source), browser, tmux, and relevant agent CLI versions.
+      placeholder: |
+        OS: Ubuntu 24.04
+        Browser: Chrome 136
+        tmux: 3.4
+        Agent CLI: codex ...
+    validations:
+      required: true

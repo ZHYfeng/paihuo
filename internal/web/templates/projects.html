@@ -1,0 +1,42 @@
+{{define "content"}}
+<header class="page-header">
+  <span class="crumb">派活 / <b>项目</b></span>
+  <span class="spacer"></span>
+  <button class="btn brand sm" onclick="openProjectModal()">
+    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    新建项目
+  </button>
+</header>
+<div class="page-content">
+
+  <!-- 项目列表 -->
+  <div id="projectListShell">
+    <div class="toolbar">
+      <input id="pSearch" class="inp" placeholder="搜索项目…" oninput="renderProjectList()">
+      <span class="spacer"></span>
+      <span id="projectCount" class="count-info"></span>
+    </div>
+    <div class="project-grid" id="projectGrid"></div>
+    <div id="projectEmpty" class="empty hidden">还没有项目。项目把任务和角色产出聚合到一起，并绑定工作目录：先建项目，再往看板里派活。</div>
+  </div>
+
+  <!-- 项目详情 -->
+  <div id="projectDetailShell" class="hidden">
+    <header class="page-header">
+      <button class="btn ghost sm" onclick="closeProjectDetail()">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        返回
+      </button>
+      <span class="crumb" id="pdCrumb"></span>
+      <span class="spacer"></span>
+      <span id="pdBadge"></span>
+      <button class="btn sm danger" onclick="deleteProject()">删除</button>
+    </header>
+    <div class="project-detail">
+      <div class="detail-main" id="pdMain"></div>
+      <aside class="detail-side" id="pdSide"></aside>
+    </div>
+  </div>
+</div>
+
+{{end}}

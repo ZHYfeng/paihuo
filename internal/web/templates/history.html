@@ -1,0 +1,35 @@
+{{define "content"}}
+<header class="page-header">
+  <span class="crumb">派活 / <b>历史</b></span>
+  <span class="spacer"></span>
+</header>
+<div class="page-content">
+  <div class="toolbar">
+    <select id="hAgent" class="sel-md" onchange="loadHistory()"><option value="">全部角色</option></select>
+    <select id="hStatus" class="sel-sm" onchange="loadHistory()">
+      <option value="">全部状态</option>
+      <option value="succeeded">完成</option>
+      <option value="failed">失败</option>
+      <option value="cancelled">已取消</option>
+      <option value="awaiting_review">待审批</option>
+      <option value="queued">待执行</option>
+      <option value="running">执行中</option>
+    </select>
+    <input id="hDays" type="number" min="0" placeholder="最近N天" class="sel-xs" onchange="loadHistory()">
+    <button class="btn sm" onclick="loadHistory()">筛选</button>
+    <span class="spacer"></span>
+    <button class="btn sm danger" onclick="deleteSelected()">删除选中（<span id="hSelCount">0</span>）</button>
+    <button class="btn sm danger" onclick="cleanupHistory()">清理筛选结果</button>
+  </div>
+  <div class="list-wrap">
+    <table class="list-grid">
+      <thead><tr>
+        <th class="chk"><input type="checkbox" id="hCheckAll" onclick="toggleAll()"></th>
+        <th>ID</th><th>标题</th><th>角色</th><th>项目</th><th>权限</th><th>状态</th><th>轮次</th><th>创建</th><th>结束</th><th style="width:110px">操作</th>
+      </tr></thead>
+      <tbody id="historyBody"></tbody>
+    </table>
+    <div id="historyEmpty" class="empty hidden">没有符合条件的任务</div>
+  </div>
+</div>
+{{end}}

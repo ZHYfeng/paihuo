@@ -1,0 +1,17 @@
+{
+  "name": "paihuo",
+  "private": true,
+  "description": "Development tooling for PaiHuo's embedded frontend",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:frontend": "./scripts/build-frontend.sh",
+    "check:frontend": "./scripts/build-frontend.sh --check",
+    "test:e2e": "./scripts/e2e.sh"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1",
+    "playwright": "1.62.1"
+  }
+}
