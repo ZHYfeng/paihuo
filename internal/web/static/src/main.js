@@ -1,5 +1,5 @@
 // 模块 main（由 scripts/split-frontend.py 生成）
-import { addChip, agentTab, closeAgentDetail, deleteAgent, hideAgentDetail, openAgentDetail, openAgentModal, refreshAgentCatalog, removeChip, renderAgentList, renderAgentModalSchema, renderAgentOverview, saveAgentConcurrency, saveAgentConfig, setAgentView, showAgentDetail, submitAgent, syncModelThinking, toggleSkill } from "./agents.js";
+import { addChip, agentTab, agentTabFromCard, closeAgentDetail, deleteAgent, hideAgentDetail, openAgentDetail, openAgentModal, refreshAgentCatalog, removeChip, renderAgentList, renderAgentModalSchema, renderAgentOverview, saveAgentConcurrency, saveAgentConfig, setAgentView, showAgentDetail, submitAgent, syncModelThinking, toggleAgent, toggleSkill } from "./agents.js";
 import { api, closeModal, esc, fmtDur, fmtPct, logout, state, toast } from "./core.js";
 import { loadDashboard } from "./dashboard.js";
 import { cleanupHistory, deleteSelected, loadHistory, selectAllNonMergeTasks, toggleAll, toggleRow } from "./history.js";
@@ -397,6 +397,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 // ===== 模板 onclick 等引用的全局函数（脚本自动生成，勿手改） =====
 window.addChip = addChip;
 window.agentTab = agentTab;
+window.agentTabFromCard = agentTabFromCard;
 window.applyFilters = applyFilters;
 window.applyTemplate = applyTemplate;
 window.cleanupHistory = cleanupHistory;
@@ -476,6 +477,7 @@ window.syncModelThinking = syncModelThinking;
 window.syncTaskConcurrency = syncTaskConcurrency;
 window.syncTaskDependency = syncTaskDependency;
 window.syncTaskRunMode = syncTaskRunMode;
+window.toggleAgent = toggleAgent;
 window.toggleAll = toggleAll;
 window.toggleAllSkills = toggleAllSkills;
 window.toggleRow = toggleRow;

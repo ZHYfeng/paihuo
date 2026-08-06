@@ -29,12 +29,40 @@ export function agentTaskStats(a) {
   };
 }
 
+export function filteredAgents() {
+  const q = (document.getElementById("aSearch")?.value || "").trim().toLowerCase();
+  const list = state.agents.filter(a => {
+    if (!q) return true;
+    const rc = a.role_config || {};
+    return [a.name, a.description, a.cli, rc.model]
+      .some(value => String(value || "").toLowerCase().includes(q));
+  });
+  return { list, query: q };
+}
+
+export function renderAgentEmpty(list, query) {
+  const empty = document.getElementById("agentEmpty");
+  if (!empty) return;
+  empty.textContent = list.length
+    ? ""
+    : query
+      ? "没有符合条件的角色"
+      : "还没有角色。每个角色绑定一种 CLI，配置按该 CLI 的官方文档深度定制。";
+  empty.classList.toggle("hidden", list.length > 0);
+}
+
+export function agentActionsHTML(a) {
+  return `
+    <button class="btn xs" title="打开详情并切到配置 tab" onclick="event.stopPropagation();agentTabFromCard(${a.id})">配置</button>
+    <button class="btn xs" title="编辑角色基本信息和配置" onclick="event.stopPropagation();openAgentModal(${a.id})">编辑</button>
+    <button class="btn xs" title="${a.enabled ? "停用" : "启用"}角色" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "停用" : "启用"}</button>
+    <button class="btn xs danger" title="删除角色" aria-label="删除角色 ${esc(a.name)}" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}</button>`;
+}
+
 export function renderAgentGrid() {
   const grid = document.getElementById("agentGrid");
   if (!grid) return;
-  const q = (document.getElementById("aSearch")?.value || "").trim().toLowerCase();
-  const list = state.agents.filter(a =>
-    !q || a.name.toLowerCase().includes(q) || (a.description || "").toLowerCase().includes(q));
+  const { list, query } = filteredAgents();
   grid.innerHTML = list.map(a => {
     const rc = a.role_config || {};
     const st = agentTaskStats(a);
@@ -56,15 +84,11 @@ export function renderAgentGrid() {
         <span><b>${st.total}</b> 任务</span>
         <span><b style="color:var(--st-running)">${st.inFlight}</b> 进行中</span>
         <span><b style="color:var(--st-review)">${st.review}</b> 待审批</span>
-        <span class="ac-ops">
-          <button class="btn xs" title="打开详情并切到配置 tab" onclick="event.stopPropagation();agentTabFromCard(${a.id})">配置</button>
-          <button class="btn xs" onclick="event.stopPropagation();openAgentModal(${a.id})">编辑</button>
-          <button class="btn xs" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "停用" : "启用"}</button>
-          <button class="btn xs danger" title="删除角色" aria-label="删除角色 ${esc(a.name)}" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}</button>
-        </span>
       </div>
+      <div class="ac-ops">${agentActionsHTML(a)}</div>
     </div>`;
   }).join("");
+  renderAgentEmpty(list, query);
   const cnt = document.getElementById("agentCount");
   if (cnt) cnt.textContent = `${list.length} 个角色`;
 }
@@ -72,8 +96,7 @@ export function renderAgentGrid() {
 export function renderAgentTable() {
   const body = document.getElementById("agentList");
   if (!body) return;
-  const q = (document.getElementById("aSearch")?.value || "").trim().toLowerCase();
-  const list = state.agents.filter(a => !q || a.name.toLowerCase().includes(q));
+  const { list, query } = filteredAgents();
   body.innerHTML = list.map(a => {
     const rc = a.role_config || {};
     return `<tr onclick="openAgentDetail(${a.id})">
@@ -87,15 +110,11 @@ export function renderAgentTable() {
       <td class="num">${esc(String(a.max_concurrency || 1))}</td>
       <td><span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "启用" : "停用"}</span></td>
       <td>
-        <span class="ops">
-          <button class="btn xs" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "停用" : "启用"}</button>
-          <button class="btn xs danger" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}删除</button>
-        </span>
+        <span class="ops">${agentActionsHTML(a)}</span>
       </td>
     </tr>`;
   }).join("");
-  const empty = document.getElementById("agentEmpty");
-  if (empty) empty.classList.toggle("hidden", list.length > 0);
+  renderAgentEmpty(list, query);
   const cnt = document.getElementById("agentCount");
   if (cnt) cnt.textContent = `${list.length} 个角色`;
 }
@@ -123,6 +142,7 @@ export async function refreshAgentCatalog() {
 
 export async function toggleAgent(id) {
   const a = state.agents.find(x => x.id === id);
+  if (!a) return;
   try {
     await api(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: !a.enabled }) });
     await loadAll();

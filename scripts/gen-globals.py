@@ -26,10 +26,12 @@ for d in (TPL, SRC):
         if not (f.endswith(".html") or f.endswith(".js")):
             continue
         t = open(os.path.join(d, f), encoding="utf-8").read()
-        for m in re.finditer(r'on[a-z]+\s*=\s*"([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(', t):
-            g = m.group(1)
-            if g not in KEYWORDS and g in exports:
-                needed.add(g)
+        for attr in re.finditer(r'\bon[a-z]+\s*=\s*"([^"]*)"', t):
+            # 动态渲染的按钮通常先调用 event.stopPropagation()，再调用
+            # 真正的页面函数；不能只取 onclick 属性中的第一个调用。
+            for g in re.findall(r"(?<![.${\w$])([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(", attr.group(1)):
+                if g not in KEYWORDS and g in exports:
+                    needed.add(g)
 
 # 更新 main.js 标记区间
 src = open(MAIN, encoding="utf-8").read()

@@ -1003,7 +1003,7 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   font-size: 11.5px; color: var(--fg-faint); font-variant-numeric: tabular-nums;
 }
 .ac-stats b { font-size: 13px; color: var(--fg); font-weight: 700; }
-.ac-ops { margin-left: auto; display: flex; gap: 4px; flex-shrink: 0; }
+.ac-ops { display: flex; justify-content: flex-end; gap: 4px; flex-wrap: wrap; margin-top: 10px; }
 
 /* CLI 专属头像渐变 */
 .av-omp { background: linear-gradient(135deg, #38bdf8, #0284c7); }

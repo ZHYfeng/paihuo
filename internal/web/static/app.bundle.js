@@ -2086,11 +2086,32 @@
       review: ts.filter((t) => t.status === "awaiting_review").length
     };
   }
+  function filteredAgents() {
+    const q = (document.getElementById("aSearch")?.value || "").trim().toLowerCase();
+    const list = state.agents.filter((a) => {
+      if (!q) return true;
+      const rc = a.role_config || {};
+      return [a.name, a.description, a.cli, rc.model].some((value) => String(value || "").toLowerCase().includes(q));
+    });
+    return { list, query: q };
+  }
+  function renderAgentEmpty(list, query) {
+    const empty = document.getElementById("agentEmpty");
+    if (!empty) return;
+    empty.textContent = list.length ? "" : query ? "\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u89D2\u8272" : "\u8FD8\u6CA1\u6709\u89D2\u8272\u3002\u6BCF\u4E2A\u89D2\u8272\u7ED1\u5B9A\u4E00\u79CD CLI\uFF0C\u914D\u7F6E\u6309\u8BE5 CLI \u7684\u5B98\u65B9\u6587\u6863\u6DF1\u5EA6\u5B9A\u5236\u3002";
+    empty.classList.toggle("hidden", list.length > 0);
+  }
+  function agentActionsHTML(a) {
+    return `
+    <button class="btn xs" title="\u6253\u5F00\u8BE6\u60C5\u5E76\u5207\u5230\u914D\u7F6E tab" onclick="event.stopPropagation();agentTabFromCard(${a.id})">\u914D\u7F6E</button>
+    <button class="btn xs" title="\u7F16\u8F91\u89D2\u8272\u57FA\u672C\u4FE1\u606F\u548C\u914D\u7F6E" onclick="event.stopPropagation();openAgentModal(${a.id})">\u7F16\u8F91</button>
+    <button class="btn xs" title="${a.enabled ? "\u505C\u7528" : "\u542F\u7528"}\u89D2\u8272" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "\u505C\u7528" : "\u542F\u7528"}</button>
+    <button class="btn xs danger" title="\u5220\u9664\u89D2\u8272" aria-label="\u5220\u9664\u89D2\u8272 ${esc(a.name)}" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}</button>`;
+  }
   function renderAgentGrid() {
     const grid = document.getElementById("agentGrid");
     if (!grid) return;
-    const q = (document.getElementById("aSearch")?.value || "").trim().toLowerCase();
-    const list = state.agents.filter((a) => !q || a.name.toLowerCase().includes(q) || (a.description || "").toLowerCase().includes(q));
+    const { list, query } = filteredAgents();
     grid.innerHTML = list.map((a) => {
       const rc = a.role_config || {};
       const st = agentTaskStats(a);
@@ -2112,23 +2133,18 @@
         <span><b>${st.total}</b> \u4EFB\u52A1</span>
         <span><b style="color:var(--st-running)">${st.inFlight}</b> \u8FDB\u884C\u4E2D</span>
         <span><b style="color:var(--st-review)">${st.review}</b> \u5F85\u5BA1\u6279</span>
-        <span class="ac-ops">
-          <button class="btn xs" title="\u6253\u5F00\u8BE6\u60C5\u5E76\u5207\u5230\u914D\u7F6E tab" onclick="event.stopPropagation();agentTabFromCard(${a.id})">\u914D\u7F6E</button>
-          <button class="btn xs" onclick="event.stopPropagation();openAgentModal(${a.id})">\u7F16\u8F91</button>
-          <button class="btn xs" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "\u505C\u7528" : "\u542F\u7528"}</button>
-          <button class="btn xs danger" title="\u5220\u9664\u89D2\u8272" aria-label="\u5220\u9664\u89D2\u8272 ${esc(a.name)}" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}</button>
-        </span>
       </div>
+      <div class="ac-ops">${agentActionsHTML(a)}</div>
     </div>`;
     }).join("");
+    renderAgentEmpty(list, query);
     const cnt = document.getElementById("agentCount");
     if (cnt) cnt.textContent = `${list.length} \u4E2A\u89D2\u8272`;
   }
   function renderAgentTable() {
     const body = document.getElementById("agentList");
     if (!body) return;
-    const q = (document.getElementById("aSearch")?.value || "").trim().toLowerCase();
-    const list = state.agents.filter((a) => !q || a.name.toLowerCase().includes(q));
+    const { list, query } = filteredAgents();
     body.innerHTML = list.map((a) => {
       const rc = a.role_config || {};
       return `<tr onclick="openAgentDetail(${a.id})">
@@ -2142,15 +2158,11 @@
       <td class="num">${esc(String(a.max_concurrency || 1))}</td>
       <td><span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "\u542F\u7528" : "\u505C\u7528"}</span></td>
       <td>
-        <span class="ops">
-          <button class="btn xs" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "\u505C\u7528" : "\u542F\u7528"}</button>
-          <button class="btn xs danger" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}\u5220\u9664</button>
-        </span>
+        <span class="ops">${agentActionsHTML(a)}</span>
       </td>
     </tr>`;
     }).join("");
-    const empty = document.getElementById("agentEmpty");
-    if (empty) empty.classList.toggle("hidden", list.length > 0);
+    renderAgentEmpty(list, query);
     const cnt = document.getElementById("agentCount");
     if (cnt) cnt.textContent = `${list.length} \u4E2A\u89D2\u8272`;
   }
@@ -2176,7 +2188,22 @@
       }
     }
   }
+  async function toggleAgent(id) {
+    const a = state.agents.find((x) => x.id === id);
+    if (!a) return;
+    try {
+      await api(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: !a.enabled }) });
+      await loadAll();
+      renderAgentList();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
   var pendingAgentTab = null;
+  function agentTabFromCard(id) {
+    pendingAgentTab = "config";
+    openAgentDetail(id);
+  }
   function openAgentDetail(id) {
     location.hash = "#/agent/" + id;
   }
@@ -3237,6 +3264,7 @@
   });
   window.addChip = addChip;
   window.agentTab = agentTab;
+  window.agentTabFromCard = agentTabFromCard;
   window.applyFilters = applyFilters;
   window.applyTemplate = applyTemplate;
   window.cleanupHistory = cleanupHistory;
@@ -3316,6 +3344,7 @@
   window.syncTaskConcurrency = syncTaskConcurrency;
   window.syncTaskDependency = syncTaskDependency;
   window.syncTaskRunMode = syncTaskRunMode;
+  window.toggleAgent = toggleAgent;
   window.toggleAll = toggleAll;
   window.toggleAllSkills = toggleAllSkills;
   window.toggleRow = toggleRow;
