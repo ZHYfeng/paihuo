@@ -207,3 +207,90 @@ func TestCodexModelsProbeUsesHostCapabilitiesAndHidesAliases(t *testing.T) {
 		t.Fatalf("schema 思考档位映射不正确: %v", opts)
 	}
 }
+
+func TestClaudeModelsProbeReadsEffectiveSettingsAndEnvironment(t *testing.T) {
+	home := t.TempDir()
+	project := filepath.Join(home, "repo", "nested")
+	if err := os.MkdirAll(filepath.Join(home, "repo", ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{
+  "model": "opus[1m]",
+  "availableModels": ["sonnet", "claude-haiku-4-5"],
+  "modelOverrides": {"claude-opus-5": "gateway/opus-5"},
+  "env": {"ANTHROPIC_DEFAULT_OPUS_MODEL": "gateway/opus-default"}
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "repo", ".claude", "settings.json"), []byte(`{"model":"project-opus"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".claude", "settings.local.json"), []byte(`{"model":"local-sonnet"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range claudeSettingsModelKeys {
+		t.Setenv(key, "")
+	}
+	t.Setenv("ANTHROPIC_MODEL", "env/claude-model")
+
+	got := claudeModelsProbeAt(home, project)
+	if len(got) == 0 || got[0] != "env/claude-model" {
+		t.Fatalf("直接环境变量应优先成为第一候选，得到 %v", got)
+	}
+	for _, want := range []string{
+		"local-sonnet", "project-opus", "opus[1m]", "sonnet", "claude-haiku-4-5",
+		"claude-opus-5", "gateway/opus-5", "gateway/opus-default", "opus",
+	} {
+		if !containsModel(got, want) {
+			t.Fatalf("Claude 模型候选缺少 %q，得到 %v", want, got)
+		}
+	}
+}
+
+func TestClaudeModelsProbeReadsStateModelIDs(t *testing.T) {
+	home := t.TempDir()
+	state := `{
+  "additionalModelOptionsCache": [{"value":"custom/fable"}],
+  "modelAccessCache": [{"model":"access/sonnet"}],
+  "orgModelDefaultCache": {"model":"org/opus"},
+  "clientDataCacheSlots": {"slot-a":{"model":"slot/haiku"}},
+  "projects": {
+    "/repo": {"lastModelUsage": {
+      "claude-opus-4-8[1m]": {"inputTokens": 1},
+      "<synthetic>": {"inputTokens": 2}
+    }}
+  }
+}`
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(state), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range claudeSettingsModelKeys {
+		t.Setenv(key, "")
+	}
+	got := claudeModelsProbeAt(home, filepath.Join(home, "repo"))
+	for _, want := range []string{"custom/fable", "access/sonnet", "org/opus", "slot/haiku", "claude-opus-4-8[1m]"} {
+		if !containsModel(got, want) {
+			t.Fatalf("Claude 状态缓存缺少真实模型 %q，得到 %v", want, got)
+		}
+	}
+	if containsModel(got, "<synthetic>") {
+		t.Fatalf("合成模型占位符不应成为候选: %v", got)
+	}
+}
+
+func containsModel(models []string, want string) bool {
+	for _, model := range models {
+		if model == want {
+			return true
+		}
+	}
+	return false
+}
