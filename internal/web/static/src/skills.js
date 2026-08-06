@@ -4,6 +4,8 @@ import { loadProjDatalist } from "./projects.js";
 
 export function setSkillTab(tab) {
   const skills = tab === "skills";
+  if (!skills && /^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
+  if (!skills) hideSkillDetail();
   document.getElementById("segSkillLib").classList.toggle("active", skills);
   document.getElementById("segExt").classList.toggle("active", !skills);
   document.getElementById("skillShell").classList.toggle("hidden", !skills);
@@ -60,7 +62,7 @@ export function renderSkillLib() {
   if (!grid) return;
   const lib = state.skillLib;
   grid.innerHTML = lib.map(s => `
-    <div class="skill-card">
+    <article class="skill-card" tabindex="0" role="button" aria-label="查看技能 ${esc(s.name)}" onclick="openSkillDetail(${s.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSkillDetail(${s.id})}">
       <div class="sk-top">
         <span class="avatar">${esc((s.name || "?").slice(0, 1))}</span>
         <div class="sk-id">
@@ -74,14 +76,139 @@ export function renderSkillLib() {
       <div class="sk-foot">
         <span class="count-info">来源：${esc(s.source_path || "-")} · ${(s.created_at || "").slice(0, 10)}</span>
         <span class="ac-ops">
-          <button class="btn xs danger" onclick="deleteSkill(${s.id})">${icon("trash")}删除</button>
+          <button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s.id})">详情${icon("expand")}</button>
+          <button class="btn xs danger" onclick="deleteSkill(${s.id});event.stopPropagation()">${icon("trash")}删除</button>
         </span>
       </div>
-    </div>`).join("");
+    </article>`).join("");
   const empty = document.getElementById("skillEmpty");
   if (empty) empty.classList.toggle("hidden", lib.length > 0);
   const cnt = document.getElementById("skillCount");
   if (cnt) cnt.textContent = `${lib.length} 个技能`;
+}
+
+function formatSkillBytes(size) {
+  const n = Number(size);
+  if (!Number.isFinite(n) || n < 0) return "-";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function skillDetailSideHTML(skill) {
+  return `
+    <section class="side-panel">
+      <div class="side-heading">技能信息</div>
+      <div class="prop-row"><span class="k">名称</span><span class="v" title="${esc(skill.name)}">${esc(skill.name)}</span></div>
+      <div class="prop-row"><span class="k">技能目录</span><code class="prop-mono" title="${esc(skill.dir)}">${esc(skill.dir)}</code></div>
+      <div class="prop-row"><span class="k">来源路径</span><code class="prop-mono" title="${esc(skill.source_path || "-")}">${esc(skill.source_path || "-")}</code></div>
+      <div class="prop-row"><span class="k">创建时间</span><span class="v">${esc((skill.created_at || "").slice(0, 16).replace("T", " ") || "-")}</span></div>
+      <div class="prop-row"><span class="k">说明文件</span><span class="v">SKILL.md${skill.size_bytes !== undefined ? ` · ${formatSkillBytes(skill.size_bytes)}` : ""}</span></div>
+    </section>
+    <div class="side-actions">
+      <div class="side-heading">操作</div>
+      <div class="detail-actions">
+        <button class="btn" onclick="copySkillContent()">${icon("copy")}复制 SKILL.md</button>
+        <button class="btn danger" onclick="deleteSkillFromDetail()">${icon("trash")}删除技能</button>
+      </div>
+    </div>`;
+}
+
+function renderSkillDetailShell(skill) {
+  const main = document.getElementById("sdMain");
+  const side = document.getElementById("sdSide");
+  if (!main || !side) return;
+  document.getElementById("sdCrumb").innerHTML = `技能 / <b>${esc(skill.name)}</b>`;
+  document.getElementById("sdBadge").innerHTML = `<span class="badge" style="--st-color:var(--brand)">SKILL.md</span>`;
+  main.innerHTML = `
+    <section class="skill-hero">
+      <span class="avatar lg skill-avatar">${esc((skill.name || "?").slice(0, 1))}</span>
+      <div class="skill-hero-copy">
+        <div class="detail-id">技能说明 · Markdown</div>
+        <h2>${esc(skill.name)}</h2>
+        ${skill.description ? `<div class="skill-hero-desc">${esc(skill.description)}</div>` : ""}
+      </div>
+    </section>
+    <div class="skill-doc-head">
+      <div>
+        <div class="section-title">SKILL.md</div>
+        <div class="section-sub" id="sdDocMeta">正在读取技能说明…</div>
+      </div>
+      <button class="btn ghost xs" onclick="copySkillContent()">${icon("copy")}复制</button>
+    </div>
+    <pre class="skill-doc" id="sdDoc">加载中…</pre>`;
+  side.innerHTML = skillDetailSideHTML(skill);
+}
+
+function renderSkillDocument(detail) {
+  const doc = document.getElementById("sdDoc");
+  const meta = document.getElementById("sdDocMeta");
+  if (!doc || !meta) return;
+  const content = String(detail.content || "");
+  doc.textContent = content || "（SKILL.md 为空）";
+  doc.classList.toggle("is-empty", !content);
+  meta.textContent = content ? `${formatSkillBytes(detail.size_bytes ?? content.length)} · ${content.split("\n").length} 行` : "空文件";
+  const side = document.getElementById("sdSide");
+  if (side) side.innerHTML = skillDetailSideHTML(detail);
+}
+
+export function openSkillDetail(id) {
+  location.hash = "#/skill/" + id;
+}
+
+export function closeSkillDetail() {
+  location.hash = "#/";
+}
+
+export function hideSkillDetail() {
+  document.getElementById("skillDetailShell")?.classList.add("hidden");
+  document.getElementById("skillShell")?.classList.remove("hidden");
+  state.skillDetail = null;
+}
+
+export async function showSkillDetail(id) {
+  let skill = state.skillLib.find(x => x.id === id);
+  if (!skill) {
+    await loadSkillLib();
+    renderSkillLib();
+    skill = state.skillLib.find(x => x.id === id);
+  }
+  if (!skill) {
+    toast("技能不存在或已被删除", true);
+    return;
+  }
+  state.skillDetail = skill;
+  document.getElementById("skillShell")?.classList.add("hidden");
+  document.getElementById("skillDetailShell")?.classList.remove("hidden");
+  renderSkillDetailShell(skill);
+  try {
+    const detail = await api(`/api/skills/${id}`);
+    if (state.skillDetail?.id !== id) return;
+    state.skillDetail = detail;
+    renderSkillDocument(detail);
+  } catch (e) {
+    if (state.skillDetail?.id !== id) return;
+    const doc = document.getElementById("sdDoc");
+    const meta = document.getElementById("sdDocMeta");
+    if (doc) { doc.textContent = `读取失败：${e.message}`; doc.classList.add("is-error"); }
+    if (meta) meta.textContent = "无法读取 SKILL.md";
+  }
+}
+
+export async function copySkillContent() {
+  const content = state.skillDetail?.content;
+  if (content === undefined) return toast("技能说明还在加载中", true);
+  try {
+    await navigator.clipboard.writeText(content);
+    toast("已复制 SKILL.md");
+  } catch (_) {
+    toast("复制失败，请手动选择内容", true);
+  }
+}
+
+export function deleteSkillFromDetail() {
+  const id = state.skillDetail?.id;
+  if (id !== undefined) deleteSkill(id);
 }
 
 export function openSkillModal() {
@@ -128,6 +255,10 @@ export async function deleteSkill(id) {
     toast("已删除");
     await loadSkillLib();
     renderSkillLib();
+    if (state.skillDetail?.id === id) {
+      hideSkillDetail();
+      if (/^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
+    }
   } catch (e) { toast(e.message, true); }
 }
 

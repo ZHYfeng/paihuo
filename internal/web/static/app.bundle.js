@@ -29,8 +29,10 @@
     projectView: null,
     // 项目详情中的项目 id
     agentView: "grid",
-    skillLib: []
+    skillLib: [],
     // 注册到 paihuo 工作目录的技能库 [{id,name,description,dir}]
+    skillDetail: null
+    // 当前打开的技能详情（含 SKILL.md 内容）
   };
   var STATUS_LABEL = {
     queued: "\u5F85\u6267\u884C",
@@ -314,6 +316,8 @@
   // internal/web/static/src/skills.js
   function setSkillTab(tab) {
     const skills = tab === "skills";
+    if (!skills && /^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
+    if (!skills) hideSkillDetail();
     document.getElementById("segSkillLib").classList.toggle("active", skills);
     document.getElementById("segExt").classList.toggle("active", !skills);
     document.getElementById("skillShell").classList.toggle("hidden", !skills);
@@ -372,7 +376,7 @@
     if (!grid) return;
     const lib = state.skillLib;
     grid.innerHTML = lib.map((s) => `
-    <div class="skill-card">
+    <article class="skill-card" tabindex="0" role="button" aria-label="\u67E5\u770B\u6280\u80FD ${esc(s.name)}" onclick="openSkillDetail(${s.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSkillDetail(${s.id})}">
       <div class="sk-top">
         <span class="avatar">${esc((s.name || "?").slice(0, 1))}</span>
         <div class="sk-id">
@@ -386,14 +390,132 @@
       <div class="sk-foot">
         <span class="count-info">\u6765\u6E90\uFF1A${esc(s.source_path || "-")} \xB7 ${(s.created_at || "").slice(0, 10)}</span>
         <span class="ac-ops">
-          <button class="btn xs danger" onclick="deleteSkill(${s.id})">${icon("trash")}\u5220\u9664</button>
+          <button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s.id})">\u8BE6\u60C5${icon("expand")}</button>
+          <button class="btn xs danger" onclick="deleteSkill(${s.id});event.stopPropagation()">${icon("trash")}\u5220\u9664</button>
         </span>
       </div>
-    </div>`).join("");
+    </article>`).join("");
     const empty = document.getElementById("skillEmpty");
     if (empty) empty.classList.toggle("hidden", lib.length > 0);
     const cnt = document.getElementById("skillCount");
     if (cnt) cnt.textContent = `${lib.length} \u4E2A\u6280\u80FD`;
+  }
+  function formatSkillBytes(size) {
+    const n = Number(size);
+    if (!Number.isFinite(n) || n < 0) return "-";
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  function skillDetailSideHTML(skill) {
+    return `
+    <section class="side-panel">
+      <div class="side-heading">\u6280\u80FD\u4FE1\u606F</div>
+      <div class="prop-row"><span class="k">\u540D\u79F0</span><span class="v" title="${esc(skill.name)}">${esc(skill.name)}</span></div>
+      <div class="prop-row"><span class="k">\u6280\u80FD\u76EE\u5F55</span><code class="prop-mono" title="${esc(skill.dir)}">${esc(skill.dir)}</code></div>
+      <div class="prop-row"><span class="k">\u6765\u6E90\u8DEF\u5F84</span><code class="prop-mono" title="${esc(skill.source_path || "-")}">${esc(skill.source_path || "-")}</code></div>
+      <div class="prop-row"><span class="k">\u521B\u5EFA\u65F6\u95F4</span><span class="v">${esc((skill.created_at || "").slice(0, 16).replace("T", " ") || "-")}</span></div>
+      <div class="prop-row"><span class="k">\u8BF4\u660E\u6587\u4EF6</span><span class="v">SKILL.md${skill.size_bytes !== void 0 ? ` \xB7 ${formatSkillBytes(skill.size_bytes)}` : ""}</span></div>
+    </section>
+    <div class="side-actions">
+      <div class="side-heading">\u64CD\u4F5C</div>
+      <div class="detail-actions">
+        <button class="btn" onclick="copySkillContent()">${icon("copy")}\u590D\u5236 SKILL.md</button>
+        <button class="btn danger" onclick="deleteSkillFromDetail()">${icon("trash")}\u5220\u9664\u6280\u80FD</button>
+      </div>
+    </div>`;
+  }
+  function renderSkillDetailShell(skill) {
+    const main = document.getElementById("sdMain");
+    const side = document.getElementById("sdSide");
+    if (!main || !side) return;
+    document.getElementById("sdCrumb").innerHTML = `\u6280\u80FD / <b>${esc(skill.name)}</b>`;
+    document.getElementById("sdBadge").innerHTML = `<span class="badge" style="--st-color:var(--brand)">SKILL.md</span>`;
+    main.innerHTML = `
+    <section class="skill-hero">
+      <span class="avatar lg skill-avatar">${esc((skill.name || "?").slice(0, 1))}</span>
+      <div class="skill-hero-copy">
+        <div class="detail-id">\u6280\u80FD\u8BF4\u660E \xB7 Markdown</div>
+        <h2>${esc(skill.name)}</h2>
+        ${skill.description ? `<div class="skill-hero-desc">${esc(skill.description)}</div>` : ""}
+      </div>
+    </section>
+    <div class="skill-doc-head">
+      <div>
+        <div class="section-title">SKILL.md</div>
+        <div class="section-sub" id="sdDocMeta">\u6B63\u5728\u8BFB\u53D6\u6280\u80FD\u8BF4\u660E\u2026</div>
+      </div>
+      <button class="btn ghost xs" onclick="copySkillContent()">${icon("copy")}\u590D\u5236</button>
+    </div>
+    <pre class="skill-doc" id="sdDoc">\u52A0\u8F7D\u4E2D\u2026</pre>`;
+    side.innerHTML = skillDetailSideHTML(skill);
+  }
+  function renderSkillDocument(detail) {
+    const doc = document.getElementById("sdDoc");
+    const meta = document.getElementById("sdDocMeta");
+    if (!doc || !meta) return;
+    const content = String(detail.content || "");
+    doc.textContent = content || "\uFF08SKILL.md \u4E3A\u7A7A\uFF09";
+    doc.classList.toggle("is-empty", !content);
+    meta.textContent = content ? `${formatSkillBytes(detail.size_bytes ?? content.length)} \xB7 ${content.split("\n").length} \u884C` : "\u7A7A\u6587\u4EF6";
+    const side = document.getElementById("sdSide");
+    if (side) side.innerHTML = skillDetailSideHTML(detail);
+  }
+  function openSkillDetail(id) {
+    location.hash = "#/skill/" + id;
+  }
+  function closeSkillDetail() {
+    location.hash = "#/";
+  }
+  function hideSkillDetail() {
+    document.getElementById("skillDetailShell")?.classList.add("hidden");
+    document.getElementById("skillShell")?.classList.remove("hidden");
+    state.skillDetail = null;
+  }
+  async function showSkillDetail(id) {
+    let skill = state.skillLib.find((x) => x.id === id);
+    if (!skill) {
+      await loadSkillLib();
+      renderSkillLib();
+      skill = state.skillLib.find((x) => x.id === id);
+    }
+    if (!skill) {
+      toast("\u6280\u80FD\u4E0D\u5B58\u5728\u6216\u5DF2\u88AB\u5220\u9664", true);
+      return;
+    }
+    state.skillDetail = skill;
+    document.getElementById("skillShell")?.classList.add("hidden");
+    document.getElementById("skillDetailShell")?.classList.remove("hidden");
+    renderSkillDetailShell(skill);
+    try {
+      const detail = await api(`/api/skills/${id}`);
+      if (state.skillDetail?.id !== id) return;
+      state.skillDetail = detail;
+      renderSkillDocument(detail);
+    } catch (e) {
+      if (state.skillDetail?.id !== id) return;
+      const doc = document.getElementById("sdDoc");
+      const meta = document.getElementById("sdDocMeta");
+      if (doc) {
+        doc.textContent = `\u8BFB\u53D6\u5931\u8D25\uFF1A${e.message}`;
+        doc.classList.add("is-error");
+      }
+      if (meta) meta.textContent = "\u65E0\u6CD5\u8BFB\u53D6 SKILL.md";
+    }
+  }
+  async function copySkillContent() {
+    const content = state.skillDetail?.content;
+    if (content === void 0) return toast("\u6280\u80FD\u8BF4\u660E\u8FD8\u5728\u52A0\u8F7D\u4E2D", true);
+    try {
+      await navigator.clipboard.writeText(content);
+      toast("\u5DF2\u590D\u5236 SKILL.md");
+    } catch (_) {
+      toast("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u9009\u62E9\u5185\u5BB9", true);
+    }
+  }
+  function deleteSkillFromDetail() {
+    const id = state.skillDetail?.id;
+    if (id !== void 0) deleteSkill(id);
   }
   function openSkillModal() {
     document.getElementById("sSkillPath").value = "";
@@ -440,6 +562,10 @@
       toast("\u5DF2\u5220\u9664");
       await loadSkillLib();
       renderSkillLib();
+      if (state.skillDetail?.id === id) {
+        hideSkillDetail();
+        if (/^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
+      }
     } catch (e) {
       toast(e.message, true);
     }
@@ -2576,6 +2702,12 @@
       }
       return;
     }
+    if (path === "/skills") {
+      const m = /^#\/skill\/(\d+)/.exec(h);
+      if (m) showSkillDetail(Number(m[1]));
+      else if (state.skillDetail !== null) hideSkillDetail();
+      return;
+    }
   }
   var ovTimer = null;
   function refreshOverviewSoon() {
@@ -2654,7 +2786,10 @@
         else if (path === "/agents") loadProvision();
         else if (path === "/projects") renderProjectList();
         else if (path === "/autopilots") renderScheduleList();
-        else if (path === "/skills") loadSkillLib().then(renderSkillLib);
+        else if (path === "/skills") loadSkillLib().then(() => {
+          renderSkillLib();
+          route();
+        });
         else if (path === "/settings") loadSettings();
       }).catch(() => {
       });
@@ -2699,7 +2834,8 @@
     } else if (path === "/autopilots") {
       renderScheduleList();
     } else if (path === "/skills") {
-      loadSkillLib().then(renderSkillLib);
+      await loadSkillLib();
+      renderSkillLib();
     } else if (path === "/settings") {
       loadSettings();
     }
@@ -2718,8 +2854,10 @@
   window.closeInstTerminal = closeInstTerminal;
   window.closeModal = closeModal;
   window.closeProjectDetail = closeProjectDetail;
+  window.closeSkillDetail = closeSkillDetail;
   window.closeTerminal = closeTerminal;
   window.copyLogs = copyLogs;
+  window.copySkillContent = copySkillContent;
   window.copyText = copyText;
   window.createDefaultRole = createDefaultRole;
   window.deleteAgent = deleteAgent;
@@ -2727,6 +2865,7 @@
   window.deleteSchedule = deleteSchedule;
   window.deleteSelected = deleteSelected;
   window.deleteSkill = deleteSkill;
+  window.deleteSkillFromDetail = deleteSkillFromDetail;
   window.deleteTask = deleteTask;
   window.deleteTemplate = deleteTemplate;
   window.endInteractiveTask = endInteractiveTask;
@@ -2744,6 +2883,7 @@
   window.openProjectModal = openProjectModal;
   window.openProjectTask = openProjectTask;
   window.openScheduleModal = openScheduleModal;
+  window.openSkillDetail = openSkillDetail;
   window.openSkillModal = openSkillModal;
   window.openSubTask = openSubTask;
   window.openTask = openTask;

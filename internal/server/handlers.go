@@ -1225,6 +1225,43 @@ func (s *Server) listSkills(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, skills)
 }
 
+type skillDetailResponse struct {
+	store.Skill
+	Content  string `json:"content"`
+	FileName string `json:"file_name"`
+	Size     int64  `json:"size_bytes"`
+}
+
+func (s *Server) getSkill(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	sk, err := s.st.GetSkill(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "技能不存在")
+		return
+	}
+
+	path := filepath.Join(sk.Dir, "SKILL.md")
+	fi, err := os.Stat(path)
+	if err != nil || fi.IsDir() {
+		writeErr(w, http.StatusNotFound, "技能说明文件不存在")
+		return
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "读取技能说明失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, skillDetailResponse{
+		Skill:    *sk,
+		Content:  string(b),
+		FileName: "SKILL.md",
+		Size:     fi.Size(),
+	})
+}
+
 // createSkill 定向添加：把源目录（含 SKILL.md）复制到 paihuo 工作目录并登记。
 func (s *Server) createSkill(w http.ResponseWriter, r *http.Request) {
 	var in struct {

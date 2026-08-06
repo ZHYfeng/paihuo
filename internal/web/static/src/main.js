@@ -7,7 +7,7 @@ import { closeProjectDetail, deleteProject, dirLoad, hideProjectDetail, mkdirCur
 import { appendInstLine, closeInstTerminal, copyText, createDefaultRole, installProvision, loadProvision, provState, refreshProvision } from "./provision.js";
 import { deleteSchedule, openScheduleModal, renderScheduleList, submitSchedule, toggleSchedule } from "./schedules.js";
 import { loadSettings, runCleanup, saveRetention, saveWtRetention } from "./settings.js";
-import { deleteSkill, deleteTemplate, loadSkillLib, loadTemplates, openExtModal, openSkillModal, removeExt, renderSkillLib, scanSkills, setSkillTab, submitExt, submitSkill } from "./skills.js";
+import { closeSkillDetail, copySkillContent, deleteSkill, deleteSkillFromDetail, deleteTemplate, hideSkillDetail, loadSkillLib, loadTemplates, openExtModal, openSkillDetail, openSkillModal, removeExt, renderSkillLib, scanSkills, setSkillTab, showSkillDetail, submitExt, submitSkill } from "./skills.js";
 import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskRunMode, wsDiscard, wsMerge } from "./task.js";
 import { closeTerminal, openTerminal, sendTaskInput, sendTerminalInput, syncTerminalInput } from "./terminal.js";
 
@@ -254,6 +254,12 @@ export function route() {
     }
     return;
   }
+  if (path === "/skills") {
+    const m = /^#\/skill\/(\d+)/.exec(h);
+    if (m) showSkillDetail(Number(m[1]));
+    else if (state.skillDetail !== null) hideSkillDetail();
+    return;
+  }
 }
 
 export let ovTimer = null;
@@ -332,7 +338,7 @@ document.addEventListener("visibilitychange", () => {
       else if (path === "/agents") loadProvision();
       else if (path === "/projects") renderProjectList();
       else if (path === "/autopilots") renderScheduleList();
-      else if (path === "/skills") loadSkillLib().then(renderSkillLib);
+      else if (path === "/skills") loadSkillLib().then(() => { renderSkillLib(); route(); });
       else if (path === "/settings") loadSettings();
     }).catch(() => {});
   }
@@ -371,7 +377,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   } else if (path === "/autopilots") {
     renderScheduleList();
   } else if (path === "/skills") {
-    loadSkillLib().then(renderSkillLib);
+    await loadSkillLib();
+    renderSkillLib();
   } else if (path === "/settings") {
     loadSettings();
   }
@@ -394,8 +401,10 @@ window.closeDetail = closeDetail;
 window.closeInstTerminal = closeInstTerminal;
 window.closeModal = closeModal;
 window.closeProjectDetail = closeProjectDetail;
+window.closeSkillDetail = closeSkillDetail;
 window.closeTerminal = closeTerminal;
 window.copyLogs = copyLogs;
+window.copySkillContent = copySkillContent;
 window.copyText = copyText;
 window.createDefaultRole = createDefaultRole;
 window.deleteAgent = deleteAgent;
@@ -403,6 +412,7 @@ window.deleteProject = deleteProject;
 window.deleteSchedule = deleteSchedule;
 window.deleteSelected = deleteSelected;
 window.deleteSkill = deleteSkill;
+window.deleteSkillFromDetail = deleteSkillFromDetail;
 window.deleteTask = deleteTask;
 window.deleteTemplate = deleteTemplate;
 window.endInteractiveTask = endInteractiveTask;
@@ -420,6 +430,7 @@ window.openProject = openProject;
 window.openProjectModal = openProjectModal;
 window.openProjectTask = openProjectTask;
 window.openScheduleModal = openScheduleModal;
+window.openSkillDetail = openSkillDetail;
 window.openSkillModal = openSkillModal;
 window.openSubTask = openSubTask;
 window.openTask = openTask;

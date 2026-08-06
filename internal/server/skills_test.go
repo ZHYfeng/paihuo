@@ -7,11 +7,51 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"paihuo/internal/events"
 	"paihuo/internal/store"
 )
+
+func TestGetSkillReturnsMarkdownDetail(t *testing.T) {
+	dir := t.TempDir()
+	content := "---\nname: reviewer\ndescription: review code\n---\n\n# Review\n\nCheck the diff carefully.\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	id, err := st.CreateSkill(store.Skill{
+		Name: "reviewer", Description: "review code", Dir: dir, SourcePath: "/source/reviewer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(st, events.NewHub(), nil, nil, "", filepath.Join(t.TempDir(), "managed-skills"))
+	req := httptest.NewRequest(http.MethodGet, "/api/skills/"+strconv.FormatInt(id, 10), nil)
+	resp := httptest.NewRecorder()
+	s.Handler().ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("技能详情状态应为 200，得到 %d: %s", resp.Code, resp.Body.String())
+	}
+	var detail struct {
+		Name     string `json:"name"`
+		Content  string `json:"content"`
+		FileName string `json:"file_name"`
+		Size     int64  `json:"size_bytes"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.Name != "reviewer" || detail.Content != content || detail.FileName != "SKILL.md" || detail.Size != int64(len(content)) {
+		t.Fatalf("技能详情内容错误: %+v", detail)
+	}
+}
 
 func TestScanSkillsDiscoversRootAndNestedSkillsWithoutReimportingManagedCopies(t *testing.T) {
 	root := t.TempDir()
