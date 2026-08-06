@@ -945,6 +945,28 @@ func (r *tmuxRunner) SendText(taskID int64, text string) error {
 	return nil
 }
 
+// SendKeystrokes 向 task pane 原样写入 xterm 产生的按键序列，不追加 Enter。
+// tmux 的 -l 令 Tab、方向键和控制字符作为终端输入传给 Pi，而不是被当作
+// tmux 的按键名称或 shell 语法解释。
+func (r *tmuxRunner) SendKeystrokes(taskID int64, keys string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.hasWindow(taskID) {
+		return fmt.Errorf("交互终端 task-%d 不存在", taskID)
+	}
+	dead, err := r.paneDead(taskID)
+	if err != nil {
+		return fmt.Errorf("读取交互终端状态失败: %w", err)
+	}
+	if dead {
+		return fmt.Errorf("交互终端 task-%d 已退出", taskID)
+	}
+	if err := r.command("send-keys", "-t", r.target(taskID), "-l", "--", keys); err != nil {
+		return fmt.Errorf("发送终端按键失败: %w", err)
+	}
+	return nil
+}
+
 // ArchiveFailureArtifacts 将异常中断前留下的运行文件移入当前任务目录中的独立
 // failure-* 子目录。下一次续跑同一任务时可以安全地创建新的 terminal.log/run.sh，
 // 而这份证据会保留到任务被删除为止。

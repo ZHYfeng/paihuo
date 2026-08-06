@@ -75,6 +75,37 @@ func TestCreateInteractiveTaskRequiresPiAndDefaultsRemainBatch(t *testing.T) {
 	}
 }
 
+func TestInteractiveInputRequiresExactlyOnePayloadMode(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	hub := events.NewHub()
+	executor := exec.New(st, hub, t.TempDir(), "server-input-payload-test.db")
+	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
+	agentID, err := st.CreateAgent(store.Agent{Name: "pi", CLI: "pi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID, err := st.CreateTask(store.Task{
+		Title: "interactive", Status: store.StatusRunning, RunMode: store.RunModeInteractive, AgentID: &agentID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, body := range []string{`{}`, `{"message":"hello","keys":"h"}`} {
+		req := httptest.NewRequest(http.MethodPost, "/api/tasks/"+itoa(taskID)+"/input", strings.NewReader(body))
+		req.SetPathValue("id", itoa(taskID))
+		resp := httptest.NewRecorder()
+		s.sendTaskInput(resp, req)
+		if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "必须且只能提供一个") {
+			t.Fatalf("输入模式应互斥: body=%s code=%d response=%s", body, resp.Code, resp.Body.String())
+		}
+	}
+}
+
 // 普通任务在创建后仍可改派到另一个角色，详情页的角色下拉框依赖该接口
 // 同时返回最新角色信息以便立即刷新界面。
 func TestPatchTaskChangesAssignedAgent(t *testing.T) {

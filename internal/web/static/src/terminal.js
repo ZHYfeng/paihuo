@@ -11,6 +11,7 @@ let termInteractive = false;
 let taskTerm = null;
 let taskTermTask = null;
 let taskTermLogs = [];
+const terminalKeyQueues = new Map();
 
 // PaiHuo 的交互式 Pi pane 使用固定画布，避免浏览器宽度变化后重放 TUI
 // 控制序列时把光标、分隔线和输入区重新换行。该尺寸与执行器创建的 tmux
@@ -37,9 +38,63 @@ function terminalOptions(interactive = false, running = false) {
     convertEol: true,
     scrollback: interactive ? 3000 : 10000,
     cursorBlink: interactive && running,
-    disableStdin: true,
+    disableStdin: !(interactive && running),
     theme: TERM_THEME,
   };
+}
+
+function interactiveTaskRunning(taskID) {
+  const task = state.tasks.find(t => t.id === taskID);
+  return task?.run_mode === "interactive" && task?.status === "running";
+}
+
+// xterm 的 onData 会为普通文字、Tab、方向键和组合键产生终端字节序列。
+// 每个任务只保持一个串行请求队列，避免快速输入时多个 fetch 乱序抵达 tmux。
+async function flushTerminalKeystrokes(taskID, queue) {
+  queue.sending = true;
+  try {
+    while (queue.pending) {
+      let end = Math.min(queue.pending.length, 4096);
+      if (end < queue.pending.length && /[\uD800-\uDBFF]/.test(queue.pending[end - 1])) end--;
+      const keys = queue.pending.slice(0, end);
+      queue.pending = queue.pending.slice(end);
+      try {
+        await api(`/api/tasks/${taskID}/input`, {
+          method: "POST", body: JSON.stringify({ keys }),
+        });
+      } catch (e) {
+        queue.pending = "";
+        if (interactiveTaskRunning(taskID)) toast(`终端输入发送失败：${e.message}`, true);
+        break;
+      }
+    }
+  } finally {
+    queue.sending = false;
+    if (!queue.pending && terminalKeyQueues.get(taskID) === queue) terminalKeyQueues.delete(taskID);
+  }
+}
+
+function queueTerminalKeystrokes(taskID, keys) {
+  if (!keys || !interactiveTaskRunning(taskID)) return;
+  let queue = terminalKeyQueues.get(taskID);
+  if (!queue) {
+    queue = { pending: "", sending: false };
+    terminalKeyQueues.set(taskID, queue);
+  }
+  queue.pending += keys;
+  if (!queue.sending) void flushTerminalKeystrokes(taskID, queue);
+}
+
+function configureTerminalInput(target, enabled) {
+  if (!target) return;
+  target.options.disableStdin = !enabled;
+  target.options.cursorBlink = enabled;
+  target.element?.classList.toggle("terminal-writable", enabled);
+  if (target.textarea) {
+    target.textarea.setAttribute("aria-label", enabled ? "Pi 交互式终端输入" : "只读终端输出");
+    target.textarea.setAttribute("aria-disabled", String(!enabled));
+  }
+  if (!enabled) target.blur();
 }
 
 function writeTerminalLogs(target, logs, emptyMessage = "（暂无输出）") {
@@ -65,10 +120,13 @@ function syncFullscreenTerminalGeometry() {
 
 export function initTerm() {
   if (term) return;
-  term = new Terminal(terminalOptions(termInteractive, termInteractive));
+  term = new Terminal(terminalOptions(termInteractive, false));
   termFit = new FitAddon.FitAddon();
   term.loadAddon(termFit);
   term.open(document.getElementById("termX"));
+  term.onData(keys => {
+    if (state.termTask && termInteractive) queueTerminalKeystrokes(state.termTask, keys);
+  });
   term.onScroll(event => {
     if (event.position === 0 && !ignoreTopScroll) loadOlderTerminalLogs();
   });
@@ -159,6 +217,7 @@ export function openTerminal(id) {
 }
 
 export function closeTerminal() {
+  configureTerminalInput(term, false);
   state.termTask = null; // 停止向已关闭的弹窗追加日志
   termLogs = [];
   termHasMore = false;
@@ -192,7 +251,13 @@ export function openTaskTerminal(id, logs = [], running = false) {
   taskTerm = new Terminal(terminalOptions(true, running));
   taskTerm.open(host);
   taskTerm.resize(INTERACTIVE_TERM_COLS, INTERACTIVE_TERM_ROWS);
+  taskTerm.onData(keys => queueTerminalKeystrokes(id, keys));
+  configureTerminalInput(taskTerm, running);
   writeTerminalLogs(taskTerm, taskTermLogs, "（交互终端等待输出）");
+}
+
+export function focusTaskTerminal() {
+  taskTerm?.focus();
 }
 
 export function taskTermAppendLog(l) {
@@ -216,19 +281,16 @@ export function taskTerminalText() {
 }
 
 // syncTerminalInput 与任务 SSE 同步：只有正在运行的交互式 Pi 任务才能收到
-// 消息，任务退出后立即收起输入栏，避免把内容误发到已归档的窗口。
+// 原始按键，任务退出后立即收起提示栏并把终端切回只读。
 export function syncTerminalInput(t) {
   const bar = document.getElementById("termInputBar");
-  const input = document.getElementById("termInput");
-  if (!bar || !input) return;
   const enabled = t?.run_mode === "interactive" && t?.status === "running";
-  bar.classList.toggle("hidden", !enabled);
-  input.disabled = !enabled;
-  if (!enabled) input.value = "";
+  bar?.classList.toggle("hidden", !enabled);
+  configureTerminalInput(term, enabled);
 }
 
 // sendTaskInput 通过服务端再转交给专用 tmux；浏览器不接触 tmux socket，也不
-// 能把文本解释成 shell 命令。inputID 为空时使用 explicitMessage（/exit 按钮）。
+// 能把文本解释成 shell 命令。inputID 为空时使用 explicitMessage（/quit 按钮）。
 export async function sendTaskInput(id, inputID, explicitMessage) {
   const input = inputID ? document.getElementById(inputID) : null;
   const message = explicitMessage ?? input?.value ?? "";
@@ -249,9 +311,8 @@ export async function sendTaskInput(id, inputID, explicitMessage) {
   }
 }
 
-export function sendTerminalInput() {
-  if (!state.termTask) return;
-  sendTaskInput(state.termTask, "termInput");
+export function focusFullscreenTerminal() {
+  term?.focus();
 }
 
 /* ============================================================

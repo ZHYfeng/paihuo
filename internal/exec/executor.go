@@ -664,18 +664,7 @@ func (e *Executor) taskContext(taskID int64) (context.Context, func()) {
 
 const maxInteractiveInputBytes = 16 * 1024
 
-// SendInput 将一条人工消息送入正在运行的 Pi 交互式任务。输入必须是单行，
-// 以保证它在 Pi TUI 中是一条原子消息；复杂的初始指令仍由任务内容承载。
-func (e *Executor) SendInput(taskID int64, text string) error {
-	if strings.TrimSpace(text) == "" {
-		return fmt.Errorf("消息不能为空")
-	}
-	if strings.ContainsAny(text, "\x00\r\n") {
-		return fmt.Errorf("交互消息暂不支持换行")
-	}
-	if len(text) > maxInteractiveInputBytes {
-		return fmt.Errorf("交互消息不能超过 %d KB", maxInteractiveInputBytes/1024)
-	}
+func (e *Executor) validateInteractiveInputTarget(taskID int64) error {
 	tk, err := e.st.GetTask(taskID)
 	if err != nil {
 		return fmt.Errorf("读取任务失败: %w", err)
@@ -696,11 +685,48 @@ func (e *Executor) SendInput(taskID int64, text string) error {
 	if agent.CLI != "pi" {
 		return fmt.Errorf("交互式任务目前只支持 Pi 角色")
 	}
+	return nil
+}
+
+// SendInput 将一条人工消息送入正在运行的 Pi 交互式任务。输入必须是单行，
+// 以保证它在 Pi TUI 中是一条原子消息；复杂的初始指令仍由任务内容承载。
+func (e *Executor) SendInput(taskID int64, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return fmt.Errorf("消息不能为空")
+	}
+	if strings.ContainsAny(text, "\x00\r\n") {
+		return fmt.Errorf("交互消息暂不支持换行")
+	}
+	if len(text) > maxInteractiveInputBytes {
+		return fmt.Errorf("交互消息不能超过 %d KB", maxInteractiveInputBytes/1024)
+	}
+	if err := e.validateInteractiveInputTarget(taskID); err != nil {
+		return err
+	}
 	if err := e.runner.SendText(taskID, text); err != nil {
 		return err
 	}
 	e.log(taskID, "in", text)
 	return nil
+}
+
+// SendKeystrokes 把浏览器 xterm 产生的原始按键序列送入 Pi TUI。与 SendInput
+// 不同，它不会自动补 Enter，也不会逐键写入任务日志；这样 Tab、方向键、Esc
+// 和组合键仍由 Pi 自己解释，命令补全及选择器可以按原生方式工作。
+func (e *Executor) SendKeystrokes(taskID int64, keys string) error {
+	if keys == "" {
+		return fmt.Errorf("按键内容不能为空")
+	}
+	if strings.ContainsRune(keys, '\x00') {
+		return fmt.Errorf("按键内容不能包含 NUL")
+	}
+	if len(keys) > maxInteractiveInputBytes {
+		return fmt.Errorf("单次按键内容不能超过 %d KB", maxInteractiveInputBytes/1024)
+	}
+	if err := e.validateInteractiveInputTarget(taskID); err != nil {
+		return err
+	}
+	return e.runner.SendKeystrokes(taskID, keys)
 }
 
 const (

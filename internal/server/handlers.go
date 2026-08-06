@@ -278,7 +278,8 @@ func normalizeNewTaskDependency(tk *store.Task) error {
 	}
 }
 
-// sendTaskInput 把已登录用户的一条人工消息送进运行中的 Pi 交互式 pane。
+// sendTaskInput 把已登录用户的整行消息或 xterm 原始按键送进运行中的 Pi
+// 交互式 pane；两种模式互斥，避免同一请求被重复提交。
 func (s *Server) sendTaskInput(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
@@ -289,12 +290,23 @@ func (s *Server) sendTaskInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Message string `json:"message"`
+		Message *string `json:"message"`
+		Keys    *string `json:"keys"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if err := s.ex.SendInput(id, in.Message); err != nil {
+	if (in.Message == nil) == (in.Keys == nil) {
+		writeErr(w, http.StatusBadRequest, "message 和 keys 必须且只能提供一个")
+		return
+	}
+	var err error
+	if in.Keys != nil {
+		err = s.ex.SendKeystrokes(id, *in.Keys)
+	} else {
+		err = s.ex.SendInput(id, *in.Message)
+	}
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}

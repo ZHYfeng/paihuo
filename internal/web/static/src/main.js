@@ -10,7 +10,7 @@ import { deleteSchedule, openScheduleModal, renderScheduleList, submitSchedule, 
 import { loadSettings, runCleanup, saveRetention, saveWtRetention } from "./settings.js";
 import { closeSkillDetail, copySkillContent, deleteSelectedSkills, deleteSkill, deleteSkillFromDetail, deleteTemplate, hideSkillDetail, loadSkillLib, loadTemplates, openExtModal, openSkillDetail, openSkillModal, removeExt, renderSkillLib, saveSkillTags, saveSkillTagsInline, scanSkills, setSkillTab, setSkillView, showSkillDetail, submitExt, submitSkill, toggleAllSkills, toggleSkillGroup, toggleSkillSelection, toggleSkillTagsEditor } from "./skills.js";
 import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskConcurrency, syncTaskDependency, syncTaskRunMode, wsDiscard } from "./task.js";
-import { closeTerminal, openTerminal, sendTaskInput, sendTerminalInput, syncTerminalInput } from "./terminal.js";
+import { closeTerminal, focusFullscreenTerminal, focusTaskTerminal, openTerminal, syncTerminalInput } from "./terminal.js";
 
 export async function loadAll() {
   const [tasks, agents, schedules, projects] = await Promise.all([
@@ -189,6 +189,9 @@ export function initShortcuts() {
   document.addEventListener("keydown", e => {
     const t = e.target;
     const inField = t && (t.matches("input, textarea, select") || t.isContentEditable);
+    // 交互式 xterm 必须独占 Tab、Esc、Ctrl+B 等按键，Pi 的命令补全、取消
+    // 和编辑快捷键才不会被全局焦点陷阱或侧栏快捷键截走。
+    if (t?.closest?.(".xterm")) return;
     const modal = activeModal();
     if (e.key === "Tab" && modal) {
       const focusable = [...modal.querySelectorAll("button:not([disabled]), [href], input:not([disabled]):not([type='hidden']), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")]
@@ -454,6 +457,8 @@ window.deleteTask = deleteTask;
 window.deleteTemplate = deleteTemplate;
 window.endInteractiveTask = endInteractiveTask;
 window.filterSkillOptions = filterSkillOptions;
+window.focusFullscreenTerminal = focusFullscreenTerminal;
+window.focusTaskTerminal = focusTaskTerminal;
 window.gitInitProject = gitInitProject;
 window.installProvision = installProvision;
 window.loadHistory = loadHistory;
@@ -499,8 +504,6 @@ window.scanSkills = scanSkills;
 window.selectAllNonMergeTasks = selectAllNonMergeTasks;
 window.sendRoleStudioChat = sendRoleStudioChat;
 window.sendRoleStudioTest = sendRoleStudioTest;
-window.sendTaskInput = sendTaskInput;
-window.sendTerminalInput = sendTerminalInput;
 window.setAgentSort = setAgentSort;
 window.setAgentView = setAgentView;
 window.setSkillTab = setSkillTab;

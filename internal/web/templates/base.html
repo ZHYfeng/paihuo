@@ -246,9 +246,9 @@
       </div>
       <div class="term-body term-full" id="termX" style="padding:0"></div>
     </div>
-    <div class="term-input hidden" id="termInputBar">
-      <input id="termInput" autocomplete="off" aria-label="发送给交互式 Pi 的消息" placeholder="发送消息给 Pi（Enter 发送）" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();sendTerminalInput()}">
-      <button class="btn primary" onclick="sendTerminalInput()">发送</button>
+    <div class="term-input terminal-input-help hidden" id="termInputBar">
+      <span>点击终端直接输入 · Tab / ↑ / ↓ 使用 Pi 命令联想 · <code>/quit</code> 结束</span>
+      <button class="btn sm" onclick="focusFullscreenTerminal()">聚焦输入</button>
     </div>
   </div>
 </div>

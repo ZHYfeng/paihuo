@@ -1062,6 +1062,7 @@
   var taskTerm = null;
   var taskTermTask = null;
   var taskTermLogs = [];
+  var terminalKeyQueues = /* @__PURE__ */ new Map();
   var INTERACTIVE_TERM_COLS = 80;
   var INTERACTIVE_TERM_ROWS = 24;
   var TERM_THEME = {
@@ -1095,9 +1096,58 @@
       convertEol: true,
       scrollback: interactive ? 3e3 : 1e4,
       cursorBlink: interactive && running,
-      disableStdin: true,
+      disableStdin: !(interactive && running),
       theme: TERM_THEME
     };
+  }
+  function interactiveTaskRunning(taskID) {
+    const task = state.tasks.find((t) => t.id === taskID);
+    return task?.run_mode === "interactive" && task?.status === "running";
+  }
+  async function flushTerminalKeystrokes(taskID, queue) {
+    queue.sending = true;
+    try {
+      while (queue.pending) {
+        let end = Math.min(queue.pending.length, 4096);
+        if (end < queue.pending.length && /[\uD800-\uDBFF]/.test(queue.pending[end - 1])) end--;
+        const keys = queue.pending.slice(0, end);
+        queue.pending = queue.pending.slice(end);
+        try {
+          await api(`/api/tasks/${taskID}/input`, {
+            method: "POST",
+            body: JSON.stringify({ keys })
+          });
+        } catch (e) {
+          queue.pending = "";
+          if (interactiveTaskRunning(taskID)) toast(`\u7EC8\u7AEF\u8F93\u5165\u53D1\u9001\u5931\u8D25\uFF1A${e.message}`, true);
+          break;
+        }
+      }
+    } finally {
+      queue.sending = false;
+      if (!queue.pending && terminalKeyQueues.get(taskID) === queue) terminalKeyQueues.delete(taskID);
+    }
+  }
+  function queueTerminalKeystrokes(taskID, keys) {
+    if (!keys || !interactiveTaskRunning(taskID)) return;
+    let queue = terminalKeyQueues.get(taskID);
+    if (!queue) {
+      queue = { pending: "", sending: false };
+      terminalKeyQueues.set(taskID, queue);
+    }
+    queue.pending += keys;
+    if (!queue.sending) void flushTerminalKeystrokes(taskID, queue);
+  }
+  function configureTerminalInput(target, enabled) {
+    if (!target) return;
+    target.options.disableStdin = !enabled;
+    target.options.cursorBlink = enabled;
+    target.element?.classList.toggle("terminal-writable", enabled);
+    if (target.textarea) {
+      target.textarea.setAttribute("aria-label", enabled ? "Pi \u4EA4\u4E92\u5F0F\u7EC8\u7AEF\u8F93\u5165" : "\u53EA\u8BFB\u7EC8\u7AEF\u8F93\u51FA");
+      target.textarea.setAttribute("aria-disabled", String(!enabled));
+    }
+    if (!enabled) target.blur();
   }
   function writeTerminalLogs(target, logs, emptyMessage = "\uFF08\u6682\u65E0\u8F93\u51FA\uFF09") {
     if (!target) return;
@@ -1120,10 +1170,13 @@
   }
   function initTerm() {
     if (term) return;
-    term = new Terminal(terminalOptions(termInteractive, termInteractive));
+    term = new Terminal(terminalOptions(termInteractive, false));
     termFit = new FitAddon.FitAddon();
     term.loadAddon(termFit);
     term.open(document.getElementById("termX"));
+    term.onData((keys) => {
+      if (state.termTask && termInteractive) queueTerminalKeystrokes(state.termTask, keys);
+    });
     term.onScroll((event) => {
       if (event.position === 0 && !ignoreTopScroll) loadOlderTerminalLogs();
     });
@@ -1209,6 +1262,7 @@
     });
   }
   function closeTerminal() {
+    configureTerminalInput(term, false);
     state.termTask = null;
     termLogs = [];
     termHasMore = false;
@@ -1240,7 +1294,12 @@
     taskTerm = new Terminal(terminalOptions(true, running));
     taskTerm.open(host);
     taskTerm.resize(INTERACTIVE_TERM_COLS, INTERACTIVE_TERM_ROWS);
+    taskTerm.onData((keys) => queueTerminalKeystrokes(id, keys));
+    configureTerminalInput(taskTerm, running);
     writeTerminalLogs(taskTerm, taskTermLogs, "\uFF08\u4EA4\u4E92\u7EC8\u7AEF\u7B49\u5F85\u8F93\u51FA\uFF09");
+  }
+  function focusTaskTerminal() {
+    taskTerm?.focus();
   }
   function taskTermAppendLog(l) {
     if (!taskTerm || taskTermTask !== l.task_id) return;
@@ -1262,12 +1321,9 @@
   }
   function syncTerminalInput(t) {
     const bar = document.getElementById("termInputBar");
-    const input = document.getElementById("termInput");
-    if (!bar || !input) return;
     const enabled = t?.run_mode === "interactive" && t?.status === "running";
-    bar.classList.toggle("hidden", !enabled);
-    input.disabled = !enabled;
-    if (!enabled) input.value = "";
+    bar?.classList.toggle("hidden", !enabled);
+    configureTerminalInput(term, enabled);
   }
   async function sendTaskInput(id, inputID, explicitMessage) {
     const input = inputID ? document.getElementById(inputID) : null;
@@ -1288,9 +1344,8 @@
       return false;
     }
   }
-  function sendTerminalInput() {
-    if (!state.termTask) return;
-    sendTaskInput(state.termTask, "termInput");
+  function focusFullscreenTerminal() {
+    term?.focus();
   }
 
   // internal/web/static/src/task.js
@@ -1638,9 +1693,9 @@
     const { visible: visibleLogs, errors: logErrors } = logStats();
     const logMeta = interactive ? `${isLive ? "\u5B9E\u65F6\u753B\u9762" : "\u5DF2\u5F52\u6863\u753B\u9762"} \xB7 ${INTERACTIVE_TERM_COLS} \xD7 ${INTERACTIVE_TERM_ROWS}` : state.logsHasMore ? `\u5DF2\u52A0\u8F7D ${visibleLogs}/${state.logsTotal} \u6761` : `${visibleLogs} \u6761`;
     const dependencyAlert = !mergeTask && t.status === "queued" && dependency.state !== "ready" ? `<div class="task-alert"><span class="task-alert-title">${dependency.state === "skipped" ? "\u524D\u5E8F\u4EA4\u4ED8\u5DF2\u8DF3\u8FC7" : "\u7B49\u5F85\u524D\u7F6E\u4EA4\u4ED8"}</span><span>${esc(dependency.reason || "\u7B49\u5F85\u8C03\u5EA6")}</span></div>` : "";
-    const input = isInteractive ? `<div class="term-input detail-input">
-      <input id="taskInput" autocomplete="off" aria-label="\u53D1\u9001\u7ED9 Pi \u7684\u6D88\u606F" placeholder="\u53D1\u9001\u6D88\u606F\u7ED9 Pi\uFF08Enter \u53D1\u9001\uFF09" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();sendTaskInput(${t.id},'taskInput')}">
-      <button class="btn primary" onclick="sendTaskInput(${t.id},'taskInput')">\u53D1\u9001</button>
+    const input = isInteractive ? `<div class="term-input detail-input terminal-input-help">
+      <span>\u70B9\u51FB\u7EC8\u7AEF\u76F4\u63A5\u8F93\u5165 \xB7 Tab / \u2191 / \u2193 \u4F7F\u7528 Pi \u547D\u4EE4\u8054\u60F3 \xB7 <code>/quit</code> \u7ED3\u675F</span>
+      <button class="btn sm" onclick="focusTaskTerminal()">\u805A\u7126\u8F93\u5165</button>
     </div>` : "";
     main.innerHTML = `
     <section class="task-hero">
@@ -1906,9 +1961,9 @@
     }
   }
   async function endInteractiveTask(id) {
-    if (!confirm("\u5411 Pi \u53D1\u9001 /exit \u5E76\u7ED3\u675F\u4EA4\u4E92\u4F1A\u8BDD\uFF1F\u4EFB\u52A1\u4F1A\u6309\u6B63\u5E38\u9000\u51FA\u7ED3\u679C\u7ED3\u7B97\u3002")) return;
-    if (await sendTaskInput(id, "", "/exit")) {
-      toast("\u5DF2\u53D1\u9001 /exit\uFF0C\u7B49\u5F85 Pi \u9000\u51FA");
+    if (!confirm("\u5411 Pi \u53D1\u9001 /quit \u5E76\u7ED3\u675F\u4EA4\u4E92\u4F1A\u8BDD\uFF1F\u4EFB\u52A1\u4F1A\u6309\u6B63\u5E38\u9000\u51FA\u7ED3\u679C\u7ED3\u7B97\u3002")) return;
+    if (await sendTaskInput(id, "", "/quit")) {
+      toast("\u5DF2\u53D1\u9001 /quit\uFF0C\u7B49\u5F85 Pi \u9000\u51FA");
     }
   }
   async function rejectTask(id) {
@@ -2189,7 +2244,7 @@
     if (interactive) interactive.disabled = !isPi;
     if (!isPi && select.value === "interactive") select.value = "batch";
     if (help) {
-      help.textContent = isPi ? "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u4EA4\u4E92\u5F0F\u4F1A\u4FDD\u7559 Pi \u7EC8\u7AEF\uFF0C\u76F4\u5230\u4F60\u53D1\u9001 /exit\u3002" : "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u4EA4\u4E92\u5F0F\u76EE\u524D\u4EC5\u652F\u6301 Pi \u89D2\u8272\u3002";
+      help.textContent = isPi ? "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u4EA4\u4E92\u5F0F\u4F1A\u4FDD\u7559 Pi \u7EC8\u7AEF\uFF0C\u76F4\u5230\u4F60\u53D1\u9001 /quit\u3002" : "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u4EA4\u4E92\u5F0F\u76EE\u524D\u4EC5\u652F\u6301 Pi \u89D2\u8272\u3002";
     }
   }
   function syncTaskDependency() {
@@ -4074,6 +4129,7 @@
     document.addEventListener("keydown", (e) => {
       const t = e.target;
       const inField = t && (t.matches("input, textarea, select") || t.isContentEditable);
+      if (t?.closest?.(".xterm")) return;
       const modal = activeModal();
       if (e.key === "Tab" && modal) {
         const focusable = [...modal.querySelectorAll("button:not([disabled]), [href], input:not([disabled]):not([type='hidden']), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")].filter((el) => !el.closest(".hidden") && el.getClientRects().length);
@@ -4360,6 +4416,8 @@
   window.deleteTemplate = deleteTemplate;
   window.endInteractiveTask = endInteractiveTask;
   window.filterSkillOptions = filterSkillOptions;
+  window.focusFullscreenTerminal = focusFullscreenTerminal;
+  window.focusTaskTerminal = focusTaskTerminal;
   window.gitInitProject = gitInitProject;
   window.installProvision = installProvision;
   window.loadHistory = loadHistory;
@@ -4405,8 +4463,6 @@
   window.selectAllNonMergeTasks = selectAllNonMergeTasks;
   window.sendRoleStudioChat = sendRoleStudioChat;
   window.sendRoleStudioTest = sendRoleStudioTest;
-  window.sendTaskInput = sendTaskInput;
-  window.sendTerminalInput = sendTerminalInput;
   window.setAgentSort = setAgentSort;
   window.setAgentView = setAgentView;
   window.setSkillTab = setSkillTab;

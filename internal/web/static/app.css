@@ -2942,6 +2942,13 @@ a.project-card:hover { color: inherit; text-decoration: none; }
 }
 .interactive-term-canvas .xterm { min-height: 336px; padding: 8px 10px; }
 .interactive-term-canvas .xterm-screen { min-width: max-content; }
+.interactive-term-canvas .terminal-writable,
+.interactive-terminal-modal .terminal-writable { cursor: text; }
+.terminal-input-help {
+  justify-content: space-between; color: var(--fg-muted); font-size: 11.5px;
+}
+.terminal-input-help span { min-width: 0; line-height: 1.45; }
+.terminal-input-help code { color: var(--brand); font-family: var(--font-mono); }
 .interactive-task-log .term { border-color: rgba(199, 243, 106, .17); }
 .interactive-task-log .term-head { border-bottom-color: rgba(199, 243, 106, .13); }
 

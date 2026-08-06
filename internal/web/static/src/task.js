@@ -399,9 +399,9 @@ export function renderDetail(t) {
       : `${visibleLogs} 条`;
   const dependencyAlert = !mergeTask && t.status === "queued" && dependency.state !== "ready"
     ? `<div class="task-alert"><span class="task-alert-title">${dependency.state === "skipped" ? "前序交付已跳过" : "等待前置交付"}</span><span>${esc(dependency.reason || "等待调度")}</span></div>` : "";
-  const input = isInteractive ? `<div class="term-input detail-input">
-      <input id="taskInput" autocomplete="off" aria-label="发送给 Pi 的消息" placeholder="发送消息给 Pi（Enter 发送）" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();sendTaskInput(${t.id},'taskInput')}">
-      <button class="btn primary" onclick="sendTaskInput(${t.id},'taskInput')">发送</button>
+  const input = isInteractive ? `<div class="term-input detail-input terminal-input-help">
+      <span>点击终端直接输入 · Tab / ↑ / ↓ 使用 Pi 命令联想 · <code>/quit</code> 结束</span>
+      <button class="btn sm" onclick="focusTaskTerminal()">聚焦输入</button>
     </div>` : "";
   main.innerHTML = `
     <section class="task-hero">
@@ -681,9 +681,9 @@ export async function setTaskStatus(id, status) {
 }
 
 export async function endInteractiveTask(id) {
-  if (!confirm("向 Pi 发送 /exit 并结束交互会话？任务会按正常退出结果结算。")) return;
-  if (await sendTaskInput(id, "", "/exit")) {
-    toast("已发送 /exit，等待 Pi 退出");
+  if (!confirm("向 Pi 发送 /quit 并结束交互会话？任务会按正常退出结果结算。")) return;
+  if (await sendTaskInput(id, "", "/quit")) {
+    toast("已发送 /quit，等待 Pi 退出");
   }
 }
 
@@ -995,7 +995,7 @@ export function syncTaskRunMode() {
   if (!isPi && select.value === "interactive") select.value = "batch";
   if (help) {
     help.textContent = isPi
-      ? "批处理会自动结算；交互式会保留 Pi 终端，直到你发送 /exit。"
+      ? "批处理会自动结算；交互式会保留 Pi 终端，直到你发送 /quit。"
       : "批处理会自动结算；交互式目前仅支持 Pi 角色。";
   }
 }
