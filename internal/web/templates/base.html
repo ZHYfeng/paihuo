@@ -102,6 +102,10 @@
   <div class="modal-box">
     <h3 id="taskModalTitle">新建任务</h3>
     <div class="sub">指派给角色执行，可选用模板填充提示词</div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('taskModal')">取消</button>
+      <button class="btn primary" onclick="submitTask()">创建</button>
+    </div>
     <input type="hidden" id="tParentId">
     <label class="field">从模板填充
       <select id="tTemplate" onchange="applyTemplate()"><option value="">—</option></select>
@@ -153,10 +157,6 @@
       </span>
       <span class="field-help">仅控制运行资源是否重叠；勾选时会默认改为独立任务。若选择明确前置，仍必须等待前置成功交付。</span>
     </label>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeModal('taskModal')">取消</button>
-      <button class="btn primary" onclick="submitTask()">创建</button>
-    </div>
   </div>
 </div>
 
