@@ -24,7 +24,24 @@
   <!-- Skills 库 -->
   <div id="skillShell">
     <div class="skill-grid" id="skillGrid"></div>
-    <div id="skillEmpty" class="empty hidden">技能库为空。点击右上角「添加技能」，指定一个本地技能目录（含 SKILL.md）导入。</div>
+    <div id="skillEmpty" class="empty hidden">技能库为空。点击右上角「添加技能」，可导入单个目录或扫描一个目录树中的全部 skills。</div>
+  </div>
+
+  <!-- Skill 详情 -->
+  <div id="skillDetailShell" class="hidden">
+    <header class="page-header">
+      <button class="btn ghost sm" onclick="closeSkillDetail()">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        返回
+      </button>
+      <span class="crumb" id="sdCrumb"></span>
+      <span class="spacer"></span>
+      <span id="sdBadge"></span>
+    </header>
+    <div class="detail-view skill-detail">
+      <div class="detail-main" id="sdMain"></div>
+      <aside class="detail-side" id="sdSide"></aside>
+    </div>
   </div>
 
   <!-- Pi Extensions -->
@@ -44,10 +61,10 @@
 <div class="modal hidden" id="skillModal">
   <div class="modal-box">
     <h3>添加技能</h3>
-    <div class="sub">指定源目录（含 SKILL.md），paihuo 会把它复制到自己的工作目录登记入库</div>
-    <label class="field">来源目录
+    <div class="sub">单个导入需要目录中含 <code>SKILL.md</code>；扫描会递归发现所选目录下的全部 skills，并复制到 paihuo 工作目录登记入库</div>
+    <label class="field">技能目录 / 扫描根目录
       <span class="dir-input-row">
-        <input id="sSkillPath" placeholder="/path/to/skill-dir" list="dlistSkill">
+        <input id="sSkillPath" placeholder="/path/to/skill-dir 或 skills-root" list="dlistSkill">
         <datalist id="dlistSkill"></datalist>
         <button type="button" class="btn sm" onclick="openDirPicker('sSkillPath')">
           <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
@@ -57,7 +74,8 @@
     </label>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal('skillModal')">取消</button>
-      <button class="btn primary" onclick="submitSkill()">导入</button>
+      <button class="btn" onclick="submitSkill()">导入当前目录</button>
+      <button class="btn primary" onclick="scanSkills()">扫描并导入</button>
     </div>
   </div>
 </div>

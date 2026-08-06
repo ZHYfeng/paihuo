@@ -1214,7 +1214,7 @@ func (s *Server) provisionInstall(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
-// 技能库（注册到 paihuo 工作目录；角色配置按名称勾选，执行注入实际目录）
+// 技能库（单个导入或递归扫描；角色配置按名称勾选，执行注入实际目录）
 
 func (s *Server) listSkills(w http.ResponseWriter, r *http.Request) {
 	skills, err := s.st.ListSkills()
@@ -1225,6 +1225,43 @@ func (s *Server) listSkills(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, skills)
 }
 
+type skillDetailResponse struct {
+	store.Skill
+	Content  string `json:"content"`
+	FileName string `json:"file_name"`
+	Size     int64  `json:"size_bytes"`
+}
+
+func (s *Server) getSkill(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	sk, err := s.st.GetSkill(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "技能不存在")
+		return
+	}
+
+	path := filepath.Join(sk.Dir, "SKILL.md")
+	fi, err := os.Stat(path)
+	if err != nil || fi.IsDir() {
+		writeErr(w, http.StatusNotFound, "技能说明文件不存在")
+		return
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "读取技能说明失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, skillDetailResponse{
+		Skill:    *sk,
+		Content:  string(b),
+		FileName: "SKILL.md",
+		Size:     fi.Size(),
+	})
+}
+
 // createSkill 定向添加：把源目录（含 SKILL.md）复制到 paihuo 工作目录并登记。
 func (s *Server) createSkill(w http.ResponseWriter, r *http.Request) {
 	var in struct {
@@ -1233,52 +1270,219 @@ func (s *Server) createSkill(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	src, err := filepath.Abs(strings.TrimSpace(in.SourcePath))
-	if err != nil || src == "" {
-		writeErr(w, http.StatusBadRequest, "需要技能目录路径")
+	src, err := skillSourceDir(in.SourcePath)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if isPathWithin(src, s.skillsDir) {
+		writeErr(w, http.StatusBadRequest, "不能导入 paihuo 管理的技能库目录")
+		return
+	}
+	if fi, err := os.Stat(filepath.Join(src, "SKILL.md")); err != nil || fi.IsDir() {
+		writeErr(w, http.StatusBadRequest, "该目录没有 SKILL.md，不是技能")
+		return
+	}
+	sk, err := s.importSkill(src)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, sk)
+}
+
+// skillScanResult 是一次递归扫描的结果。扫描会跳过已由 paihuo 管理的
+// 技能副本，重复扫描同一个目录不会重复入库。
+type skillScanResult struct {
+	Found    int              `json:"found"`
+	Imported []store.Skill    `json:"imported"`
+	Skipped  []string         `json:"skipped"`
+	Errors   []skillScanError `json:"errors"`
+}
+
+type skillScanError struct {
+	SourcePath string `json:"source_path"`
+	Error      string `json:"error"`
+}
+
+// scanSkills 递归寻找目录树内所有含 SKILL.md 的目录，并逐个导入。
+// 单个技能导入失败不会中断其它技能，结果会在 errors 中返回给前端。
+func (s *Server) scanSkills(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		SourcePath string `json:"source_path"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	root, err := skillSourceDir(in.SourcePath)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if isPathWithin(root, s.skillsDir) {
+		writeErr(w, http.StatusBadRequest, "不能扫描 paihuo 管理的技能库目录")
+		return
+	}
+
+	dirs, err := discoverSkillDirs(root, s.skillsDir)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "扫描技能目录失败: "+err.Error())
+		return
+	}
+	if len(dirs) == 0 {
+		writeErr(w, http.StatusBadRequest, "目录下未发现 SKILL.md")
+		return
+	}
+
+	existing, err := s.st.ListSkills()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	knownSources := make(map[string]struct{}, len(existing))
+	for _, sk := range existing {
+		if src, err := skillSourceDir(sk.SourcePath); err == nil {
+			knownSources[src] = struct{}{}
+		}
+	}
+
+	result := skillScanResult{
+		Found:    len(dirs),
+		Imported: make([]store.Skill, 0, len(dirs)),
+		Skipped:  make([]string, 0),
+		Errors:   make([]skillScanError, 0),
+	}
+	for _, src := range dirs {
+		if _, exists := knownSources[src]; exists {
+			result.Skipped = append(result.Skipped, src)
+			continue
+		}
+		sk, err := s.importSkill(src)
+		if err != nil {
+			result.Errors = append(result.Errors, skillScanError{SourcePath: src, Error: err.Error()})
+			continue
+		}
+		knownSources[src] = struct{}{}
+		result.Imported = append(result.Imported, sk)
+	}
+
+	status := http.StatusOK
+	if len(result.Imported) > 0 {
+		status = http.StatusCreated
+	}
+	if len(result.Errors) > 0 {
+		status = http.StatusMultiStatus
+	}
+	writeJSON(w, status, result)
+}
+
+// skillSourceDir 将用户输入标准化为绝对目录，并校验目录存在。解析软链可以
+// 保证同一目录从不同软链路径扫描时仍能正确去重。
+func skillSourceDir(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("需要技能目录路径")
+	}
+	src, err := filepath.Abs(raw)
+	if err != nil {
+		return "", err
 	}
 	fi, err := os.Stat(src)
 	if err != nil || !fi.IsDir() {
-		writeErr(w, http.StatusBadRequest, "目录不存在")
-		return
+		return "", fmt.Errorf("目录不存在")
+	}
+	if resolved, err := filepath.EvalSymlinks(src); err == nil {
+		src = resolved
+	}
+	return filepath.Clean(src), nil
+}
+
+// discoverSkillDirs 返回 root 下每个直接包含 SKILL.md 的目录。它不会跟随
+// 目录软链，既避免循环，也避免意外扫描到根目录之外；s.skillsDir 则永远
+// 跳过，防止把 paihuo 已复制的技能再次导入。
+func discoverSkillDirs(root, skillsDir string) ([]string, error) {
+	dirs := make([]string, 0)
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if isPathWithin(path, skillsDir) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Name() == "SKILL.md" {
+			dirs = append(dirs, filepath.Dir(path))
+		}
+		return nil
+	})
+	return dirs, err
+}
+
+// isPathWithin 判断 path 是否等于 dir 或位于 dir 之下。调用者可以传入相对
+// 路径（默认数据库路径会产生相对的 skillsDir），函数会先按当前工作目录展开。
+func isPathWithin(path, dir string) bool {
+	if dir == "" {
+		return false
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(absDir), filepath.Clean(absPath))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// importSkill 把一个已经校验过的技能目录复制到 paihuo 的工作目录并登记。
+func (s *Server) importSkill(src string) (store.Skill, error) {
+	if isPathWithin(src, s.skillsDir) {
+		return store.Skill{}, fmt.Errorf("不能导入 paihuo 管理的技能库目录")
 	}
 	skillmd := filepath.Join(src, "SKILL.md")
-	if _, err := os.Stat(skillmd); err != nil {
-		writeErr(w, http.StatusBadRequest, "该目录没有 SKILL.md，不是技能")
-		return
+	fi, err := os.Stat(skillmd)
+	if err != nil || fi.IsDir() {
+		return store.Skill{}, fmt.Errorf("该目录没有 SKILL.md，不是技能")
 	}
 	name, desc := parseSkillFrontmatter(skillmd)
 	if name == "" {
 		name = filepath.Base(src)
 	}
 	if err := os.MkdirAll(s.skillsDir, 0o755); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+		return store.Skill{}, err
 	}
-	// 目标目录：slug 化名称，冲突则追加序号
+	// 目标目录：slug 化名称，冲突则追加序号。
 	slug := skillSlug(name)
 	dst := filepath.Join(s.skillsDir, slug)
 	for n := 2; ; n++ {
-		if _, err := os.Stat(dst); os.IsNotExist(err) {
+		_, err := os.Stat(dst)
+		if os.IsNotExist(err) {
 			break
+		}
+		if err != nil {
+			return store.Skill{}, err
 		}
 		dst = filepath.Join(s.skillsDir, fmt.Sprintf("%s-%d", slug, n))
 	}
-	if err := copyDir(src, dst); err != nil {
-		writeErr(w, http.StatusInternalServerError, "复制技能目录失败: "+err.Error())
-		return
+	if err := copyDir(src, dst, s.skillsDir); err != nil {
+		return store.Skill{}, fmt.Errorf("复制技能目录失败: %w", err)
 	}
 	id, err := s.st.CreateSkill(store.Skill{
 		Name: name, Description: desc, Dir: dst, SourcePath: src,
 	})
 	if err != nil {
-		os.RemoveAll(dst)
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+		_ = os.RemoveAll(dst)
+		return store.Skill{}, err
 	}
-	sk, _ := s.st.GetSkill(id)
-	writeJSON(w, http.StatusCreated, sk)
+	sk, err := s.st.GetSkill(id)
+	if err != nil {
+		return store.Skill{}, err
+	}
+	return *sk, nil
 }
 
 func (s *Server) deleteSkill(w http.ResponseWriter, r *http.Request) {
@@ -1346,11 +1550,19 @@ func skillSlug(s string) string {
 	return out
 }
 
-// copyDir 递归复制目录（技能可能含子文件/脚本）。
-func copyDir(src, dst string) error {
+// copyDir 递归复制目录（技能可能含子文件/脚本）。skipDirs 内的目录不会
+// 被复制；导入的目标技能库位于源目录内时，这能避免递归复制自己。
+func copyDir(src, dst string, skipDirs ...string) error {
 	return filepath.Walk(src, func(p string, fi os.FileInfo, err error) error {
 		if err != nil {
 			return err
+		}
+		if fi.IsDir() {
+			for _, skip := range skipDirs {
+				if isPathWithin(p, skip) {
+					return filepath.SkipDir
+				}
+			}
 		}
 		rel, err := filepath.Rel(src, p)
 		if err != nil {

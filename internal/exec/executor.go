@@ -596,11 +596,19 @@ func (e *Executor) SendInput(taskID int64, text string) error {
 	return nil
 }
 
-// detachedResultSettleTimeout 是日志 pane 已结束、独立 Codex service 也已收尾
-// 但 agent-exit-code 尚未写入时的最大结算时间。该文件由同一 agent wrapper
-// 在退出前原子写入；短暂等待可覆盖 systemd --collect 与文件落盘的竞态，同时
-// 仍能让真正丢失的任务在有限时间内失败。
-const detachedResultSettleTimeout = 3 * time.Second
+const (
+	// detachedResultSettleTimeout 只适用于已确认独立 Codex service 正在收尾
+	// 或已经结束、但 agent-exit-code 尚未写入的最终结算窗口。该文件由同一
+	// agent wrapper 在退出前原子写入；15 秒覆盖 systemd --collect 与文件
+	// 落盘竞态，同时仍能让真正丢失的任务在有限时间内失败。
+	detachedResultSettleTimeout = 15 * time.Second
+
+	// detachedUnknownQuietTimeout 适用于 pane 已丢、但 systemctl 暂时不能
+	// 确认独立 agent 状态的观测故障。原始输出每次增长都会重置此计时；因此
+	// agent 仍在工作的任务不会因一次 D-Bus/systemd 查询失败被误判。即使
+	// 完全无输出，也保留足以覆盖历史 8 分钟 pane 丢失的长观察窗口。
+	detachedUnknownQuietTimeout = 15 * time.Minute
+)
 
 // waitTmux 将 tmux pipe-pane 文件增量同步到 SQLite，并等待 window 内命令退出。
 // serviceCtx 取消表示 paihuo 自身退出，此时保留 task window；taskCtx 取消才终止任务。
@@ -608,6 +616,8 @@ func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task)
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	var awaitingResultSince time.Time
+	var unknownQuietSince time.Time
+	var lastAgentOutputSize int64 = -1
 	for {
 		if err := taskCtx.Err(); err != nil {
 			_ = e.runner.StopWithReason(tk.ID, "task_context_cancel")
@@ -632,12 +642,40 @@ func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task)
 		if obs.Done {
 			return obs.ExitCode, exitError(obs.ExitCode)
 		}
+		now := time.Now()
+		outputProgressed := obs.DetachedAgent && obs.AgentOutputSize > lastAgentOutputSize
+		if obs.DetachedAgent && obs.AgentOutputSize > lastAgentOutputSize {
+			lastAgentOutputSize = obs.AgentOutputSize
+		}
 		if obs.AwaitingAgentResult {
 			if awaitingResultSince.IsZero() {
-				awaitingResultSince = time.Now()
-				e.log(tk.ID, "sys", "⏳ 日志 pane 已结束，等待独立 agent 写回退出结果")
+				awaitingResultSince = now
+				e.log(tk.ID, "sys", "⏳ 日志 pane 已结束，独立 agent 已进入收尾，等待写回退出结果")
+			} else if outputProgressed {
+				// agent-output.log 仍在增长说明真实 agent 仍有活动；把最终
+				// 结算窗口从最后一次活动重新开始，而非截断一个仍在运行的任务。
+				awaitingResultSince = now
 			}
-			if time.Since(awaitingResultSince) < detachedResultSettleTimeout {
+			unknownQuietSince = time.Time{}
+			if now.Sub(awaitingResultSince) < detachedResultSettleTimeout {
+				select {
+				case <-serviceCtx.Done():
+				case <-taskCtx.Done():
+				case <-ticker.C:
+				}
+				continue
+			}
+			return -1, tmuxWindowLostError{taskID: tk.ID}
+		}
+		if obs.DetachedAgent && obs.AgentState == agentServiceUnknown && obs.Alive {
+			awaitingResultSince = time.Time{}
+			if unknownQuietSince.IsZero() {
+				unknownQuietSince = now
+				e.log(tk.ID, "sys", "⏳ 日志 pane 已结束，暂时无法确认独立 agent 状态；继续观察原始输出和退出结果")
+			} else if outputProgressed {
+				unknownQuietSince = now
+			}
+			if now.Sub(unknownQuietSince) < detachedUnknownQuietTimeout {
 				select {
 				case <-serviceCtx.Done():
 				case <-taskCtx.Done():
@@ -648,6 +686,7 @@ func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task)
 			return -1, tmuxWindowLostError{taskID: tk.ID}
 		}
 		awaitingResultSince = time.Time{}
+		unknownQuietSince = time.Time{}
 		if !obs.Alive {
 			return -1, tmuxWindowLostError{taskID: tk.ID}
 		}

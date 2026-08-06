@@ -307,6 +307,23 @@ function findChrome() {
   const ext = await page.evaluate(() => document.querySelector(".seg .active")?.textContent || "");
   ext.includes("扩展") ? ok("技能/扩展双 tab") : fail("双 tab 切换异常");
 
+  // Skills 外层必须占满 page-content 的剩余高度，否则内层列表会被内容撑开，
+  // 在可视区外被裁切而无法滚动。逐步填充卡片，适配不同的测试视口尺寸。
+  const skillsScrollable = await page.evaluate(() => {
+    setSkillTab("skills");
+    const grid = document.getElementById("skillGrid");
+    let count = 40;
+    do {
+      grid.innerHTML = Array.from({ length: count }, (_, i) =>
+        `<div class="skill-card"><div class="sk-name">滚动验证技能 ${i + 1}</div><div class="sk-desc">用于验证 Skills 列表不会被裁切。</div></div>`
+      ).join("");
+      count *= 2;
+    } while (grid.scrollHeight <= grid.clientHeight && count <= 1280);
+    grid.scrollTop = 200;
+    return grid.scrollHeight > grid.clientHeight && grid.scrollTop > 0;
+  });
+  skillsScrollable ? ok("技能列表可滚动") : fail("技能列表被裁切或不可滚动");
+
   // 汇总
   console.log("— 汇总 —");
   if (errors.length) { failed = true; errors.slice(0, 10).forEach(e => console.log("  ✗ " + e)); }

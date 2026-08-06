@@ -209,7 +209,8 @@ kbd {
 .page-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 
 /* 各页面壳层：占满剩余高度，内部组件才能正确滚动 */
-#boardShell, #detailShell, #projectListShell, #projectDetailShell, #agentListShell, #agentDetailShell {
+#boardShell, #detailShell, #projectListShell, #projectDetailShell, #agentListShell, #agentDetailShell,
+#skillShell, #skillDetailShell, #extShell {
   flex: 1; display: flex; flex-direction: column; min-height: 0;
 }
 
@@ -1110,10 +1111,16 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 }
 .skill-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl);
-  padding: 14px 16px; box-shadow: var(--sh-surface);
-  transition: border-color var(--t-fast), background var(--t-fast);
+  padding: 14px 16px; box-shadow: var(--sh-surface); cursor: pointer; position: relative; overflow: hidden;
+  transition: border-color var(--t-fast), background var(--t-fast), transform var(--t-fast), box-shadow var(--t-med);
 }
-.skill-card:hover { border-color: var(--border-strong); background: var(--raised); }
+.skill-card::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2.5px;
+  background: var(--brand-grad); opacity: 0; transition: opacity var(--t-fast);
+}
+.skill-card:hover, .skill-card:focus-visible { border-color: var(--border-strong); background: var(--raised); transform: translateY(-1px); box-shadow: var(--sh-card); }
+.skill-card:hover::before, .skill-card:focus-visible::before { opacity: 1; }
+.skill-card:active { transform: scale(.99); }
 .sk-top { display: flex; align-items: center; gap: 10px; }
 .sk-id { flex: 1; min-width: 0; }
 .sk-name { font-size: 14px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1130,7 +1137,25 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   display: flex; align-items: center; gap: 10px; margin-top: 10px;
   font-size: 11px; color: var(--fg-faint); font-variant-numeric: tabular-nums;
 }
+.sk-foot > .count-info { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sk-foot .ac-ops { margin-left: auto; }
+
+/* 技能详情 */
+.skill-hero { display: flex; align-items: flex-start; gap: 14px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.skill-avatar { background: var(--brand-grad); box-shadow: var(--glow-brand), inset 0 1px 0 rgba(255, 255, 255, .24); }
+.skill-hero-copy { min-width: 0; }
+.skill-hero h2 { margin-top: 3px; }
+.skill-hero-desc { margin-top: 5px; color: var(--fg-muted); font-size: 13px; line-height: 20px; white-space: pre-wrap; word-break: break-word; }
+.skill-doc-head { display: flex; align-items: center; gap: 10px; margin: 18px 0 7px; }
+.skill-doc-head > div { min-width: 0; flex: 1; }
+.skill-doc {
+  margin: 0; min-height: 280px; padding: 15px 16px; overflow: auto;
+  background: var(--inset); border: 1px solid var(--border); border-radius: var(--r-lg);
+  color: var(--fg-muted); font: 12px/19px var(--font-mono);
+  white-space: pre-wrap; word-break: break-word;
+}
+.skill-doc.is-empty { color: var(--fg-faint); }
+.skill-doc.is-error { color: var(--danger); border-color: rgba(248, 113, 113, .3); }
 
 /* 项目卡片目录 chip */
 .pc-meta .pc-dir {

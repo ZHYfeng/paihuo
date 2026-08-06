@@ -34,7 +34,7 @@ type Server struct {
 	ex           *exec.Executor
 	sched        *sched.Scheduler
 	token        string
-	skillsDir    string                        // 技能库工作目录（<db目录>/skills，定向添加的技能复制到这里）
+	skillsDir    string                        // 技能库工作目录（<db目录>/skills，导入或扫描发现的技能复制到这里）
 	sessionsRoot string                        // 任务 worktree 根目录（<db目录>/sessions）
 	pages        map[string]*template.Template // 每页一个模板集（base + 页面，避免 content 冲突）
 	mux          *http.ServeMux
@@ -210,6 +210,8 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("GET /api/provision", s.provisionStatus)
 	m.HandleFunc("GET /api/skills", s.listSkills)
 	m.HandleFunc("POST /api/skills", s.createSkill)
+	m.HandleFunc("POST /api/skills/scan", s.scanSkills)
+	m.HandleFunc("GET /api/skills/{id}", s.getSkill)
 	m.HandleFunc("DELETE /api/skills/{id}", s.deleteSkill)
 	m.HandleFunc("GET /api/extensions", s.listExtensions)
 	m.HandleFunc("POST /api/extensions/install", s.installExtension)
