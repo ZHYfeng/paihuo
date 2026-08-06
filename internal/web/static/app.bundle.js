@@ -3309,7 +3309,7 @@
     openModal("roleStudioModal");
   }
   function openCurrentRoleEditor() {
-    const id = studioState()?.agentID || state.agentEditing?.id;
+    const id = state.agentEditing?.id;
     if (id) openRoleStudio(id);
   }
   function changeRoleStudioCli() {

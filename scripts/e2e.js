@@ -107,6 +107,40 @@ function findChrome() {
   roleStudio ? ok("角色统一编辑器（三栏同时保留）") : fail("角色统一编辑器未完整渲染");
   await page.evaluate(() => closeModal("roleStudioModal"));
 
+  // 详情页编辑必须以当前详情角色为准。先打开角色 A 的工作台留下草稿，
+  // 再切到角色 B；如果错误复用了旧的 roleStudio.agentID，这里会重新打开 A。
+  const editorSwitch = await page.evaluate(async () => {
+    const all = await (await fetch("/api/agents")).json();
+    if (all.length < 2) return { skipped: true };
+    const first = all[0], second = all[1];
+    const waitFor = check => new Promise(resolve => {
+      const started = Date.now();
+      const poll = () => {
+        if (check() || Date.now() - started > 3000) return resolve();
+        setTimeout(poll, 40);
+      };
+      poll();
+    });
+    openAgentDetail(first.id);
+    await waitFor(() => document.getElementById("adCrumb")?.textContent.includes(first.name));
+    await openRoleStudio(first.id);
+    closeModal("roleStudioModal");
+    openAgentDetail(second.id);
+    await waitFor(() => document.getElementById("adCrumb")?.textContent.includes(second.name));
+    openCurrentRoleEditor();
+    await waitFor(() => document.getElementById("rsName")?.value === second.name);
+    return {
+      skipped: false,
+      title: document.getElementById("roleStudioTitle")?.textContent || "",
+      name: document.getElementById("rsName")?.value || "",
+      expectedName: second.name,
+    };
+  });
+  if (editorSwitch.skipped) ok("角色详情切换后编辑（角色不足，跳过）");
+  else if (editorSwitch.name === editorSwitch.expectedName && editorSwitch.title.includes(editorSwitch.expectedName)) ok("角色详情切换后打开正确编辑器");
+  else fail(`角色详情切换后打开错误角色：${JSON.stringify(editorSwitch)}`);
+  await page.evaluate(() => closeModal("roleStudioModal"));
+
   // 角色详情页内联并发编辑器：改值保存后 API 应持久化（先改再还原，不污染数据）
   const agents = await page.evaluate(async () => await (await fetch("/api/agents")).json());
   if (!agents.length) ok("角色详情页并发编辑器（无角色，跳过）");

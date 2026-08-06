@@ -190,7 +190,9 @@ export async function openRoleStudio(id) {
 }
 
 export function openCurrentRoleEditor() {
-  const id = studioState()?.agentID || state.agentEditing?.id;
+  // 详情页的当前角色才是这个按钮的来源。工作台草稿会在关闭弹窗后
+  // 保留未保存内容，不能让它把后续切换到的详情角色“带回”旧角色。
+  const id = state.agentEditing?.id;
   if (id) openRoleStudio(id);
 }
 
