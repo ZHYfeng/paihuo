@@ -1,6 +1,8 @@
 package server
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -58,5 +60,29 @@ func TestCleanRoleStudioOutput(t *testing.T) {
 	}
 	if got := cleanRoleStudioOutput("pi", "tokens used\n答复"); got != "tokens used\n答复" {
 		t.Fatalf("其他 CLI 不应误裁剪输出: %q", got)
+	}
+}
+
+func TestRoleStudioSkillPromptsAreConcise(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "source-dir")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: brand\ndescription: brand workflow\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	draft := roleStudioDraft{RoleConfig: store.RoleConfig{Skills: []string{dir}}}
+
+	if got, want := roleStudioSkillInstruction(draft), "待创建角色拥有以下技能：\n- brand"; got != want {
+		t.Fatalf("draft skill prompt=%q, want %q", got, want)
+	}
+	got := roleStudioPreparedSkillsPrompt(draft.RoleConfig.Skills)
+	if want := "当前角色拥有以下技能：\n- brand"; got != want {
+		t.Fatalf("prepared skill prompt=%q, want %q", got, want)
+	}
+	for _, unwanted := range []string{"PaiHuo", "SKILL.md", dir, "必须阅读", "工作流程", "不要修改或提交"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("prepared skill prompt should not contain %q: %s", unwanted, got)
+		}
 	}
 }

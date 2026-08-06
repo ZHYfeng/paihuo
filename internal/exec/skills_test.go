@@ -46,9 +46,12 @@ func TestPrepareRoleSkillsUsesNativeRootsAndCleansUp(t *testing.T) {
 		t.Fatalf("staged reference missing: %q %v", got, err)
 	}
 	prompt := buildRoleSkillsPrompt(prepared.Bindings)
-	for _, want := range []string{"design", "SKILL.md", binding.Dir, "不要修改或提交"} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("skill prompt missing %q: %s", want, prompt)
+	if want := "当前角色拥有以下技能：\n- design"; prompt != want {
+		t.Fatalf("skill prompt=%q, want %q", prompt, want)
+	}
+	for _, unwanted := range []string{"PaiHuo", "SKILL.md", binding.Dir, "必须阅读", "工作流程", "references", "不要修改或提交"} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("skill prompt should not contain %q: %s", unwanted, prompt)
 		}
 	}
 	if _, err := os.Stat(manifest); err != nil {

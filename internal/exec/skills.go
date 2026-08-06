@@ -3,7 +3,7 @@ package exec
 // 本文件把角色配置中的技能目录变成一次任务真正可见的技能：
 //   1. 复制到当前 CLI 的原生项目技能目录；
 //   2. 用 CLI 支持的参数（OMP/Pi）选择这些副本；
-//   3. 在任务提示中明确要求读取 SKILL.md，覆盖不同 CLI 的自动触发差异。
+//   3. 在任务提示中简要列出当前角色拥有的技能。
 //
 // 副本放在任务 worktree 的 CLI 原生目录，清单放在任务 tmux 运行目录，
 // 不会把清单写进 Git。任务结算前会删除副本；服务重启时清单保留，恢复
@@ -340,12 +340,23 @@ func buildRoleSkillsPrompt(bindings []roleSkillBinding) string {
 	if len(bindings) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString("【PaiHuo 角色技能已启用】以下是本角色明确选择的技能。开始任务前必须阅读每个目录中的 SKILL.md，并遵循其中的工作流程；其中引用的 references、scripts、模板等资源按需从同一目录读取。")
+	names := make([]string, 0, len(bindings))
 	for _, binding := range bindings {
-		fmt.Fprintf(&b, "\n- %s（技能文件：%s）", binding.OriginalName, filepath.Join(binding.Dir, "SKILL.md"))
+		name := strings.TrimSpace(binding.OriginalName)
+		if name == "" {
+			name = strings.TrimSpace(binding.NativeName)
+		}
+		names = append(names, name)
 	}
-	b.WriteString("\n如果技能说明与任务正文冲突，以任务正文和系统安全边界为准；不要修改或提交这些 PaiHuo 临时技能副本。")
+	names = uniqueNonEmpty(names)
+	if len(names) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("当前角色拥有以下技能：")
+	for _, name := range names {
+		fmt.Fprintf(&b, "\n- %s", name)
+	}
 	return b.String()
 }
 

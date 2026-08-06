@@ -25,9 +25,8 @@ import (
 )
 
 const (
-	// Role assistants may need to read several Skills before responding. Keep
-	// the request bounded, but give those skill-heavy roles enough time to
-	// finish instead of failing at the old two-minute cutoff.
+	// Keep requests bounded, but give skill-heavy roles enough time to finish
+	// instead of failing at the old two-minute cutoff.
 	roleStudioTimeout = 5 * time.Minute
 	roleStudioOutput  = 256 << 10
 	roleStudioHistory = 24
@@ -235,24 +234,11 @@ func buildRoleStudioTestPrompt(draft roleStudioDraft, message string, tests []ro
 %s
 </TEST_MESSAGE>
 
-不要讨论工作台内部实现。
-
-%s`, roleStudioDraftJSON(draft), roleStudioTranscript(tests), message, roleStudioSkillInstruction(draft))
+不要讨论工作台内部实现。`, roleStudioDraftJSON(draft), roleStudioTranscript(tests), message)
 }
 
 func roleStudioSkillInstruction(d roleStudioDraft) string {
-	if len(d.RoleConfig.Skills) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("本角色选择了以下 Skills。如果当前 CLI 能读取这些路径，请先阅读对应 SKILL.md，并在答复中遵循其适用要求；不要修改这些源目录：")
-	for _, path := range d.RoleConfig.Skills {
-		path = strings.TrimSpace(path)
-		if path != "" {
-			fmt.Fprintf(&b, "\n- %s/SKILL.md", path)
-		}
-	}
-	return b.String()
+	return roleStudioSkillsSummary("待创建角色拥有以下技能：", roleStudioSkillNames(d.RoleConfig.Skills))
 }
 
 func roleStudioDraftJSON(d roleStudioDraft) string {
@@ -325,7 +311,7 @@ func (s *Server) runRoleStudio(parent context.Context, role store.RoleConfig, cl
 	if instr := strings.TrimSpace(role.Instructions); instr != "" {
 		prompt = instr + "\n\n" + prompt
 	}
-	if skillPrompt := roleStudioPreparedSkillsPrompt(skillNames, skillDirs); skillPrompt != "" {
+	if skillPrompt := roleStudioPreparedSkillsPrompt(role.Skills); skillPrompt != "" {
 		prompt = skillPrompt + "\n\n" + prompt
 	}
 	bin, args, env, err := adapter.Build(paiexec.RunOptions{
@@ -373,18 +359,43 @@ func (s *Server) runRoleStudio(parent context.Context, role store.RoleConfig, cl
 	return cleanRoleStudioOutput(cli, text), nil
 }
 
-func roleStudioPreparedSkillsPrompt(names, dirs []string) string {
-	if len(dirs) == 0 {
+func roleStudioPreparedSkillsPrompt(paths []string) string {
+	return roleStudioSkillsSummary("当前角色拥有以下技能：", roleStudioSkillNames(paths))
+}
+
+func roleStudioSkillNames(paths []string) []string {
+	names := make([]string, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		name, _, _ := parseSkillFrontmatter(filepath.Join(path, "SKILL.md"))
+		name = strings.TrimSpace(name)
+		if name == "" {
+			name = filepath.Base(filepath.Clean(path))
+		}
+		if name == "" || name == "." || name == string(filepath.Separator) {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return names
+}
+
+func roleStudioSkillsSummary(title string, names []string) string {
+	if len(names) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("【PaiHuo 角色 Skills 已启用】开始本次工作前必须阅读以下临时技能副本中的 SKILL.md，并遵循其中适用的工作流程；不要修改或提交这些副本：")
-	for i, dir := range dirs {
-		name := "角色技能"
-		if i < len(names) && strings.TrimSpace(names[i]) != "" {
-			name = names[i]
-		}
-		fmt.Fprintf(&b, "\n- %s（%s）", name, filepath.Join(dir, "SKILL.md"))
+	b.WriteString(title)
+	for _, name := range names {
+		fmt.Fprintf(&b, "\n- %s", name)
 	}
 	return b.String()
 }

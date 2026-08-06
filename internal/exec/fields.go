@@ -112,7 +112,7 @@ func commonFields() []Field {
 			Help:    "low 更快更省、high 深度推理；medium 为默认"},
 		{Key: "skills", Label: "技能", Type: "list", Group: "技能", Source: "skills",
 			Placeholder: "勾选已注册到 paihuo 工作目录的技能",
-			Help:        "执行器会把角色选择的技能安全复制到本次任务的 CLI 原生技能目录，并要求 agent 读取 SKILL.md"},
+			Help:        "执行器会把角色选择的技能安全复制到本次任务的 CLI 原生技能目录"},
 		{Key: "plugins", Label: "插件 / 配置叠加", Type: "list", Group: "技能",
 			Placeholder: "/path/to/plugin, /path/to/config.toml",
 			Help:        "逗号分隔的插件或配置叠加文件（--config）"},
