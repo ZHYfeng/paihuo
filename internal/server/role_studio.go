@@ -17,6 +17,7 @@ import (
 	osexec "os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	paiexec "paihuo/internal/exec"
@@ -24,7 +25,10 @@ import (
 )
 
 const (
-	roleStudioTimeout = 2 * time.Minute
+	// Role assistants may need to read several Skills before responding. Keep
+	// the request bounded, but give those skill-heavy roles enough time to
+	// finish instead of failing at the old two-minute cutoff.
+	roleStudioTimeout = 5 * time.Minute
 	roleStudioOutput  = 256 << 10
 	roleStudioHistory = 24
 )
@@ -335,6 +339,17 @@ func (s *Server) runRoleStudio(parent context.Context, role store.RoleConfig, cl
 	ctx, cancel := context.WithTimeout(parent, roleStudioTimeout)
 	defer cancel()
 	cmd := osexec.CommandContext(ctx, bin, args...)
+	// CLI launchers such as Codex are Node wrappers that spawn a native child.
+	// Put the whole invocation in its own process group so a timeout cannot
+	// leave that child holding the command pipes open after the wrapper dies.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Dir = workdir
 	cmd.Env = env
 	var output limitedRoleStudioBuffer
