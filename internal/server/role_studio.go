@@ -292,17 +292,11 @@ func (s *Server) runRoleStudio(parent context.Context, role store.RoleConfig, cl
 		return "", fmt.Errorf("创建角色工作台临时目录失败: %w", err)
 	}
 	defer os.RemoveAll(workdir)
-	// Codex 默认拒绝在非 Git 目录运行。工作台只使用临时目录，初始化一
-	// 个空仓库满足 CLI 的安全前置，不会接触任何用户项目。
-	if cli == "codex" {
-		if initErr := osexec.Command("git", "init", "-q", workdir).Run(); initErr != nil {
-			return "", fmt.Errorf("为 Codex 工作台初始化临时 Git 目录失败: %w", initErr)
-		}
-	}
-	manifestPath := filepath.Join(workdir, ".paihuo-role-skills.json")
-	skillDirs, skillNames, cleanupSkills, err := paiexec.PrepareRoleSkillsForWorkspace(
-		workdir, cli, manifestPath, time.Now().UnixNano(), role.Skills,
-	)
+	// 工作台用短生命周期临时目录，不建角色目录：PrepareRoleSkillsStandalone
+	// 在临时目录内按各 CLI 语义准备技能（symlink/副本回退与正式任务一致）。
+	// Codex 的 git 前置用 --skip-git-repo-check 绕过（与任务执行器一致），
+	// 不再 git init 临时目录。
+	mount, cleanupSkills, err := paiexec.PrepareRoleSkillsStandalone(workdir, cli, role.Skills)
 	if err != nil {
 		return "", fmt.Errorf("加载角色 Skills 失败: %w", err)
 	}
@@ -317,7 +311,8 @@ func (s *Server) runRoleStudio(parent context.Context, role store.RoleConfig, cl
 	bin, args, env, err := adapter.Build(paiexec.RunOptions{
 		Dir: workdir, Prompt: prompt, Role: role,
 		Perm: store.PermReview, RunMode: store.RunModeBatch,
-		SkillDirs: skillDirs, SkillNames: skillNames,
+		SkillMount:   mount,
+		SkipGitCheck: cli == "codex",
 	})
 	if err != nil {
 		return "", err

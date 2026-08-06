@@ -20,13 +20,18 @@ type RunOptions struct {
 	Perm       string // 任务权限模式：full | review
 	RunMode    string // batch | interactive
 	SessionDir string // 任务专属会话目录（会话隔离，互不干扰）
-	// SkillDirs 是执行器为本次任务准备的技能副本目录。它们位于任务
-	// 工作空间内，避免 CLI 因沙箱/工作目录限制读不到角色选择的源目录。
+	// SkillDirs 是执行器为本次任务准备的技能副本目录（旧每任务副本机制）。
 	// 为空时适配器回退到 Role.Skills，便于单元测试和兼容旧调用方。
 	SkillDirs []string
 	// SkillNames 是本次任务实际启用的技能名。OMP 的 --skills 参数是
 	// 名称 glob 过滤器，不是目录加载器，因此不能直接传 Role.Skills 路径。
 	SkillNames []string
+	// SkillMount 是角色级技能挂载视图（symlink + 各 CLI 挂载描述）。非 nil
+	// 时优先于 SkillDirs/SkillNames。
+	SkillMount *RoleSkillMount
+	// SkipGitCheck 让 codex 在非 git 项目目录执行（--skip-git-repo-check），
+	// 仅批处理 exec 有效；不修改角色配置，只注入本次调用。
+	SkipGitCheck bool
 }
 
 // Adapter 是 agent CLI 的适配器。
@@ -114,6 +119,18 @@ func mergeEnv(extra map[string]string) []string {
 	return env
 }
 
+// envWith 在已有环境切片中设置/追加单个 KEY=VALUE（原地覆盖重复项）。
+func envWith(env []string, key, value string) []string {
+	kv := key + "=" + value
+	for i, e := range env {
+		if k, _, ok := strings.Cut(e, "="); ok && k == key {
+			env[i] = kv
+			return env
+		}
+	}
+	return append(env, kv)
+}
+
 // shellJoin 仅用于日志展示。
 func shellJoin(parts []string) string {
 	quoted := make([]string, len(parts))
@@ -151,12 +168,16 @@ func (a *ompAdapter) Build(o RunOptions) (string, []string, []string, error) {
 		args = append(args, "--append-system-prompt", s)
 	}
 	skillNames := o.SkillNames
-	if len(skillNames) == 0 {
-		// 兼容直接调用 Adapter.Build 的旧代码；正式任务由执行器填充
-		// SkillNames，传入原始目录只会取其 basename 作为过滤名。
-		skillNames = skillBasenames(o.Role.Skills)
-	}
-	if len(skillNames) > 0 {
+	if o.SkillMount != nil && o.SkillMount.OmpOverlay != "" {
+		// 角色级 overlay 已把 skills.customDirectories 限定为角色技能目录
+		// （含 global 合并），无需 --skills 名称过滤。
+		args = append(args, "--config", o.SkillMount.OmpOverlay)
+	} else if len(skillNames) > 0 || len(o.Role.Skills) > 0 {
+		if len(skillNames) == 0 {
+			// 兼容直接调用 Adapter.Build 的旧代码；正式任务由执行器填充
+			// SkillNames，传入原始目录只会取其 basename 作为过滤名。
+			skillNames = skillBasenames(o.Role.Skills)
+		}
 		args = append(args, "--skills", strings.Join(skillNames, ","))
 	}
 	if thinking := strings.TrimSpace(o.Role.Thinking); thinking != "" {
@@ -202,7 +223,7 @@ func (a *ompAdapter) Schema() []Field {
 		f.Help = "按所选模型从 omp models --json 读取 thinking 档位，并原样传给 --thinking；模型未声明时不猜测"
 	}
 	if f := byKey(fs, "skills"); f != nil {
-		f.Help = "执行器把所选技能复制到任务 .agents/skills，并用官方 --skills 按名称过滤；任务提示会明确要求读取并遵循"
+		f.Help = "执行器把所选技能挂载为角色级技能目录（symlink 视图），经 omp --config overlay（含全局 customDirectories 合并）加载；任务提示会明确要求读取并遵循"
 	}
 	fs = append(fs,
 		Field{Key: "tools", Label: "工具白名单", Type: "list", Group: "执行",
@@ -249,12 +270,15 @@ func (a *openCodeAdapter) Build(o RunOptions) (string, []string, []string, error
 	if ag := o.Role.Custom["agent"]; ag != "" {
 		args = append(args, "--agent", ag)
 	}
-	if cfg := o.Role.Custom["config"]; cfg != "" {
-		args = append(args, "--config", cfg)
-	}
 	args = append(args, o.Role.ExtraArgs...)
 	args = append(args, o.Prompt)
-	return a.bin, args, mergeEnv(o.Role.Env), nil
+	env := mergeEnv(o.Role.Env)
+	if o.SkillMount != nil && o.SkillMount.OpencodeConfig != "" {
+		// opencode 1.18 无 --config CLI 选项；技能通过内置配置层
+		// OPENCODE_CONFIG_CONTENT 注入（绝对路径 skills.paths）。
+		env = envWith(env, "OPENCODE_CONFIG_CONTENT", o.SkillMount.OpencodeConfig)
+	}
+	return a.bin, args, env, nil
 }
 
 func (a *openCodeAdapter) Warnings(o RunOptions) []string {
@@ -264,6 +288,9 @@ func (a *openCodeAdapter) Warnings(o RunOptions) []string {
 	}
 	if len(o.Role.Plugins) > 0 {
 		ws = append(ws, "opencode 插件按项目/全局配置管理，角色 plugins 字段不生效")
+	}
+	if cfg := o.Role.Custom["config"]; cfg != "" {
+		ws = append(ws, "opencode 1.18 已移除 --config 选项，该字段不再生效；技能请在技能页勾选，由执行器通过 OPENCODE_CONFIG_CONTENT 注入")
 	}
 	return ws
 }
@@ -288,9 +315,9 @@ func (a *openCodeAdapter) Schema() []Field {
 			Suggestions: []string{"build", "plan", "architect", "debug", "test", "code-review"},
 			Placeholder: "如 build / planner（可输入自定义）",
 			Help:        "opencode agent 名称（--agent），项目 .opencode/agent/*.md 定义的角色；从候选中选择或直接输入"},
-		{Key: "config", Label: "配置文件", Type: "text", Group: "执行",
+		{Key: "config", Label: "配置文件（已弃用）", Type: "text", Group: "执行",
 			Placeholder: "/path/to/opencode.json",
-			Help:        "--config 叠加指定配置文件（默认读项目 opencode.json / .opencode/opencode.json）"},
+			Help:        "已弃用：opencode 1.18 无 --config 选项，该字段不再生效；技能请在技能页勾选，由执行器自动注入"},
 		{Key: "extra_args", Label: "额外参数", Type: "text", Group: "执行",
 			Placeholder: "--no-tools --log-level debug",
 			Help:        "原样追加到 opencode run 命令"},
@@ -340,6 +367,9 @@ func (a *piAdapter) Build(o RunOptions) (string, []string, []string, error) {
 		args = append(args, "--thinking", o.Role.Thinking)
 	}
 	skillDirs := o.SkillDirs
+	if o.SkillMount != nil {
+		skillDirs = o.SkillMount.SkillPaths
+	}
 	if len(skillDirs) == 0 {
 		skillDirs = o.Role.Skills
 	}
@@ -372,7 +402,7 @@ func (a *piAdapter) Schema() []Field {
 		f.Help = "无法从本机模型目录识别逐模型思考档位时，保留通用选项：off / minimal / low / medium / high / xhigh / max / ultra；默认使用 Pi/模型默认。"
 	}
 	if f := byKey(fs, "skills"); f != nil {
-		f.Help = "执行器把所选技能复制到任务工作空间，并用官方 --skill 逐目录加载（可多个）"
+		f.Help = "执行器把所选技能挂载为角色级技能目录（symlink 视图），并用官方 --skill 逐目录加载（可多个）"
 	}
 	// pi 无 plugins 字段：扩展用 pi install 全局管理（见 Skills 页扩展 tab）
 	out := fs[:0]
@@ -428,6 +458,10 @@ func (a *claudeAdapter) Build(o RunOptions) (string, []string, []string, error) 
 	args = append(args, "--permission-mode", pm)
 	if settings := o.Role.Custom["settings"]; settings != "" {
 		args = append(args, "--settings", settings)
+	}
+	if o.SkillMount != nil && o.SkillMount.ClaudePlugin != "" {
+		// claude 插件布局：插件顶层 skills/ + .claude-plugin/plugin.json。
+		args = append(args, "--plugin-dir", o.SkillMount.ClaudePlugin)
 	}
 	args = append(args, o.Role.ExtraArgs...)
 	if interactive {
@@ -492,10 +526,11 @@ func (a *codexAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	// 官方默认保护。
 	if o.Role.Custom["execution_mode"] == "yolo" {
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
-		if !interactive {
-			// --skip-git-repo-check 是 exec 子命令参数；交互 TUI 不接受它。
-			args = append(args, "--skip-git-repo-check")
-		}
+	}
+	if !interactive && (o.SkipGitCheck || o.Role.Custom["execution_mode"] == "yolo") {
+		// --skip-git-repo-check 是 exec 子命令参数；交互 TUI 不接受它。
+		// 非 git 项目 + safe 模式由执行器注入；yolo 自带该参数。
+		args = append(args, "--skip-git-repo-check")
 	}
 	if m := o.Role.Model; m != "" {
 		args = append(args, "-c", "model="+tomlQuote(m))

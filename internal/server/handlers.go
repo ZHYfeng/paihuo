@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -960,6 +961,13 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// role_config 变更（含技能选择）后立即对账角色级技能挂载目录，
+	// 不必等下一次任务启动或服务重启才生效。
+	if _, ok := set["role_config"]; ok {
+		if _, rerr := s.ex.EnsureRoleSkills(id, a.Name, a.RoleConfig.Skills); rerr != nil {
+			log.Printf("⚠ 角色 %d 技能目录对账失败: %v", id, rerr)
+		}
+	}
 	// 提高并发数或重新启用角色后，不必等下一次一秒轮询才派发队列。
 	s.ex.Wake()
 	writeJSON(w, http.StatusOK, a)
@@ -984,6 +992,11 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 	if err := s.st.DeleteAgent(id); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	// 技能挂载目录移入 .stale 暂存区（7 天兜底）；失败不阻断删除，
+	// 启动对账会再扫一次孤儿目录。
+	if err := s.ex.RemoveRoleSkills(id); err != nil {
+		log.Printf("⚠ 清理角色 %d 技能目录失败: %v", id, err)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

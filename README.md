@@ -124,6 +124,25 @@ go build -o paihuo ./cmd/paihuo
 - `{{.date}}` 今天日期、`{{.time}}` 当前时间、`{{.name}}` 定时任务名
 - 每个定时任务可选择生成任务时的权限模式；该值写入每一条生成的任务，不属于角色配置
 
+## 技能机制（角色技能物化）
+
+角色的 Skills 配置指向技能库中的目录。PaiHuo 为每个角色维护一个**常驻只读技能视图**：
+
+```
+<sessionsRoot>/.role-agents/<agentID>/
+├── .agents/skills/<name>/   # 统一技能视图：symlink → 技能库目录（零复制）
+├── skills/<name>            # claude 插件布局（与 .agents/skills 互链）
+├── .claude-plugin/plugin.json
+├── overlay.yml              # omp --config overlay（自动合并全局 customDirectories）
+└── manifest.json            # 挂载清单（幂等对账依据）
+```
+
+- 各 CLI 的加载方式：pi `--skill` 逐目录；omp `--config overlay.yml`；opencode 注入 `OPENCODE_CONFIG_CONTENT`；claude `--plugin-dir`；codex 任务级把技能 symlink 到 `$HOME/.agents/skills/paihuo-*`（USER scope，任务结束即删）
+- SKILL.md frontmatter `name` 与目录名不一致/非法的技能自动**回退为副本并改写 name**（满足 opencode 的目录=name 约束）；缺 description 仅告警不阻断（omp 下不可见）
+- 技能目录永远在 worktree / 用户项目目录**之外**：不会被 agent `git add -A` 提交，也不会污染非 git 项目目录；同名技能按 `-2` 递增命名
+- 角色技能变更（配置保存）与服务启动都会**幂等对账**：新增即挂载、移除即清理、源目录失效自动剔除并告警、恢复后自动重建；角色删除后目录进 `.stale` 保留 7 天
+- 非 git 项目 + codex（safe 模式）：自动注入 `--skip-git-repo-check`，不再依赖 yolo 或 git init
+
 ## 多 agent 协作
 
 任务详情点「拆分子任务」：所有任务按各自角色的最大并发数派发；同一角色也可并行。**默认每个任务不并发**——同一项目同时只执行一个任务，除非创建时勾选了「并发执行」；勾选后可与同项目其他任务并行（仅受角色并发上限约束）。Git 项目中每个任务使用独立 worktree，运行期间互不改写工作目录；非 Git 项目会共用目录，应把相关角色并发设为 `1`。父任务不执行，只聚合展示。删除父任务级联删除子任务。

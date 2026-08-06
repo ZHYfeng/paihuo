@@ -187,6 +187,111 @@ func TestPiSchema(t *testing.T) {
 	}
 }
 
+// 角色级技能挂载：omp 用 overlay --config（不再 --skills 过滤）、opencode 用
+// OPENCODE_CONFIG_CONTENT env（不再 --config）、claude 用 --plugin-dir。
+func TestSkillMountWiringAcrossAdapters(t *testing.T) {
+	mount := &RoleSkillMount{
+		SkillPaths:     []string{"/role/.agents/skills/design", "/role/.agents/skills/review"},
+		OmpOverlay:     "/role/overlay.yml",
+		OpencodeConfig: `{"skills":{"paths":["/role/.agents/skills/design"]}}`,
+		ClaudePlugin:   "/role",
+	}
+
+	t.Run("omp", func(t *testing.T) {
+		a := &ompAdapter{baseAdapter{id: "omp", name: "omp", bin: "omp"}}
+		_, args, _, err := a.Build(RunOptions{
+			Prompt: "p", Role: store.RoleConfig{Skills: []string{"/sk/a"}}, SkillMount: mount,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "--config /role/overlay.yml") {
+			t.Fatalf("omp 应使用 overlay --config: %s", joined)
+		}
+		if strings.Contains(joined, "--skills") {
+			t.Fatalf("有 SkillMount 时 omp 不应再用 --skills: %s", joined)
+		}
+	})
+
+	t.Run("opencode", func(t *testing.T) {
+		a := &openCodeAdapter{baseAdapter{id: "opencode", name: "opencode", bin: "opencode"}}
+		_, args, env, err := a.Build(RunOptions{
+			Dir: "/repo", Prompt: "p", Role: store.RoleConfig{Custom: map[string]string{"config": "/x.json"}},
+			SkillMount: mount,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(strings.Join(args, " "), "--config") {
+			t.Fatalf("opencode 1.18 不应再传 --config: %v", args)
+		}
+		if !envHas(env, "OPENCODE_CONFIG_CONTENT", mount.OpencodeConfig) {
+			t.Fatalf("opencode env 应含 OPENCODE_CONFIG_CONTENT: %v", env)
+		}
+		if ws := a.Warnings(RunOptions{Role: store.RoleConfig{Custom: map[string]string{"config": "/x.json"}}}); len(ws) == 0 {
+			t.Fatal("opencode config 字段应给出已弃用告警")
+		}
+	})
+
+	t.Run("claude", func(t *testing.T) {
+		a := &claudeAdapter{baseAdapter{id: "claude", name: "claude", bin: "claude"}}
+		_, args, _, err := a.Build(RunOptions{Prompt: "p", Role: store.RoleConfig{}, SkillMount: mount})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(strings.Join(args, " "), "--plugin-dir /role") {
+			t.Fatalf("claude 应使用 --plugin-dir: %v", args)
+		}
+	})
+
+	t.Run("pi", func(t *testing.T) {
+		a := &piAdapter{baseAdapter{id: "pi", name: "Pi Agent", bin: "pi"}}
+		_, args, _, err := a.Build(RunOptions{Prompt: "p", Role: store.RoleConfig{}, SkillMount: mount})
+		if err != nil {
+			t.Fatal(err)
+		}
+		joined := strings.Join(args, " ")
+		for _, want := range mount.SkillPaths {
+			if !strings.Contains(joined, "--skill "+want) {
+				t.Fatalf("pi 应逐目录 --skill: %s", joined)
+			}
+		}
+	})
+}
+
+// codex：非 git 项目 safe 模式注入 --skip-git-repo-check；交互 TUI 不注入。
+func TestCodexSkipGitRepoCheck(t *testing.T) {
+	a := &codexAdapter{baseAdapter{id: "codex", name: "codex", bin: "codex"}}
+	_, args, _, err := a.Build(RunOptions{
+		Prompt: "p", RunMode: store.RunModeBatch, SkipGitCheck: true, Role: store.RoleConfig{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(args, " "), "--skip-git-repo-check") {
+		t.Fatalf("safe 模式非 git 项目应注入 --skip-git-repo-check: %v", args)
+	}
+	_, args, _, err = a.Build(RunOptions{
+		Prompt: "p", RunMode: store.RunModeInteractive, SkipGitCheck: true, Role: store.RoleConfig{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(args, " "), "--skip-git-repo-check") {
+		t.Fatalf("交互 TUI 不应传 --skip-git-repo-check: %v", args)
+	}
+}
+
+func envHas(env []string, key, want string) bool {
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+			return v == want
+		}
+	}
+	return false
+}
+
 func TestOpenCodeAdapterPassesVariantNameDirectly(t *testing.T) {
 	a := &openCodeAdapter{baseAdapter{id: "opencode", name: "opencode", bin: "opencode"}}
 	_, args, _, err := a.Build(RunOptions{

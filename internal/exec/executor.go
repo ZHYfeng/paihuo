@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -83,6 +84,7 @@ func (e *Executor) Start(ctx context.Context) {
 	e.recoverLostCompletions()
 	e.reconcileMergeTasks()
 	e.recoverInterrupted(ctx)
+	e.reconcileRoleSkillDirs()
 	go e.loop(ctx)
 }
 
@@ -131,6 +133,70 @@ func (e *Executor) reconcileMergeTasks() {
 		if !pending[id] {
 			delete(e.mergeReconcileErrors, id)
 		}
+	}
+}
+
+// roleAgentDir 返回角色技能挂载目录（<sessionsRoot>/.role-agents/<agentID>）。
+// 目录位于所有 worktree / 用户项目目录之外，技能副本/链接永远不会被提交。
+func (e *Executor) roleAgentDir(agentID int64) string {
+	return filepath.Join(e.sessionsRoot, ".role-agents", fmt.Sprintf("%d", agentID))
+}
+
+// EnsureRoleSkills 幂等对账某个角色的技能挂载目录（供执行器与 server 钩子调用）。
+func (e *Executor) EnsureRoleSkills(agentID int64, roleName string, selected []string) (*RoleSkillMount, error) {
+	return EnsureRoleSkills(agentID, roleName, selected, e.roleAgentDir(agentID))
+}
+
+// RemoveRoleSkills 删除角色的技能挂载目录：先移入 .stale 暂存区（7 天兜底），
+// 不直接删除，防止误删后无法恢复。
+func (e *Executor) RemoveRoleSkills(agentID int64) error {
+	return MoveRoleAgentDirToStale(e.roleAgentDir(agentID), filepath.Join(e.sessionsRoot, ".role-agents", ".stale"))
+}
+
+// reconcileRoleSkillDirs 服务启动时对账全部角色的技能挂载：
+//  1. 每个角色执行 EnsureRoleSkills（幂等，新增/删除/断裂自愈）；
+//  2. 清单存在但角色已删除的目录移入 .stale（保留 7 天再删）；
+//  3. 一次性清理旧每任务副本机制残留在 worktree 的 paihuo-* 目录。
+func (e *Executor) reconcileRoleSkillDirs() {
+	agents, err := e.st.ListAgents()
+	if err != nil {
+		log.Printf("⚠ 扫描角色技能目录失败: %v", err)
+		return
+	}
+	active := make(map[int64]bool, len(agents))
+	for _, a := range agents {
+		active[a.ID] = true
+		if _, err := e.EnsureRoleSkills(a.ID, a.Name, a.RoleConfig.Skills); err != nil {
+			log.Printf("⚠ 对账角色 %d 技能目录失败: %v", a.ID, err)
+		}
+	}
+	roleRoot := filepath.Join(e.sessionsRoot, ".role-agents")
+	staleRoot := filepath.Join(roleRoot, ".stale")
+	if entries, err := os.ReadDir(roleRoot); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() || entry.Name() == ".stale" {
+				continue
+			}
+			dir := filepath.Join(roleRoot, entry.Name())
+			manifest, exists, err := loadRoleMountManifest(filepath.Join(dir, roleMountManifestName))
+			if err != nil || !exists {
+				continue // 无清单无法确认归属，交给 EnsureRoleSkills 处理
+			}
+			if active[manifest.AgentID] {
+				continue
+			}
+			if err := MoveRoleAgentDirToStale(dir, staleRoot); err != nil {
+				log.Printf("⚠ 归档已删除角色的技能目录 %s 失败: %v", dir, err)
+			} else {
+				log.Printf("↻ 已归档已删除角色的技能目录 %s（7 天后自动清理）", dir)
+			}
+		}
+	}
+	if err := ReapStaleRoleDirs(staleRoot, 7*24*time.Hour); err != nil {
+		log.Printf("⚠ 清理角色技能暂存区失败: %v", err)
+	}
+	if err := CleanupLegacyTaskSkillCopies(e.sessionsRoot); err != nil {
+		log.Printf("⚠ 清理旧任务技能副本残留失败: %v", err)
 	}
 }
 
@@ -556,7 +622,7 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		}
 	}
 
-	preparedSkills, err := prepareRoleSkills(tk.ID, dir, agent.CLI, e.runner.skillManifestPath(tk.ID), agent.RoleConfig.Skills)
+	preparedSkills, err := e.EnsureRoleSkills(agentID, agent.Name, agent.RoleConfig.Skills)
 	if err != nil {
 		fail("加载角色技能失败: " + err.Error())
 		return
@@ -568,14 +634,31 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		}
 		e.log(tk.ID, "sys", "🧩 已启用角色技能: "+strings.Join(names, "、"))
 	}
+	for _, w := range preparedSkills.Warnings {
+		e.log(tk.ID, "sys", "⚠ "+w)
+	}
+	// codex 只能从 $HOME/.agents/skills（USER scope）加载外部技能：任务级
+	// symlink 挂载（唯一名 paihuo-<taskID>-...），清单在 tmux 运行目录，
+	// 结算时由 cleanupRoleSkills 按清单删除。
+	if agent.CLI == "codex" && len(preparedSkills.SkillPaths) > 0 {
+		if err := MountCodexSkills(tk.ID, preparedSkills, e.runner.skillManifestPath(tk.ID)); err != nil {
+			fail("挂载 codex 角色技能失败: " + err.Error())
+			return
+		}
+	}
 	ro := RunOptions{
 		Dir:        dir,
 		Prompt:     taskPrompt(tk),
 		Role:       agent.RoleConfig,
 		Perm:       tk.Perm,
 		RunMode:    tk.RunMode,
-		SkillDirs:  preparedSkills.SkillDirs,
-		SkillNames: preparedSkills.SkillNames,
+		SkillMount: preparedSkills,
+	}
+	// 非 git 项目 + codex（safe 模式）：codex 拒绝在非 git 目录执行，
+	// 但 --skip-git-repo-check 可单独使用（不依赖 yolo），本次调用注入，
+	// 不动角色配置、不 git init 用户目录。
+	if !isGitProject && agent.CLI == "codex" && agent.RoleConfig.Custom["execution_mode"] != "yolo" {
+		ro.SkipGitCheck = true
 	}
 	// instructions：任务指令模板，追加在提示词之前（适配器可按 CLI 映射为官方参数）
 	if instr := strings.TrimSpace(agent.RoleConfig.Instructions); instr != "" {

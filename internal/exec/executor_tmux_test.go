@@ -822,3 +822,119 @@ func waitWindowGone(t *testing.T, r *tmuxRunner, taskID int64, timeout time.Dura
 	}
 	t.Fatalf("任务结算后应清理 tmux window task-%d", taskID)
 }
+
+// tmuxCodexTestAdapter 记录 RunOptions 并验证 codex 任务级技能挂载在运行期间可见。
+type tmuxCodexTestAdapter struct {
+	recordPath string
+}
+
+func (a *tmuxCodexTestAdapter) ID() string   { return "codex" }
+func (a *tmuxCodexTestAdapter) Name() string { return "tmux codex test" }
+func (a *tmuxCodexTestAdapter) Detect() (string, error) {
+	return osexec.LookPath("sh")
+}
+func (a *tmuxCodexTestAdapter) Build(o RunOptions) (string, []string, []string, error) {
+	skills := 0
+	if o.SkillMount != nil {
+		skills = len(o.SkillMount.SkillPaths)
+	}
+	_ = os.WriteFile(a.recordPath, []byte(fmt.Sprintf("skip=%v skills=%d", o.SkipGitCheck, skills)), 0o644)
+	sh, err := osexec.LookPath("sh")
+	if err != nil {
+		return "", nil, nil, err
+	}
+	// 任务运行期间断言 $HOME/.agents/skills/paihuo-* 挂载点可见
+	cmd := `if ls "$HOME"/.agents/skills/paihuo-* >/dev/null 2>&1; then printf mounted > mounted.txt; fi`
+	return sh, []string{"-c", cmd}, os.Environ(), nil
+}
+func (tmuxCodexTestAdapter) Warnings(RunOptions) []string { return nil }
+func (tmuxCodexTestAdapter) Schema() []Field              { return nil }
+func (tmuxCodexTestAdapter) Models() []string             { return nil }
+func (tmuxCodexTestAdapter) Docs() string                 { return "" }
+
+// 非 git 项目 + codex safe 模式：注入 --skip-git-repo-check 且任务成功；
+// codex 任务级技能挂载（$HOME/.agents/skills/paihuo-*）运行期可见、结算后清理。
+func TestExecutorCodexNonGitProjectSkipGitCheckAndSkillMountLifecycle(t *testing.T) {
+	requireTmuxIntegration(t)
+	orig := registry["codex"]
+	recordPath := filepath.Join(t.TempDir(), "record.txt")
+	registry["codex"] = &tmuxCodexTestAdapter{recordPath: recordPath}
+	t.Cleanup(func() { registry["codex"] = orig })
+
+	origHome := os.Getenv("HOME")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Cleanup(func() { _ = os.Setenv("HOME", origHome) })
+
+	// 非 git 项目目录
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "base.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := writeSkill(t, "alpha", "a")
+
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	agentID, err := st.CreateAgent(store.Agent{
+		Name: "codex-safe", CLI: "codex", Enabled: true,
+		RoleConfig: store.RoleConfig{Skills: []string{src}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, err := st.CreateProject(store.Project{Name: "proj", ProjectDir: projectDir, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID, err := st.CreateTask(store.Task{
+		Title: "codex non-git", Status: store.StatusQueued, Perm: store.PermFull,
+		AgentID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionsRoot := t.TempDir()
+	socket := fmt.Sprintf("paihuo-codex-test-%d", os.Getpid())
+	e := New(st, events.NewHub(), sessionsRoot, "codex-test.db")
+	e.runner = newTmuxRunnerAt(sessionsRoot, socket)
+	cleanupRunner := newTmuxRunnerAt(sessionsRoot, socket)
+	t.Cleanup(func() { _ = cleanupRunner.command("kill-server") })
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	e.Start(ctx)
+	e.Wake()
+	waitTaskStatus(t, st, taskID, store.StatusSucceeded, 10*time.Second)
+
+	record, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(record) != "skip=true skills=1" {
+		t.Fatalf("非 git + codex safe 应注入 SkipGitCheck 且挂载 1 个技能: %q", record)
+	}
+	// 运行期间挂载点可见
+	mounted, err := os.ReadFile(filepath.Join(projectDir, "mounted.txt"))
+	if err != nil || string(mounted) != "mounted" {
+		t.Fatalf("codex 任务级挂载应在运行期可见: %q err=%v", mounted, err)
+	}
+	// 结算后 $HOME/.agents/skills 的挂载点被清理（用户技能不受影响）
+	userRoot := filepath.Join(home, ".agents", "skills")
+	entries, err := os.ReadDir(userRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "paihuo-") {
+			t.Fatalf("结算后 codex 挂载点应被清理: %s", entry.Name())
+		}
+	}
+	// 角色目录常驻（sessionsRoot 内，不在 worktree/项目目录）
+	roleLink := filepath.Join(sessionsRoot, ".role-agents", fmt.Sprintf("%d", agentID), ".agents", "skills", "alpha")
+	if fi, err := os.Lstat(roleLink); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("角色级技能目录应常驻: %v %v", fi, err)
+	}
+}

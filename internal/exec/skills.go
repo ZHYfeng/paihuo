@@ -1,25 +1,69 @@
 package exec
 
-// 本文件把角色配置中的技能目录变成一次任务真正可见的技能：
-//   1. 复制到当前 CLI 的原生项目技能目录；
-//   2. 用 CLI 支持的参数（OMP/Pi）选择这些副本；
-//   3. 在任务提示中简要列出当前角色拥有的技能。
+// 本文件把角色配置中的技能目录变成一次任务真正可见的技能。
 //
-// 副本放在任务 worktree 的 CLI 原生目录，清单放在任务 tmux 运行目录，
-// 不会把清单写进 Git。任务结算前会删除副本；服务重启时清单保留，恢复
-// 接管后再清理。
+// 新机制（角色级常驻挂载）：每个角色在 <sessionsRoot>/.role-agents/<agentID>/ 下
+// 拥有一个只读技能视图：.agents/skills/<name> 默认是到技能库目录的 symlink
+// （frontmatter 不合规的技能回退为副本+改写 name），claude 用 skills/ 镜像 +
+// .claude-plugin/plugin.json，omp 用 overlay.yml，opencode 用 OPENCODE_CONFIG_CONTENT。
+// 角色目录位于所有 worktree / 用户项目目录之外，结构性消灭 git 提交污染与
+// 目录污染；EnsureRoleSkills 幂等对账，崩溃/重启后自动重建。
+//
+// codex 无法从命令行加载任意技能目录（官方仅 REPO/USER scope），因此任务级
+// 把 <roleDir>/.agents/skills/<name> 以 symlink 挂到 $HOME/.agents/skills/paihuo-*，
+// 清单放在任务 tmux 运行目录，任务结算时删除（与旧副本机制同一套 manifest）。
+//
+// 旧机制 prepareRoleSkills（每任务复制到 worktree）保留为兼容包装，仅供
+// 测试与旧调用方使用，执行器已不再调用。
 
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 )
 
 const roleSkillsManifestVersion = 1
+
+// roleMountManifestVersion 是角色级技能挂载清单（<roleDir>/manifest.json）的版本。
+const roleMountManifestVersion = 1
+
+const roleMountManifestName = "manifest.json"
+
+// RoleSkillMount 描述一个角色的技能挂载视图，适配器据此选择各 CLI 的
+// 原生挂载方式（pi --skill 逐目录 / omp overlay / opencode env / claude
+// plugin-dir / codex $HOME 任务级 symlink）。
+type RoleSkillMount struct {
+	RoleDir        string             // <sessionsRoot>/.role-agents/<agentID>
+	SkillNames     []string           // 挂载的技能名（即目录名）
+	SkillPaths     []string           // .agents/skills/<name> 完整路径（pi --skill 用）
+	SkillsRoot     string             // .agents/skills 目录（omp/opencode 用）
+	ClaudePlugin   string             // claude --plugin-dir 用（RoleDir 本身）
+	OmpOverlay     string             // overlay.yml 路径（omp --config 用）
+	OpencodeConfig string             // OPENCODE_CONFIG_CONTENT JSON 串
+	Bindings       []roleSkillBinding // 任务提示词展示用
+	Warnings       []string           // 对账发现的非致命问题（缺技能/断裂/回退）
+}
+
+// roleMountEntry 是角色挂载清单中的一条技能。
+type roleMountEntry struct {
+	Name   string `json:"name"`             // 挂载目录名（slug，冲突时 -2 递增）
+	Target string `json:"target"`           // 源技能目录（绝对路径）
+	Kind   string `json:"kind"`             // symlink | copy
+	Broken bool   `json:"broken,omitempty"` // 源目录已失效，从挂载集合剔除
+}
+
+// roleMountManifest 记录角色目录当前挂载的技能集合，供幂等对账。
+type roleMountManifest struct {
+	Version int              `json:"version"`
+	AgentID int64            `json:"agent_id"`
+	Entries []roleMountEntry `json:"entries"`
+}
 
 type roleSkillBinding struct {
 	OriginalName string
@@ -336,6 +380,602 @@ func cleanupRoleSkillsManifest(manifestPath string, manifest roleSkillsManifest)
 	return firstErr
 }
 
+// ---------------------------------------------------------------------------
+// 角色级技能挂载（新机制）
+
+// EnsureRoleSkills 幂等地构建/对账一个角色的技能挂载目录。selected 是角色
+// 配置中的源技能目录绝对路径列表（RoleConfig.Skills）。返回的 RoleSkillMount
+// 供适配器使用；损坏/失效的技能会被剔除并在 Warnings 中说明，不阻断任务。
+// 角色目录位于 <roleDir>（sessionsRoot/.role-agents/<agentID>），永远不在
+// git worktree 或用户项目目录内。
+func EnsureRoleSkills(agentID int64, roleName string, selected []string, roleDir string) (*RoleSkillMount, error) {
+	mount := &RoleSkillMount{RoleDir: roleDir}
+	if roleDir == "" {
+		return nil, fmt.Errorf("角色技能目录为空")
+	}
+	selected = uniqueNonEmpty(selected)
+	if len(selected) == 0 {
+		// 角色没有技能：只清理历史残留，不创建目录结构，不写空 overlay。
+		if err := reconcileRoleMountEntries(agentID, roleDir, nil, mount); err != nil {
+			return nil, err
+		}
+		return mount, nil
+	}
+	roleSkills := filepath.Join(roleDir, ".agents", "skills")
+	claudeSkills := filepath.Join(roleDir, "skills")
+	pluginDir := filepath.Join(roleDir, ".claude-plugin")
+	for _, dir := range []string{roleSkills, claudeSkills, pluginDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("创建角色技能目录失败: %w", err)
+		}
+	}
+
+	if err := reconcileRoleMountEntries(agentID, roleDir, selected, mount); err != nil {
+		return nil, err
+	}
+	if len(mount.SkillPaths) == 0 {
+		// 角色当前没有可挂载技能：清掉旧的 overlay/插件包装，避免空配置残留。
+		_ = os.Remove(filepath.Join(roleDir, "overlay.yml"))
+		_ = os.RemoveAll(filepath.Join(roleDir, ".claude-plugin"))
+		_ = os.RemoveAll(filepath.Join(roleDir, "skills"))
+		return mount, nil
+	}
+
+	overlayPath := filepath.Join(roleDir, "overlay.yml")
+	if err := writeOmpOverlay(overlayPath, ompOverlayDirs(roleDir)); err != nil {
+		return nil, fmt.Errorf("生成 omp overlay 失败: %w", err)
+	}
+	mount.OmpOverlay = overlayPath
+
+	cfg, err := opencodeSkillsConfigJSON(mount.SkillPaths)
+	if err != nil {
+		return nil, fmt.Errorf("生成 opencode 技能配置失败: %w", err)
+	}
+	mount.OpencodeConfig = cfg
+
+	pluginPath := filepath.Join(pluginDir, "plugin.json")
+	if err := writeClaudePluginJSON(pluginPath, fmt.Sprintf("paihuo-role-%d", agentID), roleName); err != nil {
+		return nil, fmt.Errorf("生成 claude 插件清单失败: %w", err)
+	}
+	mount.ClaudePlugin = roleDir
+	mount.SkillsRoot = roleSkills
+	return mount, nil
+}
+
+// reconcileRoleMountEntries 把角色目录的磁盘状态与 selected 对齐：
+// 新增 → 挂 symlink（或回退副本）；移除 → 删除条目与 claude 镜像；
+// 已存在且目标一致 → 跳过（保留 mtime）；symlink 目标失效 → 标记 broken
+// 并从挂载集合剔除（源恢复后自动重新挂载）。
+func reconcileRoleMountEntries(agentID int64, roleDir string, selected []string, mount *RoleSkillMount) error {
+	roleSkills := filepath.Join(roleDir, ".agents", "skills")
+	manifestPath := filepath.Join(roleDir, roleMountManifestName)
+	manifest, manifestExists, err := loadRoleMountManifest(manifestPath)
+	if err != nil {
+		return err
+	}
+
+	// 期望集合：先校验源，再定名（slug + 冲突递增），再定形态。
+	var desired []roleMountEntry
+	used := make(map[string]bool, len(selected))
+	for _, raw := range selected {
+		src, err := resolveSkillSource(raw)
+		if err != nil {
+			mount.Warnings = append(mount.Warnings, fmt.Sprintf("技能 %q 无法加载，已跳过: %v", raw, err))
+			continue
+		}
+		name := uniqueSkillSlug(slugSkillName(filepath.Base(src)), used)
+		used[name] = true
+		kind := "symlink"
+		if ok, reason := validateSkillFrontmatter(src, name); !ok {
+			kind = "copy"
+			mount.Warnings = append(mount.Warnings, fmt.Sprintf("技能 %q 的 SKILL.md %s；已回退为副本并改写 name", name, reason))
+		}
+		if _, desc, _ := parseSkillFrontmatter(filepath.Join(src, "SKILL.md")); strings.TrimSpace(desc) == "" {
+			mount.Warnings = append(mount.Warnings, fmt.Sprintf("技能 %q 缺少 frontmatter description，omp 下不可见；请在技能库补充", name))
+		}
+		desired = append(desired, roleMountEntry{Name: name, Target: src, Kind: kind})
+	}
+
+	existing := make(map[string]roleMountEntry, len(manifest.Entries))
+	for _, e := range manifest.Entries {
+		existing[e.Name] = e
+	}
+	want := make(map[string]bool, len(desired))
+	for _, d := range desired {
+		want[d.Name] = true
+	}
+
+	changed := !manifestExists
+	for name := range existing {
+		if !want[name] {
+			removeRoleMountEntry(roleDir, name)
+			delete(existing, name)
+			changed = true
+		}
+	}
+
+	for _, d := range desired {
+		p := filepath.Join(roleSkills, d.Name)
+		prev, had := existing[d.Name]
+		if had && prev.Target == d.Target && prev.Kind == d.Kind {
+			// 已挂载且目标一致：校验 symlink 完整性后直接复用。
+			if d.Kind == "symlink" {
+				if _, err := os.Stat(p); err != nil {
+					// 角色目录内的链接缺失/断裂（源本身仍可用）：重建。
+					_ = os.Remove(p)
+					if serr := os.Symlink(d.Target, p); serr != nil {
+						return fmt.Errorf("重建技能 %q 链接失败: %w", d.Name, serr)
+					}
+					if prev.Broken {
+						prev.Broken = false
+						changed = true
+					}
+				} else if prev.Broken {
+					prev.Broken = false
+					changed = true
+				}
+				existing[d.Name] = prev
+			}
+			mount.addEntry(prev, roleDir)
+			continue
+		}
+		// 新建或形态/目标变化：删除旧的再重建。
+		if had {
+			removeRoleMountEntry(roleDir, d.Name)
+		}
+		switch d.Kind {
+		case "symlink":
+			if err := os.Symlink(d.Target, p); err != nil {
+				return fmt.Errorf("挂载技能 %q 失败: %w", d.Name, err)
+			}
+		default:
+			if err := copySkillDir(d.Target, p, d.Name); err != nil {
+				return fmt.Errorf("复制技能 %q 失败: %w", d.Name, err)
+			}
+		}
+		mirror := filepath.Join(roleDir, "skills", d.Name)
+		_ = os.Remove(mirror)
+		// 相对目标从 skills/ 解析：../.agents/skills/<name>
+		if err := os.Symlink(filepath.Join("..", ".agents", "skills", d.Name), mirror); err != nil {
+			return fmt.Errorf("创建 claude 技能镜像失败: %w", err)
+		}
+		mount.addEntry(d, roleDir)
+		changed = true
+	}
+
+	if changed {
+		manifest = roleMountManifest{Version: roleMountManifestVersion, AgentID: agentID, Entries: make([]roleMountEntry, 0, len(desired))}
+		for _, d := range desired {
+			entry := d
+			if prev, ok := existing[d.Name]; ok {
+				entry.Broken = prev.Broken
+			}
+			manifest.Entries = append(manifest.Entries, entry)
+		}
+		if err := writeJSONAtomic(manifestPath, manifest); err != nil {
+			return fmt.Errorf("保存角色技能清单失败: %w", err)
+		}
+	}
+	return nil
+}
+
+func (m *RoleSkillMount) addEntry(e roleMountEntry, roleDir string) {
+	name := e.Name
+	original := skillName(filepath.Join(e.Target, "SKILL.md"))
+	if original == "" {
+		original = filepath.Base(e.Target)
+	}
+	m.SkillNames = append(m.SkillNames, name)
+	m.SkillPaths = append(m.SkillPaths, filepath.Join(roleDir, ".agents", "skills", name))
+	m.Bindings = append(m.Bindings, roleSkillBinding{OriginalName: original, NativeName: name, Dir: filepath.Join(roleDir, ".agents", "skills", name)})
+}
+
+func loadRoleMountManifest(path string) (roleMountManifest, bool, error) {
+	var manifest roleMountManifest
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return manifest, false, nil
+	}
+	if err != nil {
+		return manifest, false, fmt.Errorf("读取角色技能清单失败: %w", err)
+	}
+	if err := json.Unmarshal(b, &manifest); err != nil {
+		return manifest, false, fmt.Errorf("解析角色技能清单失败: %w", err)
+	}
+	if manifest.Version != roleMountManifestVersion {
+		return manifest, false, fmt.Errorf("角色技能清单版本 %d 不受支持", manifest.Version)
+	}
+	return manifest, true, nil
+}
+
+func removeRoleMountEntry(roleDir, name string) {
+	for _, root := range []string{filepath.Join(roleDir, ".agents", "skills"), filepath.Join(roleDir, "skills")} {
+		_ = os.RemoveAll(filepath.Join(root, name))
+	}
+}
+
+// validateSkillFrontmatter 预检技能 frontmatter name 是否与挂载目录名一致且
+// 合法（kebab-case、≤64 字符）。opencode 要求目录名=name，不满足时调用方
+// 回退为副本并改写 name。
+func validateSkillFrontmatter(dir, mountName string) (ok bool, reason string) {
+	name, _, _ := parseSkillFrontmatter(filepath.Join(dir, "SKILL.md"))
+	if name == "" {
+		return false, "缺少 frontmatter name"
+	}
+	if name != mountName {
+		return false, fmt.Sprintf("frontmatter name %q 与挂载目录名 %q 不一致", name, mountName)
+	}
+	if len(name) > 64 || slugSkillName(name) != name {
+		return false, "frontmatter name 不是合法 kebab-case（≤64 字符）"
+	}
+	return true, ""
+}
+
+// uniqueSkillSlug 保证同一角色内目录名唯一：同名冲突时按 -2、-3 递增。
+func uniqueSkillSlug(slug string, used map[string]bool) string {
+	if slug == "" {
+		slug = "skill"
+	}
+	name := slug
+	for i := 2; used[name]; i++ {
+		name = fmt.Sprintf("%s-%d", slug, i)
+	}
+	return name
+}
+
+// writeOmpOverlay 生成 omp --config overlay：skills.customDirectories 限定为
+// 角色技能目录（customDirs 已含 global 合并结果，global 在前、角色目录在后）。
+// omp 的数组键是整体替换语义，因此必须在生成时合并用户全局配置。
+func writeOmpOverlay(path string, customDirs []string) error {
+	var b strings.Builder
+	b.WriteString("skills:\n  customDirectories:\n")
+	for _, dir := range customDirs {
+		fmt.Fprintf(&b, "    - %s\n", yamlQuote(dir))
+	}
+	return writeJSONAtomic(path, []byte(b.String()))
+}
+
+// ompOverlayDirs 读取用户全局 ~/.omp/agent/config.yml 的 skills.customDirectories
+// 并与角色技能目录合并（global 在前）。解析失败降级为只含角色目录。
+func ompOverlayDirs(roleDir string) []string {
+	dirs := []string{}
+	home, err := os.UserHomeDir()
+	if err == nil {
+		globalPath := filepath.Join(home, ".omp", "agent", "config.yml")
+		if global, gerr := readOmpCustomDirectories(globalPath); gerr == nil && len(global) > 0 {
+			dirs = append(dirs, global...)
+		} else if gerr != nil && !os.IsNotExist(gerr) {
+			log.Printf("⚠ 读取 omp 全局技能目录失败（overlay 将只含角色技能）: %v", gerr)
+		}
+	}
+	return uniqueNonEmpty(append(dirs, filepath.Join(roleDir, ".agents", "skills")))
+}
+
+// readOmpCustomDirectories 用最简解析读取 YAML 里的
+// skills:
+//
+//	customDirectories:
+//	  - /path
+//
+// 结构（含内联列表）。解析失败返回错误，调用方降级处理。
+func readOmpCustomDirectories(path string) ([]string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n")
+	var out []string
+	inBlock := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		key, rest, has := strings.Cut(trimmed, ":")
+		if has && strings.TrimSpace(key) == "customDirectories" {
+			rest = strings.TrimSpace(rest)
+			if rest != "" {
+				out = append(out, parseYAMLInlineList(rest)...)
+			} else {
+				inBlock = true
+			}
+			continue
+		}
+		if inBlock {
+			if !strings.HasPrefix(trimmed, "-") {
+				inBlock = false
+				continue
+			}
+			item := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+			item = strings.Trim(item, `"'`)
+			if item != "" {
+				out = append(out, item)
+			}
+		}
+	}
+	return out, nil
+}
+
+func parseYAMLInlineList(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]") {
+		raw = strings.TrimSpace(raw[1 : len(raw)-1])
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		item := strings.Trim(strings.TrimSpace(part), `"'`)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func yamlQuote(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
+}
+
+// opencodeSkillsConfigJSON 生成 OPENCODE_CONFIG_CONTENT 的 JSON：
+// {"skills":{"paths":[...]}}。
+func opencodeSkillsConfigJSON(paths []string) (string, error) {
+	v := map[string]any{"skills": map[string]any{"paths": paths}}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func writeClaudePluginJSON(path, pluginName, description string) error {
+	v := map[string]string{
+		"name":        pluginName,
+		"version":     "1.0.0",
+		"description": description,
+	}
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeJSONAtomic(path, append(b, '\n'))
+}
+
+// writeJSONAtomic 原子写一个 JSON（或文本）文件。
+func writeJSONAtomic(path string, v any) error {
+	var b []byte
+	var err error
+	switch t := v.(type) {
+	case []byte:
+		b = t
+	default:
+		b, err = json.Marshal(v)
+		if err != nil {
+			return err
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// MountCodexSkills 把角色技能视图以 symlink 挂到 $HOME/.agents/skills（USER
+// scope，官方支持 symlink），供 codex 原生发现。挂载名 paihuo-<taskID>-<n>-<slug>
+// 与旧副本命名一致；清单先写后建链，任务结算时由 cleanupRoleSkills 按清单删除。
+func MountCodexSkills(taskID int64, mount *RoleSkillMount, manifestPath string) error {
+	if mount == nil || len(mount.SkillPaths) == 0 {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return fmt.Errorf("无法确定用户主目录（%v），不能挂载 codex 技能", err)
+	}
+	userRoot := filepath.Join(home, ".agents", "skills")
+	if err := os.MkdirAll(userRoot, 0o755); err != nil {
+		return fmt.Errorf("创建 %s 失败: %w", userRoot, err)
+	}
+	manifest := roleSkillsManifest{Version: roleSkillsManifestVersion, TaskID: taskID}
+	for i, path := range mount.SkillPaths {
+		if _, err := resolveSkillSource(path); err != nil {
+			return fmt.Errorf("技能 %q 无法加载: %w", path, err)
+		}
+		name := generatedSkillName(taskID, i, filepath.Base(path))
+		dst := filepath.Join(userRoot, name)
+		manifest.Paths = append(manifest.Paths, dst)
+		if err := writeRoleSkillsManifest(manifestPath, manifest); err != nil {
+			return err
+		}
+		_ = os.Remove(dst) // 续跑/崩溃残留的旧链
+		if err := os.Symlink(path, dst); err != nil {
+			return fmt.Errorf("挂载 codex 技能 %q 失败: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// PrepareRoleSkillsStandalone 供角色工作台等短生命周期场景使用：在临时目录内
+// 按各 CLI 语义准备技能（symlink/副本回退 + frontmatter 预检与正式任务一致），
+// 不建角色目录。返回的 mount 直接传给 adapter.Build，cleanup 在命令结束后调用。
+func PrepareRoleSkillsStandalone(workdir, cli string, selected []string) (*RoleSkillMount, func(), error) {
+	mount := &RoleSkillMount{RoleDir: workdir}
+	noop := func() {}
+	selected = uniqueNonEmpty(selected)
+	if len(selected) == 0 {
+		return mount, noop, nil
+	}
+	roleSkills := filepath.Join(workdir, ".agents", "skills")
+	if err := os.MkdirAll(roleSkills, 0o755); err != nil {
+		return nil, noop, fmt.Errorf("创建技能目录失败: %w", err)
+	}
+	cleanup := func() {
+		for _, p := range []string{
+			filepath.Join(workdir, ".agents"), filepath.Join(workdir, "skills"),
+			filepath.Join(workdir, ".claude-plugin"), filepath.Join(workdir, "overlay.yml"),
+		} {
+			_ = os.RemoveAll(p)
+		}
+	}
+	used := make(map[string]bool, len(selected))
+	for _, raw := range selected {
+		src, err := resolveSkillSource(raw)
+		if err != nil {
+			cleanup()
+			return nil, noop, fmt.Errorf("技能 %q 无法加载: %w", raw, err)
+		}
+		name := uniqueSkillSlug(slugSkillName(filepath.Base(src)), used)
+		used[name] = true
+		p := filepath.Join(roleSkills, name)
+		if ok, _ := validateSkillFrontmatter(src, name); ok {
+			if err := os.Symlink(src, p); err != nil {
+				cleanup()
+				return nil, noop, fmt.Errorf("挂载技能 %q 失败: %w", name, err)
+			}
+		} else if err := copySkillDir(src, p, name); err != nil {
+			cleanup()
+			return nil, noop, fmt.Errorf("复制技能 %q 失败: %w", name, err)
+		}
+		mount.SkillNames = append(mount.SkillNames, name)
+		mount.SkillPaths = append(mount.SkillPaths, p)
+		mount.Bindings = append(mount.Bindings, roleSkillBinding{
+			OriginalName: skillName(filepath.Join(src, "SKILL.md")), NativeName: name, Dir: p,
+		})
+		if mount.Bindings[len(mount.Bindings)-1].OriginalName == "" {
+			mount.Bindings[len(mount.Bindings)-1].OriginalName = filepath.Base(src)
+		}
+	}
+	mount.SkillsRoot = roleSkills
+	switch cli {
+	case "omp":
+		overlay := filepath.Join(workdir, "overlay.yml")
+		if err := writeOmpOverlay(overlay, []string{roleSkills}); err != nil {
+			cleanup()
+			return nil, noop, fmt.Errorf("生成 omp overlay 失败: %w", err)
+		}
+		mount.OmpOverlay = overlay
+	case "opencode":
+		cfg, err := opencodeSkillsConfigJSON(mount.SkillPaths)
+		if err != nil {
+			cleanup()
+			return nil, noop, fmt.Errorf("生成 opencode 技能配置失败: %w", err)
+		}
+		mount.OpencodeConfig = cfg
+	case "claude":
+		pluginDir := filepath.Join(workdir, ".claude-plugin")
+		if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+			cleanup()
+			return nil, noop, fmt.Errorf("创建 claude 插件目录失败: %w", err)
+		}
+		if err := writeClaudePluginJSON(filepath.Join(pluginDir, "plugin.json"), "paihuo-role-studio", "role-studio"); err != nil {
+			cleanup()
+			return nil, noop, fmt.Errorf("生成 claude 插件清单失败: %w", err)
+		}
+		claudeSkills := filepath.Join(workdir, "skills")
+		if err := os.MkdirAll(claudeSkills, 0o755); err != nil {
+			cleanup()
+			return nil, noop, fmt.Errorf("创建 claude 技能目录失败: %w", err)
+		}
+		for _, name := range mount.SkillNames {
+			// 相对目标从 workdir/skills/ 解析：../.agents/skills/<name>
+			if err := os.Symlink(filepath.Join("..", ".agents", "skills", name), filepath.Join(claudeSkills, name)); err != nil {
+				cleanup()
+				return nil, noop, fmt.Errorf("创建 claude 技能镜像失败: %w", err)
+			}
+		}
+		mount.ClaudePlugin = workdir
+	}
+	return mount, cleanup, nil
+}
+
+// MoveRoleAgentDirToStale 把已删除角色的技能目录移入 .stale 暂存区（保留
+// 7 天兜底，防止误删后无法恢复），而不是直接删除。
+func MoveRoleAgentDirToStale(roleDir, staleRoot string) error {
+	if _, err := os.Stat(roleDir); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(staleRoot, 0o700); err != nil {
+		return err
+	}
+	dst := filepath.Join(staleRoot, fmt.Sprintf("%s-%d", filepath.Base(roleDir), time.Now().Unix()))
+	return os.Rename(roleDir, dst)
+}
+
+// ReapStaleRoleDirs 删除 .stale 中超过 retention 的暂存目录。
+func ReapStaleRoleDirs(staleRoot string, retention time.Duration) error {
+	entries, err := os.ReadDir(staleRoot)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	cutoff := time.Now().Add(-retention)
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			_ = os.RemoveAll(filepath.Join(staleRoot, e.Name()))
+		}
+	}
+	return nil
+}
+
+// CleanupLegacyTaskSkillCopies 一次性迁移清理：扫描 sessionsRoot 下各 worktree
+// 的 .agents/skills、.claude/skills、.opencode/skills 中 paihuo-* 前缀目录
+// （旧每任务副本机制的残留），并回收空目录。只删 paihuo-* 前缀，绝不碰用户技能。
+func CleanupLegacyTaskSkillCopies(sessionsRoot string) error {
+	return filepath.WalkDir(sessionsRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // 跳过不可读目录，不阻断扫描
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		switch d.Name() {
+		case ".role-agents", ".stale", ".tmux", ".role-studio":
+			return filepath.SkipDir
+		}
+		base := d.Name()
+		parent := filepath.Base(filepath.Dir(path))
+		if base != "skills" || (parent != ".agents" && parent != ".claude" && parent != ".opencode") {
+			return nil
+		}
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return nil
+		}
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), "paihuo-") {
+				_ = os.RemoveAll(filepath.Join(path, e.Name()))
+			}
+		}
+		if rest, err := os.ReadDir(path); err == nil && len(rest) == 0 {
+			_ = os.Remove(path)
+			if p := filepath.Dir(path); p != sessionsRoot {
+				if pe, err := os.ReadDir(p); err == nil && len(pe) == 0 {
+					_ = os.Remove(p)
+				}
+			}
+		}
+		return filepath.SkipDir
+	})
+}
+
 func buildRoleSkillsPrompt(bindings []roleSkillBinding) string {
 	if len(bindings) == 0 {
 		return ""
@@ -414,6 +1054,68 @@ func skillName(path string) string {
 		return strings.Trim(strings.TrimSpace(value), `"'`)
 	}
 	return ""
+}
+
+// parseSkillFrontmatter 解析 SKILL.md 头部 YAML frontmatter 的 name / description。
+// 解析失败或没有 frontmatter 时返回空，由调用方用目录名兜底。
+func parseSkillFrontmatter(path string) (name, desc string, tags []string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	text := string(b)
+	if !strings.HasPrefix(text, "---") {
+		return
+	}
+	rest := text[3:]
+	end := strings.Index(rest, "---")
+	if end < 0 {
+		return
+	}
+	frontmatter := strings.Split(rest[:end], "\n")
+	readingTags := false
+	for _, line := range frontmatter {
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			if readingTags && strings.HasPrefix(strings.TrimSpace(line), "-") {
+				tags = append(tags, strings.Trim(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-")), `"'`))
+			}
+			continue
+		}
+		readingTags = false
+		switch strings.TrimSpace(k) {
+		case "name":
+			name = strings.Trim(strings.TrimSpace(v), `"'`)
+		case "description":
+			desc = strings.Trim(strings.TrimSpace(v), `"'`)
+		case "tags":
+			tags = parseSkillTagsValue(v)
+			readingTags = strings.TrimSpace(v) == ""
+		}
+	}
+	return
+}
+
+func parseSkillTagsValue(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "[]" {
+		return []string{}
+	}
+	if strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]") {
+		raw = strings.TrimSpace(raw[1 : len(raw)-1])
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == '，' })
+	if len(parts) == 0 {
+		parts = []string{raw}
+	}
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.Trim(strings.TrimSpace(part), `"'`)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func generatedSkillName(taskID int64, index int, original string) string {
