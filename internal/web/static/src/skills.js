@@ -12,6 +12,7 @@ export function setSkillTab(tab) {
   document.getElementById("extShell").classList.toggle("hidden", skills);
   document.getElementById("btnAddSkill").classList.toggle("hidden", !skills);
   document.getElementById("btnAddExt").classList.toggle("hidden", skills);
+  document.getElementById("skillManageControls")?.classList.toggle("hidden", !skills || state.skillDetail !== null);
   if (!skills) loadExtensions();
 }
 
@@ -54,16 +55,46 @@ export async function removeExt() {
 export async function loadSkillLib() {
   try {
     state.skillLib = await api("/api/skills");
-  } catch (_) { state.skillLib = []; }
+    const known = new Set(state.skillLib.map(s => s.id));
+    state.skillSelected.forEach(id => { if (!known.has(id)) state.skillSelected.delete(id); });
+  } catch (_) {
+    state.skillLib = [];
+    state.skillSelected.clear();
+  }
 }
 
-export function renderSkillLib() {
-  const grid = document.getElementById("skillGrid");
-  if (!grid) return;
-  const lib = state.skillLib;
-  grid.innerHTML = lib.map(s => `
-    <article class="skill-card" tabindex="0" role="button" aria-label="查看技能 ${esc(s.name)}" onclick="openSkillDetail(${s.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSkillDetail(${s.id})}">
+function skillGroupDirectory(skill) {
+  const raw = String(skill.source_path || skill.dir || "").trim().replace(/[\\/]+$/, "");
+  if (!raw) return "未指定来源目录";
+  const slash = Math.max(raw.lastIndexOf("/"), raw.lastIndexOf("\\"));
+  if (slash < 0) return "根目录";
+  if (slash === 0) return raw.slice(0, 1);
+  if (slash === 2 && raw[1] === ":") return raw.slice(0, 3);
+  return raw.slice(0, slash) || "根目录";
+}
+
+function skillGroups() {
+  const groups = new Map();
+  state.skillLib.forEach(skill => {
+    const directory = skillGroupDirectory(skill);
+    let group = groups.get(directory);
+    if (!group) {
+      group = { directory, skills: [] };
+      groups.set(directory, group);
+    }
+    group.skills.push(skill);
+  });
+  return [...groups.values()].sort((a, b) => a.directory.localeCompare(b.directory));
+}
+
+function skillCardHTML(s) {
+  const selected = state.skillSelected.has(s.id);
+  return `
+    <article class="skill-card${selected ? " selected" : ""}" tabindex="0" role="button" aria-label="查看技能 ${esc(s.name)}" onclick="openSkillDetail(${s.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSkillDetail(${s.id})}">
       <div class="sk-top">
+        <label class="skill-select" onclick="event.stopPropagation()" title="选择 ${esc(s.name)}">
+          <input type="checkbox" data-skill-id="${s.id}" ${selected ? "checked" : ""} aria-label="选择技能 ${esc(s.name)}" onchange="toggleSkillSelection(${s.id}, this.checked)">
+        </label>
         <span class="avatar">${esc((s.name || "?").slice(0, 1))}</span>
         <div class="sk-id">
           <div class="sk-name">${esc(s.name)}</div>
@@ -71,7 +102,7 @@ export function renderSkillLib() {
         </div>
       </div>
       <div class="sk-meta">
-        <span class="chip" title="${esc(s.dir)}">${esc(s.dir)}</span>
+        <span class="chip" title="${esc(s.dir)}">副本：${esc(s.dir)}</span>
       </div>
       <div class="sk-foot">
         <span class="count-info">来源：${esc(s.source_path || "-")} · ${(s.created_at || "").slice(0, 10)}</span>
@@ -80,11 +111,99 @@ export function renderSkillLib() {
           <button class="btn xs danger" onclick="deleteSkill(${s.id});event.stopPropagation()">${icon("trash")}删除</button>
         </span>
       </div>
-    </article>`).join("");
+    </article>`;
+}
+
+function syncSkillSelectionControls(groups = skillGroups()) {
+  const lib = state.skillLib;
+  const selected = state.skillSelected;
+  const selectedCount = selected.size;
+  const all = lib.length > 0 && selectedCount === lib.length;
+  const checkAll = document.getElementById("skillCheckAll");
+  if (checkAll) {
+    checkAll.checked = all;
+    checkAll.indeterminate = selectedCount > 0 && !all;
+  }
+  document.querySelectorAll("#skillGrid input[data-skill-id]").forEach(cb => {
+    const on = selected.has(Number(cb.dataset.skillId));
+    cb.checked = on;
+    cb.closest(".skill-card")?.classList.toggle("selected", on);
+  });
+  groups.forEach((group, i) => {
+    const groupSelected = group.skills.filter(s => selected.has(s.id)).length;
+    const cb = document.querySelector(`#skillGrid input[data-skill-group="${i}"]`);
+    if (!cb) return;
+    cb.checked = groupSelected === group.skills.length;
+    cb.indeterminate = groupSelected > 0 && groupSelected < group.skills.length;
+  });
+  const cnt = document.getElementById("skillSelectedCount");
+  if (cnt) cnt.textContent = `已选 ${selectedCount}`;
+  const del = document.getElementById("btnDeleteSkills");
+  if (del) del.disabled = selectedCount === 0;
+}
+
+export function renderSkillLib() {
+  const grid = document.getElementById("skillGrid");
+  if (!grid) return;
+  const lib = state.skillLib;
+  const groups = skillGroups();
+  grid.innerHTML = groups.map((group, i) => `
+    <section class="skill-group">
+      <header class="skill-group-head">
+        <label class="skill-group-select" title="选择目录 ${esc(group.directory)}">
+          <input type="checkbox" data-skill-group="${i}" aria-label="选择目录 ${esc(group.directory)}" onchange="toggleSkillGroup(${i}, this.checked)">
+        </label>
+        ${icon("folder")}
+        <div class="skill-group-title">
+          <b>来源目录</b>
+          <code title="${esc(group.directory)}">${esc(group.directory)}</code>
+        </div>
+        <span class="count-info">${group.skills.length} 个技能</span>
+      </header>
+      <div class="skill-group-grid">${group.skills.map(skillCardHTML).join("")}</div>
+    </section>`).join("");
   const empty = document.getElementById("skillEmpty");
   if (empty) empty.classList.toggle("hidden", lib.length > 0);
   const cnt = document.getElementById("skillCount");
   if (cnt) cnt.textContent = `${lib.length} 个技能`;
+  syncSkillSelectionControls(groups);
+}
+
+export function toggleSkillSelection(id, checked) {
+  if (checked) state.skillSelected.add(id); else state.skillSelected.delete(id);
+  syncSkillSelectionControls();
+}
+
+export function toggleSkillGroup(groupIndex, checked) {
+  const group = skillGroups()[groupIndex];
+  if (!group) return;
+  group.skills.forEach(skill => {
+    if (checked) state.skillSelected.add(skill.id); else state.skillSelected.delete(skill.id);
+  });
+  syncSkillSelectionControls();
+}
+
+export function toggleAllSkills(checked) {
+  state.skillSelected.clear();
+  if (checked) state.skillLib.forEach(skill => state.skillSelected.add(skill.id));
+  syncSkillSelectionControls();
+}
+
+export async function deleteSelectedSkills() {
+  const ids = [...state.skillSelected];
+  if (!ids.length) return toast("先勾选要删除的技能", true);
+  if (!confirm(`删除选中的 ${ids.length} 个技能？将同时移除工作目录中的副本，已引用它们的角色配置会失效。`)) return;
+  try {
+    const result = await api("/api/skills", { method: "DELETE", body: JSON.stringify({ ids }) });
+    if (state.skillDetail && ids.includes(state.skillDetail.id)) {
+      hideSkillDetail();
+      if (/^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
+    }
+    state.skillSelected.clear();
+    await loadSkillLib();
+    renderSkillLib();
+    toast(`已删除 ${result.count ?? ids.length} 个技能`);
+  } catch (e) { toast(e.message, true); }
 }
 
 function formatSkillBytes(size) {
@@ -164,6 +283,7 @@ export function hideSkillDetail() {
   document.getElementById("skillDetailShell")?.classList.add("hidden");
   document.getElementById("skillShell")?.classList.remove("hidden");
   state.skillDetail = null;
+  document.getElementById("skillManageControls")?.classList.remove("hidden");
 }
 
 export async function showSkillDetail(id) {
@@ -180,6 +300,7 @@ export async function showSkillDetail(id) {
   state.skillDetail = skill;
   document.getElementById("skillShell")?.classList.add("hidden");
   document.getElementById("skillDetailShell")?.classList.remove("hidden");
+  document.getElementById("skillManageControls")?.classList.add("hidden");
   renderSkillDetailShell(skill);
   try {
     const detail = await api(`/api/skills/${id}`);
@@ -253,6 +374,7 @@ export async function deleteSkill(id) {
   try {
     await api(`/api/skills/${id}`, { method: "DELETE" });
     toast("已删除");
+    state.skillSelected.delete(id);
     await loadSkillLib();
     renderSkillLib();
     if (state.skillDetail?.id === id) {

@@ -1945,6 +1945,33 @@ func (s *Store) DeleteSkill(id int64) error {
 	return err
 }
 
+// DeleteSkills 在同一个事务中删除一批技能记录。调用方负责清理技能目录副本。
+func (s *Store) DeleteSkills(ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare("DELETE FROM skills WHERE id=?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, id := range ids {
+		if id <= 0 {
+			return fmt.Errorf("非法技能 id: %d", id)
+		}
+		if _, err := stmt.Exec(id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // ListTasksForCleanup 返回全部任务（worktree 清理用）。
 func (s *Store) ListTasksForCleanup() ([]Task, error) {
 	rows, err := s.db.Query("SELECT " + taskColsBrief + taskFrom + " WHERE 1=1")

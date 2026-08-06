@@ -210,6 +210,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("GET /api/provision", s.provisionStatus)
 	m.HandleFunc("GET /api/skills", s.listSkills)
 	m.HandleFunc("POST /api/skills", s.createSkill)
+	m.HandleFunc("DELETE /api/skills", s.deleteSkills)
 	m.HandleFunc("POST /api/skills/scan", s.scanSkills)
 	m.HandleFunc("GET /api/skills/{id}", s.getSkill)
 	m.HandleFunc("DELETE /api/skills/{id}", s.deleteSkill)

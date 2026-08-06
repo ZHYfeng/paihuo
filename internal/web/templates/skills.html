@@ -18,12 +18,17 @@
       <button id="segExt" onclick="setSkillTab('ext')">扩展（pi）</button>
     </div>
     <span class="spacer"></span>
+    <div class="skill-manage-controls" id="skillManageControls">
+      <label class="skill-check-all"><input type="checkbox" id="skillCheckAll" onchange="toggleAllSkills(this.checked)">全选</label>
+      <span id="skillSelectedCount" class="count-info">已选 0</span>
+      <button class="btn sm danger" id="btnDeleteSkills" onclick="deleteSelectedSkills()" disabled>删除选中</button>
+    </div>
     <span id="skillCount" class="count-info"></span>
   </div>
 
   <!-- Skills 库 -->
   <div id="skillShell">
-    <div class="skill-grid" id="skillGrid"></div>
+    <div class="skill-groups" id="skillGrid"></div>
     <div id="skillEmpty" class="empty hidden">技能库为空。点击右上角「添加技能」，可导入单个目录或扫描一个目录树中的全部 skills。</div>
   </div>
 

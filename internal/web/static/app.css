@@ -1143,11 +1143,34 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   max-height: 46vh; overflow-y: auto; margin-bottom: 10px;
 }
 .ext-actions { display: flex; align-items: center; gap: 10px; }
-.skill-grid {
-  flex: 1; overflow-y: auto; padding: 14px 16px;
+.skill-groups {
+  flex: 1; min-width: 0; overflow-y: auto; padding: 14px 16px;
+}
+.skill-group { min-width: 0; }
+.skill-group + .skill-group { margin-top: 18px; }
+.skill-group-head {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  min-height: 30px; margin-bottom: 8px; color: var(--fg-muted);
+}
+.skill-group-head > .ic { width: 15px; height: 15px; color: var(--brand); flex-shrink: 0; }
+.skill-group-select, .skill-check-all {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+}
+.skill-group-select input, .skill-check-all input { margin: 0; }
+.skill-group-title {
+  display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: 1;
+}
+.skill-group-title b { color: var(--fg); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.skill-group-title code {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--fg-muted); font: 11px var(--font-mono);
+}
+.skill-group-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px;
   align-content: start;
 }
+.skill-manage-controls { display: inline-flex; align-items: center; gap: 9px; }
+.skill-manage-controls.hidden { display: none; }
 .skill-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl);
   padding: 14px 16px; box-shadow: var(--sh-surface); cursor: pointer; position: relative; overflow: hidden;
@@ -1158,9 +1181,12 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   background: var(--brand-grad); opacity: 0; transition: opacity var(--t-fast);
 }
 .skill-card:hover, .skill-card:focus-visible { border-color: var(--border-strong); background: var(--raised); transform: translateY(-1px); box-shadow: var(--sh-card); }
+.skill-card.selected { border-color: var(--brand); background: var(--brand-dim); }
 .skill-card:hover::before, .skill-card:focus-visible::before { opacity: 1; }
 .skill-card:active { transform: scale(.99); }
 .sk-top { display: flex; align-items: center; gap: 10px; }
+.skill-select { display: inline-flex; align-items: center; flex-shrink: 0; cursor: pointer; }
+.skill-select input { width: 16px; height: 16px; margin: 0; }
 .sk-id { flex: 1; min-width: 0; }
 .sk-name { font-size: 14px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sk-desc {
@@ -1348,10 +1374,12 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   .page-content { min-width: 0; min-height: 0; }
   .toolbar { height: auto; min-height: 0; padding: 8px 12px; align-items: stretch; }
   .toolbar select, .toolbar input:not([type="checkbox"]) { min-width: 0; }
-  .project-grid, .agent-grid, .prov-grid, .skill-grid {
+  .project-grid, .agent-grid, .prov-grid {
     min-width: 0; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
     padding: 12px;
   }
+  .skill-group-grid { min-width: 0; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
+  .skill-groups { padding: 12px; }
   .project-card, .agent-card, .prov-card, .skill-card { min-width: 0; }
   .list-wrap { min-width: 0; overflow: auto; overscroll-behavior-x: contain; }
   .list-grid { min-width: 760px; }
@@ -1388,8 +1416,10 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   .stat-chip { flex: 1 1 calc(50% - 6px); min-width: 0; padding: 8px 9px; gap: 6px; }
   .stat-chip b { font-size: 13px; }
 
-  .project-grid, .agent-grid, .prov-grid, .skill-grid { grid-template-columns: 1fr; padding: 10px 12px; }
-  .prov-grid, .agent-grid, .skill-grid { gap: 10px; }
+  .project-grid, .agent-grid, .prov-grid { grid-template-columns: 1fr; padding: 10px 12px; }
+  .skill-group-grid { grid-template-columns: 1fr; }
+  .skill-groups { padding: 10px 12px; }
+  .prov-grid, .agent-grid, .skill-group-grid { gap: 10px; }
   .board-view { padding: 10px 12px; gap: 10px; }
   .board-section-head { flex-direction: column; gap: 6px; }
   .board-section-counts { margin-left: 0; }

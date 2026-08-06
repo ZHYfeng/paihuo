@@ -154,6 +154,97 @@ func TestScanSkillsRejectsDirectoryWithoutSkillFiles(t *testing.T) {
 	}
 }
 
+func TestDeleteSkillsBatchDeletesRecordsAndCopies(t *testing.T) {
+	root := t.TempDir()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	paths := []string{filepath.Join(root, "one"), filepath.Join(root, "two")}
+	ids := make([]int64, 0, len(paths))
+	for i, dir := range paths {
+		writeTestSkill(t, dir, "# Skill\n")
+		id, err := st.CreateSkill(store.Skill{
+			Name: filepath.Base(dir), Dir: dir, SourcePath: filepath.Join(root, "source", filepath.Base(dir)),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+		if i == 0 {
+			// 让重复 id 也经过批量接口的去重逻辑。
+			ids = append(ids, id)
+		}
+	}
+
+	s := New(st, events.NewHub(), nil, nil, "", filepath.Join(root, "managed-skills"))
+	body, err := json.Marshal(map[string]any{"ids": ids})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/api/skills", bytes.NewReader(body))
+	resp := httptest.NewRecorder()
+	s.Handler().ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("批量删除状态应为 200，得到 %d: %s", resp.Code, resp.Body.String())
+	}
+	var result struct {
+		Deleted []int64 `json:"deleted"`
+		Count   int     `json:"count"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 2 || len(result.Deleted) != 2 {
+		t.Fatalf("批量删除返回错误: %+v", result)
+	}
+	all, err := st.ListSkills()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 0 {
+		t.Fatalf("批量删除后仍有技能记录: %+v", all)
+	}
+	for _, dir := range paths {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Fatalf("技能副本没有清理: %s, err=%v", dir, err)
+		}
+	}
+}
+
+func TestDeleteSkillsBatchMissingIDDoesNotPartiallyDelete(t *testing.T) {
+	root := t.TempDir()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	id, err := st.CreateSkill(store.Skill{Name: "one", Dir: filepath.Join(root, "one")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(st, events.NewHub(), nil, nil, "", filepath.Join(root, "managed-skills"))
+	body, err := json.Marshal(map[string]any{"ids": []int64{id, id + 999}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/api/skills", bytes.NewReader(body))
+	resp := httptest.NewRecorder()
+	s.Handler().ServeHTTP(resp, req)
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("不存在技能应返回 404，得到 %d: %s", resp.Code, resp.Body.String())
+	}
+	all, err := st.ListSkills()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].ID != id {
+		t.Fatalf("批量删除校验失败时不应部分删除: %+v", all)
+	}
+}
+
 func writeTestSkill(t *testing.T, dir, body string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {

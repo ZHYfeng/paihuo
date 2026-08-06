@@ -19,6 +19,7 @@ export const state = {
   projectView: null, // 项目详情中的项目 id
   agentView: "grid",
   skillLib: [],      // 注册到 paihuo 工作目录的技能库 [{id,name,description,dir}]
+  skillSelected: new Set(), // Skills 管理页当前勾选的技能 id
   skillDetail: null, // 当前打开的技能详情（含 SKILL.md 内容）
 };
 

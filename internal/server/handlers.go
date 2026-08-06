@@ -1667,6 +1667,52 @@ func (s *Server) deleteSkill(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
 }
 
+// deleteSkills 批量删除技能登记和对应的工作目录副本。
+// 先校验全部 id，再一次性提交数据库事务，避免部分删除。
+func (s *Server) deleteSkills(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		IDs []int64 `json:"ids"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if len(in.IDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "至少选择一个技能")
+		return
+	}
+
+	// 去重保持请求顺序，避免同一个技能被重复处理。
+	ids := make([]int64, 0, len(in.IDs))
+	seen := make(map[int64]struct{}, len(in.IDs))
+	skills := make([]store.Skill, 0, len(in.IDs))
+	for _, id := range in.IDs {
+		if id <= 0 {
+			writeErr(w, http.StatusBadRequest, "非法技能 id")
+			return
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		sk, err := s.st.GetSkill(id)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, fmt.Sprintf("技能不存在: %d", id))
+			return
+		}
+		ids = append(ids, id)
+		skills = append(skills, *sk)
+	}
+
+	if err := s.st.DeleteSkills(ids); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, sk := range skills {
+		os.RemoveAll(sk.Dir) // 登记删除后清理工作目录副本
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": ids, "count": len(ids)})
+}
+
 // parseSkillFrontmatter 解析 SKILL.md 头部 YAML frontmatter 的 name / description。
 // 解析失败或没有 frontmatter 时返回空，由调用方用目录名兜底。
 func parseSkillFrontmatter(path string) (name, desc string) {

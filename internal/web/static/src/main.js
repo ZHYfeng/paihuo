@@ -7,7 +7,7 @@ import { closeProjectDetail, deleteProject, dirLoad, hideProjectDetail, mkdirCur
 import { appendInstLine, closeInstTerminal, copyText, createDefaultRole, installProvision, loadProvision, provState, refreshProvision } from "./provision.js";
 import { deleteSchedule, openScheduleModal, renderScheduleList, submitSchedule, toggleSchedule } from "./schedules.js";
 import { loadSettings, runCleanup, saveRetention, saveWtRetention } from "./settings.js";
-import { closeSkillDetail, copySkillContent, deleteSkill, deleteSkillFromDetail, deleteTemplate, hideSkillDetail, loadSkillLib, loadTemplates, openExtModal, openSkillDetail, openSkillModal, removeExt, renderSkillLib, scanSkills, setSkillTab, showSkillDetail, submitExt, submitSkill } from "./skills.js";
+import { closeSkillDetail, copySkillContent, deleteSelectedSkills, deleteSkill, deleteSkillFromDetail, deleteTemplate, hideSkillDetail, loadSkillLib, loadTemplates, openExtModal, openSkillDetail, openSkillModal, removeExt, renderSkillLib, scanSkills, setSkillTab, showSkillDetail, submitExt, submitSkill, toggleAllSkills, toggleSkillGroup, toggleSkillSelection } from "./skills.js";
 import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskConcurrency, syncTaskDependency, syncTaskRunMode, wsDiscard } from "./task.js";
 import { closeTerminal, openTerminal, sendTaskInput, sendTerminalInput, syncTerminalInput } from "./terminal.js";
 
@@ -415,6 +415,7 @@ window.deleteAgent = deleteAgent;
 window.deleteProject = deleteProject;
 window.deleteSchedule = deleteSchedule;
 window.deleteSelected = deleteSelected;
+window.deleteSelectedSkills = deleteSelectedSkills;
 window.deleteSkill = deleteSkill;
 window.deleteSkillFromDetail = deleteSkillFromDetail;
 window.deleteTask = deleteTask;
@@ -475,10 +476,13 @@ window.syncTaskConcurrency = syncTaskConcurrency;
 window.syncTaskDependency = syncTaskDependency;
 window.syncTaskRunMode = syncTaskRunMode;
 window.toggleAll = toggleAll;
+window.toggleAllSkills = toggleAllSkills;
 window.toggleRow = toggleRow;
 window.toggleSchedule = toggleSchedule;
 window.toggleSidebar = toggleSidebar;
 window.toggleSkill = toggleSkill;
+window.toggleSkillGroup = toggleSkillGroup;
+window.toggleSkillSelection = toggleSkillSelection;
 window.wsDiscard = wsDiscard;
 
 // ===== 页面生命周期 =====
