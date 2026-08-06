@@ -444,9 +444,12 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   opacity: .9;
 }
 .card .c-top {
-  display: flex; align-items: center; gap: 7px; font-size: 10.5px; color: var(--fg-faint);
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 7px;
+  min-width: 0; font-size: 10.5px; color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
 }
+.card .c-top .c-id,
+.card .c-top .c-time { flex: 0 0 auto; white-space: nowrap; }
 .card .c-top .c-id { font-weight: 700; color: var(--fg-muted); }
 .card .c-top .c-time { color: var(--fg-faint); }
 .card .c-top .st-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--st-color); flex-shrink: 0; }
@@ -465,7 +468,10 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 }
 .card .c-agent .avatar { width: 15px; height: 15px; }
 .card .c-foot { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--fg-faint); }
-.card .chip { font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--raised); color: var(--fg-muted); border: 1px solid var(--border); }
+.card .chip {
+  flex: 0 0 auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--raised); color: var(--fg-muted); border: 1px solid var(--border);
+}
 .card .chip.review { color: var(--warning); border-color: rgba(251, 191, 36, .35); background: rgba(251, 191, 36, .1); }
 .chip.merge { color: var(--merge-accent); border-color: rgba(167, 139, 250, .36); background: rgba(167, 139, 250, .11); }
 .chip.task-kind { color: var(--fg-faint); }
