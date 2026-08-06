@@ -507,6 +507,47 @@ func TestCreateProjectTaskDependencies(t *testing.T) {
 	}
 }
 
+func TestDeleteTaskRewiresWeakDependents(t *testing.T) {
+	s := openTest(t)
+	projectID, err := s.CreateProject(Project{Name: "delete-dependency-project", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstID, err := s.CreateTaskWithProjectDependency(Task{
+		Title: "first", Status: StatusSucceeded, ProjectID: &projectID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondID, err := s.CreateTaskWithProjectDependency(Task{
+		Title: "second", Status: StatusSucceeded, ProjectID: &projectID, DependencyMode: DependencyWeak,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thirdID, err := s.CreateTaskWithProjectDependency(Task{
+		Title: "third", Status: StatusQueued, ProjectID: &projectID, DependencyMode: DependencyWeak,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := s.GetTask(thirdID)
+	if err != nil || third.DependsOn == nil || *third.DependsOn != secondID {
+		t.Fatalf("测试任务应先依赖第二项: task=%+v err=%v", third, err)
+	}
+
+	if err := s.DeleteTask(secondID); err != nil {
+		t.Fatalf("删除被弱依赖的中间任务失败: %v", err)
+	}
+	if exists, err := s.HasTask(secondID); err != nil || exists {
+		t.Fatalf("中间任务应已删除: exists=%v err=%v", exists, err)
+	}
+	third, err = s.GetTask(thirdID)
+	if err != nil || third.DependsOn == nil || *third.DependsOn != firstID {
+		t.Fatalf("删除中间任务后应改接到更早前置: task=%+v err=%v", third, err)
+	}
+}
+
 // 弱依赖在非阻塞失败时放行，强依赖始终等待成功交付；Git 任务的交付还包括
 // 它专属的代码合并任务。该测试同时覆盖“合并任务优先于后续实现任务”的队列顺序。
 func TestTaskDependencyFailureAndMergeDelivery(t *testing.T) {

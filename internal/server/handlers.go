@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -570,21 +571,31 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "代码合并任务不能单独删除；请重试它，或删除源任务以放弃整组代码")
 		return
 	}
-	dependent, err := s.st.FirstTaskDependent(id)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if dependent != nil {
-		writeErr(w, http.StatusConflict, fmt.Sprintf("任务 #%d 仍以前置任务 #%d 为依赖；请先处理或删除后项", dependent.ID, id))
-		return
-	}
-	if err := s.st.UpdateTask(id, map[string]any{"status": store.StatusCancelled, "finished_at": store.Now(), "error": "任务已删除"}); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 	tasks, err := s.st.ListTaskDeletionOrder(id)
 	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	deleting := make(map[int64]bool, len(tasks))
+	for _, tk := range tasks {
+		deleting[tk.ID] = true
+	}
+	// 自动生成的弱依赖会在删除事务中解除；只有明确指定的强依赖需要
+	// 用户先处理，避免删除前置后让后项绕过原本的业务条件。
+	for _, tk := range tasks {
+		dependents, err := s.st.ListTaskDependents(tk.ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for _, dependent := range dependents {
+			if !deleting[dependent.ID] && dependent.DependencyMode == store.DependencyStrong {
+				writeErr(w, http.StatusConflict, fmt.Sprintf("任务 #%d 仍以前置任务 #%d 为强依赖；请先处理或删除后项", dependent.ID, tk.ID))
+				return
+			}
+		}
+	}
+	if err := s.st.UpdateTask(id, map[string]any{"status": store.StatusCancelled, "finished_at": store.Now(), "error": "任务已删除"}); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -609,6 +620,11 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.st.DeleteTask(id); err != nil {
+		var depErr *store.TaskDependencyError
+		if errors.As(err, &depErr) {
+			writeErr(w, http.StatusConflict, fmt.Sprintf("任务 #%d 仍以前置任务 #%d 为强依赖；请先处理或删除后项", depErr.DependentID, depErr.SourceID))
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

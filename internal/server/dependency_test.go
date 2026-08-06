@@ -89,4 +89,25 @@ func TestCreateTaskDefaultsToWeakProjectDependencyAndProtectsReferencedDelete(t 
 	if err != nil || unchanged.Status != store.StatusQueued {
 		t.Fatalf("删除被拒绝后源任务不应被取消: task=%+v err=%v", unchanged, err)
 	}
+
+	// 删除明确依赖后，自动生成的弱依赖不应继续阻止源任务删除。
+	deleteStrongReq := httptest.NewRequest(http.MethodDelete, "/api/tasks/"+itoa(strong.ID), nil)
+	deleteStrongReq.SetPathValue("id", itoa(strong.ID))
+	deleteStrongResp := httptest.NewRecorder()
+	s.deleteTask(deleteStrongResp, deleteStrongReq)
+	if deleteStrongResp.Code != http.StatusNoContent {
+		t.Fatalf("删除强依赖后项失败: code=%d body=%s", deleteStrongResp.Code, deleteStrongResp.Body.String())
+	}
+
+	deleteFirstReq := httptest.NewRequest(http.MethodDelete, "/api/tasks/"+itoa(first.ID), nil)
+	deleteFirstReq.SetPathValue("id", itoa(first.ID))
+	deleteFirstResp := httptest.NewRecorder()
+	s.deleteTask(deleteFirstResp, deleteFirstReq)
+	if deleteFirstResp.Code != http.StatusNoContent {
+		t.Fatalf("删除被弱依赖的任务失败: code=%d body=%s", deleteFirstResp.Code, deleteFirstResp.Body.String())
+	}
+	remaining, err := st.GetTask(second.ID)
+	if err != nil || remaining.DependsOn != nil || remaining.DependencyMode != store.DependencyWeak {
+		t.Fatalf("删除前置后弱依赖应被解除且后项保留: task=%+v err=%v", remaining, err)
+	}
 }
