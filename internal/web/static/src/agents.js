@@ -1,8 +1,7 @@
 // 模块 agents（由 scripts/split-frontend.py 生成）
-import { STATUS_LABEL, ST_COLOR, api, closeModal, esc, fmtDur, fmtPct, icon, openModal, state, toast } from "./core.js";
+import { STATUS_LABEL, ST_COLOR, api, esc, fmtDur, fmtPct, icon, state, toast } from "./core.js";
 import { loadAll, loadSchema } from "./main.js";
 import { dailyChartHTML, openProject, statusBarHTML } from "./projects.js";
-import { loadSkillLib } from "./skills.js";
 import { openTask } from "./task.js";
 
 export let dlSeq = 0;
@@ -53,9 +52,7 @@ export function renderAgentEmpty(list, query) {
 
 export function agentActionsHTML(a) {
   return `
-    <button class="btn xs" title="打开角色创建工作台，可让创建助手调整并测试该角色" onclick="event.stopPropagation();openRoleStudio(${a.id})">设计</button>
-    <button class="btn xs" title="打开详情并切到配置 tab" onclick="event.stopPropagation();agentTabFromCard(${a.id})">配置</button>
-    <button class="btn xs" title="编辑角色基本信息和配置" onclick="event.stopPropagation();openAgentModal(${a.id})">编辑</button>
+    <button class="btn xs" title="打开唯一角色编辑器，编辑配置并测试角色" onclick="event.stopPropagation();openRoleStudio(${a.id})">编辑</button>
     <button class="btn xs" title="${a.enabled ? "停用" : "启用"}角色" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "停用" : "启用"}</button>
     <button class="btn xs danger" title="删除角色" aria-label="删除角色 ${esc(a.name)}" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}</button>`;
 }
@@ -151,14 +148,7 @@ export async function toggleAgent(id) {
   } catch (e) { toast(e.message, true); }
 }
 
-/* ---- 目录选择器 ---- */
-export let pendingAgentTab = null;
-
-export function agentTabFromCard(id) {
-  pendingAgentTab = "config";
-  openAgentDetail(id);
-}
-
+/* ---- 角色详情 ---- */
 export function openAgentDetail(id) { location.hash = "#/agent/" + id; }
 
 export function closeAgentDetail() { location.hash = "#/"; }
@@ -173,9 +163,7 @@ export function showAgentDetail(id) {
   const docs = state.schema[a.cli]?.docs;
   document.getElementById("adCliDocs").innerHTML =
     `<span class="badge">${esc(a.cli)}</span> ${docs ? `<a class="t-link" target="_blank" rel="noreferrer" href="${esc(docs)}">官方文档 ↗</a>` : ""}`;
-  const tab = pendingAgentTab || "overview";
-  pendingAgentTab = null;
-  agentTab(tab);
+  agentTab("overview");
 }
 
 export function hideAgentDetail() {
@@ -185,6 +173,7 @@ export function hideAgentDetail() {
 }
 
 export function agentTab(name) {
+  if (name !== "overview" && name !== "stats") name = "overview";
   state.agentTab = name;
   document.querySelectorAll("#agentTabs button").forEach(b =>
     b.classList.toggle("active", b.dataset.tab === name));
@@ -192,7 +181,6 @@ export function agentTab(name) {
   if (!a) return;
   const form = document.getElementById("agentForm");
   if (name === "overview") renderAgentOverview(a);
-  else if (name === "config") renderAgentConfig(a);
   else if (name === "stats") renderAgentStats(a);
 }
 
@@ -464,7 +452,7 @@ export function selectOptionsHTML(options, val) {
 // syncModelThinking 在模型输入变化时，把思考档位收窄到当前 Linux 主机为该
 // 模型实际声明的集合。没有模型能力目录的 CLI 保留 schema 的静态选项。
 export function syncModelThinking(input) {
-  const scope = input.closest("#configForm, #agentModalSchema");
+  const scope = input.closest("#rsSchema");
   const select = scope && scope.querySelector('select[data-key="thinking"][data-thinking-options]');
   if (!select) return;
   let byModel = {}, fallback = [];
@@ -571,85 +559,7 @@ export async function saveAgentConcurrency() {
   } catch (e) { toast(e.message, true); }
 }
 
-export async function renderAgentConfig(a) {
-  const form = document.getElementById("agentForm");
-  if (!form) return;
-  if (!state.schema[a.cli]) await loadSchema(); // 容错：首屏 schema 是后台加载的，点得快时现拉一次
-  const schema = state.schema[a.cli];
-  if (!schema) { form.innerHTML = `<div class="empty">CLI schema 未加载</div>`; return; }
-  await loadSkillLib();
-  form.innerHTML = `
-    <div class="schema-tip">该角色的可配置参数来自 ${esc(schema.name)} 官方文档
-      ${schema.docs ? `<a class="t-link" target="_blank" rel="noreferrer" href="${esc(schema.docs)}">查看文档 ↗</a>` : ""}。
-      每个 CLI 的字段不同——这是按角色深度定制，不是统一定制；环境变量在下方「执行」分组里一并编辑。</div>
-    <div id="configForm">${schemaFormHTML(schema, a.role_config || {})}</div>
-    <div style="margin-top:16px"><button class="btn primary" onclick="saveAgentConfig()">保存</button></div>`;
-}
-
-export async function saveAgentConfig() {
-  const a = state.agentEditing;
-  if (!a) return;
-  const schema = state.schema[a.cli];
-  const cfg = readConfigFrom(schema, document.getElementById("configForm"));
-  try {
-    await api(`/api/agents/${a.id}`, { method: "PATCH", body: JSON.stringify({ role_config: cfg }) });
-    toast("配置已保存");
-    await loadAll();
-    showAgentDetail(a.id);
-  } catch (e) { toast(e.message, true); }
-}
-
-export async function openAgentModal(id) {
-  const a = id ? state.agents.find(x => x.id === id) : null;
-  document.getElementById("agentModalTitle").textContent = a ? "编辑角色" : "新建角色";
-  document.getElementById("aId").value = a ? a.id : "";
-  document.getElementById("aName").value = a ? a.name : "";
-  document.getElementById("aDesc").value = a ? (a.description || "") : "";
-  document.getElementById("aMaxConcurrency").value = a ? (a.max_concurrency || 1) : 1;
-  state.agentModalRC = a ? JSON.parse(JSON.stringify(a.role_config || {})) : {};
-  await loadSchema();
-  await loadSkillLib();
-  const sel = document.getElementById("aCli");
-  if (a) sel.value = a.cli;
-  else if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
-  renderAgentModalSchema();
-  openModal("agentModal");
-}
-
-export function renderAgentModalSchema() {
-  const schema = state.schema[document.getElementById("aCli").value];
-  const box = document.getElementById("agentModalSchema");
-  if (!box) return;
-  const sub = document.getElementById("agentModalSub");
-  if (sub && schema) {
-    sub.innerHTML = `配置按 ${esc(schema.name)} 官方文档定制
-      ${schema.docs ? `（<a class="t-link" target="_blank" rel="noreferrer" href="${esc(schema.docs)}">文档 ↗</a>）` : ""}，不同 CLI 字段不同`;
-  }
-  box.innerHTML = schema ? schemaFormHTML(schema, state.agentModalRC) : "";
-}
-
-export async function submitAgent() {
-  const id = document.getElementById("aId").value;
-  const cli = document.getElementById("aCli").value;
-  const schema = state.schema[cli];
-  const body = {
-    name: document.getElementById("aName").value.trim(),
-    description: document.getElementById("aDesc").value.trim(),
-    cli,
-    max_concurrency: Number(document.getElementById("aMaxConcurrency").value),
-    enabled: true,
-    role_config: schema ? readConfigFrom(schema, document.getElementById("agentModalSchema")) : {},
-  };
-  try {
-    if (id) await api(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify(body) });
-    else await api("/api/agents", { method: "POST", body: JSON.stringify(body) });
-    closeModal("agentModal");
-    // 从角色创建工作台切到手动表单后，旧草稿不能覆盖刚保存的配置。
-    state.roleStudio = null;
-    await loadAll();
-    renderAgentList();
-  } catch (e) { toast(e.message, true); }
-}
+/* 角色创建、编辑与 schema 配置统一在 role studio 中完成。 */
 
 export async function deleteAgent(id) {
   // 详情页的按钮是内联 onclick，无法访问 ES module 内部的 state；没有显式

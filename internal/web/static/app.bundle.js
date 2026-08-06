@@ -29,10 +29,8 @@
     historySel: /* @__PURE__ */ new Set(),
     agentEditing: null,
     agentTab: "overview",
-    agentModalRC: {},
-    // 新建/编辑弹窗中的临时 role_config
     roleStudio: null,
-    // 角色创建工作台的草稿、创建助手对话与测试对话
+    // 唯一角色编辑器的草稿、助手对话与测试对话
     projectView: null,
     // 项目详情中的项目 id
     agentView: "grid",
@@ -2456,9 +2454,7 @@
   }
   function agentActionsHTML(a) {
     return `
-    <button class="btn xs" title="\u6253\u5F00\u89D2\u8272\u521B\u5EFA\u5DE5\u4F5C\u53F0\uFF0C\u53EF\u8BA9\u521B\u5EFA\u52A9\u624B\u8C03\u6574\u5E76\u6D4B\u8BD5\u8BE5\u89D2\u8272" onclick="event.stopPropagation();openRoleStudio(${a.id})">\u8BBE\u8BA1</button>
-    <button class="btn xs" title="\u6253\u5F00\u8BE6\u60C5\u5E76\u5207\u5230\u914D\u7F6E tab" onclick="event.stopPropagation();agentTabFromCard(${a.id})">\u914D\u7F6E</button>
-    <button class="btn xs" title="\u7F16\u8F91\u89D2\u8272\u57FA\u672C\u4FE1\u606F\u548C\u914D\u7F6E" onclick="event.stopPropagation();openAgentModal(${a.id})">\u7F16\u8F91</button>
+    <button class="btn xs" title="\u6253\u5F00\u552F\u4E00\u89D2\u8272\u7F16\u8F91\u5668\uFF0C\u7F16\u8F91\u914D\u7F6E\u5E76\u6D4B\u8BD5\u89D2\u8272" onclick="event.stopPropagation();openRoleStudio(${a.id})">\u7F16\u8F91</button>
     <button class="btn xs" title="${a.enabled ? "\u505C\u7528" : "\u542F\u7528"}\u89D2\u8272" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "\u505C\u7528" : "\u542F\u7528"}</button>
     <button class="btn xs danger" title="\u5220\u9664\u89D2\u8272" aria-label="\u5220\u9664\u89D2\u8272 ${esc(a.name)}" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}</button>`;
   }
@@ -2553,11 +2549,6 @@
       toast(e.message, true);
     }
   }
-  var pendingAgentTab = null;
-  function agentTabFromCard(id) {
-    pendingAgentTab = "config";
-    openAgentDetail(id);
-  }
   function openAgentDetail(id) {
     location.hash = "#/agent/" + id;
   }
@@ -2573,9 +2564,7 @@
     document.getElementById("adCrumb").innerHTML = `\u89D2\u8272 / <b>${esc(a.name)}</b>`;
     const docs = state.schema[a.cli]?.docs;
     document.getElementById("adCliDocs").innerHTML = `<span class="badge">${esc(a.cli)}</span> ${docs ? `<a class="t-link" target="_blank" rel="noreferrer" href="${esc(docs)}">\u5B98\u65B9\u6587\u6863 \u2197</a>` : ""}`;
-    const tab = pendingAgentTab || "overview";
-    pendingAgentTab = null;
-    agentTab(tab);
+    agentTab("overview");
   }
   function hideAgentDetail() {
     document.getElementById("agentDetailShell").classList.add("hidden");
@@ -2583,13 +2572,13 @@
     state.agentEditing = null;
   }
   function agentTab(name) {
+    if (name !== "overview" && name !== "stats") name = "overview";
     state.agentTab = name;
     document.querySelectorAll("#agentTabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
     const a = state.agentEditing;
     if (!a) return;
     const form = document.getElementById("agentForm");
     if (name === "overview") renderAgentOverview(a);
-    else if (name === "config") renderAgentConfig(a);
     else if (name === "stats") renderAgentStats(a);
   }
   async function loadAgentStats(a) {
@@ -2837,7 +2826,7 @@
     }).join("");
   }
   function syncModelThinking(input) {
-    const scope = input.closest("#configForm, #agentModalSchema");
+    const scope = input.closest("#rsSchema");
     const select = scope && scope.querySelector('select[data-key="thinking"][data-thinking-options]');
     if (!select) return;
     let byModel = {}, fallback = [];
@@ -2942,87 +2931,6 @@
       toast(`\u5E76\u53D1\u5DF2\u66F4\u65B0\u4E3A ${n}`);
       await loadAll();
       showAgentDetail(a.id);
-    } catch (e) {
-      toast(e.message, true);
-    }
-  }
-  async function renderAgentConfig(a) {
-    const form = document.getElementById("agentForm");
-    if (!form) return;
-    if (!state.schema[a.cli]) await loadSchema();
-    const schema = state.schema[a.cli];
-    if (!schema) {
-      form.innerHTML = `<div class="empty">CLI schema \u672A\u52A0\u8F7D</div>`;
-      return;
-    }
-    await loadSkillLib();
-    form.innerHTML = `
-    <div class="schema-tip">\u8BE5\u89D2\u8272\u7684\u53EF\u914D\u7F6E\u53C2\u6570\u6765\u81EA ${esc(schema.name)} \u5B98\u65B9\u6587\u6863
-      ${schema.docs ? `<a class="t-link" target="_blank" rel="noreferrer" href="${esc(schema.docs)}">\u67E5\u770B\u6587\u6863 \u2197</a>` : ""}\u3002
-      \u6BCF\u4E2A CLI \u7684\u5B57\u6BB5\u4E0D\u540C\u2014\u2014\u8FD9\u662F\u6309\u89D2\u8272\u6DF1\u5EA6\u5B9A\u5236\uFF0C\u4E0D\u662F\u7EDF\u4E00\u5B9A\u5236\uFF1B\u73AF\u5883\u53D8\u91CF\u5728\u4E0B\u65B9\u300C\u6267\u884C\u300D\u5206\u7EC4\u91CC\u4E00\u5E76\u7F16\u8F91\u3002</div>
-    <div id="configForm">${schemaFormHTML(schema, a.role_config || {})}</div>
-    <div style="margin-top:16px"><button class="btn primary" onclick="saveAgentConfig()">\u4FDD\u5B58</button></div>`;
-  }
-  async function saveAgentConfig() {
-    const a = state.agentEditing;
-    if (!a) return;
-    const schema = state.schema[a.cli];
-    const cfg = readConfigFrom(schema, document.getElementById("configForm"));
-    try {
-      await api(`/api/agents/${a.id}`, { method: "PATCH", body: JSON.stringify({ role_config: cfg }) });
-      toast("\u914D\u7F6E\u5DF2\u4FDD\u5B58");
-      await loadAll();
-      showAgentDetail(a.id);
-    } catch (e) {
-      toast(e.message, true);
-    }
-  }
-  async function openAgentModal(id) {
-    const a = id ? state.agents.find((x) => x.id === id) : null;
-    document.getElementById("agentModalTitle").textContent = a ? "\u7F16\u8F91\u89D2\u8272" : "\u65B0\u5EFA\u89D2\u8272";
-    document.getElementById("aId").value = a ? a.id : "";
-    document.getElementById("aName").value = a ? a.name : "";
-    document.getElementById("aDesc").value = a ? a.description || "" : "";
-    document.getElementById("aMaxConcurrency").value = a ? a.max_concurrency || 1 : 1;
-    state.agentModalRC = a ? JSON.parse(JSON.stringify(a.role_config || {})) : {};
-    await loadSchema();
-    await loadSkillLib();
-    const sel = document.getElementById("aCli");
-    if (a) sel.value = a.cli;
-    else if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
-    renderAgentModalSchema();
-    openModal("agentModal");
-  }
-  function renderAgentModalSchema() {
-    const schema = state.schema[document.getElementById("aCli").value];
-    const box = document.getElementById("agentModalSchema");
-    if (!box) return;
-    const sub = document.getElementById("agentModalSub");
-    if (sub && schema) {
-      sub.innerHTML = `\u914D\u7F6E\u6309 ${esc(schema.name)} \u5B98\u65B9\u6587\u6863\u5B9A\u5236
-      ${schema.docs ? `\uFF08<a class="t-link" target="_blank" rel="noreferrer" href="${esc(schema.docs)}">\u6587\u6863 \u2197</a>\uFF09` : ""}\uFF0C\u4E0D\u540C CLI \u5B57\u6BB5\u4E0D\u540C`;
-    }
-    box.innerHTML = schema ? schemaFormHTML(schema, state.agentModalRC) : "";
-  }
-  async function submitAgent() {
-    const id = document.getElementById("aId").value;
-    const cli = document.getElementById("aCli").value;
-    const schema = state.schema[cli];
-    const body = {
-      name: document.getElementById("aName").value.trim(),
-      description: document.getElementById("aDesc").value.trim(),
-      cli,
-      max_concurrency: Number(document.getElementById("aMaxConcurrency").value),
-      enabled: true,
-      role_config: schema ? readConfigFrom(schema, document.getElementById("agentModalSchema")) : {}
-    };
-    try {
-      if (id) await api(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify(body) });
-      else await api("/api/agents", { method: "POST", body: JSON.stringify(body) });
-      closeModal("agentModal");
-      state.roleStudio = null;
-      await loadAll();
-      renderAgentList();
     } catch (e) {
       toast(e.message, true);
     }
@@ -3248,7 +3156,7 @@
     if (!s) return;
     const d = s.draft;
     const title = document.getElementById("roleStudioTitle");
-    if (title) title.textContent = d.name ? `\u8BBE\u8BA1\uFF1A${d.name}` : "\u521B\u5EFA\u89D2\u8272\u5DE5\u4F5C\u53F0";
+    if (title) title.textContent = d.name ? `\u7F16\u8F91\uFF1A${d.name}` : "\u521B\u5EFA\u89D2\u8272";
     const status = document.getElementById("roleStudioStatus");
     if (status) status.textContent = s.agentID ? "\u7F16\u8F91\u8349\u7A3F \xB7 \u672A\u53D1\u5E03" : "\u65B0\u89D2\u8272\u8349\u7A3F \xB7 \u672A\u4FDD\u5B58";
     const name = document.getElementById("rsName");
@@ -3299,6 +3207,10 @@
     renderCreatorSelect();
     renderStudioDraft();
     openModal("roleStudioModal");
+  }
+  function openCurrentRoleEditor() {
+    const id = studioState()?.agentID || state.agentEditing?.id;
+    if (id) openRoleStudio(id);
   }
   function changeRoleStudioCli() {
     const s = studioState();
@@ -3403,14 +3315,6 @@
       if (input && (inputID === "rsCreatorInput" && id === "rsCreatorState" || inputID === "rsTestInput" && id === "rsTestState")) input.disabled = busy;
     });
   }
-  function openRoleStudioManual() {
-    const s = studioState();
-    if (!s) return;
-    s.draft = currentDraftFromForm();
-    closeModal("roleStudioModal");
-    if (s.agentID) openAgentModal(s.agentID);
-    else openAgentModal();
-  }
   async function saveRoleStudio() {
     const s = studioState();
     if (!s) return;
@@ -3435,7 +3339,9 @@
       closeModal("roleStudioModal");
       state.roleStudio = null;
       await loadAll();
-      renderAgentList();
+      const detailVisible = !document.getElementById("agentDetailShell")?.classList.contains("hidden");
+      if (s.agentID && detailVisible) showAgentDetail(s.agentID);
+      else renderAgentList();
       toast(s.agentID ? "\u89D2\u8272\u8349\u7A3F\u5DF2\u4FDD\u5B58" : `\u89D2\u8272\u5DF2\u521B\u5EFA\uFF1A${result?.name || draft.name}`);
     } catch (e) {
       toast(`\u4FDD\u5B58\u89D2\u8272\u5931\u8D25\uFF1A${e.message}`, true);
@@ -4076,7 +3982,6 @@
   });
   window.addChip = addChip;
   window.agentTab = agentTab;
-  window.agentTabFromCard = agentTabFromCard;
   window.applyFilters = applyFilters;
   window.applyTemplate = applyTemplate;
   window.changeRoleStudioCli = changeRoleStudioCli;
@@ -4109,7 +4014,7 @@
   window.logout = logout;
   window.mkdirCurrent = mkdirCurrent;
   window.openAgentDetail = openAgentDetail;
-  window.openAgentModal = openAgentModal;
+  window.openCurrentRoleEditor = openCurrentRoleEditor;
   window.openDirPicker = openDirPicker;
   window.openExtModal = openExtModal;
   window.openNewTask = openNewTask;
@@ -4117,7 +4022,6 @@
   window.openProjectModal = openProjectModal;
   window.openProjectTask = openProjectTask;
   window.openRoleStudio = openRoleStudio;
-  window.openRoleStudioManual = openRoleStudioManual;
   window.openScheduleModal = openScheduleModal;
   window.openSkillDetail = openSkillDetail;
   window.openSkillModal = openSkillModal;
@@ -4133,14 +4037,12 @@
   window.removeChip = removeChip;
   window.removeExt = removeExt;
   window.renderAgentList = renderAgentList;
-  window.renderAgentModalSchema = renderAgentModalSchema;
   window.renderProjectList = renderProjectList;
   window.renderSkillLib = renderSkillLib;
   window.resumeTask = resumeTask;
   window.roleStudioQuickAsk = roleStudioQuickAsk;
   window.runCleanup = runCleanup;
   window.saveAgentConcurrency = saveAgentConcurrency;
-  window.saveAgentConfig = saveAgentConfig;
   window.saveAsTemplate = saveAsTemplate;
   window.saveRetention = saveRetention;
   window.saveRoleStudio = saveRoleStudio;
@@ -4157,7 +4059,6 @@
   window.setSkillView = setSkillView;
   window.setTaskStatus = setTaskStatus;
   window.setView = setView;
-  window.submitAgent = submitAgent;
   window.submitExt = submitExt;
   window.submitProject = submitProject;
   window.submitSchedule = submitSchedule;

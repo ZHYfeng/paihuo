@@ -11,9 +11,8 @@
   </button>
   <button class="btn brand sm" onclick="openRoleStudio()">
     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-    AI 创建角色
+    创建角色
   </button>
-  <button class="btn sm" onclick="openAgentModal()">手动创建</button>
 </header>
 <div class="page-content">
 
@@ -48,64 +47,38 @@
       <span class="crumb" id="adCrumb"></span>
       <span class="spacer"></span>
       <span id="adCliDocs" class="count-info"></span>
+      <button class="btn sm primary" onclick="openCurrentRoleEditor()">编辑角色</button>
       <button class="btn sm danger" onclick="deleteAgent()">删除</button>
     </header>
     <div class="tab-bar" id="agentTabs">
       <button class="active" data-tab="overview" onclick="agentTab('overview')">概况</button>
-      <button data-tab="config" onclick="agentTab('config')">配置</button>
       <button data-tab="stats" onclick="agentTab('stats')">统计</button>
     </div>
     <div id="agentForm" class="tab-panel"></div>
   </div>
 </div>
 
-<!-- 新建/编辑角色弹窗（配置区按所选 CLI 的 schema 渲染） -->
-<div class="modal hidden" id="agentModal">
-  <div class="modal-box wide">
-    <h3 id="agentModalTitle">新建角色</h3>
-    <div class="sub" id="agentModalSub">不同 CLI 有各自官方的可配置参数，表单随之深度定制</div>
-    <input type="hidden" id="aId">
-    <div class="row">
-      <label class="field">名称 <input id="aName" data-autofocus placeholder="如：编码工"></label>
-      <label class="field">CLI
-        <select id="aCli" onchange="renderAgentModalSchema()"></select>
-      </label>
-      <label class="field">最大并发
-        <input id="aMaxConcurrency" type="number" min="1" step="1" inputmode="numeric" value="1" required aria-describedby="aConcurrencyHelp">
-      </label>
-    </div>
-    <div class="field-help" id="aConcurrencyHelp">同一角色最多同时运行的任务数。每个任务独占 tmux、会话和 Git worktree；请按机器资源与模型配额设置。</div>
-    <label class="field">描述 <input id="aDesc" placeholder="这个角色负责什么"></label>
-    <div id="agentModalSchema"></div>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeModal('agentModal')">取消</button>
-      <button class="btn primary" onclick="submitAgent()">保存</button>
-    </div>
-  </div>
-</div>
-
-<!-- 角色创建工作台：创建助手、角色草稿、被创建 Agent 测试三栏同时保留。 -->
+<!-- 唯一的角色创建/编辑器：配置、AI 调整与测试都在同一份草稿中完成。 -->
 <div class="modal hidden" id="roleStudioModal">
   <div class="role-studio-modal">
     <header class="role-studio-head">
       <div class="role-studio-title">
-        <span class="page-kicker">ROLE STUDIO</span>
-        <h2 id="roleStudioTitle" data-modal-title>创建角色工作台</h2>
+        <span class="page-kicker">ROLE EDITOR</span>
+        <h2 id="roleStudioTitle" data-modal-title>创建角色</h2>
         <span id="roleStudioStatus" class="rs-status">草稿 · 未发布</span>
       </div>
       <div class="role-studio-head-actions">
         <label class="rs-creator-select">创建助手
           <select id="rsCreatorAgent" aria-label="选择创建助手"></select>
         </label>
-        <button class="btn sm" onclick="openRoleStudioManual()">手动配置</button>
         <button class="btn sm primary" onclick="saveRoleStudio()">保存角色</button>
-        <button class="btn sm ghost" onclick="closeModal('roleStudioModal')" aria-label="关闭角色创建工作台">关闭</button>
+        <button class="btn sm ghost" onclick="closeModal('roleStudioModal')" aria-label="关闭角色编辑器">关闭</button>
       </div>
     </header>
     <div class="role-studio-grid">
       <section class="rs-pane rs-creator-pane" aria-label="创建角色 Agent">
         <header class="rs-pane-head">
-          <div><span class="rs-eyebrow">DESIGN AGENT</span><h3>创建角色 Agent</h3></div>
+          <div><span class="rs-eyebrow">ROLE ASSISTANT</span><h3>角色助手</h3></div>
           <span id="rsCreatorState" class="badge">待命</span>
         </header>
         <div id="rsCreatorChat" class="rs-chat-log" aria-live="polite"></div>
@@ -119,9 +92,9 @@
         </form>
       </section>
 
-      <section class="rs-pane rs-draft-pane" aria-label="角色草稿">
+      <section class="rs-pane rs-draft-pane" aria-label="角色配置">
         <header class="rs-pane-head">
-          <div><span class="rs-eyebrow">DRAFT CONFIGURATION</span><h3>角色草稿</h3></div>
+          <div><span class="rs-eyebrow">ROLE CONFIGURATION</span><h3>角色配置</h3></div>
           <span id="rsDraftBadge" class="badge">未保存</span>
         </header>
         <div class="rs-draft-scroll">
@@ -140,7 +113,6 @@
         </div>
         <footer class="rs-pane-foot">
           <span id="rsSkillNote" class="count-info"></span>
-          <button class="btn xs" onclick="openRoleStudioManual()">打开完整表单</button>
         </footer>
       </section>
 

@@ -20,8 +20,7 @@ export const state = {
   history: [], historySel: new Set(),
   agentEditing: null,
   agentTab: "overview",
-  agentModalRC: {},  // 新建/编辑弹窗中的临时 role_config
-  roleStudio: null,  // 角色创建工作台的草稿、创建助手对话与测试对话
+  roleStudio: null,  // 唯一角色编辑器的草稿、助手对话与测试对话
   projectView: null, // 项目详情中的项目 id
   agentView: "grid",
   skillLib: [],      // 注册到 paihuo 工作目录的技能库 [{id,name,description,tags,dir}]

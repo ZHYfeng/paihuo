@@ -1,7 +1,7 @@
-// 角色创建工作台：创建助手对话、草稿配置与被创建 Agent 测试保持在同一屏。
+// 角色编辑器：创建助手对话、配置与被创建 Agent 测试保持在同一屏。
 import { api, closeModal, esc, openModal, state, toast } from "./core.js";
 import { loadAll, loadSchema } from "./main.js";
-import { openAgentModal, readConfigFrom, renderAgentList, schemaFormHTML } from "./agents.js";
+import { readConfigFrom, renderAgentList, schemaFormHTML, showAgentDetail } from "./agents.js";
 import { loadSkillLib } from "./skills.js";
 
 function clone(value) {
@@ -135,7 +135,7 @@ function renderStudioDraft() {
   if (!s) return;
   const d = s.draft;
   const title = document.getElementById("roleStudioTitle");
-  if (title) title.textContent = d.name ? `设计：${d.name}` : "创建角色工作台";
+  if (title) title.textContent = d.name ? `编辑：${d.name}` : "创建角色";
   const status = document.getElementById("roleStudioStatus");
   if (status) status.textContent = s.agentID ? "编辑草稿 · 未发布" : "新角色草稿 · 未保存";
   const name = document.getElementById("rsName");
@@ -187,6 +187,11 @@ export async function openRoleStudio(id) {
   renderCreatorSelect();
   renderStudioDraft();
   openModal("roleStudioModal");
+}
+
+export function openCurrentRoleEditor() {
+  const id = studioState()?.agentID || state.agentEditing?.id;
+  if (id) openRoleStudio(id);
 }
 
 export function changeRoleStudioCli() {
@@ -297,15 +302,6 @@ function setStudioBusy(id, busy, text) {
   });
 }
 
-export function openRoleStudioManual() {
-  const s = studioState();
-  if (!s) return;
-  s.draft = currentDraftFromForm();
-  closeModal("roleStudioModal");
-  if (s.agentID) openAgentModal(s.agentID);
-  else openAgentModal();
-}
-
 export async function saveRoleStudio() {
   const s = studioState();
   if (!s) return;
@@ -329,7 +325,9 @@ export async function saveRoleStudio() {
     closeModal("roleStudioModal");
     state.roleStudio = null;
     await loadAll();
-    renderAgentList();
+    const detailVisible = !document.getElementById("agentDetailShell")?.classList.contains("hidden");
+    if (s.agentID && detailVisible) showAgentDetail(s.agentID);
+    else renderAgentList();
     toast(s.agentID ? "角色草稿已保存" : `角色已创建：${result?.name || draft.name}`);
   } catch (e) {
     toast(`保存角色失败：${e.message}`, true);
