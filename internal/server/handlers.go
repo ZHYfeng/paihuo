@@ -107,18 +107,22 @@ func (s *Server) resumeTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "只有已完成、失败或已取消的任务可以继续对话")
 		return
 	}
-	// 成功的普通任务一旦已有合并任务，必须重试该合并任务，不能回头重跑
-	// 源任务并绕过确定性的合并链路。
+	// 成功的 Git 源任务进入的是「必须合并」链路：无论 child 已经存在还是
+	// 正在由周期对账补建，都不能回头重跑源任务并覆盖已完成的代码结果。
 	if src.Status == store.StatusSucceeded && src.MergeOf == nil {
-		hasMerge, err := s.st.HasMergeTaskForSource(src.ID)
+		obligated, err := s.sourceHasOrNeedsMerge(*src)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if hasMerge {
-			writeErr(w, http.StatusConflict, "源任务已有代码合并任务；请继续或重试该合并任务")
+		if obligated {
+			writeErr(w, http.StatusConflict, "源任务代码已完成，系统正在或已经执行代码合并；请查看对应合并任务")
 			return
 		}
+	}
+	if src.Status == store.StatusSucceeded && src.MergeOf != nil {
+		writeErr(w, http.StatusConflict, "代码合并任务已成功，不能继续对话或重复合并")
+		return
 	}
 	resumed, err := s.st.ResumeTask(id)
 	if err != nil {
@@ -146,6 +150,19 @@ func (s *Server) resumeTask(w http.ResponseWriter, r *http.Request) {
 
 func isTerminalTaskStatus(status string) bool {
 	return status == store.StatusSucceeded || status == store.StatusFailed || status == store.StatusCancelled
+}
+
+// sourceHasOrNeedsMerge 覆盖正常 Git 源任务（已有 worktree）与旧数据/竞态
+// （child 已存在但源任务未留下 branch）两种情况，避免成功源任务被回退重跑而
+// 绕过确定性的合并链路。
+func (s *Server) sourceHasOrNeedsMerge(tk store.Task) (bool, error) {
+	if tk.MergeOf != nil {
+		return false, nil
+	}
+	if tk.WorktreeBranch != "" {
+		return true, nil
+	}
+	return s.st.HasMergeTaskForSource(tk.ID)
 }
 
 func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agentID, projectID *int64, perm, runMode string, concurrent bool, parentID, resumeOf *int64) {
@@ -260,6 +277,17 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "任务不存在")
 		return
 	}
+	// 合并子任务是系统状态机的一部分，来源、工作目录、权限和串行策略都
+	// 不能在详情页被改坏；用户只需重试失败/取消的合并任务，或取消运行中
+	// 的任务，角色不可用时则先在角色页恢复原角色。
+	if cur.MergeOf != nil {
+		for key := range set {
+			if key != "status" {
+				writeErr(w, http.StatusConflict, "代码合并任务由系统管理；只能取消运行中任务或重试失败任务")
+				return
+			}
+		}
+	}
 	approveReview := false
 
 	// 状态流转校验
@@ -271,15 +299,19 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		}
 		approveReview = cur.Status == store.StatusAwaitingReview && to == store.StatusSucceeded
 		if to == store.StatusQueued && cur.Status == store.StatusSucceeded && cur.MergeOf == nil {
-			hasMerge, err := s.st.HasMergeTaskForSource(cur.ID)
+			obligated, err := s.sourceHasOrNeedsMerge(*cur)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			if hasMerge {
-				writeErr(w, http.StatusConflict, "源任务已有代码合并任务；请重试该合并任务，或新建任务")
+			if obligated {
+				writeErr(w, http.StatusConflict, "源任务代码已完成，系统正在或已经执行代码合并；请重试对应合并任务")
 				return
 			}
+		}
+		if to == store.StatusQueued && cur.Status == store.StatusSucceeded && cur.MergeOf != nil {
+			writeErr(w, http.StatusConflict, "代码合并任务已成功，不能重试或重复合并")
+			return
 		}
 		if to == store.StatusQueued {
 			// 重试：清空执行痕迹
@@ -451,8 +483,13 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 先标记根任务取消，阻止它在删除竞态中再派发新的合并子任务。
-	if _, err := s.st.GetTask(id); err != nil {
+	target, err := s.st.GetTask(id)
+	if err != nil {
 		writeErr(w, http.StatusNotFound, "任务不存在")
+		return
+	}
+	if target.MergeOf != nil {
+		writeErr(w, http.StatusConflict, "代码合并任务不能单独删除；请重试它，或删除源任务以放弃整组代码")
 		return
 	}
 	if err := s.st.UpdateTask(id, map[string]any{"status": store.StatusCancelled, "finished_at": store.Now(), "error": "任务已删除"}); err != nil {
@@ -589,16 +626,7 @@ func (s *Server) workspaceMerge(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "普通任务不能直接合并；请等待系统创建的代码合并任务")
 		return
 	}
-	if tk.Status != store.StatusSucceeded && tk.Status != store.StatusFailed {
-		writeErr(w, http.StatusConflict, "代码合并任务尚未结束，不能手工合并")
-		return
-	}
-	hash, err := workspace.Merge(*tk, s.sessionsRoot)
-	if err != nil {
-		writeErr(w, http.StatusConflict, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"merged": true, "commit": hash})
+	writeErr(w, http.StatusConflict, "代码合并由合并任务成功结算时自动执行；失败请重试该合并任务")
 }
 
 func (s *Server) workspaceDiscard(w http.ResponseWriter, r *http.Request) {
@@ -620,6 +648,15 @@ func (s *Server) workspaceDiscard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tk.MergeOf == nil && tk.Status == store.StatusSucceeded {
+		hasMerge, err := s.st.HasMergeTaskForSource(tk.ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if tk.WorktreeBranch != "" && !hasMerge {
+			writeErr(w, http.StatusConflict, "代码合并任务正在创建；如需放弃代码，请删除源任务")
+			return
+		}
 		tasks, err := s.st.ListTaskDeletionOrder(tk.ID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())

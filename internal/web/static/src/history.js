@@ -1,7 +1,7 @@
 // 模块 history（由 scripts/split-frontend.py 生成）
 import { PERM_LABEL, STATUS_LABEL, ST_COLOR, api, esc, icon, state, toast } from "./core.js";
 import { loadAll } from "./main.js";
-import { canRetryTask, deleteTask, openTask, setTaskStatus } from "./task.js";
+import { canDeleteTask, canRetryTask, deleteTask, isMergeTask, openTask, retryTaskLabel, setTaskStatus } from "./task.js";
 
 export function loadHistory() {
   const agentId = document.getElementById("hAgent").value;
@@ -27,7 +27,7 @@ export function renderHistory() {
     <tr data-id="${t.id}" class="${state.historySel.has(t.id) ? "selected" : ""}" onclick="toggleRow(this)">
       <td class="chk"><input type="checkbox" ${state.historySel.has(t.id) ? "checked" : ""} onclick="event.stopPropagation()"></td>
       <td class="num">#${t.id}</td>
-      <td class="t-title"><span class="t-link" onclick="event.stopPropagation();openTask(${t.id})">${esc(t.title)}</span></td>
+      <td class="t-title"><span class="t-link" onclick="event.stopPropagation();openTask(${t.id})">${esc(t.title)}</span>${isMergeTask(t) ? ` <span class="chip merge">合并 #${t.merge_of}</span>` : ""}</td>
       <td>${esc(t.agent_name || "-")}</td>
       <td>${esc(t.project_name || "-")}</td>
       <td>${PERM_LABEL[t.perm] || t.perm}</td>
@@ -38,8 +38,8 @@ export function renderHistory() {
       <td>
         <span class="ops">
           ${canRetryTask(t)
-            ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>` : ""}
-          <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>
+            ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}${retryTaskLabel(t)}</button>` : ""}
+          ${canDeleteTask(t) ? `<button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>` : ""}
         </span>
       </td>
     </tr>`).join("");
@@ -69,6 +69,9 @@ export function toggleAll() {
 export async function deleteSelected() {
   const ids = [...state.historySel];
   if (!ids.length) return toast("先勾选要删除的任务", true);
+  if (ids.some(id => isMergeTask(state.history.find(t => t.id === id)))) {
+    return toast("代码合并任务不能单独删除；请删除其源任务以放弃整组代码", true);
+  }
   if (!confirm(`删除选中的 ${ids.length} 条任务？不可恢复。`)) return;
   try {
     for (const id of ids) await api(`/api/tasks/${id}`, { method: "DELETE" });

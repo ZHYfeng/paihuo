@@ -249,7 +249,7 @@
     <tr data-id="${t.id}" class="${state.historySel.has(t.id) ? "selected" : ""}" onclick="toggleRow(this)">
       <td class="chk"><input type="checkbox" ${state.historySel.has(t.id) ? "checked" : ""} onclick="event.stopPropagation()"></td>
       <td class="num">#${t.id}</td>
-      <td class="t-title"><span class="t-link" onclick="event.stopPropagation();openTask(${t.id})">${esc(t.title)}</span></td>
+      <td class="t-title"><span class="t-link" onclick="event.stopPropagation();openTask(${t.id})">${esc(t.title)}</span>${isMergeTask(t) ? ` <span class="chip merge">\u5408\u5E76 #${t.merge_of}</span>` : ""}</td>
       <td>${esc(t.agent_name || "-")}</td>
       <td>${esc(t.project_name || "-")}</td>
       <td>${PERM_LABEL[t.perm] || t.perm}</td>
@@ -259,8 +259,8 @@
       <td class="num">${(t.finished_at || "").slice(5, 16).replace("T", " ")}</td>
       <td>
         <span class="ops">
-          ${canRetryTask(t) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}\u91CD\u8BD5</button>` : ""}
-          <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}\u5220\u9664</button>
+          ${canRetryTask(t) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}${retryTaskLabel(t)}</button>` : ""}
+          ${canDeleteTask(t) ? `<button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}\u5220\u9664</button>` : ""}
         </span>
       </td>
     </tr>`).join("");
@@ -288,6 +288,9 @@
   async function deleteSelected() {
     const ids = [...state.historySel];
     if (!ids.length) return toast("\u5148\u52FE\u9009\u8981\u5220\u9664\u7684\u4EFB\u52A1", true);
+    if (ids.some((id) => isMergeTask(state.history.find((t) => t.id === id)))) {
+      return toast("\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1\u4E0D\u80FD\u5355\u72EC\u5220\u9664\uFF1B\u8BF7\u5220\u9664\u5176\u6E90\u4EFB\u52A1\u4EE5\u653E\u5F03\u6574\u7EC4\u4EE3\u7801", true);
+    }
     if (!confirm(`\u5220\u9664\u9009\u4E2D\u7684 ${ids.length} \u6761\u4EFB\u52A1\uFF1F\u4E0D\u53EF\u6062\u590D\u3002`)) return;
     try {
       for (const id of ids) await api(`/api/tasks/${id}`, { method: "DELETE" });
@@ -735,11 +738,34 @@
       return true;
     });
   }
-  function renderBoard() {
-    const el = document.getElementById("boardView");
-    if (!el) return;
-    const tasks = filteredTasks();
-    el.innerHTML = BOARD_COLS.map(([key, label, statuses]) => {
+  function isMergeTask(t) {
+    return t?.merge_of !== null && t?.merge_of !== void 0;
+  }
+  function mergeTaskFor(source) {
+    if (!source || isMergeTask(source)) return null;
+    return state.tasks.find((t) => isMergeTask(t) && t.merge_of === source.id) || null;
+  }
+  function mergeBlockReason(t) {
+    if (!isMergeTask(t) || t.status !== "queued") return "";
+    if (!t.agent_id) return "\u672A\u6307\u6D3E\u89D2\u8272";
+    const agent = state.agents.find((a) => a.id === t.agent_id);
+    if (!agent) return "\u89D2\u8272\u4E0D\u53EF\u7528";
+    return agent.enabled ? "" : "\u89D2\u8272\u5DF2\u505C\u7528";
+  }
+  function taskKindChip(t) {
+    return isMergeTask(t) ? `<span class="chip merge" title="\u7531\u6E90\u4EFB\u52A1 #${t.merge_of} \u81EA\u52A8\u521B\u5EFA">\u4EE3\u7801\u5408\u5E76 \xB7 #${t.merge_of}</span>` : `<span class="chip task-kind">\u5B9E\u73B0</span>`;
+  }
+  function sourceMergeChip(t) {
+    if (isMergeTask(t)) return "";
+    const merge = mergeTaskFor(t);
+    if (!merge) {
+      return t.status === "succeeded" && t.worktree_branch ? `<span class="chip merge-pending">\u6B63\u5728\u521B\u5EFA\u5408\u5E76</span>` : "";
+    }
+    return `<span class="chip merge-state ${merge.status}" title="\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1 #${merge.id}">\u5408\u5E76\uFF1A${STATUS_LABEL[merge.status] || merge.status}</span>`;
+  }
+  function boardColumnsHTML(tasks, mergeSection) {
+    const columns = mergeSection ? [...BOARD_COLS, ["merge-attention", "\u9700\u5904\u7406", ["failed", "cancelled"]]] : BOARD_COLS;
+    return columns.map(([key, label, statuses]) => {
       const items = tasks.filter((t) => statuses.includes(t.status));
       return `<div class="board-col" style="--st-color:${ST_COLOR[statuses[0]]}">
       <div class="board-col-head">
@@ -751,14 +777,40 @@
       </div>
     </div>`;
     }).join("");
+  }
+  function boardSectionHTML(kind, title, note, tasks) {
+    const blocked = tasks.filter((t) => mergeBlockReason(t)).length;
+    const empty = kind === "merge" ? "\u8FD8\u6CA1\u6709\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1\uFF1B\u5B9E\u73B0\u4EFB\u52A1\u5B8C\u6210\u540E\u4F1A\u81EA\u52A8\u51FA\u73B0\u5728\u8FD9\u91CC\u3002" : "\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u5B9E\u73B0\u4EFB\u52A1\u3002";
+    return `<section class="board-section ${kind === "merge" ? "merge-section" : "source-section"}">
+    <div class="board-section-head">
+      <div><h2>${title}</h2><p>${note}</p></div>
+      <div class="board-section-counts">
+        <span>${tasks.length} \u4E2A</span>
+        ${blocked ? `<span class="chip merge-blocked">${blocked} \u4E2A\u89D2\u8272\u4E0D\u53EF\u7528</span>` : ""}
+      </div>
+    </div>
+    <div class="board-section-lanes">${tasks.length ? boardColumnsHTML(tasks, kind === "merge") : `<div class="board-section-empty">${empty}</div>`}</div>
+  </section>`;
+  }
+  function renderBoard() {
+    const el = document.getElementById("boardView");
+    if (!el) return;
+    const tasks = filteredTasks();
+    const sourceTasks = tasks.filter((t) => !isMergeTask(t));
+    const mergeTasks = tasks.filter(isMergeTask);
+    el.innerHTML = boardSectionHTML("source", "\u5B9E\u73B0\u4EFB\u52A1", "\u89D2\u8272\u6267\u884C\u7684\u539F\u59CB\u5DE5\u4F5C\u9879\uFF1B\u5B8C\u6210\u540E\u4F1A\u81EA\u52A8\u521B\u5EFA\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1\u3002", sourceTasks) + boardSectionHTML("merge", "\u4EE3\u7801\u5408\u5E76", "\u4F7F\u7528\u65B0\u7684\u72EC\u7ACB worktree \u9A8C\u8BC1\u3001\u89E3\u51B3\u51B2\u7A81\u5E76\u81EA\u52A8\u5199\u5165\u4E3B\u5206\u652F\u3002", mergeTasks);
     const c = document.getElementById("viewCount");
-    if (c) c.textContent = `${tasks.length} \u4E2A\u4EFB\u52A1`;
+    if (c) c.textContent = `${sourceTasks.length} \u4E2A\u5B9E\u73B0 \xB7 ${mergeTasks.length} \u4E2A\u5408\u5E76`;
   }
   function cardHTML(t) {
+    const blocked = mergeBlockReason(t);
     return `<div class="card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
     <div class="c-top">
       <span class="st-dot"></span><span class="c-id">#${t.id}</span>
       <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
+      ${taskKindChip(t)}
+      ${sourceMergeChip(t)}
+      ${blocked ? `<span class="chip merge-blocked">${blocked}</span>` : ""}
       ${t.perm === "review" ? `<span class="chip review">\u5BA1\u6279</span>` : ""}
       ${t.run_mode === "interactive" ? `<span class="chip">\u4EA4\u4E92</span>` : ""}
       ${t.concurrent ? `<span class="chip">\u5E76\u53D1</span>` : ""}
@@ -783,6 +835,7 @@
     <tr onclick="openTask(${t.id})">
       <td class="num">#${t.id}</td>
       <td class="t-title">${esc(t.title)}</td>
+      <td>${taskKindChip(t)}${mergeBlockReason(t) ? `<span class="chip merge-blocked">${mergeBlockReason(t)}</span>` : ""}</td>
       <td>${esc(t.agent_name || "-")}</td>
       <td>${t.project_id ? `<a class="t-link" href="/projects#/project/${t.project_id}" onclick="event.stopPropagation()">${esc(t.project_name || "-")}</a>` : esc(t.project_name || "-")}</td>
       <td><span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span></td>
@@ -792,15 +845,15 @@
       <td>
         <span class="ops">
           <button class="btn xs" onclick="event.stopPropagation();openTask(${t.id})">${icon("expand")}\u8BE6\u60C5</button>
-          ${canRetryTask(t) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}\u91CD\u8BD5</button>` : ""}
-          <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}\u5220\u9664</button>
+          ${canRetryTask(t) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}${retryTaskLabel(t)}</button>` : ""}
+          ${canDeleteTask(t) ? `<button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}\u5220\u9664</button>` : ""}
         </span>
       </td>
     </tr>`).join("");
     const empty = document.getElementById("listEmpty");
     if (empty) empty.classList.toggle("hidden", tasks.length > 0);
     const c = document.getElementById("viewCount");
-    if (c) c.textContent = `${tasks.length} \u4E2A\u4EFB\u52A1`;
+    if (c) c.textContent = `${tasks.filter((t) => !isMergeTask(t)).length} \u4E2A\u5B9E\u73B0 \xB7 ${tasks.filter(isMergeTask).length} \u4E2A\u5408\u5E76`;
   }
   function setView(v) {
     state.view = v;
@@ -876,6 +929,8 @@
   function renderDetail(t) {
     const main = document.getElementById("dMain");
     if (!main) return;
+    const mergeTask = isMergeTask(t);
+    const mergeSource = mergeTask ? state.tasks.find((x) => x.id === t.merge_of) : null;
     const isInteractive = t.run_mode === "interactive" && t.status === "running";
     const isLive = ["claimed", "running"].includes(t.status);
     const agent = state.agents.find((a) => a.id === t.agent_id);
@@ -892,12 +947,13 @@
     </div>` : "";
     main.innerHTML = `
     <section class="task-hero">
-      <div class="task-kicker"><span>\u4EFB\u52A1 #${t.id}</span><span>\u521B\u5EFA\u4E8E ${esc(createdAt)}</span></div>
+      <div class="task-kicker"><span>${mergeTask ? `\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1 \xB7 \u6765\u6E90 #${t.merge_of}` : `\u5B9E\u73B0\u4EFB\u52A1 #${t.id}`}</span><span>\u521B\u5EFA\u4E8E ${esc(createdAt)}</span></div>
       <h2>${esc(t.title)}</h2>
       <div class="task-meta">
         <span class="task-meta-item"><span class="avatar sm${agentCli ? ` av-${esc(agentCli)}` : ""}">${esc(agentName.slice(0, 1))}</span>${esc(agentName)}</span>
         ${t.project_name ? `<span class="task-meta-item">${esc(t.project_name)}</span>` : ""}
         <span class="task-meta-item">${runMode}</span>
+        ${mergeTask ? `<span class="task-meta-item task-meta-accent">${mergeSource ? `\u6E90\u4EFB\u52A1\uFF1A#${mergeSource.id}` : `\u6E90\u4EFB\u52A1\uFF1A#${t.merge_of}`}</span>` : sourceMergeChip(t)}
         ${t.resume_of ? `<span class="task-meta-item task-meta-accent">\u7EED\u8DD1\u81EA #${t.resume_of}</span>` : ""}
       </div>
     </section>
@@ -905,7 +961,7 @@
       <summary><span>\u4EFB\u52A1\u8BF4\u660E</span><span class="section-meta">${bodyLength} \u5B57</span></summary>
       <div class="task-prompt-body">${esc(t.body)}</div>
     </details>` : ""}
-    ${t.error ? `<div class="task-alert"><span class="task-alert-title">\u4EFB\u52A1\u5931\u8D25</span><span>${esc(t.error)}</span></div>` : ""}
+    ${t.error ? `<div class="task-alert"><span class="task-alert-title">${mergeTask ? "\u4EE3\u7801\u5408\u5E76\u5931\u8D25" : "\u4EFB\u52A1\u5931\u8D25"}</span><span>${esc(t.error)}</span></div>` : ""}
     <div id="childrenBox"></div>
     ${t.status === "awaiting_review" ? `<details class="task-section task-diff" open>
       <summary><span>\u4EE3\u7801\u6539\u52A8</span><span class="section-meta">\u7B49\u5F85\u5BA1\u6279</span></summary>
@@ -947,9 +1003,9 @@
       const w = await api(`/api/workspace/${id}`);
       const t = state.tasks.find((x) => x.id === id) || {};
       const done = ["succeeded", "failed", "cancelled"].includes(t.status);
-      const isMergeTask = !!t.merge_of;
-      const canManualMerge = isMergeTask && ["succeeded", "failed"].includes(t.status);
-      const sourceAwaitingMerge = !isMergeTask && t.status === "succeeded";
+      const mergeTask = isMergeTask(t);
+      const sourceMerge = mergeTaskFor(t);
+      const sourceAwaitingMerge = !mergeTask && t.status === "succeeded";
       if (!w.is_git) {
         box.innerHTML = `<div class="ws-row"><span class="ws-label">\u9694\u79BB</span><span class="ws-val">\u9879\u76EE\u975E git \u4ED3\u5E93\uFF0C\u4EFB\u52A1\u76F4\u63A5\u5728\u9879\u76EE\u76EE\u5F55\u6267\u884C</span><button class="btn xs" onclick="gitInitProject('${esc(w.path)}', ${id})">git init</button></div>`;
         return;
@@ -961,20 +1017,26 @@
       box.innerHTML = `
       <div class="ws-row"><span class="ws-label">\u5206\u652F</span><span class="ws-val mono">${esc(w.branch)}</span></div>
       <div class="ws-row"><span class="ws-label">HEAD</span><span class="ws-val mono">${esc(w.head || "-")}` + (w.dirty ? ` <span class="ws-tag dirty">dirty</span>` : "") + (w.ahead > 0 ? ` <span class="ws-tag ahead">+${w.ahead}</span>` : "") + `</span></div>
-      <div class="ws-row"><span class="ws-label">\u8DEF\u5F84</span><span class="ws-val mono" title="${esc(w.path)}">${esc(w.path)}</span></div>` + (done ? `<div class="ws-actions">` + (canManualMerge ? `<button class="btn sm brand" onclick="wsMerge(${id})">\u5408\u5E76\u56DE\u4E3B\u5206\u652F</button>` : `<span class="ws-val">\u4EE3\u7801\u7531\u7CFB\u7EDF\u521B\u5EFA\u7684\u5408\u5E76\u4EFB\u52A1\u5199\u5165\u4E3B\u5206\u652F</span>`) + (sourceAwaitingMerge ? "" : `<button class="btn sm danger" onclick="wsDiscard(${id})">\u4E22\u5F03</button>`) + `</div>` : "");
+      <div class="ws-row"><span class="ws-label">\u8DEF\u5F84</span><span class="ws-val mono" title="${esc(w.path)}">${esc(w.path)}</span></div>` + (done ? workspaceActionsHTML(t, sourceMerge, sourceAwaitingMerge, id) : "");
     } catch (_) {
       box.innerHTML = `<div class="empty">\u5DE5\u4F5C\u7A7A\u95F4\u4FE1\u606F\u4E0D\u53EF\u7528</div>`;
     }
   }
-  async function wsMerge(id) {
-    if (!confirm(`\u628A\u4EFB\u52A1 #${id} \u7684\u6539\u52A8 squash \u5408\u5E76\u56DE\u4E3B\u5206\u652F\uFF1F`)) return;
-    try {
-      const r = await api(`/api/workspace/${id}/merge`, { method: "POST" });
-      toast(`\u5DF2\u5408\u5E76${r.commit ? " (" + r.commit + ")" : ""}`);
-      loadWorkspace(id);
-    } catch (e) {
-      toast(e.message, true);
+  function workspaceActionsHTML(t, sourceMerge, sourceAwaitingMerge, id) {
+    if (isMergeTask(t)) {
+      if (t.status === "succeeded") {
+        return `<div class="ws-actions"><span class="ws-val">\u4EE3\u7801\u5DF2\u7531\u672C\u5408\u5E76\u4EFB\u52A1\u81EA\u52A8\u5199\u5165\u4E3B\u5206\u652F</span><button class="btn sm danger" onclick="wsDiscard(${id})">\u6E05\u7406\u5DE5\u4F5C\u7A7A\u95F4</button></div>`;
+      }
+      const action = t.status === "failed" || t.status === "cancelled" ? "\u8BF7\u4F7F\u7528\u201C\u91CD\u8BD5\u5408\u5E76\u201D\u7EE7\u7EED\u5904\u7406\u3002" : "\u4EE3\u7801\u5C06\u7531\u672C\u5408\u5E76\u4EFB\u52A1\u6210\u529F\u7ED3\u7B97\u65F6\u81EA\u52A8\u5199\u5165\u4E3B\u5206\u652F\u3002";
+      return `<div class="ws-actions"><span class="ws-val">${action}</span></div>`;
     }
+    if (sourceAwaitingMerge) {
+      if (sourceMerge) {
+        return `<div class="ws-actions"><span class="ws-val">\u4EE3\u7801\u7531\u5408\u5E76\u4EFB\u52A1 #${sourceMerge.id}\uFF08${STATUS_LABEL[sourceMerge.status] || sourceMerge.status}\uFF09\u5904\u7406</span></div>`;
+      }
+      return `<div class="ws-actions"><span class="ws-val">\u4EE3\u7801\u5DF2\u5B8C\u6210\uFF0C\u7CFB\u7EDF\u6B63\u5728\u8865\u5EFA\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1</span></div>`;
+    }
+    return `<div class="ws-actions"><button class="btn sm danger" onclick="wsDiscard(${id})">\u4E22\u5F03</button></div>`;
   }
   async function wsDiscard(id) {
     if (!confirm(`\u4E22\u5F03\u4EFB\u52A1 #${id} \u7684\u5DE5\u4F5C\u7A7A\u95F4\uFF1F\u5206\u652F\u4E0E worktree \u5C06\u5220\u9664\uFF0C\u6539\u52A8\u4E0D\u53EF\u6062\u590D\u3002`)) return;
@@ -999,6 +1061,8 @@
   function renderSide(t) {
     const side = document.getElementById("dSide");
     if (!side) return;
+    const mergeTask = isMergeTask(t);
+    const mergeBlocked = mergeBlockReason(t);
     const statusOpts = Object.keys(STATUS_LABEL).map((s) => `<option value="${s}" ${s === t.status ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("");
     const agentOpts = `<option value="">\u4E0D\u6307\u6D3E</option>` + state.agents.filter((a) => a.enabled || a.id === t.agent_id).map((a) => `<option value="${a.id}" ${a.id === t.agent_id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
     const pOpts = `<option value="">\u65E0\u9879\u76EE</option>` + state.projects.map((p) => `<option value="${p.id}" ${t.project_id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
@@ -1016,19 +1080,33 @@
       primaryActions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}\u53D6\u6D88</button>`;
     }
     if (canRetryTask(t)) {
-      primaryActions += `<button class="btn sm" onclick="setTaskStatus(${t.id},'queued')">${icon("retry")}\u91CD\u8BD5</button>`;
-      secondaryActions += `<button class="btn sm" onclick="resumeTask(${t.id})">${icon("terminal")}\u7EE7\u7EED\u5BF9\u8BDD</button>`;
+      primaryActions += `<button class="btn sm" onclick="setTaskStatus(${t.id},'queued')">${icon("retry")}${retryTaskLabel(t)}</button>`;
+      if (!mergeTask) secondaryActions += `<button class="btn sm" onclick="resumeTask(${t.id})">${icon("terminal")}\u7EE7\u7EED\u5BF9\u8BDD</button>`;
     }
-    secondaryActions += `<button class="btn sm" onclick="openSubTask(${t.id})">${icon("plus")}\u62C6\u5206\u5B50\u4EFB\u52A1</button>`;
-    if (t.body) secondaryActions += `<button class="btn sm" onclick="saveAsTemplate(${t.id})">${icon("bookmark")}\u4FDD\u5B58\u4E3A\u6A21\u677F</button>`;
-    secondaryActions += `<button class="btn sm danger" onclick="deleteTask(${t.id})">${icon("trash")}\u5220\u9664\u4EFB\u52A1</button>`;
+    if (mergeTask) {
+      if (mergeBlocked) primaryActions += `<span class="side-muted">${mergeBlocked}\uFF1B\u542F\u7528\u539F\u89D2\u8272\u540E\u5C06\u81EA\u52A8\u6267\u884C\u3002</span>`;
+      secondaryActions += `<button class="btn sm" onclick="openTask(${t.merge_of})">${icon("back")}\u6253\u5F00\u6E90\u4EFB\u52A1 #${t.merge_of}</button>`;
+    } else {
+      secondaryActions += `<button class="btn sm" onclick="openSubTask(${t.id})">${icon("plus")}\u62C6\u5206\u5B50\u4EFB\u52A1</button>`;
+      if (t.body) secondaryActions += `<button class="btn sm" onclick="saveAsTemplate(${t.id})">${icon("bookmark")}\u4FDD\u5B58\u4E3A\u6A21\u677F</button>`;
+      secondaryActions += `<button class="btn sm danger" onclick="deleteTask(${t.id})">${icon("trash")}\u5220\u9664\u4EFB\u52A1</button>`;
+    }
     const runInfo = `
     <div class="prop-row"><span class="k">\u6267\u884C\u5668</span><span class="v">tmux \xB7 ${["claimed", "running"].includes(t.status) ? `paihuo:task-${t.id}` : "\u65E5\u5FD7\u5DF2\u5F52\u6863"}</span></div>
     <div class="prop-row"><span class="k">\u76EE\u5F55</span><span class="v prop-mono" title="${esc(t.project_dir || "")}">${esc(t.project_dir || "-")}</span></div>
     <div class="prop-row"><span class="k">\u5BA1\u6279\u8F6E\u6B21</span><span class="v">${t.review_rounds || "-"}</span></div>
     <div class="prop-row"><span class="k">\u5F00\u59CB</span><span class="v">${esc((t.started_at || "-").slice(0, 16).replace("T", " "))}</span></div>
     <div class="prop-row"><span class="k">\u7ED3\u675F</span><span class="v">${esc((t.finished_at || "-").slice(0, 16).replace("T", " "))}</span></div>`;
-    side.innerHTML = `
+    const properties = mergeTask ? `
+    <details class="side-collapse side-properties" open>
+      <summary><span>\u5408\u5E76\u4EFB\u52A1\u5C5E\u6027</span><span class="section-meta">\u7CFB\u7EDF\u7BA1\u7406</span></summary>
+      <div class="side-collapse-body">
+        <div class="prop-row"><span class="k">\u6765\u6E90</span><span class="v"><button class="btn xs" onclick="openTask(${t.merge_of})">\u4EFB\u52A1 #${t.merge_of}</button></span></div>
+        <div class="prop-row"><span class="k">\u72B6\u6001</span><span class="v">${STATUS_LABEL[t.status] || t.status}</span></div>
+        <div class="prop-row"><span class="k">\u89D2\u8272</span><span class="v">${esc(t.agent_name || "\u672A\u6307\u6D3E")}${mergeBlocked ? ` \xB7 ${mergeBlocked}` : ""}</span></div>
+        <div class="prop-row"><span class="k">\u7B56\u7565</span><span class="v">\u72EC\u7ACB worktree \xB7 \u4E32\u884C \xB7 \u81EA\u52A8\u5199\u5165\u4E3B\u5206\u652F</span></div>
+      </div>
+    </details>` : `
     <details class="side-collapse side-properties">
       <summary><span>\u4EFB\u52A1\u5C5E\u6027</span><span class="section-meta">\u53EF\u7F16\u8F91</span></summary>
       <div class="side-collapse-body">
@@ -1046,7 +1124,9 @@
             <option value="1" ${t.concurrent ? "selected" : ""}>\u5E76\u53D1</option>
           </select></span></div>
       </div>
-    </details>
+    </details>`;
+    side.innerHTML = `
+    ${properties}
     <details class="side-collapse">
       <summary><span>\u8FD0\u884C\u4FE1\u606F</span><span class="section-meta">\u6280\u672F\u7EC6\u8282</span></summary>
       <div class="side-collapse-body">${runInfo}</div>
@@ -1125,6 +1205,8 @@
     }
   }
   async function deleteTask(id) {
+    const task = state.tasks.find((t) => t.id === id);
+    if (isMergeTask(task)) return toast("\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1\u4E0D\u80FD\u5355\u72EC\u5220\u9664\uFF1B\u8BF7\u91CD\u8BD5\u5B83\uFF0C\u6216\u5220\u9664\u6E90\u4EFB\u52A1\u4EE5\u653E\u5F03\u6574\u7EC4\u4EE3\u7801", true);
     if (!confirm(`\u5220\u9664\u4EFB\u52A1 #${id}\uFF1F\u6267\u884C\u65E5\u5FD7\u3001worktree\u3001\u4EFB\u52A1\u5206\u652F\u53CA\u5176\u5408\u5E76\u5B50\u4EFB\u52A1\u5C06\u4E00\u5E76\u5220\u9664\u3002`)) return;
     try {
       await api(`/api/tasks/${id}`, { method: "DELETE" });
@@ -1145,22 +1227,36 @@
   }
   function canRetryTask(t) {
     if (!["succeeded", "failed", "cancelled"].includes(t.status)) return false;
-    return !(t.status === "succeeded" && !t.merge_of && state.tasks.some((child) => child.merge_of === t.id));
+    if (isMergeTask(t)) return ["failed", "cancelled"].includes(t.status);
+    return !(t.status === "succeeded" && (t.worktree_branch || mergeTaskFor(t)));
+  }
+  function retryTaskLabel(t) {
+    return isMergeTask(t) ? "\u91CD\u8BD5\u5408\u5E76" : "\u91CD\u8BD5";
+  }
+  function canDeleteTask(t) {
+    return !isMergeTask(t);
   }
   async function loadChildren(id) {
     try {
       const kids = await api(`/api/tasks/${id}/children`);
       const box = document.getElementById("childrenBox");
       if (!box || !kids.length) return;
-      const done = kids.filter((k) => ["succeeded", "failed", "cancelled"].includes(k.status)).length;
-      const hasActive = kids.some((k) => ["queued", "claimed", "running", "awaiting_review"].includes(k.status));
-      box.innerHTML = `<details class="task-section task-subtasks"${hasActive ? " open" : ""}>
-      <summary><span>\u5B50\u4EFB\u52A1</span><span class="section-meta">${done}/${kids.length} \u5DF2\u5B8C\u6210</span></summary>
-      <div class="task-subtask-list">` + kids.map((k) => `<div class="task-subtask" onclick="openTask(${k.id})">
-        <div class="c-title">#${k.id} ${esc(k.title)}</div>
-        <div class="c-meta"><span class="badge ${k.status}" style="--st-color:${ST_COLOR[k.status]}"><span class="st-dot"></span>${STATUS_LABEL[k.status]}</span>
-        <span style="font-size:11px;color:var(--fg-faint)">${esc(k.agent_name || "")}</span></div>
-      </div>`).join("") + `</div></details>`;
+      const sourceKids = kids.filter((k) => !isMergeTask(k));
+      const mergeKids = kids.filter(isMergeTask);
+      const section = (title, items, open, merge) => {
+        if (!items.length) return "";
+        const done = items.filter((k) => ["succeeded", "failed", "cancelled"].includes(k.status)).length;
+        return `<details class="task-section task-subtasks ${merge ? "task-merge-children" : ""}"${open ? " open" : ""}>
+        <summary><span>${title}</span><span class="section-meta">${done}/${items.length} \u5DF2\u7ED3\u675F</span></summary>
+        <div class="task-subtask-list">` + items.map((k) => `<div class="task-subtask" onclick="openTask(${k.id})">
+          <div class="c-title">#${k.id} ${esc(k.title)}</div>
+          <div class="c-meta">${isMergeTask(k) ? `<span class="chip merge">\u4EE3\u7801\u5408\u5E76</span>` : ""}<span class="badge ${k.status}" style="--st-color:${ST_COLOR[k.status]}"><span class="st-dot"></span>${STATUS_LABEL[k.status]}</span>
+          <span style="font-size:11px;color:var(--fg-faint)">${esc(k.agent_name || "")}</span></div>
+        </div>`).join("") + `</div></details>`;
+      };
+      const sourceActive = sourceKids.some((k) => ["queued", "claimed", "running", "awaiting_review"].includes(k.status));
+      const mergeActive = mergeKids.some((k) => ["queued", "claimed", "running", "awaiting_review"].includes(k.status));
+      box.innerHTML = section("\u5B50\u4EFB\u52A1", sourceKids, sourceActive, false) + section("\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1", mergeKids, mergeActive, true);
     } catch (_) {
     }
   }
@@ -1368,8 +1464,10 @@
     const list = state.projects.filter((p) => !q || p.name.toLowerCase().includes(q));
     grid.innerHTML = list.map((p) => {
       const ts = state.tasks.filter((t) => t.project_id === p.id);
-      const done = ts.filter((t) => t.status === "succeeded").length;
-      const pct = ts.length ? done / ts.length * 100 : 0;
+      const sourceTasks = ts.filter((t) => !isMergeTask(t));
+      const mergeTasks = ts.filter(isMergeTask);
+      const done = sourceTasks.filter((t) => t.status === "succeeded").length;
+      const pct = sourceTasks.length ? done / sourceTasks.length * 100 : 0;
       const agents = new Set(ts.map((t) => t.agent_name).filter(Boolean));
       return `<div class="project-card" onclick="openProject(${p.id})">
       <div class="pc-top">
@@ -1382,8 +1480,9 @@
         <span class="pc-pct">${fmtPct(pct)}</span></div>
       <div class="pc-meta">
         ${p.project_dir ? `<span class="pc-dir" title="${esc(p.project_dir)}">${esc(p.project_dir)}</span>` : ""}
-        <span>${ts.length} \u4EFB\u52A1</span>
-        <span>${done} \u5B8C\u6210</span>
+        <span>${sourceTasks.length} \u4EFB\u52A1</span>
+        ${mergeTasks.length ? `<span>${mergeTasks.length} \u5408\u5E76</span>` : ""}
+        <span>${done} \u5B9E\u73B0\u5B8C\u6210</span>
         <span>${agents.size} \u89D2\u8272</span>
         <span class="spacer"></span>
         <span class="pc-date">${(p.updated_at || p.created_at || "").slice(5, 16).replace("T", " ")}</span>
@@ -1435,15 +1534,18 @@
     if (!main || !side) return;
     const counts = s.status_counts || [];
     const review = counts.find((c) => c.status === "awaiting_review");
-    const rowHTML = tasks.map((t) => `
-    <div class="p-task-row" onclick="openTask(${t.id})">
+    const sourceTasks = tasks.filter((t) => !isMergeTask(t));
+    const mergeTasks = tasks.filter(isMergeTask);
+    const rowHTML = (items, merge) => items.map((t) => `
+    <div class="p-task-row ${merge ? "merge-task-row" : ""}" onclick="openTask(${t.id})">
       <span class="num">#${t.id}</span>
       <span class="t">${esc(t.title)}</span>
+      ${merge ? `<span class="chip merge">\u5408\u5E76 #${t.merge_of}</span>` : ""}
       <span class="a">${t.agent_name ? `<span class="avatar sm">${esc(t.agent_name.slice(0, 1))}</span>${esc(t.agent_name)}` : "-"}</span>
       <span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>
       <span class="ops">
-          ${canRetryTask(t) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}\u91CD\u8BD5</button>` : ""}
-        <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}\u5220\u9664</button>
+          ${canRetryTask(t) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}${retryTaskLabel(t)}</button>` : ""}
+        ${canDeleteTask(t) ? `<button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}\u5220\u9664</button>` : ""}
       </span>
     </div>`).join("");
     const agentsHTML = (s.agents || []).map((a) => `
@@ -1469,7 +1571,8 @@
         <div class="stat-chip"><span class="sc-dot" style="background:var(--st-review)"></span><b>${review ? review.count : 0}</b><span>\u5F85\u5BA1\u6279</span></div>
         <div class="stat-chip"><span class="sc-dot" style="background:var(--st-done)"></span><b>${s.succeeded}</b><span>\u5B8C\u6210</span></div>
         <div class="stat-chip"><span class="sc-dot" style="background:var(--st-failed)"></span><b>${s.failed}</b><span>\u5931\u8D25</span></div>
-        <div class="stat-chip"><span class="sc-dot" style="background:var(--fg-muted)"></span><b>${s.total}</b><span>\u603B\u4EFB\u52A1</span></div>
+        <div class="stat-chip"><span class="sc-dot" style="background:var(--fg-muted)"></span><b>${sourceTasks.length}</b><span>\u5B9E\u73B0\u4EFB\u52A1</span></div>
+        <div class="stat-chip"><span class="sc-dot" style="background:var(--merge-accent)"></span><b>${mergeTasks.length}</b><span>\u5408\u5E76\u4EFB\u52A1</span></div>
       </div>
     </div>
 
@@ -1477,12 +1580,17 @@
     ${dailyChartHTML(s.daily, 14)}
 
     <div class="sec-title" style="display:flex;align-items:center;justify-content:space-between">
-      <span>\u4EFB\u52A1 ${tasks.length}</span>
+      <span>\u4EFB\u52A1 ${sourceTasks.length}</span>
       <button class="btn sm brand" onclick="openProjectTask(${p.id})">${icon("plus")}\u65B0\u5EFA\u4EFB\u52A1</button>
     </div>
     <div class="p-task-list">
-      ${rowHTML || `<div class="empty">\u8FD8\u6CA1\u6709\u4EFB\u52A1
+      ${rowHTML(sourceTasks, false) || `<div class="empty">\u8FD8\u6CA1\u6709\u4EFB\u52A1
         <button class="btn xs brand" style="margin-left:8px" onclick="openProjectTask(${p.id})">${icon("plus")}\u6D3E\u6D3B</button></div>`}
+    </div>
+
+    <div class="sec-title task-section-title"><span>\u4EE3\u7801\u5408\u5E76 ${mergeTasks.length}</span><span class="section-note">\u7531\u5DF2\u5B8C\u6210\u4EFB\u52A1\u81EA\u52A8\u521B\u5EFA</span></div>
+    <div class="p-task-list merge-task-list">
+      ${rowHTML(mergeTasks, true) || `<div class="empty">\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1\u4F1A\u5728\u5B9E\u73B0\u4EFB\u52A1\u5B8C\u6210\u6216\u5BA1\u6279\u901A\u8FC7\u540E\u81EA\u52A8\u521B\u5EFA\u3002</div>`}
     </div>
 
     <div class="sec-title">\u6210\u5458\u7EDF\u8BA1\uFF08\u5728\u672C\u9879\u76EE\u4E0A\u5DE5\u4F5C\u7684 agent\uFF09</div>
@@ -2927,5 +3035,4 @@
   window.toggleSidebar = toggleSidebar;
   window.toggleSkill = toggleSkill;
   window.wsDiscard = wsDiscard;
-  window.wsMerge = wsMerge;
 })();

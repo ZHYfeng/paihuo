@@ -176,6 +176,124 @@ func TestExecutorQueuesMergeTaskAfterSuccessfulFullTask(t *testing.T) {
 	}
 }
 
+func TestExecutorReconcilesCompletedGitTaskWithoutMerge(t *testing.T) {
+	projectDir := initExecutorGitProject(t)
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	agentID, err := st.CreateAgent(store.Agent{Name: "reconciler", CLI: tmuxAutoMergeTestCLI, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, err := st.CreateProject(store.Project{Name: "proj", ProjectDir: projectDir, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceID, err := st.CreateTask(store.Task{
+		Title: "completed before merge handoff", Status: store.StatusSucceeded, Perm: store.PermFull,
+		AgentID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionsRoot := t.TempDir()
+	source, err := st.GetTask(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, branch, base, err := workspace.Ensure(*source, sessionsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateTask(sourceID, map[string]any{"worktree_branch": branch, "base_commit": base}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "reconcile.txt"), []byte("reconciled\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	e := New(st, events.NewHub(), sessionsRoot, "reconcile-merge-test.db")
+	e.reconcileMergeTasks()
+	children, err := st.ListChildren(sourceID)
+	if err != nil || len(children) != 1 {
+		t.Fatalf("对账后应创建唯一合并任务: %+v err=%v", children, err)
+	}
+	if children[0].MergeOf == nil || *children[0].MergeOf != sourceID || children[0].Status != store.StatusQueued {
+		t.Fatalf("对账创建的合并任务配置错误: %+v", children[0])
+	}
+	status := osexec.Command("git", "status", "--porcelain")
+	status.Dir = dir
+	if out, err := status.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("对账前应保存源 worktree: out=%q err=%v", out, err)
+	}
+
+	// 周期扫描可重复执行，不会再创建一个 child。
+	e.reconcileMergeTasks()
+	children, err = st.ListChildren(sourceID)
+	if err != nil || len(children) != 1 {
+		t.Fatalf("重复对账不应创建第二个合并任务: %+v err=%v", children, err)
+	}
+}
+
+func TestExecutorKeepsCompletedSourceWhenMergeChildAlreadyExists(t *testing.T) {
+	projectDir := initExecutorGitProject(t)
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	agentID, err := st.CreateAgent(store.Agent{Name: "handoff", CLI: tmuxAutoMergeTestCLI, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, err := st.CreateProject(store.Project{Name: "proj", ProjectDir: projectDir, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceID, err := st.CreateTask(store.Task{
+		Title: "already handed off", Status: store.StatusRunning, Perm: store.PermFull,
+		AgentID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionsRoot := t.TempDir()
+	source, err := st.GetTask(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, branch, base, err := workspace.Ensure(*source, sessionsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateTask(sourceID, map[string]any{"worktree_branch": branch, "base_commit": base}); err != nil {
+		t.Fatal(err)
+	}
+	source, err = st.GetTask(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "handoff.txt"), []byte("done\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateTask(store.NewMergeTask(*source)); err != nil {
+		t.Fatal(err)
+	}
+
+	e := New(st, events.NewHub(), sessionsRoot, "handoff-merge-test.db")
+	e.finishRun(*source, 0, nil, false)
+	completed, err := st.GetTask(sourceID)
+	if err != nil || completed.Status != store.StatusSucceeded {
+		t.Fatalf("已有 child 的成功源任务不能被误记失败: %+v err=%v", completed, err)
+	}
+	children, err := st.ListChildren(sourceID)
+	if err != nil || len(children) != 1 {
+		t.Fatalf("已有合并任务必须保持唯一: %+v err=%v", children, err)
+	}
+}
+
 // 生产中曾出现过：tmux 日志 pane 先消失，独立 Codex agent 随后才写入成功
 // 退出码。即使 systemd 已确认 agent 进入 inactive，pane 也不是 agent 的
 // 结果来源；执行器必须给持久退出码足够的结算窗口。

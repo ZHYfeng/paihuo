@@ -278,6 +278,53 @@ func TestCompleteTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 	}
 }
 
+func TestMergeReconciliationCreatesExactlyOneChildForCompletedGitTask(t *testing.T) {
+	s := openTest(t)
+	agentID := mustAgent(t, s, "reconciler", true)
+	projectID, err := s.CreateProject(Project{Name: "proj", ProjectDir: t.TempDir(), Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceID, err := s.CreateTask(Task{
+		Title: "finish despite handoff failure", Status: StatusRunning, Perm: PermFull,
+		AgentID: &agentID, ProjectID: &projectID, ProjectDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateTask(sourceID, map[string]any{"worktree_branch": "paihuo/task-reconcile"}); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := s.MarkTaskSucceededAwaitingMerge(sourceID)
+	if err != nil || !changed {
+		t.Fatalf("应把已完成源任务留给合并对账: changed=%v err=%v", changed, err)
+	}
+	pending, err := s.ListCompletedGitTasksWithoutMerge()
+	if err != nil || len(pending) != 1 || pending[0].ID != sourceID {
+		t.Fatalf("应找到唯一待补建合并任务的源任务: %+v err=%v", pending, err)
+	}
+
+	mergeID, created, err := s.EnsureMergeTask(pending[0])
+	if err != nil || !created {
+		t.Fatalf("首次对账应创建合并任务: id=%d created=%v err=%v", mergeID, created, err)
+	}
+	merge, err := s.GetTask(mergeID)
+	if err != nil || merge.MergeOf == nil || *merge.MergeOf != sourceID || merge.Status != StatusQueued {
+		t.Fatalf("补建的合并任务不正确: %+v err=%v", merge, err)
+	}
+
+	// 对账可重复执行，不会创建第二个合并任务。
+	mergeID2, created, err := s.EnsureMergeTask(pending[0])
+	if err != nil || created || mergeID2 != mergeID {
+		t.Fatalf("重复对账应返回已有合并任务: id=%d created=%v err=%v", mergeID2, created, err)
+	}
+	pending, err = s.ListCompletedGitTasksWithoutMerge()
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("已有合并任务后不应再出现在对账队列: %+v err=%v", pending, err)
+	}
+}
+
 func TestRecoverLostTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 	s := openTest(t)
 	agentID := mustAgent(t, s, "recovery", true)

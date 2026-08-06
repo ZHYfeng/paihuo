@@ -34,10 +34,17 @@ type Executor struct {
 	// cancels 是任务级取消句柄
 	cancels map[int64]context.CancelFunc
 	wake    chan struct{}
+
+	// mergeReconcileMu 串行化「已完成源任务必须拥有唯一合并任务」的持久化
+	// 对账；errors 仅用于避免不可恢复的 worktree 问题每 30 秒刷一遍日志。
+	mergeReconcileMu     sync.Mutex
+	mergeReconcileErrors map[int64]string
 }
 
 var errExecutorStopping = errors.New("paihuo 正在停止")
 var errTmuxWindowLost = errors.New("专用 tmux window 已消失，且未留下退出码")
+
+const mergeReconcileInterval = 30 * time.Second
 
 type tmuxWindowLostError struct {
 	taskID int64
@@ -55,15 +62,16 @@ func (e tmuxWindowLostError) Is(target error) bool {
 // CLI 的会话文件和同机其他 paihuo 实例隔离开。
 func New(st *store.Store, hub *events.Hub, sessionsRoot, instanceID string) *Executor {
 	return &Executor{
-		st:           st,
-		hub:          hub,
-		sessionsRoot: sessionsRoot,
-		taskSessions: newTaskSessionStore(sessionsRoot, instanceID),
-		runner:       newTmuxRunner(sessionsRoot),
-		active:       make(map[int64]int),
-		activeProj:   make(map[int64]int),
-		cancels:      make(map[int64]context.CancelFunc),
-		wake:         make(chan struct{}, 1),
+		st:                   st,
+		hub:                  hub,
+		sessionsRoot:         sessionsRoot,
+		taskSessions:         newTaskSessionStore(sessionsRoot, instanceID),
+		runner:               newTmuxRunner(sessionsRoot),
+		active:               make(map[int64]int),
+		activeProj:           make(map[int64]int),
+		cancels:              make(map[int64]context.CancelFunc),
+		wake:                 make(chan struct{}, 1),
+		mergeReconcileErrors: make(map[int64]string),
 	}
 }
 
@@ -74,8 +82,64 @@ func (e *Executor) Start(ctx context.Context) {
 		log.Printf("⚠ 专用 tmux 执行器未就绪: %v", err)
 	}
 	e.recoverLostCompletions()
+	e.reconcileMergeTasks()
 	e.recoverInterrupted(ctx)
 	go e.loop(ctx)
+}
+
+// reconcileMergeTasks 对账每一条已完成 Git 源任务的合并义务。正常路径通过
+// CompleteTaskAndCreateMerge / ApproveTaskAndCreateMerge 在一个事务中完成，
+// 这里覆盖的是进程中断、旧版本遗留记录，或保存源分支后创建子任务暂时失败的
+// 窄窗口。Store 的 merge_of 唯一索引保证重复扫描不会产生多个合并任务。
+func (e *Executor) reconcileMergeTasks() {
+	e.mergeReconcileMu.Lock()
+	defer e.mergeReconcileMu.Unlock()
+	if e.mergeReconcileErrors == nil {
+		e.mergeReconcileErrors = make(map[int64]string)
+	}
+
+	tasks, err := e.st.ListCompletedGitTasksWithoutMerge()
+	if err != nil {
+		log.Printf("⚠ 扫描待补建代码合并任务失败: %v", err)
+		return
+	}
+	pending := make(map[int64]bool, len(tasks))
+	for _, tk := range tasks {
+		pending[tk.ID] = true
+		if _, err := workspace.Snapshot(tk, e.sessionsRoot); err != nil {
+			e.logMergeReconcileProblem(tk.ID, "保存待合并源任务工作区失败: "+err.Error())
+			continue
+		}
+		mergeID, created, err := e.st.EnsureMergeTask(tk)
+		if err != nil {
+			// 任务可能恰好被删除、取消或由正常路径处理完成；下一轮扫描会
+			// 自然消失。其余问题仅在首次（或错误变化时）记录一次。
+			e.logMergeReconcileProblem(tk.ID, "补建代码合并任务失败: "+err.Error())
+			continue
+		}
+		delete(e.mergeReconcileErrors, tk.ID)
+		if !created {
+			continue
+		}
+		e.log(tk.ID, "sys", fmt.Sprintf("↻ 自动合并对账：已补建代码合并任务 #%d", mergeID))
+		e.log(mergeID, "sys", fmt.Sprintf("⇄ 由任务 #%d 的自动合并对账创建，等待整合代码", tk.ID))
+		e.publishTask(tk.ID)
+		e.publishTask(mergeID)
+		e.Wake()
+	}
+	for id := range e.mergeReconcileErrors {
+		if !pending[id] {
+			delete(e.mergeReconcileErrors, id)
+		}
+	}
+}
+
+func (e *Executor) logMergeReconcileProblem(taskID int64, msg string) {
+	if e.mergeReconcileErrors[taskID] == msg {
+		return
+	}
+	e.mergeReconcileErrors[taskID] = msg
+	e.log(taskID, "sys", "⚠ 自动合并对账："+msg)
 }
 
 // recoverLostCompletions 修复旧执行器留下的一个非常窄的收尾竞态：pane 已
@@ -244,12 +308,17 @@ func (e *Executor) CleanupOrphanTaskSessions() (int, error) {
 func (e *Executor) loop(ctx context.Context) {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
+	lastMergeReconcile := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-e.wake:
 		case <-t.C:
+		}
+		if time.Since(lastMergeReconcile) >= mergeReconcileInterval {
+			e.reconcileMergeTasks()
+			lastMergeReconcile = time.Now()
 		}
 		e.dispatch(ctx)
 	}
@@ -777,8 +846,7 @@ func (e *Executor) finishRun(tk store.Task, code int, runErr error, canceled boo
 		}
 		mergeID, err := e.st.CompleteTaskAndCreateMerge(tk.ID, store.NewMergeTask(tk))
 		if err != nil {
-			if cur, getErr := e.st.GetTask(tk.ID); getErr == nil && cur.Status == store.StatusCancelled {
-				e.log(tk.ID, "sys", "■ 已取消")
+			if e.keepCompletedSourceForMergeReconciliation(tk) {
 				return
 			}
 			msg := "创建代码合并任务失败: " + err.Error()
@@ -822,6 +890,41 @@ func (e *Executor) finishRun(tk store.Task, code int, runErr error, canceled boo
 		e.log(tk.ID, "sys", "✓ 完成")
 	}
 	e.publishTask(tk.ID)
+}
+
+// keepCompletedSourceForMergeReconciliation 保留 agent 已经成功完成、且源
+// worktree 已快照的代码结果。创建合并子任务的原子事务偶发报错时，不能把
+// 源任务误写成 failed；先持久化为 succeeded，再由 reconcileMergeTasks 幂等地
+// 补建唯一子任务。返回 true 表示调用方不应继续走失败结算。
+func (e *Executor) keepCompletedSourceForMergeReconciliation(tk store.Task) bool {
+	cur, err := e.st.GetTask(tk.ID)
+	if err == nil {
+		if cur.Status == store.StatusCancelled {
+			e.log(tk.ID, "sys", "■ 已取消")
+			return true
+		}
+		if cur.Status == store.StatusSucceeded && cur.MergeOf == nil && cur.WorktreeBranch != "" {
+			e.log(tk.ID, "sys", "⚠ 代码已完成，正在对账代码合并任务")
+			e.publishTask(tk.ID)
+			e.reconcileMergeTasks()
+			e.Wake()
+			return true
+		}
+	}
+
+	marked, markErr := e.st.MarkTaskSucceededAwaitingMerge(tk.ID)
+	if markErr != nil {
+		e.log(tk.ID, "sys", "⚠ 保存待对账的代码合并状态失败: "+markErr.Error())
+		return false
+	}
+	if !marked {
+		return false
+	}
+	e.log(tk.ID, "sys", "⚠ 代码已完成，合并任务创建暂未完成；系统将自动补建")
+	e.publishTask(tk.ID)
+	e.reconcileMergeTasks()
+	e.Wake()
+	return true
 }
 
 // preserveTmuxFailureArtifacts 在 tmux window 非正常消失时留下 run.sh、终端输出

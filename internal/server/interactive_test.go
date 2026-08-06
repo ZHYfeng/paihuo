@@ -273,7 +273,7 @@ func TestResumeTaskDoesNotBypassExistingMergeTask(t *testing.T) {
 	req.SetPathValue("id", itoa(sourceID))
 	resp := httptest.NewRecorder()
 	s.resumeTask(resp, req)
-	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "已有代码合并任务") {
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "源任务代码已完成") {
 		t.Fatalf("不应绕过现有合并任务: code=%d body=%s", resp.Code, resp.Body.String())
 	}
 	got, err := st.GetTask(sourceID)

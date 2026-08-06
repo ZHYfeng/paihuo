@@ -30,11 +30,46 @@ export function filteredTasks() {
   });
 }
 
-export function renderBoard() {
-  const el = document.getElementById("boardView");
-  if (!el) return;
-  const tasks = filteredTasks();
-  el.innerHTML = BOARD_COLS.map(([key, label, statuses]) => {
+export function isMergeTask(t) {
+  return t?.merge_of !== null && t?.merge_of !== undefined;
+}
+
+export function mergeTaskFor(source) {
+  if (!source || isMergeTask(source)) return null;
+  return state.tasks.find(t => isMergeTask(t) && t.merge_of === source.id) || null;
+}
+
+export function mergeBlockReason(t) {
+  if (!isMergeTask(t) || t.status !== "queued") return "";
+  if (!t.agent_id) return "未指派角色";
+  const agent = state.agents.find(a => a.id === t.agent_id);
+  if (!agent) return "角色不可用";
+  return agent.enabled ? "" : "角色已停用";
+}
+
+export function taskKindChip(t) {
+  return isMergeTask(t)
+    ? `<span class="chip merge" title="由源任务 #${t.merge_of} 自动创建">代码合并 · #${t.merge_of}</span>`
+    : `<span class="chip task-kind">实现</span>`;
+}
+
+function sourceMergeChip(t) {
+  if (isMergeTask(t)) return "";
+  const merge = mergeTaskFor(t);
+  if (!merge) {
+    return t.status === "succeeded" && t.worktree_branch
+      ? `<span class="chip merge-pending">正在创建合并</span>` : "";
+  }
+  return `<span class="chip merge-state ${merge.status}" title="代码合并任务 #${merge.id}">合并：${STATUS_LABEL[merge.status] || merge.status}</span>`;
+}
+
+function boardColumnsHTML(tasks, mergeSection) {
+  // 合并任务的失败/取消意味着源代码尚未进入主分支，不能像普通历史任务
+  // 一样从看板中消失；单列保留它们，直接提供“重试合并”入口。
+  const columns = mergeSection
+    ? [...BOARD_COLS, ["merge-attention", "需处理", ["failed", "cancelled"]]]
+    : BOARD_COLS;
+  return columns.map(([key, label, statuses]) => {
     const items = tasks.filter(t => statuses.includes(t.status));
     return `<div class="board-col" style="--st-color:${ST_COLOR[statuses[0]]}">
       <div class="board-col-head">
@@ -46,15 +81,45 @@ export function renderBoard() {
       </div>
     </div>`;
   }).join("");
+}
+
+function boardSectionHTML(kind, title, note, tasks) {
+  const blocked = tasks.filter(t => mergeBlockReason(t)).length;
+  const empty = kind === "merge" ? "还没有代码合并任务；实现任务完成后会自动出现在这里。" : "没有符合条件的实现任务。";
+  return `<section class="board-section ${kind === "merge" ? "merge-section" : "source-section"}">
+    <div class="board-section-head">
+      <div><h2>${title}</h2><p>${note}</p></div>
+      <div class="board-section-counts">
+        <span>${tasks.length} 个</span>
+        ${blocked ? `<span class="chip merge-blocked">${blocked} 个角色不可用</span>` : ""}
+      </div>
+    </div>
+    <div class="board-section-lanes">${tasks.length ? boardColumnsHTML(tasks, kind === "merge") : `<div class="board-section-empty">${empty}</div>`}</div>
+  </section>`;
+}
+
+export function renderBoard() {
+  const el = document.getElementById("boardView");
+  if (!el) return;
+  const tasks = filteredTasks();
+  const sourceTasks = tasks.filter(t => !isMergeTask(t));
+  const mergeTasks = tasks.filter(isMergeTask);
+  el.innerHTML =
+    boardSectionHTML("source", "实现任务", "角色执行的原始工作项；完成后会自动创建代码合并任务。", sourceTasks) +
+    boardSectionHTML("merge", "代码合并", "使用新的独立 worktree 验证、解决冲突并自动写入主分支。", mergeTasks);
   const c = document.getElementById("viewCount");
-  if (c) c.textContent = `${tasks.length} 个任务`;
+  if (c) c.textContent = `${sourceTasks.length} 个实现 · ${mergeTasks.length} 个合并`;
 }
 
 export function cardHTML(t) {
+  const blocked = mergeBlockReason(t);
   return `<div class="card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
     <div class="c-top">
       <span class="st-dot"></span><span class="c-id">#${t.id}</span>
       <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
+      ${taskKindChip(t)}
+      ${sourceMergeChip(t)}
+      ${blocked ? `<span class="chip merge-blocked">${blocked}</span>` : ""}
       ${t.perm === "review" ? `<span class="chip review">审批</span>` : ""}
       ${t.run_mode === "interactive" ? `<span class="chip">交互</span>` : ""}
       ${t.concurrent ? `<span class="chip">并发</span>` : ""}
@@ -80,6 +145,7 @@ export function renderList() {
     <tr onclick="openTask(${t.id})">
       <td class="num">#${t.id}</td>
       <td class="t-title">${esc(t.title)}</td>
+      <td>${taskKindChip(t)}${mergeBlockReason(t) ? `<span class="chip merge-blocked">${mergeBlockReason(t)}</span>` : ""}</td>
       <td>${esc(t.agent_name || "-")}</td>
       <td>${t.project_id ? `<a class="t-link" href="/projects#/project/${t.project_id}" onclick="event.stopPropagation()">${esc(t.project_name || "-")}</a>` : esc(t.project_name || "-")}</td>
       <td><span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span></td>
@@ -90,15 +156,15 @@ export function renderList() {
         <span class="ops">
           <button class="btn xs" onclick="event.stopPropagation();openTask(${t.id})">${icon("expand")}详情</button>
           ${canRetryTask(t)
-            ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>` : ""}
-          <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>
+            ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}${retryTaskLabel(t)}</button>` : ""}
+          ${canDeleteTask(t) ? `<button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>` : ""}
         </span>
       </td>
     </tr>`).join("");
   const empty = document.getElementById("listEmpty");
   if (empty) empty.classList.toggle("hidden", tasks.length > 0);
   const c = document.getElementById("viewCount");
-  if (c) c.textContent = `${tasks.length} 个任务`;
+  if (c) c.textContent = `${tasks.filter(t => !isMergeTask(t)).length} 个实现 · ${tasks.filter(isMergeTask).length} 个合并`;
 }
 
 export function setView(v) {
@@ -183,6 +249,8 @@ export async function refreshDetail() {
 export function renderDetail(t) {
   const main = document.getElementById("dMain");
   if (!main) return;
+  const mergeTask = isMergeTask(t);
+  const mergeSource = mergeTask ? state.tasks.find(x => x.id === t.merge_of) : null;
   const isInteractive = t.run_mode === "interactive" && t.status === "running";
   const isLive = ["claimed", "running"].includes(t.status);
   const agent = state.agents.find(a => a.id === t.agent_id);
@@ -199,12 +267,13 @@ export function renderDetail(t) {
     </div>` : "";
   main.innerHTML = `
     <section class="task-hero">
-      <div class="task-kicker"><span>任务 #${t.id}</span><span>创建于 ${esc(createdAt)}</span></div>
+      <div class="task-kicker"><span>${mergeTask ? `代码合并任务 · 来源 #${t.merge_of}` : `实现任务 #${t.id}`}</span><span>创建于 ${esc(createdAt)}</span></div>
       <h2>${esc(t.title)}</h2>
       <div class="task-meta">
         <span class="task-meta-item"><span class="avatar sm${agentCli ? ` av-${esc(agentCli)}` : ""}">${esc(agentName.slice(0, 1))}</span>${esc(agentName)}</span>
         ${t.project_name ? `<span class="task-meta-item">${esc(t.project_name)}</span>` : ""}
         <span class="task-meta-item">${runMode}</span>
+        ${mergeTask ? `<span class="task-meta-item task-meta-accent">${mergeSource ? `源任务：#${mergeSource.id}` : `源任务：#${t.merge_of}`}</span>` : sourceMergeChip(t)}
         ${t.resume_of ? `<span class="task-meta-item task-meta-accent">续跑自 #${t.resume_of}</span>` : ""}
       </div>
     </section>
@@ -212,7 +281,7 @@ export function renderDetail(t) {
       <summary><span>任务说明</span><span class="section-meta">${bodyLength} 字</span></summary>
       <div class="task-prompt-body">${esc(t.body)}</div>
     </details>` : ""}
-    ${t.error ? `<div class="task-alert"><span class="task-alert-title">任务失败</span><span>${esc(t.error)}</span></div>` : ""}
+    ${t.error ? `<div class="task-alert"><span class="task-alert-title">${mergeTask ? "代码合并失败" : "任务失败"}</span><span>${esc(t.error)}</span></div>` : ""}
     <div id="childrenBox"></div>
     ${t.status === "awaiting_review" ? `<details class="task-section task-diff" open>
       <summary><span>代码改动</span><span class="section-meta">等待审批</span></summary>
@@ -257,9 +326,9 @@ export async function loadWorkspace(id) {
     const w = await api(`/api/workspace/${id}`);
     const t = state.tasks.find(x => x.id === id) || {};
     const done = ["succeeded", "failed", "cancelled"].includes(t.status);
-    const isMergeTask = !!t.merge_of;
-    const canManualMerge = isMergeTask && ["succeeded", "failed"].includes(t.status);
-    const sourceAwaitingMerge = !isMergeTask && t.status === "succeeded";
+    const mergeTask = isMergeTask(t);
+    const sourceMerge = mergeTaskFor(t);
+    const sourceAwaitingMerge = !mergeTask && t.status === "succeeded";
     if (!w.is_git) {
       box.innerHTML = `<div class="ws-row"><span class="ws-label">隔离</span><span class="ws-val">项目非 git 仓库，任务直接在项目目录执行</span>` +
         `<button class="btn xs" onclick="gitInitProject('${esc(w.path)}', ${id})">git init</button></div>`;
@@ -276,21 +345,26 @@ export async function loadWorkspace(id) {
       (w.ahead > 0 ? ` <span class="ws-tag ahead">+${w.ahead}</span>` : "") +
       `</span></div>
       <div class="ws-row"><span class="ws-label">路径</span><span class="ws-val mono" title="${esc(w.path)}">${esc(w.path)}</span></div>` +
-      (done ? `<div class="ws-actions">` +
-        (canManualMerge ? `<button class="btn sm brand" onclick="wsMerge(${id})">合并回主分支</button>` :
-          `<span class="ws-val">代码由系统创建的合并任务写入主分支</span>`) +
-        (sourceAwaitingMerge ? "" : `<button class="btn sm danger" onclick="wsDiscard(${id})">丢弃</button>`) +
-      `</div>` : "");
+      (done ? workspaceActionsHTML(t, sourceMerge, sourceAwaitingMerge, id) : "");
   } catch (_) { box.innerHTML = `<div class="empty">工作空间信息不可用</div>`; }
 }
 
-export async function wsMerge(id) {
-  if (!confirm(`把任务 #${id} 的改动 squash 合并回主分支？`)) return;
-  try {
-    const r = await api(`/api/workspace/${id}/merge`, { method: "POST" });
-    toast(`已合并${r.commit ? " (" + r.commit + ")" : ""}`);
-    loadWorkspace(id);
-  } catch (e) { toast(e.message, true); }
+function workspaceActionsHTML(t, sourceMerge, sourceAwaitingMerge, id) {
+  if (isMergeTask(t)) {
+    if (t.status === "succeeded") {
+      return `<div class="ws-actions"><span class="ws-val">代码已由本合并任务自动写入主分支</span>` +
+        `<button class="btn sm danger" onclick="wsDiscard(${id})">清理工作空间</button></div>`;
+    }
+    const action = t.status === "failed" || t.status === "cancelled" ? "请使用“重试合并”继续处理。" : "代码将由本合并任务成功结算时自动写入主分支。";
+    return `<div class="ws-actions"><span class="ws-val">${action}</span></div>`;
+  }
+  if (sourceAwaitingMerge) {
+    if (sourceMerge) {
+      return `<div class="ws-actions"><span class="ws-val">代码由合并任务 #${sourceMerge.id}（${STATUS_LABEL[sourceMerge.status] || sourceMerge.status}）处理</span></div>`;
+    }
+    return `<div class="ws-actions"><span class="ws-val">代码已完成，系统正在补建代码合并任务</span></div>`;
+  }
+  return `<div class="ws-actions"><button class="btn sm danger" onclick="wsDiscard(${id})">丢弃</button></div>`;
 }
 
 export async function wsDiscard(id) {
@@ -314,6 +388,8 @@ export async function gitInitProject(path, id) {
 export function renderSide(t) {
   const side = document.getElementById("dSide");
   if (!side) return;
+  const mergeTask = isMergeTask(t);
+  const mergeBlocked = mergeBlockReason(t);
   const statusOpts = Object.keys(STATUS_LABEL).map(s =>
     `<option value="${s}" ${s === t.status ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("");
   // 和新建任务保持一致：只能新指派启用中的角色；但若当前角色后来被
@@ -338,12 +414,17 @@ export function renderSide(t) {
     primaryActions += `<button class="btn sm danger" onclick="setTaskStatus(${t.id},'cancelled')">${icon("x")}取消</button>`;
   }
   if (canRetryTask(t)) {
-    primaryActions += `<button class="btn sm" onclick="setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>`;
-    secondaryActions += `<button class="btn sm" onclick="resumeTask(${t.id})">${icon("terminal")}继续对话</button>`;
+    primaryActions += `<button class="btn sm" onclick="setTaskStatus(${t.id},'queued')">${icon("retry")}${retryTaskLabel(t)}</button>`;
+    if (!mergeTask) secondaryActions += `<button class="btn sm" onclick="resumeTask(${t.id})">${icon("terminal")}继续对话</button>`;
   }
-  secondaryActions += `<button class="btn sm" onclick="openSubTask(${t.id})">${icon("plus")}拆分子任务</button>`;
-  if (t.body) secondaryActions += `<button class="btn sm" onclick="saveAsTemplate(${t.id})">${icon("bookmark")}保存为模板</button>`;
-  secondaryActions += `<button class="btn sm danger" onclick="deleteTask(${t.id})">${icon("trash")}删除任务</button>`;
+  if (mergeTask) {
+    if (mergeBlocked) primaryActions += `<span class="side-muted">${mergeBlocked}；启用原角色后将自动执行。</span>`;
+    secondaryActions += `<button class="btn sm" onclick="openTask(${t.merge_of})">${icon("back")}打开源任务 #${t.merge_of}</button>`;
+  } else {
+    secondaryActions += `<button class="btn sm" onclick="openSubTask(${t.id})">${icon("plus")}拆分子任务</button>`;
+    if (t.body) secondaryActions += `<button class="btn sm" onclick="saveAsTemplate(${t.id})">${icon("bookmark")}保存为模板</button>`;
+    secondaryActions += `<button class="btn sm danger" onclick="deleteTask(${t.id})">${icon("trash")}删除任务</button>`;
+  }
 
   const runInfo = `
     <div class="prop-row"><span class="k">执行器</span><span class="v">tmux · ${["claimed", "running"].includes(t.status) ? `paihuo:task-${t.id}` : "日志已归档"}</span></div>
@@ -352,7 +433,16 @@ export function renderSide(t) {
     <div class="prop-row"><span class="k">开始</span><span class="v">${esc((t.started_at || "-").slice(0, 16).replace("T", " "))}</span></div>
     <div class="prop-row"><span class="k">结束</span><span class="v">${esc((t.finished_at || "-").slice(0, 16).replace("T", " "))}</span></div>`;
 
-  side.innerHTML = `
+  const properties = mergeTask ? `
+    <details class="side-collapse side-properties" open>
+      <summary><span>合并任务属性</span><span class="section-meta">系统管理</span></summary>
+      <div class="side-collapse-body">
+        <div class="prop-row"><span class="k">来源</span><span class="v"><button class="btn xs" onclick="openTask(${t.merge_of})">任务 #${t.merge_of}</button></span></div>
+        <div class="prop-row"><span class="k">状态</span><span class="v">${STATUS_LABEL[t.status] || t.status}</span></div>
+        <div class="prop-row"><span class="k">角色</span><span class="v">${esc(t.agent_name || "未指派")}${mergeBlocked ? ` · ${mergeBlocked}` : ""}</span></div>
+        <div class="prop-row"><span class="k">策略</span><span class="v">独立 worktree · 串行 · 自动写入主分支</span></div>
+      </div>
+    </details>` : `
     <details class="side-collapse side-properties">
       <summary><span>任务属性</span><span class="section-meta">可编辑</span></summary>
       <div class="side-collapse-body">
@@ -370,7 +460,10 @@ export function renderSide(t) {
             <option value="1" ${t.concurrent ? "selected" : ""}>并发</option>
           </select></span></div>
       </div>
-    </details>
+    </details>`;
+
+  side.innerHTML = `
+    ${properties}
     <details class="side-collapse">
       <summary><span>运行信息</span><span class="section-meta">技术细节</span></summary>
       <div class="side-collapse-body">${runInfo}</div>
@@ -443,6 +536,8 @@ export async function rejectTask(id) {
 }
 
 export async function deleteTask(id) {
+  const task = state.tasks.find(t => t.id === id);
+  if (isMergeTask(task)) return toast("代码合并任务不能单独删除；请重试它，或删除源任务以放弃整组代码", true);
   if (!confirm(`删除任务 #${id}？执行日志、worktree、任务分支及其合并子任务将一并删除。`)) return;
   try {
     await api(`/api/tasks/${id}`, { method: "DELETE" });
@@ -459,7 +554,16 @@ export async function deleteTask(id) {
 
 export function canRetryTask(t) {
   if (!["succeeded", "failed", "cancelled"].includes(t.status)) return false;
-  return !(t.status === "succeeded" && !t.merge_of && state.tasks.some(child => child.merge_of === t.id));
+  if (isMergeTask(t)) return ["failed", "cancelled"].includes(t.status);
+  return !(t.status === "succeeded" && (t.worktree_branch || mergeTaskFor(t)));
+}
+
+export function retryTaskLabel(t) {
+  return isMergeTask(t) ? "重试合并" : "重试";
+}
+
+export function canDeleteTask(t) {
+  return !isMergeTask(t);
 }
 
 /* 子任务 */
@@ -468,16 +572,23 @@ export async function loadChildren(id) {
     const kids = await api(`/api/tasks/${id}/children`);
     const box = document.getElementById("childrenBox");
     if (!box || !kids.length) return;
-    const done = kids.filter(k => ["succeeded", "failed", "cancelled"].includes(k.status)).length;
-    const hasActive = kids.some(k => ["queued", "claimed", "running", "awaiting_review"].includes(k.status));
-    box.innerHTML = `<details class="task-section task-subtasks"${hasActive ? " open" : ""}>
-      <summary><span>子任务</span><span class="section-meta">${done}/${kids.length} 已完成</span></summary>
-      <div class="task-subtask-list">` +
-      kids.map(k => `<div class="task-subtask" onclick="openTask(${k.id})">
-        <div class="c-title">#${k.id} ${esc(k.title)}</div>
-        <div class="c-meta"><span class="badge ${k.status}" style="--st-color:${ST_COLOR[k.status]}"><span class="st-dot"></span>${STATUS_LABEL[k.status]}</span>
-        <span style="font-size:11px;color:var(--fg-faint)">${esc(k.agent_name || "")}</span></div>
-      </div>`).join("") + `</div></details>`;
+    const sourceKids = kids.filter(k => !isMergeTask(k));
+    const mergeKids = kids.filter(isMergeTask);
+    const section = (title, items, open, merge) => {
+      if (!items.length) return "";
+      const done = items.filter(k => ["succeeded", "failed", "cancelled"].includes(k.status)).length;
+      return `<details class="task-section task-subtasks ${merge ? "task-merge-children" : ""}"${open ? " open" : ""}>
+        <summary><span>${title}</span><span class="section-meta">${done}/${items.length} 已结束</span></summary>
+        <div class="task-subtask-list">` +
+        items.map(k => `<div class="task-subtask" onclick="openTask(${k.id})">
+          <div class="c-title">#${k.id} ${esc(k.title)}</div>
+          <div class="c-meta">${isMergeTask(k) ? `<span class="chip merge">代码合并</span>` : ""}<span class="badge ${k.status}" style="--st-color:${ST_COLOR[k.status]}"><span class="st-dot"></span>${STATUS_LABEL[k.status]}</span>
+          <span style="font-size:11px;color:var(--fg-faint)">${esc(k.agent_name || "")}</span></div>
+        </div>`).join("") + `</div></details>`;
+    };
+    const sourceActive = sourceKids.some(k => ["queued", "claimed", "running", "awaiting_review"].includes(k.status));
+    const mergeActive = mergeKids.some(k => ["queued", "claimed", "running", "awaiting_review"].includes(k.status));
+    box.innerHTML = section("子任务", sourceKids, sourceActive, false) + section("代码合并任务", mergeKids, mergeActive, true);
   } catch (_) {}
 }
 

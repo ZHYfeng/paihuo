@@ -8,7 +8,7 @@ import { appendInstLine, closeInstTerminal, copyText, createDefaultRole, install
 import { deleteSchedule, openScheduleModal, renderScheduleList, submitSchedule, toggleSchedule } from "./schedules.js";
 import { loadSettings, runCleanup, saveRetention, saveWtRetention } from "./settings.js";
 import { closeSkillDetail, copySkillContent, deleteSkill, deleteSkillFromDetail, deleteTemplate, hideSkillDetail, loadSkillLib, loadTemplates, openExtModal, openSkillDetail, openSkillModal, removeExt, renderSkillLib, scanSkills, setSkillTab, showSkillDetail, submitExt, submitSkill } from "./skills.js";
-import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskRunMode, wsDiscard, wsMerge } from "./task.js";
+import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskRunMode, wsDiscard } from "./task.js";
 import { closeTerminal, openTerminal, sendTaskInput, sendTerminalInput, syncTerminalInput } from "./terminal.js";
 
 export async function loadAll() {
@@ -474,6 +474,5 @@ window.toggleSchedule = toggleSchedule;
 window.toggleSidebar = toggleSidebar;
 window.toggleSkill = toggleSkill;
 window.wsDiscard = wsDiscard;
-window.wsMerge = wsMerge;
 
 // ===== 页面生命周期 =====

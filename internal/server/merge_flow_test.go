@@ -221,7 +221,8 @@ func TestWorkspaceMergeRejectsOrdinaryTask(t *testing.T) {
 	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "普通任务不能直接合并") {
 		t.Fatalf("普通任务应被拒绝直接合并: code=%d body=%s", resp.Code, resp.Body.String())
 	}
-	if _, err := st.CreateTask(store.NewMergeTask(store.Task{ID: taskID, Title: "ordinary"})); err != nil {
+	mergeID, err := st.CreateTask(store.NewMergeTask(store.Task{ID: taskID, Title: "ordinary"}))
+	if err != nil {
 		t.Fatal(err)
 	}
 	req = httptest.NewRequest(http.MethodPost, "/api/workspace/"+itoa(taskID)+"/discard", nil)
@@ -239,7 +240,7 @@ func TestWorkspaceMergeRejectsOrdinaryTask(t *testing.T) {
 	req.SetPathValue("id", itoa(taskID))
 	resp = httptest.NewRecorder()
 	s.patchTask(resp, req)
-	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "已有代码合并任务") {
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "源任务代码已完成") {
 		t.Fatalf("源任务不应绕过既有合并任务直接重试: code=%d body=%s", resp.Code, resp.Body.String())
 	}
 	req = httptest.NewRequest(http.MethodPost, "/api/workspace/"+itoa(children[0].ID)+"/discard", nil)
@@ -248,6 +249,34 @@ func TestWorkspaceMergeRejectsOrdinaryTask(t *testing.T) {
 	s.workspaceDiscard(resp, req)
 	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "代码合并任务尚未成功") {
 		t.Fatalf("未成功的代码合并任务不应丢弃 worktree: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+
+	// 手工合并会绕过状态结算，现统一由合并任务成功时自动执行。
+	req = httptest.NewRequest(http.MethodPost, "/api/workspace/"+itoa(mergeID)+"/merge", nil)
+	req.SetPathValue("id", itoa(mergeID))
+	resp = httptest.NewRecorder()
+	s.workspaceMerge(resp, req)
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "代码合并由合并任务成功结算时自动执行") {
+		t.Fatalf("代码合并任务不应允许手工合并: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+
+	// 成功的合并任务已写入主分支，不能被通用重试入口再次排队。
+	if err := st.UpdateTask(mergeID, map[string]any{"status": store.StatusSucceeded}); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(mergeID), strings.NewReader(`{"status":"queued"}`))
+	req.SetPathValue("id", itoa(mergeID))
+	resp = httptest.NewRecorder()
+	s.patchTask(resp, req)
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "代码合并任务已成功") {
+		t.Fatalf("成功的代码合并任务不能重试: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodDelete, "/api/tasks/"+itoa(mergeID), nil)
+	req.SetPathValue("id", itoa(mergeID))
+	resp = httptest.NewRecorder()
+	s.deleteTask(resp, req)
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "代码合并任务不能单独删除") {
+		t.Fatalf("代码合并任务不能单独删除: code=%d body=%s", resp.Code, resp.Body.String())
 	}
 }
 

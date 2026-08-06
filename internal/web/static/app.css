@@ -39,6 +39,7 @@
   --info: #38bdf8;
   --danger: #f87171;
   --danger-dim: rgba(248, 113, 113, .12);
+  --merge-accent: #a78bfa;
 
   /* ---- 状态色（任务） ---- */
   --st-queued: #64748b;
@@ -304,11 +305,30 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
    看板
    ============================================================ */
 .board-view {
-  flex: 1; display: flex; gap: 12px; padding: 12px; overflow-x: auto; align-items: flex-start;
+  flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px;
+  padding: 12px; overflow: auto; align-items: stretch;
 }
+.board-section {
+  border: 1px solid var(--border); border-radius: var(--r-xl); overflow: hidden;
+  background: rgba(15, 21, 34, .36); flex-shrink: 0;
+}
+.board-section.merge-section {
+  border-color: rgba(167, 139, 250, .26);
+  background: linear-gradient(180deg, rgba(167, 139, 250, .07), rgba(15, 21, 34, .32) 44%);
+}
+.board-section-head {
+  display: flex; align-items: flex-start; gap: 12px; padding: 11px 13px 9px;
+  border-bottom: 1px solid var(--border);
+}
+.merge-section .board-section-head { border-bottom-color: rgba(167, 139, 250, .2); }
+.board-section-head h2 { font-size: 13px; line-height: 18px; font-weight: 700; color: var(--fg); }
+.board-section-head p { margin-top: 2px; max-width: 680px; color: var(--fg-faint); font-size: 11.5px; line-height: 16px; }
+.board-section-counts { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--fg-faint); font-size: 11.5px; white-space: nowrap; }
+.board-section-lanes { display: flex; gap: 12px; padding: 10px; overflow-x: auto; align-items: stretch; }
+.board-section-empty { width: 100%; padding: 17px 12px; color: var(--fg-faint); font-size: 12px; text-align: center; }
 .board-col {
-  width: 296px; flex-shrink: 0; border-radius: var(--r-xl);
-  display: flex; flex-direction: column; max-height: 100%;
+  width: 296px; min-width: 236px; height: min(330px, 40vh); min-height: 190px; flex-shrink: 0; border-radius: var(--r-xl);
+  display: flex; flex-direction: column;
   border: 1px solid var(--border);
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--st-color, #64748b) 6%, transparent), transparent 55%),
@@ -376,6 +396,15 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 .card .c-foot { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--fg-faint); }
 .card .chip { font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--raised); color: var(--fg-muted); border: 1px solid var(--border); }
 .card .chip.review { color: var(--warning); border-color: rgba(251, 191, 36, .35); background: rgba(251, 191, 36, .1); }
+.chip.merge { color: var(--merge-accent); border-color: rgba(167, 139, 250, .36); background: rgba(167, 139, 250, .11); }
+.chip.task-kind { color: var(--fg-faint); }
+.chip.merge-pending { color: var(--warning); border-color: rgba(251, 191, 36, .34); background: rgba(251, 191, 36, .09); }
+.chip.merge-blocked { color: var(--danger); border-color: rgba(248, 113, 113, .36); background: rgba(248, 113, 113, .09); }
+.chip.merge-state.queued, .chip.merge-state.claimed { color: var(--fg-faint); }
+.chip.merge-state.running { color: var(--info); border-color: rgba(56, 189, 248, .35); background: rgba(56, 189, 248, .1); }
+.chip.merge-state.awaiting_review { color: var(--warning); border-color: rgba(251, 191, 36, .35); background: rgba(251, 191, 36, .1); }
+.chip.merge-state.succeeded { color: var(--success); border-color: rgba(52, 211, 153, .35); background: rgba(52, 211, 153, .1); }
+.chip.merge-state.failed { color: var(--danger); border-color: rgba(248, 113, 113, .35); background: rgba(248, 113, 113, .1); }
 
 /* ============================================================
    列表视图（Linear 风格表格）
@@ -868,6 +897,11 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 .p-task-row .t { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .p-task-row .a { font-size: 12px; color: var(--fg-muted); flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; }
 .p-task-row .ops { display: flex; gap: 4px; flex-shrink: 0; }
+.p-task-row.merge-task-row { border-color: rgba(167, 139, 250, .25); background: rgba(167, 139, 250, .045); }
+.p-task-row.merge-task-row:hover { border-color: rgba(167, 139, 250, .48); background: rgba(167, 139, 250, .09); }
+.merge-task-list { padding-top: 1px; }
+.task-section-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.section-note { color: var(--fg-faint); font-size: 10.5px; font-weight: 400; letter-spacing: 0; text-transform: none; }
 
 /* ============================================================
    图表组件（纯 CSS，无外部依赖）
@@ -1352,7 +1386,10 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   .project-grid, .agent-grid, .prov-grid, .skill-grid { grid-template-columns: 1fr; padding: 10px 12px; }
   .prov-grid, .agent-grid, .skill-grid { gap: 10px; }
   .board-view { padding: 10px 12px; gap: 10px; }
-  .board-col { width: min(296px, calc(100vw - 32px)); }
+  .board-section-head { flex-direction: column; gap: 6px; }
+  .board-section-counts { margin-left: 0; }
+  .board-section-lanes { padding: 8px; gap: 9px; }
+  .board-col { width: min(296px, calc(100vw - 50px)); height: min(300px, 43vh); }
   .dash-grid { padding: 10px 12px 16px; gap: 18px; }
   .dash-main { min-height: 0; }
   .dash-cols { display: flex; flex-direction: column; gap: 10px; }

@@ -195,6 +195,11 @@ function findChrome() {
 
   await page.goto(URL + "/board");
   await page.waitForTimeout(700);
+  const boardAreas = await page.evaluate(() => {
+    const heads = [...document.querySelectorAll(".board-section-head h2")].map(x => x.textContent.trim());
+    return heads.includes("实现任务") && heads.includes("代码合并") && document.querySelectorAll(".board-section").length === 2;
+  });
+  boardAreas ? ok("看板区分实现任务与代码合并") : fail("看板未分区显示实现任务与代码合并");
   await page.evaluate(() => openNewTask());
   await page.waitForTimeout(350);
   const taskModal = await page.evaluate(() =>
@@ -256,9 +261,10 @@ function findChrome() {
     const btn = await page.evaluate(() => {
       const b = [...document.querySelectorAll("#pdMain .btn")].find(x => x.textContent.includes("新建任务"));
       const d = document.getElementById("projectDetailShell");
-      return { has: !!b, detail: d && !d.classList.contains("hidden") };
+      return { has: !!b, detail: d && !d.classList.contains("hidden"), mergeArea: document.getElementById("pdMain")?.textContent.includes("代码合并") };
     });
     btn.has && btn.detail ? ok("项目详情页新建任务按钮") : fail("项目详情页无新建任务入口");
+    btn.mergeArea ? ok("项目页区分代码合并任务") : fail("项目页未显示代码合并分区");
     await page.evaluate(id => openProjectTask(id), proj.id);
     await page.waitForTimeout(350);
     const pre = await page.evaluate(id => {
@@ -283,7 +289,7 @@ function findChrome() {
     createRole: typeof window.createDefaultRole === "function",
     setTaskStatus: typeof window.setTaskStatus === "function",
     openTask: typeof window.openTask === "function",
-    wsMerge: typeof window.wsMerge === "function",
+    wsDiscard: typeof window.wsDiscard === "function",
     resumeTask: typeof window.resumeTask === "function",
   }));
   Object.values(dyn).every(Boolean) ? ok("动态按钮全局函数（6 项）") : fail("动态按钮全局函数缺失: " + JSON.stringify(dyn));

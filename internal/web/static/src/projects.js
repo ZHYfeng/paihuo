@@ -1,7 +1,7 @@
 // 模块 projects（由 scripts/split-frontend.py 生成）
 import { STATUS_LABEL, ST_COLOR, api, closeModal, esc, fmtDur, fmtPct, icon, openModal, state, toast } from "./core.js";
 import { loadAll } from "./main.js";
-import { canRetryTask, deleteTask, openTask, setTaskStatus } from "./task.js";
+import { canDeleteTask, canRetryTask, deleteTask, isMergeTask, openTask, retryTaskLabel, setTaskStatus } from "./task.js";
 
 export function renderProjectList() {
   const grid = document.getElementById("projectGrid");
@@ -10,8 +10,10 @@ export function renderProjectList() {
   const list = state.projects.filter(p => !q || p.name.toLowerCase().includes(q));
   grid.innerHTML = list.map(p => {
     const ts = state.tasks.filter(t => t.project_id === p.id);
-    const done = ts.filter(t => t.status === "succeeded").length;
-    const pct = ts.length ? done / ts.length * 100 : 0;
+    const sourceTasks = ts.filter(t => !isMergeTask(t));
+    const mergeTasks = ts.filter(isMergeTask);
+    const done = sourceTasks.filter(t => t.status === "succeeded").length;
+    const pct = sourceTasks.length ? done / sourceTasks.length * 100 : 0;
     const agents = new Set(ts.map(t => t.agent_name).filter(Boolean));
     return `<div class="project-card" onclick="openProject(${p.id})">
       <div class="pc-top">
@@ -24,8 +26,9 @@ export function renderProjectList() {
         <span class="pc-pct">${fmtPct(pct)}</span></div>
       <div class="pc-meta">
         ${p.project_dir ? `<span class="pc-dir" title="${esc(p.project_dir)}">${esc(p.project_dir)}</span>` : ""}
-        <span>${ts.length} 任务</span>
-        <span>${done} 完成</span>
+        <span>${sourceTasks.length} 任务</span>
+        ${mergeTasks.length ? `<span>${mergeTasks.length} 合并</span>` : ""}
+        <span>${done} 实现完成</span>
         <span>${agents.size} 角色</span>
         <span class="spacer"></span>
         <span class="pc-date">${(p.updated_at || p.created_at || "").slice(5, 16).replace("T", " ")}</span>
@@ -78,16 +81,19 @@ export function renderProjectDetail(p, s, tasks) {
   if (!main || !side) return;
   const counts = s.status_counts || [];
   const review = counts.find(c => c.status === "awaiting_review");
-  const rowHTML = tasks.map(t => `
-    <div class="p-task-row" onclick="openTask(${t.id})">
+  const sourceTasks = tasks.filter(t => !isMergeTask(t));
+  const mergeTasks = tasks.filter(isMergeTask);
+  const rowHTML = (items, merge) => items.map(t => `
+    <div class="p-task-row ${merge ? "merge-task-row" : ""}" onclick="openTask(${t.id})">
       <span class="num">#${t.id}</span>
       <span class="t">${esc(t.title)}</span>
+      ${merge ? `<span class="chip merge">合并 #${t.merge_of}</span>` : ""}
       <span class="a">${t.agent_name ? `<span class="avatar sm">${esc(t.agent_name.slice(0, 1))}</span>${esc(t.agent_name)}` : "-"}</span>
       <span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>
       <span class="ops">
           ${canRetryTask(t)
-          ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}重试</button>` : ""}
-        <button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>
+          ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}${retryTaskLabel(t)}</button>` : ""}
+        ${canDeleteTask(t) ? `<button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>` : ""}
       </span>
     </div>`).join("");
 
@@ -115,7 +121,8 @@ export function renderProjectDetail(p, s, tasks) {
         <div class="stat-chip"><span class="sc-dot" style="background:var(--st-review)"></span><b>${review ? review.count : 0}</b><span>待审批</span></div>
         <div class="stat-chip"><span class="sc-dot" style="background:var(--st-done)"></span><b>${s.succeeded}</b><span>完成</span></div>
         <div class="stat-chip"><span class="sc-dot" style="background:var(--st-failed)"></span><b>${s.failed}</b><span>失败</span></div>
-        <div class="stat-chip"><span class="sc-dot" style="background:var(--fg-muted)"></span><b>${s.total}</b><span>总任务</span></div>
+        <div class="stat-chip"><span class="sc-dot" style="background:var(--fg-muted)"></span><b>${sourceTasks.length}</b><span>实现任务</span></div>
+        <div class="stat-chip"><span class="sc-dot" style="background:var(--merge-accent)"></span><b>${mergeTasks.length}</b><span>合并任务</span></div>
       </div>
     </div>
 
@@ -123,12 +130,17 @@ export function renderProjectDetail(p, s, tasks) {
     ${dailyChartHTML(s.daily, 14)}
 
     <div class="sec-title" style="display:flex;align-items:center;justify-content:space-between">
-      <span>任务 ${tasks.length}</span>
+      <span>任务 ${sourceTasks.length}</span>
       <button class="btn sm brand" onclick="openProjectTask(${p.id})">${icon("plus")}新建任务</button>
     </div>
     <div class="p-task-list">
-      ${rowHTML || `<div class="empty">还没有任务
+      ${rowHTML(sourceTasks, false) || `<div class="empty">还没有任务
         <button class="btn xs brand" style="margin-left:8px" onclick="openProjectTask(${p.id})">${icon("plus")}派活</button></div>`}
+    </div>
+
+    <div class="sec-title task-section-title"><span>代码合并 ${mergeTasks.length}</span><span class="section-note">由已完成任务自动创建</span></div>
+    <div class="p-task-list merge-task-list">
+      ${rowHTML(mergeTasks, true) || `<div class="empty">代码合并任务会在实现任务完成或审批通过后自动创建。</div>`}
     </div>
 
     <div class="sec-title">成员统计（在本项目上工作的 agent）</div>

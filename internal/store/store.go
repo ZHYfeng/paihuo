@@ -767,6 +767,104 @@ func (s *Store) HasMergeTaskForSource(sourceID int64) (bool, error) {
 	return exists, nil
 }
 
+// ListCompletedGitTasksWithoutMerge 返回已经完成、拥有 Git worktree、但还
+// 没有代码合并子任务的源任务。它是自动合并链路的持久化对账输入：即使进程
+// 在「保存源分支」和「插入合并任务」之间发生异常，下一次执行器启动或周期
+// 扫描仍会补上唯一的合并任务。
+func (s *Store) ListCompletedGitTasksWithoutMerge() ([]Task, error) {
+	rows, err := s.db.Query(`SELECT `+taskCols+taskFrom+`
+		WHERE t.status=?
+		  AND t.merge_of IS NULL
+		  AND t.worktree_branch<>''
+		  AND NOT EXISTS (SELECT 1 FROM tasks m WHERE m.merge_of=t.id)
+		ORDER BY t.created_at, t.id`, StatusSucceeded)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]Task, 0)
+	for rows.Next() {
+		tk, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, tk)
+	}
+	return out, rows.Err()
+}
+
+// EnsureMergeTask 为已完成的 Git 源任务创建其唯一的代码合并子任务。若另一
+// 条正常结算/恢复路径已经创建过子任务，则返回其 ID 和 created=false；因此该
+// 方法可安全地由启动恢复、周期对账和故障兜底重复调用。
+func (s *Store) EnsureMergeTask(source Task) (id int64, created bool, err error) {
+	if source.ID <= 0 {
+		return 0, false, errors.New("源任务 ID 非法")
+	}
+	merge := NewMergeTask(source)
+	prepareMergeTask(source.ID, &merge)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, false, err
+	}
+	defer tx.Rollback()
+
+	// 先读取已有子任务。merge_of 的唯一索引是最终约束，这里则让对账调用
+	// 成为无副作用的幂等操作。
+	var existing int64
+	err = tx.QueryRow(`SELECT id FROM tasks WHERE merge_of=?`, source.ID).Scan(&existing)
+	if err == nil {
+		if err := tx.Commit(); err != nil {
+			return 0, false, err
+		}
+		return existing, false, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, false, err
+	}
+
+	// 只允许仍处于「完成的非合并 Git 源任务」状态时补建，避免删除、取消或
+	// 状态回退竞态把已放弃的任务重新派发。
+	var eligible bool
+	if err := tx.QueryRow(`SELECT EXISTS(
+		SELECT 1 FROM tasks
+		WHERE id=? AND status=? AND merge_of IS NULL AND worktree_branch<>''
+	)`, source.ID, StatusSucceeded).Scan(&eligible); err != nil {
+		return 0, false, err
+	}
+	if !eligible {
+		return 0, false, errors.New("源任务当前不需要创建代码合并任务")
+	}
+
+	id, err = insertMergeTask(tx, merge)
+	if err != nil {
+		return 0, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
+}
+
+// MarkTaskSucceededAwaitingMerge 是正常执行已成功、源 worktree 也已快照，
+// 但原子完成+创建合并任务事务暂时失败时的持久化兜底。它只留下一个短暂、可
+// 被 ListCompletedGitTasksWithoutMerge 对账到的状态，绝不把成功的代码误记为
+// 执行失败。
+func (s *Store) MarkTaskSucceededAwaitingMerge(sourceID int64) (bool, error) {
+	now := Now()
+	res, err := s.db.Exec(`UPDATE tasks
+		SET status='succeeded', finished_at=COALESCE(finished_at, ?), exit_code=0,
+			error='', updated_at=?
+		WHERE id=? AND status IN ('claimed','running') AND perm='full'
+		  AND merge_of IS NULL AND worktree_branch<>''`, now, now, sourceID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 // UpdateTmuxLogOffset 记录已同步到 SQLite 的专用 tmux 原始日志位置。
 // 不更新 updated_at，避免高频终端输出扰动任务的业务更新时间。
 func (s *Store) UpdateTmuxLogOffset(id int64, offset int64) error {
