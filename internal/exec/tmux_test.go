@@ -86,6 +86,39 @@ func TestTmuxRunnerPersistsOutputAndExit(t *testing.T) {
 	}
 }
 
+// Poll 的第一次退出码读取和随后检查 pane 是否存在之间，run.sh 可能恰好写完
+// exit-code 并退出。此处用一个伪 tmux 在 list-panes 时写入退出码，稳定覆盖
+// 这一真实时序，避免把已成功完成的短任务误判为 pane 丢失。
+func TestTmuxRunnerPollRechecksExitCodeAfterWindowDisappears(t *testing.T) {
+	const taskID = int64(42)
+	r := newTmuxRunnerAt(t.TempDir(), "poll-exit-race-test")
+	if err := os.MkdirAll(r.taskDir(taskID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeTmux := filepath.Join(t.TempDir(), "tmux")
+	script := "#!/bin/sh\n" +
+		"for arg in \"$@\"; do\n" +
+		"  if [ \"$arg\" = list-panes ]; then\n" +
+		"    printf '0\\n' > " + shQuote(r.exitPath(taskID)) + "\n" +
+		"    exit 1\n" +
+		"  fi\n" +
+		"done\n" +
+		"exit 1\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r.binary = fakeTmux
+
+	obs, err := r.Poll(taskID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !obs.Done || obs.ExitCode != 0 {
+		t.Fatalf("pane 消失后新写入的退出码应被本轮轮询接收，obs=%+v", obs)
+	}
+}
+
 func TestTmuxRunnerIgnoresUserConfig(t *testing.T) {
 	bin := requireTmuxIntegration(t)
 	home := t.TempDir()

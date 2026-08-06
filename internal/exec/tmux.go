@@ -568,6 +568,16 @@ func (r *tmuxRunner) Poll(taskID, offset int64) (tmuxObservation, error) {
 			paneEnded = dead
 		}
 	}
+	// run.sh 在写入 exit-code 后立刻退出。若第一次读取发生在写入前、而
+	// hasWindow 恰好发生在退出后，会看到“window 已消失但没有退出码”的
+	// 短暂组合。pane 已结束时重新读取一次，避免把正常完成的短任务误判为
+	// window 丢失。
+	if paneEnded && !done {
+		code, done, err = r.exitCode(taskID)
+		if err != nil {
+			return tmuxObservation{}, err
+		}
+	}
 
 	agentOutputSize, detached, err := r.detachedAgentOutputSize(taskID)
 	if err != nil {
