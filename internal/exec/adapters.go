@@ -20,6 +20,13 @@ type RunOptions struct {
 	Perm       string // 任务权限模式：full | review
 	RunMode    string // batch | interactive（交互式目前仅 Pi 支持）
 	SessionDir string // 任务专属会话目录（会话隔离，互不干扰）
+	// SkillDirs 是执行器为本次任务准备的技能副本目录。它们位于任务
+	// 工作空间内，避免 CLI 因沙箱/工作目录限制读不到角色选择的源目录。
+	// 为空时适配器回退到 Role.Skills，便于单元测试和兼容旧调用方。
+	SkillDirs []string
+	// SkillNames 是本次任务实际启用的技能名。OMP 的 --skills 参数是
+	// 名称 glob 过滤器，不是目录加载器，因此不能直接传 Role.Skills 路径。
+	SkillNames []string
 }
 
 // Adapter 是 agent CLI 的适配器。
@@ -123,7 +130,8 @@ func shellJoin(parts []string) string {
 // ---------------------------------------------------------------------------
 // omp（Oh My Pi）：omp -p "提示词"
 // 角色映射：model→--model；system_prompt→--append-system-prompt；
-// skills→--add-dir；thinking low→--smol / high→--slow；plugins→--config。
+// skills→项目 .agents/skills + --skills 名称过滤；thinking low→--smol /
+// high→--slow；plugins→--config。
 
 type ompAdapter struct{ baseAdapter }
 
@@ -138,8 +146,14 @@ func (a *ompAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	if s := o.Role.SystemPrompt; s != "" {
 		args = append(args, "--append-system-prompt", s)
 	}
-	if len(o.Role.Skills) > 0 {
-		args = append(args, "--skills", strings.Join(o.Role.Skills, ","))
+	skillNames := o.SkillNames
+	if len(skillNames) == 0 {
+		// 兼容直接调用 Adapter.Build 的旧代码；正式任务由执行器填充
+		// SkillNames，传入原始目录只会取其 basename 作为过滤名。
+		skillNames = skillBasenames(o.Role.Skills)
+	}
+	if len(skillNames) > 0 {
+		args = append(args, "--skills", strings.Join(skillNames, ","))
 	}
 	switch o.Role.Thinking {
 	case "low":
@@ -181,7 +195,7 @@ func (a *ompAdapter) Schema() []Field {
 		f.Help = "low→--smol（小模型快速模式）、high→--slow（深度推理）、medium 默认"
 	}
 	if f := byKey(fs, "skills"); f != nil {
-		f.Help = "启动时注入的技能目录（官方 --skills 逗号分隔）；在 Skills 页把技能添加到 paihuo 工作目录后，这里按名称勾选"
+		f.Help = "执行器把所选技能复制到任务 .agents/skills，并用官方 --skills 按名称过滤；任务提示会明确要求读取并遵循"
 	}
 	fs = append(fs,
 		Field{Key: "tools", Label: "工具白名单", Type: "list", Group: "执行",
@@ -239,14 +253,11 @@ func (a *openCodeAdapter) Warnings(o RunOptions) []string {
 	if len(o.Role.Plugins) > 0 {
 		ws = append(ws, "opencode 插件按项目/全局配置管理，角色 plugins 字段不生效")
 	}
-	if len(o.Role.Skills) > 0 {
-		ws = append(ws, "opencode 技能读取项目内 .opencode/skills 目录，角色 skills 字段不生效")
-	}
 	return ws
 }
 
-// opencode 的模型/思考字段来自 CLI 文档；skills/plugins 走项目内 .opencode
-// 目录，故不展示；特有字段：agent（opencode agent 定义）、config（配置文件）。
+// opencode 的模型/思考字段来自 CLI 文档；skills 走项目内 .opencode/skills
+// 原生目录；特有字段：agent（opencode agent 定义）、config（配置文件）。
 func (a *openCodeAdapter) Schema() []Field {
 	return []Field{
 		{Key: "model", Label: "模型", Type: "text", Group: "模型与指令",
@@ -258,6 +269,9 @@ func (a *openCodeAdapter) Schema() []Field {
 		{Key: "instructions", Label: "指令", Type: "textarea", Group: "模型与指令",
 			Placeholder: "任务指令模板：每次执行前固定追加的指示",
 			Help:        "每次任务的固定指令前缀，注入到任务提示词之前（opencode 无官方 system prompt 参数，以提示词前缀方式生效）"},
+		{Key: "skills", Label: "技能", Type: "list", Group: "技能", Source: "skills",
+			Placeholder: "勾选已注册到 paihuo 工作目录的技能",
+			Help:        "执行器把所选技能复制到任务 .opencode/skills，由 OpenCode 原生 discovery 加载，并在提示中要求读取"},
 		{Key: "agent", Label: "Agent 定义", Type: "text", Group: "模型与指令",
 			Suggestions: []string{"build", "plan", "architect", "debug", "test", "code-review"},
 			Placeholder: "如 build / planner（可输入自定义）",
@@ -313,7 +327,11 @@ func (a *piAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	if o.Role.Thinking != "" {
 		args = append(args, "--thinking", o.Role.Thinking)
 	}
-	for _, s := range o.Role.Skills {
+	skillDirs := o.SkillDirs
+	if len(skillDirs) == 0 {
+		skillDirs = o.Role.Skills
+	}
+	for _, s := range skillDirs {
 		args = append(args, "--skill", s)
 	}
 	args = append(args, o.Role.ExtraArgs...)
@@ -342,7 +360,7 @@ func (a *piAdapter) Schema() []Field {
 		f.Help = "无法从本机模型目录识别逐模型思考档位时，保留通用选项：off / minimal / low / medium / high / xhigh / max / ultra；默认使用 Pi/模型默认。"
 	}
 	if f := byKey(fs, "skills"); f != nil {
-		f.Help = "官方 --skill 逐目录注入（可多个）；在 Skills 页把技能添加到 paihuo 工作目录后，这里按名称勾选"
+		f.Help = "执行器把所选技能复制到任务工作空间，并用官方 --skill 逐目录加载（可多个）"
 	}
 	// pi 无 plugins 字段：扩展用 pi install 全局管理（见 Skills 页扩展 tab）
 	out := fs[:0]
@@ -373,7 +391,8 @@ func (a *piAdapter) Docs() string { return "https://pi.dev/docs" }
 
 // ---------------------------------------------------------------------------
 // claude：claude -p "提示词"
-// 角色映射：model→--model；system_prompt→--append-system-prompt；skills→--add-dir。
+// 角色映射：model→--model；system_prompt→--append-system-prompt；
+// skills→项目 .claude/skills 原生 discovery。
 
 type claudeAdapter struct{ baseAdapter }
 
@@ -384,9 +403,6 @@ func (a *claudeAdapter) Build(o RunOptions) (string, []string, []string, error) 
 	}
 	if s := o.Role.SystemPrompt; s != "" {
 		args = append(args, "--append-system-prompt", s)
-	}
-	for _, d := range o.Role.Skills {
-		args = append(args, "--add-dir", d)
 	}
 	// 权限映射：custom.permission_mode（schema 提供选项），默认 acceptEdits
 	pm := o.Role.Custom["permission_mode"]
@@ -437,7 +453,7 @@ func (a *claudeAdapter) Docs() string {
 // ---------------------------------------------------------------------------
 // codex：codex exec "提示词"
 // 角色映射：model→-c model="..."；system_prompt→-c system_prompt="..."；
-// thinking→-c reasoning_effort="..."。
+// thinking→-c reasoning_effort="..."；skills→项目 .agents/skills 原生 discovery。
 
 type codexAdapter struct{ baseAdapter }
 
@@ -476,9 +492,6 @@ func (a *codexAdapter) Build(o RunOptions) (string, []string, []string, error) {
 
 func (a *codexAdapter) Warnings(o RunOptions) []string {
 	var ws []string
-	if len(o.Role.Skills) > 0 {
-		ws = append(ws, "codex 无技能目录参数，skills 字段不生效")
-	}
 	if len(o.Role.Plugins) > 0 {
 		ws = append(ws, "codex 插件通过 MCP/全局配置管理，角色 plugins 字段不生效")
 	}

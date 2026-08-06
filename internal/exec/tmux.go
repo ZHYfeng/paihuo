@@ -105,6 +105,12 @@ func (r *tmuxRunner) taskDir(taskID int64) string {
 	return filepath.Join(r.root, r.taskName(taskID))
 }
 
+// skillManifestPath 保存角色技能副本的清单。它位于任务运行目录而不是
+// Git worktree，服务重启后仍可据此在最终结算时清理临时技能文件。
+func (r *tmuxRunner) skillManifestPath(taskID int64) string {
+	return filepath.Join(r.taskDir(taskID), "role-skills.json")
+}
+
 func (r *tmuxRunner) logPath(taskID int64) string {
 	return filepath.Join(r.taskDir(taskID), "terminal.log")
 }

@@ -51,7 +51,7 @@ type RoleConfig struct {
 	Model        string            `json:"model"`
 	SystemPrompt string            `json:"system_prompt"`
 	Instructions string            `json:"instructions"` // 任务指令模板（追加在 system prompt 之后）
-	Skills       []string          `json:"skills"`       // 技能目录
+	Skills       []string          `json:"skills"`       // 角色选择的原始技能目录（任务启动时物化到 CLI 原生目录）
 	Thinking     string            `json:"thinking"`     // "" | low | medium | high
 	Plugins      []string          `json:"plugins"`      // 插件/配置文件
 	ExtraArgs    []string          `json:"extra_args"`

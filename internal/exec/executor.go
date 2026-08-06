@@ -105,6 +105,7 @@ func (e *Executor) reconcileMergeTasks() {
 	pending := make(map[int64]bool, len(tasks))
 	for _, tk := range tasks {
 		pending[tk.ID] = true
+		_ = cleanupRoleSkills(e.runner.skillManifestPath(tk.ID))
 		if _, err := workspace.Snapshot(tk, e.sessionsRoot); err != nil {
 			e.logMergeReconcileProblem(tk.ID, "保存待合并源任务工作区失败: "+err.Error())
 			continue
@@ -163,6 +164,7 @@ func (e *Executor) recoverLostCompletions() {
 		if !found || code != 0 {
 			continue
 		}
+		_ = cleanupRoleSkills(e.runner.skillManifestPath(tk.ID))
 
 		if tk.Perm == store.PermReview {
 			changed, err := e.st.RecoverLostTask(tk.ID, store.StatusAwaitingReview)
@@ -257,6 +259,7 @@ func (e *Executor) recoverInterrupted(ctx context.Context) {
 }
 
 func (e *Executor) markInterrupted(tk store.Task, msg string) {
+	_ = cleanupRoleSkills(e.runner.skillManifestPath(tk.ID))
 	e.preserveTmuxFailureArtifacts(tk.ID, msg)
 	_ = e.st.UpdateTask(tk.ID, map[string]any{
 		"status": store.StatusFailed, "finished_at": store.Now(), "error": msg,
@@ -289,6 +292,7 @@ func (e *Executor) CancelTask(id int64) {
 // RemoveTask 在删除任务前停止 tmux window 并清理其运行时文件。
 func (e *Executor) RemoveTask(id int64) {
 	e.CancelTask(id)
+	_ = cleanupRoleSkills(e.runner.skillManifestPath(id))
 	e.runner.Cleanup(id)
 	_ = e.taskSessions.Remove(id)
 }
@@ -470,6 +474,7 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	e.publishTask(tk.ID)
 
 	fail := func(msg string) {
+		_ = cleanupRoleSkills(e.runner.skillManifestPath(tk.ID))
 		e.runner.Cleanup(tk.ID)
 		e.log(tk.ID, "sys", "✗ "+msg)
 		_ = e.st.UpdateTask(tk.ID, map[string]any{
@@ -555,10 +560,33 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		fail("交互式任务目前只支持 Pi 角色")
 		return
 	}
-	ro := RunOptions{Dir: dir, Prompt: taskPrompt(tk), Role: agent.RoleConfig, Perm: tk.Perm, RunMode: tk.RunMode}
+	preparedSkills, err := prepareRoleSkills(tk.ID, dir, agent.CLI, e.runner.skillManifestPath(tk.ID), agent.RoleConfig.Skills)
+	if err != nil {
+		fail("加载角色技能失败: " + err.Error())
+		return
+	}
+	if len(preparedSkills.Bindings) > 0 {
+		names := make([]string, 0, len(preparedSkills.Bindings))
+		for _, binding := range preparedSkills.Bindings {
+			names = append(names, binding.OriginalName)
+		}
+		e.log(tk.ID, "sys", "🧩 已启用角色技能: "+strings.Join(names, "、"))
+	}
+	ro := RunOptions{
+		Dir:        dir,
+		Prompt:     taskPrompt(tk),
+		Role:       agent.RoleConfig,
+		Perm:       tk.Perm,
+		RunMode:    tk.RunMode,
+		SkillDirs:  preparedSkills.SkillDirs,
+		SkillNames: preparedSkills.SkillNames,
+	}
 	// instructions：任务指令模板，追加在提示词之前（适配器可按 CLI 映射为官方参数）
 	if instr := strings.TrimSpace(agent.RoleConfig.Instructions); instr != "" {
 		ro.Prompt = instr + "\n\n" + ro.Prompt
+	}
+	if skillPrompt := buildRoleSkillsPrompt(preparedSkills.Bindings); skillPrompt != "" {
+		ro.Prompt = skillPrompt + "\n\n" + ro.Prompt
 	}
 	// 任务专属会话目录：会话隔离（同角色多任务互不干扰）；续跑任务复用原任务会话
 	sessID := tk.ID
@@ -802,6 +830,9 @@ func (e *Executor) finishRun(tk store.Task, code int, runErr error, canceled boo
 	if errors.Is(runErr, errExecutorStopping) {
 		e.log(tk.ID, "sys", "⏸ paihuo 正在停止，专用 tmux 任务将继续运行并在下次启动后接管")
 		return
+	}
+	if err := cleanupRoleSkills(e.runner.skillManifestPath(tk.ID)); err != nil {
+		e.log(tk.ID, "sys", "⚠ 清理角色技能副本失败: "+err.Error())
 	}
 	if errors.Is(runErr, errTmuxWindowLost) {
 		e.preserveTmuxFailureArtifacts(tk.ID, runErr.Error())

@@ -33,7 +33,7 @@ func TestMergeEnvOverridesInPlace(t *testing.T) {
 	}
 }
 
-// omp 官方文档参数映射（omp.sh/docs / flag-tables）：skills→--skills、
+// omp 官方文档参数映射（omp.sh/docs / flag-tables）：skills→--skills 名称过滤、
 // 全权→--auto-approve、自定义字段→--tools/--max-time/--profile/--provider。
 func TestOmpAdapterBuild(t *testing.T) {
 	a := &ompAdapter{baseAdapter{id: "omp", name: "omp", bin: "omp"}}
@@ -55,6 +55,7 @@ func TestOmpAdapterBuild(t *testing.T) {
 				"provider": "claude",
 			},
 		},
+		SkillNames: []string{"skill-a", "skill-b"},
 	}
 	bin, args, _, err := a.Build(o)
 	if err != nil {
@@ -66,7 +67,7 @@ func TestOmpAdapterBuild(t *testing.T) {
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"-p hi", "--no-pty", "--session-dir /s/x", "--model claude/claude-sonnet-4",
-		"--append-system-prompt sys", "--slow", "--skills /sk/a,/sk/b",
+		"--append-system-prompt sys", "--slow", "--skills skill-a,skill-b",
 		"--config /p.toml", "--tools read,edit,bash", "--max-time 30m",
 		"--profile work", "--provider claude", "--auto-approve", "--no-lsp",
 	} {
@@ -123,6 +124,7 @@ func TestPiAdapterBuild(t *testing.T) {
 				"models_cycle":  "anthropic/*,*sonnet*",
 			},
 		},
+		SkillDirs: []string{"/task/.agents/skills/skill-a", "/task/.agents/skills/skill-b"},
 	}
 	_, args, _, err := a.Build(o)
 	if err != nil {
@@ -133,7 +135,7 @@ func TestPiAdapterBuild(t *testing.T) {
 		"-p hi", "--session-dir /s/x", "--model anthropic/claude-sonnet-4",
 		"--append-system-prompt sys", "--provider anthropic", "--tools read,write,bash",
 		"--exclude-tools browser", "--models anthropic/*,*sonnet*",
-		"--thinking high", "--skill /sk/a", "--skill /sk/b", "--offline",
+		"--thinking high", "--skill /task/.agents/skills/skill-a", "--skill /task/.agents/skills/skill-b", "--offline",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("缺少参数 %q（完整: %s）", want, joined)
@@ -171,6 +173,27 @@ func TestPiSchema(t *testing.T) {
 	}
 	if ws := a.Warnings(RunOptions{Role: store.RoleConfig{Plugins: []string{"/p"}}}); len(ws) != 1 {
 		t.Fatalf("plugins 应有一条警告，得到 %v", ws)
+	}
+}
+
+func TestNativeSkillAdaptersDoNotTreatSkillsAsUnsupported(t *testing.T) {
+	claude := &claudeAdapter{baseAdapter{id: "claude", name: "claude", bin: "claude"}}
+	_, args, _, err := claude.Build(RunOptions{Prompt: "p", Role: store.RoleConfig{Skills: []string{"/skill"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(args, " "), "--add-dir") {
+		t.Fatalf("claude skills must use native .claude/skills discovery, got %v", args)
+	}
+	if ws := (&codexAdapter{baseAdapter{id: "codex", name: "codex", bin: "codex"}}).Warnings(RunOptions{Role: store.RoleConfig{Skills: []string{"/skill"}}}); len(ws) != 0 {
+		t.Fatalf("codex skills should be supported through native discovery, got %v", ws)
+	}
+	keys := map[string]bool{}
+	for _, field := range (&openCodeAdapter{baseAdapter{id: "opencode", name: "opencode", bin: "opencode"}}).Schema() {
+		keys[field.Key] = true
+	}
+	if !keys["skills"] {
+		t.Fatal("opencode schema must expose role skills")
 	}
 }
 
