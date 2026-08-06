@@ -141,8 +141,8 @@ func TestPiAdapterBuild(t *testing.T) {
 	}
 }
 
-// pi schema：模型目录没有逐模型思考档位时只保留默认；skills 保留、plugins
-// 移除，并保留新增 4 字段。不能把 CLI 全局 --thinking 值当成 DeepSeek 能力。
+// pi schema：模型目录没有逐模型思考档位时保留完整通用选项；skills 保留、
+// plugins 移除，并保留新增 4 字段。
 func TestPiSchema(t *testing.T) {
 	a := &piAdapter{baseAdapter{id: "pi", name: "Pi Agent", bin: "pi"}}
 	fs := a.Schema()
@@ -158,8 +158,9 @@ func TestPiSchema(t *testing.T) {
 	if keys["plugins"] != nil {
 		t.Fatal("pi schema 不应有 plugins")
 	}
-	if got := keys["thinking"].Options; len(got) != 1 || got[0] != "" {
-		t.Fatalf("没有逐模型能力目录时 thinking 只应保留默认，得到 %v", got)
+	wantThinking := []string{"", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+	if got := keys["thinking"].Options; strings.Join(got, ",") != strings.Join(wantThinking, ",") {
+		t.Fatalf("没有逐模型能力目录时 thinking 应保留完整通用选项，得到 %v", got)
 	}
 	if got := a.Docs(); got != "https://pi.dev/docs" {
 		t.Fatalf("Docs=%q", got)

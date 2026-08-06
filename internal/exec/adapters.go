@@ -336,10 +336,10 @@ func (a *piAdapter) Schema() []Field {
 	fs := commonFields()
 	if f := byKey(fs, "thinking"); f != nil {
 		// pi 的 Linux 本机模型目录只报告 reasoning=true/false，或列表中的
-		// thinking yes/no；它没有声明每个模型允许哪些 --thinking 档位。不能
-		// 用 CLI 全局 flag 的 7 个值伪装成 DeepSeek 等模型的能力。
-		f.Options = []string{""}
-		f.Help = "本机 Pi 模型目录只报告是否支持推理，不声明每个模型可用的思考档位；留空使用 Pi/模型默认。已有旧值会保留，若要取消请改为“默认”。"
+		// thinking yes/no；无法逐模型识别具体档位时，保留完整的通用选项，
+		// 让不同 provider/model 的 thinking 值仍可直接传给 --thinking。
+		f.Options = []string{"", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+		f.Help = "无法从本机模型目录识别逐模型思考档位时，保留通用选项：off / minimal / low / medium / high / xhigh / max / ultra；默认使用 Pi/模型默认。"
 	}
 	if f := byKey(fs, "skills"); f != nil {
 		f.Help = "官方 --skill 逐目录注入（可多个）；在 Skills 页把技能添加到 paihuo 工作目录后，这里按名称勾选"
