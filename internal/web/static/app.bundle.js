@@ -17,6 +17,11 @@
     view: "board",
     selected: null,
     logs: [],
+    logsTask: null,
+    logsHasMore: false,
+    logsLoading: false,
+    logsOldestSeq: 0,
+    logsTotal: 0,
     termTask: null,
     es: null,
     // SSE 连接（隐藏时断开、可见时重连）
@@ -124,6 +129,21 @@
     }
     if (res.status === 204) return null;
     return res.json();
+  }
+  async function fetchTaskLogs(id, options = {}) {
+    const params = new URLSearchParams();
+    if (options.all) params.set("all", "1");
+    else {
+      params.set("limit", String(options.limit || 200));
+      if (options.before) params.set("before", String(options.before));
+    }
+    const data = await api(`/api/tasks/${id}/logs?${params}`);
+    if (Array.isArray(data)) return { logs: data, has_more: false, total: data.length };
+    return {
+      logs: Array.isArray(data?.logs) ? data.logs : [],
+      has_more: Boolean(data?.has_more),
+      total: Number(data?.total) || 0
+    };
   }
   function activeModal() {
     const modals = document.querySelectorAll(".modal:not(.hidden)");
@@ -931,6 +951,11 @@
   // internal/web/static/src/terminal.js
   var term = null;
   var termFit = null;
+  var termLogs = [];
+  var termHasMore = false;
+  var termOldestSeq = 0;
+  var termLoading = false;
+  var ignoreTopScroll = false;
   function initTerm() {
     if (term) return;
     term = new Terminal({
@@ -966,6 +991,9 @@
     termFit = new FitAddon.FitAddon();
     term.loadAddon(termFit);
     term.open(document.getElementById("termX"));
+    term.onScroll((event) => {
+      if (event.position === 0 && !ignoreTopScroll) loadOlderTerminalLogs();
+    });
     termFit.fit();
     window.addEventListener("resize", () => {
       try {
@@ -976,6 +1004,47 @@
   }
   function termWrite(content) {
     if (term) term.write(String(content ?? "") + "\r\n");
+  }
+  function termAppendLog(l) {
+    if (state.termTask !== l.task_id || !term) return;
+    if (termLogs.some((existing) => existing.id === l.id)) return;
+    termLogs.push(l);
+    termWrite(l.content);
+  }
+  function renderTerminalWindow() {
+    if (!term) return;
+    term.reset();
+    termLogs.forEach((l) => termWrite(l.content));
+    if (!termLogs.length) term.write("\x1B[90m\uFF08\u6682\u65E0\u8F93\u51FA\uFF09\x1B[0m\r\n");
+  }
+  async function loadOlderTerminalLogs() {
+    if (!state.termTask || !termHasMore || termLoading || !termOldestSeq) return;
+    const id = state.termTask;
+    termLoading = true;
+    try {
+      const page = await fetchTaskLogs(id, { before: termOldestSeq, limit: 200 });
+      if (state.termTask !== id) return;
+      const existing = new Set(termLogs.map((l) => l.id));
+      const older = page.logs.filter((l) => !existing.has(l.id));
+      if (!older.length) {
+        termHasMore = false;
+        return;
+      }
+      termLogs = [...older, ...termLogs];
+      termHasMore = page.has_more;
+      termOldestSeq = termLogs[0]?.seq || 0;
+      ignoreTopScroll = true;
+      const previousRows = term.buffer.active.length;
+      renderTerminalWindow();
+      term.scrollToTop();
+      term.scrollLines(Math.max(1, term.buffer.active.length - previousRows));
+      setTimeout(() => {
+        ignoreTopScroll = false;
+      }, 0);
+    } catch (_) {
+    } finally {
+      termLoading = false;
+    }
   }
   function openTerminal(id) {
     const t = state.tasks.find((x) => x.id === id) || {};
@@ -988,21 +1057,36 @@
       } catch (_) {
       }
     }, 30);
-    term.clear();
-    term.write("\x1B[90m# loading logs...\x1B[0m\r\n");
     state.termTask = id;
+    termLogs = [];
+    termHasMore = false;
+    termOldestSeq = 0;
+    termLoading = false;
+    ignoreTopScroll = true;
+    term.reset();
+    term.write("\x1B[90m# loading latest logs...\x1B[0m\r\n");
     syncTerminalInput(t);
-    api(`/api/tasks/${id}/logs`).then((logs) => {
+    fetchTaskLogs(id, { limit: 200 }).then((page) => {
       if (state.termTask !== id) return;
-      term.clear();
-      logs.forEach((l) => termWrite(l.content));
-      if (!logs.length) term.write("\x1B[90m\uFF08\u6682\u65E0\u8F93\u51FA\uFF09\x1B[0m\r\n");
+      const byID = new Map(page.logs.map((l) => [l.id, l]));
+      for (const l of termLogs) if (!byID.has(l.id)) byID.set(l.id, l);
+      termLogs = [...byID.values()].sort((a, b) => a.seq - b.seq);
+      termHasMore = page.has_more;
+      termOldestSeq = termLogs[0]?.seq || 0;
+      renderTerminalWindow();
+      term.scrollToBottom();
+      setTimeout(() => {
+        ignoreTopScroll = false;
+      }, 0);
     }).catch(() => {
       term.write("\x1B[31m\u65E5\u5FD7\u52A0\u8F7D\u5931\u8D25\x1B[0m\r\n");
     });
   }
   function closeTerminal() {
     state.termTask = null;
+    termLogs = [];
+    termHasMore = false;
+    termOldestSeq = 0;
     const bar = document.getElementById("termInputBar");
     if (bar) bar.classList.add("hidden");
     closeModal("termModal");
@@ -1277,7 +1361,16 @@
     location.hash = back;
   }
   function showDetail(id) {
+    const changed = state.selected !== id;
     state.selected = id;
+    if (changed) {
+      state.logsTask = id;
+      state.logs = [];
+      state.logsHasMore = false;
+      state.logsLoading = false;
+      state.logsOldestSeq = 0;
+      state.logsTotal = 0;
+    }
     const main = document.querySelector(".main");
     const detailShell = document.getElementById("detailShell");
     if (!detailShell) return;
@@ -1295,25 +1388,43 @@
       document.getElementById("dCrumb").innerHTML = `\u4EFB\u52A1 / <b>#${t.id}</b>`;
       document.getElementById("dBadge").innerHTML = `<span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>`;
     }
-    refreshDetail();
+    refreshDetail(changed);
   }
   function hideDetail() {
     document.getElementById("detailShell")?.classList.add("hidden");
     for (const child of detailBackground || []) child.classList.remove("hidden");
     detailBackground = null;
     state.selected = null;
+    state.logsTask = null;
+    state.logs = [];
+    state.logsHasMore = false;
+    state.logsOldestSeq = 0;
+    state.logsTotal = 0;
   }
-  async function refreshDetail() {
+  async function refreshDetail(reloadLogs = false) {
     if (!state.selected) return;
+    const id = state.selected;
+    const shouldLoadLogs = reloadLogs || state.logsTask !== id;
+    const liveLogs = shouldLoadLogs ? state.logs : [];
     try {
-      const [task, logs] = await Promise.all([
-        api(`/api/tasks/${state.selected}`),
-        api(`/api/tasks/${state.selected}/logs`)
+      const [task, page] = await Promise.all([
+        api(`/api/tasks/${id}`),
+        shouldLoadLogs ? fetchTaskLogs(id, { limit: 200 }) : Promise.resolve(null)
       ]);
+      if (state.selected !== id) return;
       const i = state.tasks.findIndex((x) => x.id === task.id);
       if (i >= 0) state.tasks[i] = task;
       else state.tasks.unshift(task);
-      state.logs = logs;
+      if (page) {
+        const byID = new Map(page.logs.map((l) => [l.id, l]));
+        for (const l of liveLogs) if (!byID.has(l.id)) byID.set(l.id, l);
+        const merged = [...byID.values()].sort((a, b) => a.seq - b.seq);
+        state.logsTask = id;
+        state.logs = merged;
+        state.logsHasMore = page.has_more;
+        state.logsOldestSeq = merged.length ? merged[0].seq : 0;
+        state.logsTotal = Math.max(page.total, merged.length);
+      }
       renderDetail(task);
     } catch (_) {
     }
@@ -1333,7 +1444,7 @@
     const bodyLength = (t.body || "").length;
     const createdAt = (t.created_at || "").slice(0, 16).replace("T", " ");
     const { visible: visibleLogs, errors: logErrors } = logStats();
-    const logMeta = `${visibleLogs} \u6761${logErrors ? ` \xB7 ${logErrors} \u4E2A\u9519\u8BEF` : ""}`;
+    const logMeta = state.logsHasMore ? `\u5DF2\u52A0\u8F7D ${visibleLogs}/${state.logsTotal} \u6761` : `${visibleLogs} \u6761`;
     const dependencyAlert = !mergeTask && t.status === "queued" && dependency.state !== "ready" ? `<div class="task-alert"><span class="task-alert-title">${dependency.state === "skipped" ? "\u524D\u5E8F\u4EA4\u4ED8\u5DF2\u8DF3\u8FC7" : "\u7B49\u5F85\u524D\u7F6E\u4EA4\u4ED8"}</span><span>${esc(dependency.reason || "\u7B49\u5F85\u8C03\u5EA6")}</span></div>` : "";
     const input = isInteractive ? `<div class="term-input detail-input">
       <input id="taskInput" autocomplete="off" aria-label="\u53D1\u9001\u7ED9 Pi \u7684\u6D88\u606F" placeholder="\u53D1\u9001\u6D88\u606F\u7ED9 Pi\uFF08Enter \u53D1\u9001\uFF09" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();sendTaskInput(${t.id},'taskInput')}">
@@ -1365,7 +1476,7 @@
       <div id="diffBox"><div class="empty">\u52A0\u8F7D\u6539\u52A8\u4E2D...</div></div>
     </details>` : ""}
     <details class="task-section task-log-section"${isLive ? " open" : ""}>
-      <summary><span>\u6267\u884C\u8BB0\u5F55</span><span class="section-meta">${logMeta}</span></summary>
+      <summary><span>\u6267\u884C\u8BB0\u5F55</span><span class="section-meta" id="logMeta">${logMeta}${logErrors ? ` \xB7 ${logErrors} \u4E2A\u9519\u8BEF` : ""}</span></summary>
       <div class="section-head">
         <div class="section-sub">${esc(agentName)} \xB7 ${runMode}</div>
         <div class="section-tools">
@@ -1387,7 +1498,12 @@
       <div id="wsBox"><div class="empty">\u52A0\u8F7D\u4E2D...</div></div>
     </details>`;
     const box = document.getElementById("logBox");
-    if (box) box.scrollTop = box.scrollHeight;
+    if (box) {
+      box.scrollTop = box.scrollHeight;
+      box.addEventListener("scroll", () => {
+        if (box.scrollTop <= 64) loadOlderLogs(box, t.id);
+      }, { passive: true });
+    }
     if (t.status === "awaiting_review") loadDiff(t.id);
     loadChildren(t.id);
     loadWorkspace(t.id);
@@ -1739,6 +1855,44 @@
     }
     return { visible, errors };
   }
+  function updateLogMeta() {
+    const meta = document.getElementById("logMeta");
+    if (!meta) return;
+    const { visible, errors } = logStats();
+    const count = state.logsHasMore ? `\u5DF2\u52A0\u8F7D ${visible}/${state.logsTotal} \u6761` : `${visible} \u6761`;
+    meta.textContent = count + (errors ? ` \xB7 ${errors} \u4E2A\u9519\u8BEF` : "");
+  }
+  async function loadOlderLogs(box, id) {
+    if (state.selected !== id || state.logsTask !== id || !state.logsHasMore || state.logsLoading) return;
+    const before = state.logsOldestSeq;
+    if (!before) return;
+    state.logsLoading = true;
+    try {
+      const page = await fetchTaskLogs(id, { before, limit: 200 });
+      if (state.selected !== id || !box.isConnected) return;
+      const existing = new Set(state.logs.map((l) => l.id));
+      const older = page.logs.filter((l) => !existing.has(l.id));
+      if (!older.length) {
+        state.logsHasMore = false;
+        updateLogMeta();
+        return;
+      }
+      const height = box.scrollHeight;
+      const top = box.scrollTop;
+      state.logs = [...older, ...state.logs];
+      state.logsHasMore = page.has_more;
+      state.logsOldestSeq = state.logs[0]?.seq || 0;
+      state.logsTotal = page.total;
+      box.insertAdjacentHTML("afterbegin", older.map(logLineHTML).filter(Boolean).join(""));
+      requestAnimationFrame(() => {
+        box.scrollTop = top + box.scrollHeight - height;
+      });
+      updateLogMeta();
+    } catch (_) {
+    } finally {
+      state.logsLoading = false;
+    }
+  }
   function logLineHTML(l) {
     const content = cleanLogContent(l.content);
     if (!content.trim() && l.stream !== "sys") return "";
@@ -1749,20 +1903,24 @@
   }
   function appendLog(l) {
     if (state.selected === l.task_id) {
+      if (state.logs.some((existing) => existing.id === l.id)) return;
       state.logs.push(l);
+      state.logsTotal = Math.max(state.logsTotal + 1, state.logs.length);
       const box = document.getElementById("logBox");
       if (box) {
+        const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 32;
         box.insertAdjacentHTML("beforeend", logLineHTML(l));
-        box.scrollTop = box.scrollHeight;
+        if (atBottom) box.scrollTop = box.scrollHeight;
+        updateLogMeta();
       }
     }
-    if (state.termTask === l.task_id) {
-      if (term) termWrite(l.content);
-    }
+    termAppendLog(l);
   }
   async function copyLogs() {
     try {
-      await navigator.clipboard.writeText(state.logs.map((l) => cleanLogContent(l.content)).filter(Boolean).join("\n"));
+      if (!state.selected) return;
+      const page = await fetchTaskLogs(state.selected, { all: true });
+      await navigator.clipboard.writeText(page.logs.map((l) => cleanLogContent(l.content)).filter(Boolean).join("\n"));
       toast("\u5DF2\u590D\u5236\u5BF9\u8BDD\u5185\u5BB9");
     } catch (_) {
       toast("\u590D\u5236\u5931\u8D25", true);

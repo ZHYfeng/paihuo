@@ -1,7 +1,12 @@
 // 模块 terminal（由 scripts/split-frontend.py 生成）
-import { api, closeModal, openModal, state, toast } from "./core.js";
+import { api, closeModal, fetchTaskLogs, openModal, state, toast } from "./core.js";
 
 export let term = null, termFit = null;
+let termLogs = [];
+let termHasMore = false;
+let termOldestSeq = 0;
+let termLoading = false;
+let ignoreTopScroll = false;
 
 export function initTerm() {
   if (term) return;
@@ -25,6 +30,9 @@ export function initTerm() {
   termFit = new FitAddon.FitAddon();
   term.loadAddon(termFit);
   term.open(document.getElementById("termX"));
+  term.onScroll(event => {
+    if (event.position === 0 && !ignoreTopScroll) loadOlderTerminalLogs();
+  });
   termFit.fit();
   window.addEventListener("resize", () => { try { termFit.fit(); } catch (_) {} });
 }
@@ -33,26 +41,86 @@ export function termWrite(content) {
   if (term) term.write(String(content ?? "") + "\r\n");
 }
 
+export function termAppendLog(l) {
+  if (state.termTask !== l.task_id || !term) return;
+  if (termLogs.some(existing => existing.id === l.id)) return;
+  termLogs.push(l);
+  termWrite(l.content);
+}
+
+function renderTerminalWindow() {
+  if (!term) return;
+  term.reset();
+  termLogs.forEach(l => termWrite(l.content));
+  if (!termLogs.length) term.write("\x1b[90m（暂无输出）\x1b[0m\r\n");
+}
+
+// xterm 本身适合渲染终端，但把数万条持久化日志一次写入仍会卡住页面。
+// 首屏从末尾开始，用户滑到顶部时再把更早窗口合并后重绘一次。
+async function loadOlderTerminalLogs() {
+  if (!state.termTask || !termHasMore || termLoading || !termOldestSeq) return;
+  const id = state.termTask;
+  termLoading = true;
+  try {
+    const page = await fetchTaskLogs(id, { before: termOldestSeq, limit: 200 });
+    if (state.termTask !== id) return;
+    const existing = new Set(termLogs.map(l => l.id));
+    const older = page.logs.filter(l => !existing.has(l.id));
+    if (!older.length) {
+      termHasMore = false;
+      return;
+    }
+    termLogs = [...older, ...termLogs];
+    termHasMore = page.has_more;
+    termOldestSeq = termLogs[0]?.seq || 0;
+    ignoreTopScroll = true;
+    const previousRows = term.buffer.active.length;
+    renderTerminalWindow();
+    term.scrollToTop();
+    // 保持原来位于旧窗口顶部的内容仍在视口中；这样继续向上滑时会再次
+    // 到达顶部并请求下一页，而不是停在刚加载页的最开头。
+    term.scrollLines(Math.max(1, term.buffer.active.length - previousRows));
+    setTimeout(() => { ignoreTopScroll = false; }, 0);
+  } catch (_) {
+    // 下次滑到顶部时重试。
+  } finally {
+    termLoading = false;
+  }
+}
+
 export function openTerminal(id) {
   const t = state.tasks.find(x => x.id === id) || {};
   document.getElementById("termTitle").textContent = `${t.agent_name || ""} · #${id} 对话`;
   openModal("termModal");
   initTerm();
   setTimeout(() => { try { termFit.fit(); } catch (_) {} }, 30);
-  term.clear();
-  term.write("\x1b[90m# loading logs...\x1b[0m\r\n");
   state.termTask = id;
+  termLogs = [];
+  termHasMore = false;
+  termOldestSeq = 0;
+  termLoading = false;
+  ignoreTopScroll = true;
+  term.reset();
+  term.write("\x1b[90m# loading latest logs...\x1b[0m\r\n");
   syncTerminalInput(t);
-  api(`/api/tasks/${id}/logs`).then(logs => {
+  fetchTaskLogs(id, { limit: 200 }).then(page => {
     if (state.termTask !== id) return;
-    term.clear();
-    logs.forEach(l => termWrite(l.content));
-    if (!logs.length) term.write("\x1b[90m（暂无输出）\x1b[0m\r\n");
+    const byID = new Map(page.logs.map(l => [l.id, l]));
+    for (const l of termLogs) if (!byID.has(l.id)) byID.set(l.id, l);
+    termLogs = [...byID.values()].sort((a, b) => a.seq - b.seq);
+    termHasMore = page.has_more;
+    termOldestSeq = termLogs[0]?.seq || 0;
+    renderTerminalWindow();
+    term.scrollToBottom();
+    setTimeout(() => { ignoreTopScroll = false; }, 0);
   }).catch(() => { term.write("\x1b[31m日志加载失败\x1b[0m\r\n"); });
 }
 
 export function closeTerminal() {
   state.termTask = null; // 停止向已关闭的弹窗追加日志
+  termLogs = [];
+  termHasMore = false;
+  termOldestSeq = 0;
   const bar = document.getElementById("termInputBar");
   if (bar) bar.classList.add("hidden");
   closeModal("termModal");

@@ -1,11 +1,11 @@
 // 模块 task（由 scripts/split-frontend.py 生成）
-import { BOARD_COLS, STATUS_LABEL, ST_COLOR, api, closeModal, esc, icon, openModal, state, toast } from "./core.js";
+import { BOARD_COLS, STATUS_LABEL, ST_COLOR, api, closeModal, esc, fetchTaskLogs, icon, openModal, state, toast } from "./core.js";
 import { loadDashboard } from "./dashboard.js";
 import { loadHistory } from "./history.js";
 import { fillSelects, loadAll, refreshOverview } from "./main.js";
 import { refreshProjectDetail } from "./projects.js";
 import { loadTemplates } from "./skills.js";
-import { openTerminal, sendTaskInput, term, termWrite } from "./terminal.js";
+import { openTerminal, sendTaskInput, termAppendLog } from "./terminal.js";
 
 // 任务详情是全站共享的视图。打开时只临时隐藏当前页面原本可见的直属内容，
 // 关闭后精确恢复，避免破坏项目/角色页自身的列表与详情切换状态。
@@ -282,7 +282,16 @@ export function closeDetail() {
 }
 
 export function showDetail(id) {
+  const changed = state.selected !== id;
   state.selected = id;
+  if (changed) {
+    state.logsTask = id;
+    state.logs = [];
+    state.logsHasMore = false;
+    state.logsLoading = false;
+    state.logsOldestSeq = 0;
+    state.logsTotal = 0;
+  }
   const main = document.querySelector(".main");
   const detailShell = document.getElementById("detailShell");
   if (!detailShell) return;
@@ -303,7 +312,7 @@ export function showDetail(id) {
     document.getElementById("dBadge").innerHTML =
       `<span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>`;
   }
-  refreshDetail();
+  refreshDetail(changed);
 }
 
 export function hideDetail() {
@@ -311,17 +320,35 @@ export function hideDetail() {
   for (const child of detailBackground || []) child.classList.remove("hidden");
   detailBackground = null;
   state.selected = null;
+  state.logsTask = null;
+  state.logs = [];
+  state.logsHasMore = false;
+  state.logsOldestSeq = 0;
+  state.logsTotal = 0;
 }
 
-export async function refreshDetail() {
+export async function refreshDetail(reloadLogs = false) {
   if (!state.selected) return;
+  const id = state.selected;
+  const shouldLoadLogs = reloadLogs || state.logsTask !== id;
+  const liveLogs = shouldLoadLogs ? state.logs : [];
   try {
-    const [task, logs] = await Promise.all([
-      api(`/api/tasks/${state.selected}`), api(`/api/tasks/${state.selected}/logs`),
+    const [task, page] = await Promise.all([
+      api(`/api/tasks/${id}`), shouldLoadLogs ? fetchTaskLogs(id, { limit: 200 }) : Promise.resolve(null),
     ]);
+    if (state.selected !== id) return;
     const i = state.tasks.findIndex(x => x.id === task.id);
     if (i >= 0) state.tasks[i] = task; else state.tasks.unshift(task);
-    state.logs = logs;
+    if (page) {
+      const byID = new Map(page.logs.map(l => [l.id, l]));
+      for (const l of liveLogs) if (!byID.has(l.id)) byID.set(l.id, l);
+      const merged = [...byID.values()].sort((a, b) => a.seq - b.seq);
+      state.logsTask = id;
+      state.logs = merged;
+      state.logsHasMore = page.has_more;
+      state.logsOldestSeq = merged.length ? merged[0].seq : 0;
+      state.logsTotal = Math.max(page.total, merged.length);
+    }
     renderDetail(task);
   } catch (_) { /* 任务已删除 */ }
 }
@@ -341,7 +368,9 @@ export function renderDetail(t) {
   const bodyLength = (t.body || "").length;
   const createdAt = (t.created_at || "").slice(0, 16).replace("T", " ");
   const { visible: visibleLogs, errors: logErrors } = logStats();
-  const logMeta = `${visibleLogs} 条${logErrors ? ` · ${logErrors} 个错误` : ""}`;
+  const logMeta = state.logsHasMore
+    ? `已加载 ${visibleLogs}/${state.logsTotal} 条`
+    : `${visibleLogs} 条`;
   const dependencyAlert = !mergeTask && t.status === "queued" && dependency.state !== "ready"
     ? `<div class="task-alert"><span class="task-alert-title">${dependency.state === "skipped" ? "前序交付已跳过" : "等待前置交付"}</span><span>${esc(dependency.reason || "等待调度")}</span></div>` : "";
   const input = isInteractive ? `<div class="term-input detail-input">
@@ -374,7 +403,7 @@ export function renderDetail(t) {
       <div id="diffBox"><div class="empty">加载改动中...</div></div>
     </details>` : ""}
     <details class="task-section task-log-section"${isLive ? " open" : ""}>
-      <summary><span>执行记录</span><span class="section-meta">${logMeta}</span></summary>
+      <summary><span>执行记录</span><span class="section-meta" id="logMeta">${logMeta}${logErrors ? ` · ${logErrors} 个错误` : ""}</span></summary>
       <div class="section-head">
         <div class="section-sub">${esc(agentName)} · ${runMode}</div>
         <div class="section-tools">
@@ -396,7 +425,12 @@ export function renderDetail(t) {
       <div id="wsBox"><div class="empty">加载中...</div></div>
     </details>`;
   const box = document.getElementById("logBox");
-  if (box) box.scrollTop = box.scrollHeight;
+  if (box) {
+    box.scrollTop = box.scrollHeight;
+    box.addEventListener("scroll", () => {
+      if (box.scrollTop <= 64) loadOlderLogs(box, t.id);
+    }, { passive: true });
+  }
   if (t.status === "awaiting_review") loadDiff(t.id);
   loadChildren(t.id);
   loadWorkspace(t.id);
@@ -778,6 +812,47 @@ export function logStats() {
   return { visible, errors };
 }
 
+function updateLogMeta() {
+  const meta = document.getElementById("logMeta");
+  if (!meta) return;
+  const { visible, errors } = logStats();
+  const count = state.logsHasMore ? `已加载 ${visible}/${state.logsTotal} 条` : `${visible} 条`;
+  meta.textContent = count + (errors ? ` · ${errors} 个错误` : "");
+}
+
+// 详情页只保留当前日志窗口。向顶部滑动时加载更早的一页，并补偿新增
+// DOM 高度，避免用户的阅读位置因 prepend 跳动。
+async function loadOlderLogs(box, id) {
+  if (state.selected !== id || state.logsTask !== id || !state.logsHasMore || state.logsLoading) return;
+  const before = state.logsOldestSeq;
+  if (!before) return;
+  state.logsLoading = true;
+  try {
+    const page = await fetchTaskLogs(id, { before, limit: 200 });
+    if (state.selected !== id || !box.isConnected) return;
+    const existing = new Set(state.logs.map(l => l.id));
+    const older = page.logs.filter(l => !existing.has(l.id));
+    if (!older.length) {
+      state.logsHasMore = false;
+      updateLogMeta();
+      return;
+    }
+    const height = box.scrollHeight;
+    const top = box.scrollTop;
+    state.logs = [...older, ...state.logs];
+    state.logsHasMore = page.has_more;
+    state.logsOldestSeq = state.logs[0]?.seq || 0;
+    state.logsTotal = page.total;
+    box.insertAdjacentHTML("afterbegin", older.map(logLineHTML).filter(Boolean).join(""));
+    requestAnimationFrame(() => { box.scrollTop = top + box.scrollHeight - height; });
+    updateLogMeta();
+  } catch (_) {
+    // 下次继续滑到顶部时重试，避免一次网络抖动把历史日志永久隐藏。
+  } finally {
+    state.logsLoading = false;
+  }
+}
+
 export function logLineHTML(l) {
   const content = cleanLogContent(l.content);
   if (!content.trim() && l.stream !== "sys") return "";
@@ -790,21 +865,25 @@ export function logsHTML() {
 
 export function appendLog(l) {
   if (state.selected === l.task_id) {
+    if (state.logs.some(existing => existing.id === l.id)) return;
     state.logs.push(l);
+    state.logsTotal = Math.max(state.logsTotal + 1, state.logs.length);
     const box = document.getElementById("logBox");
     if (box) {
+      const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 32;
       box.insertAdjacentHTML("beforeend", logLineHTML(l));
-      box.scrollTop = box.scrollHeight;
+      if (atBottom) box.scrollTop = box.scrollHeight;
+      updateLogMeta();
     }
   }
-  if (state.termTask === l.task_id) {
-    if (term) termWrite(l.content);
-  }
+  termAppendLog(l);
 }
 
 export async function copyLogs() {
   try {
-    await navigator.clipboard.writeText(state.logs.map(l => cleanLogContent(l.content)).filter(Boolean).join("\n"));
+    if (!state.selected) return;
+    const page = await fetchTaskLogs(state.selected, { all: true });
+    await navigator.clipboard.writeText(page.logs.map(l => cleanLogContent(l.content)).filter(Boolean).join("\n"));
     toast("已复制对话内容");
   } catch (_) { toast("复制失败", true); }
 }

@@ -10,6 +10,11 @@ export const state = {
   view: "board",
   selected: null,
   logs: [],
+  logsTask: null,
+  logsHasMore: false,
+  logsLoading: false,
+  logsOldestSeq: 0,
+  logsTotal: 0,
   termTask: null,
   es: null,        // SSE 连接（隐藏时断开、可见时重连）
   history: [], historySel: new Set(),
@@ -108,6 +113,24 @@ export async function api(path, opts = {}) {
   }
   if (res.status === 204) return null;
   return res.json();
+}
+
+// 日志接口分页返回窗口；兼容旧服务端返回数组，便于前端静态资源与服务端
+// 更新短暂错位时仍能显示已有日志。
+export async function fetchTaskLogs(id, options = {}) {
+  const params = new URLSearchParams();
+  if (options.all) params.set("all", "1");
+  else {
+    params.set("limit", String(options.limit || 200));
+    if (options.before) params.set("before", String(options.before));
+  }
+  const data = await api(`/api/tasks/${id}/logs?${params}`);
+  if (Array.isArray(data)) return { logs: data, has_more: false, total: data.length };
+  return {
+    logs: Array.isArray(data?.logs) ? data.logs : [],
+    has_more: Boolean(data?.has_more),
+    total: Number(data?.total) || 0,
+  };
 }
 
 export function activeModal() {

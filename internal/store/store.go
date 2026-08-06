@@ -1355,6 +1355,56 @@ func (s *Store) ListLogs(taskID int64) ([]TaskLog, error) {
 	return out, rows.Err()
 }
 
+// ListLogsPage 返回日志的一个窗口。默认从最新日志向前取，beforeSeq 不为零时
+// 只取更早的记录；结果仍按 seq 正序返回，方便前端直接追加到终端顶部。
+// 日志内容可能非常大，任务详情页不应为了打开一个任务把整张表读入内存。
+func (s *Store) ListLogsPage(taskID, beforeSeq int64, limit int) (logs []TaskLog, hasMore bool, total int, err error) {
+	const defaultLimit = 200
+	const maxLimit = 500
+	if limit <= 0 {
+		limit = defaultLimit
+	}
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+
+	if err = s.db.QueryRow("SELECT COUNT(*) FROM task_logs WHERE task_id=?", taskID).Scan(&total); err != nil {
+		return nil, false, 0, err
+	}
+
+	const cols = "SELECT id, task_id, seq, stream, content, created_at FROM task_logs WHERE task_id=?"
+	var rows *sql.Rows
+	if beforeSeq > 0 {
+		rows, err = s.db.Query(cols+" AND seq<? ORDER BY seq DESC LIMIT ?", taskID, beforeSeq, limit+1)
+	} else {
+		rows, err = s.db.Query(cols+" ORDER BY seq DESC LIMIT ?", taskID, limit+1)
+	}
+	if err != nil {
+		return nil, false, 0, err
+	}
+	defer rows.Close()
+
+	logs = make([]TaskLog, 0, limit)
+	for rows.Next() {
+		var l TaskLog
+		if err = rows.Scan(&l.ID, &l.TaskID, &l.Seq, &l.Stream, &l.Content, &l.CreatedAt); err != nil {
+			return nil, false, 0, err
+		}
+		logs = append(logs, l)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, false, 0, err
+	}
+	if len(logs) > limit {
+		hasMore = true
+		logs = logs[:limit]
+	}
+	for i, j := 0, len(logs)-1; i < j; i, j = i+1, j-1 {
+		logs[i], logs[j] = logs[j], logs[i]
+	}
+	return logs, hasMore, total, nil
+}
+
 // ---------------------------------------------------------------------------
 // 定时任务
 

@@ -721,6 +721,7 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 .term-body {
   font-family: var(--font-mono); font-size: 12px; line-height: 18px;
   padding: 10px 12px; max-height: 420px; overflow-y: auto;
+  overscroll-behavior: contain; overflow-anchor: none;
 }
 .term-body .line { display: flex; gap: 10px; white-space: pre-wrap; word-break: break-all; padding: 1px 0; }
 .term-body .line:hover { background: rgba(148, 163, 184, .04); }

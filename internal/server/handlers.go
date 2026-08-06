@@ -620,12 +620,34 @@ func (s *Server) getTaskLogs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	logs, err := s.st.ListLogs(id)
+	// all=1 只供用户主动点击“复制”时使用；普通页面始终走分页接口。
+	if r.URL.Query().Get("all") == "1" {
+		logs, err := s.st.ListLogs(id)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, logs)
+		return
+	}
+	limit := 200
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	var before int64
+	if v := r.URL.Query().Get("before"); v != "" {
+		before, _ = strconv.ParseInt(v, 10, 64)
+	}
+	logs, hasMore, total, err := s.st.ListLogsPage(id, before, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, logs)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"logs": logs, "has_more": hasMore, "total": total,
+	})
 }
 
 // getTaskChildren 返回子任务列表（多 agent 协作：拆分大任务并行执行）。
