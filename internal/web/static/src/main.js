@@ -1,5 +1,5 @@
 // 模块 main（由 scripts/split-frontend.py 生成）
-import { addChip, agentTab, closeAgentDetail, deleteAgent, filterSkillOptions, hideAgentDetail, openAgentDetail, refreshAgentCatalog, removeChip, renderAgentList, renderAgentOverview, saveAgentConcurrency, setAgentView, showAgentDetail, syncModelThinking, toggleAgent, toggleSkill } from "./agents.js";
+import { addChip, agentTab, closeAgentDetail, deleteAgent, filterSkillOptions, hideAgentDetail, openAgentDetail, refreshAgentCatalog, removeChip, renderAgentList, renderAgentOverview, saveAgentConcurrency, setAgentSort, setAgentView, showAgentDetail, syncModelThinking, toggleAgent, toggleSkill } from "./agents.js";
 import { activeModal, api, closeModal, esc, fmtDur, fmtPct, logout, state, toast } from "./core.js";
 import { loadDashboard } from "./dashboard.js";
 import { cleanupHistory, deleteSelected, loadHistory, selectAllNonMergeTasks, toggleAll, toggleRow } from "./history.js";
@@ -318,6 +318,7 @@ export function sse() {
       } else if (path === "/history") {
         loadHistory();
       } else if (path === "/roles") {
+        renderAgentList();
         if (state.agentTab === "overview") renderAgentOverview(state.agentEditing);
       } else if (path === "/projects") {
         renderProjectList();
@@ -395,6 +396,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     let av = "grid";
     try { av = localStorage.getItem("paihuo.agentView") || "grid"; } catch (_) {}
     setAgentView(av === "table" ? "table" : "grid");
+    let as = "name-asc";
+    try { as = localStorage.getItem("paihuo.agentSort") || "name-asc"; } catch (_) {}
+    setAgentSort(as);
   } else if (path === "/agents") {
     loadProvision();
   } else if (path === "/projects") {
@@ -495,6 +499,7 @@ window.sendRoleStudioChat = sendRoleStudioChat;
 window.sendRoleStudioTest = sendRoleStudioTest;
 window.sendTaskInput = sendTaskInput;
 window.sendTerminalInput = sendTerminalInput;
+window.setAgentSort = setAgentSort;
 window.setAgentView = setAgentView;
 window.setSkillTab = setSkillTab;
 window.setSkillView = setSkillView;

@@ -34,6 +34,7 @@
     projectView: null,
     // 项目详情中的项目 id
     agentView: "grid",
+    agentSort: "name-asc",
     skillLib: [],
     // 注册到 paihuo 工作目录的技能库 [{id,name,description,tags,dir}]
     skillSelected: /* @__PURE__ */ new Set(),
@@ -2529,6 +2530,75 @@
 
   // internal/web/static/src/agents.js
   var dlSeq = 0;
+  var AGENT_SORT_OPTIONS = [
+    ["name-asc", "\u540D\u79F0 A-Z"],
+    ["name-desc", "\u540D\u79F0 Z-A"],
+    ["created-desc", "\u6700\u8FD1\u521B\u5EFA"],
+    ["created-asc", "\u6700\u65E9\u521B\u5EFA"],
+    ["cli-asc", "CLI A-Z"],
+    ["model-asc", "\u6A21\u578B A-Z"],
+    ["concurrency-desc", "\u6700\u5927\u5E76\u53D1\uFF1A\u9AD8\u5230\u4F4E"],
+    ["concurrency-asc", "\u6700\u5927\u5E76\u53D1\uFF1A\u4F4E\u5230\u9AD8"],
+    ["tasks-desc", "\u4EFB\u52A1\u6570\uFF1A\u591A\u5230\u5C11"],
+    ["tasks-asc", "\u4EFB\u52A1\u6570\uFF1A\u5C11\u5230\u591A"],
+    ["status-enabled", "\u542F\u7528\u72B6\u6001\u4F18\u5148"]
+  ];
+  function normalizeAgentSort(sort) {
+    return AGENT_SORT_OPTIONS.some(([value]) => value === sort) ? sort : "name-asc";
+  }
+  function compareText(a, b) {
+    return String(a || "").localeCompare(String(b || ""), "zh-CN", {
+      numeric: true,
+      sensitivity: "base"
+    });
+  }
+  function compareAgentValues(a, b, sort, stats) {
+    switch (sort) {
+      case "name-asc":
+        return compareText(a.name, b.name);
+      case "name-desc":
+        return compareText(b.name, a.name);
+      case "created-desc":
+        return compareText(b.created_at, a.created_at);
+      case "created-asc":
+        return compareText(a.created_at, b.created_at);
+      case "cli-asc":
+        return compareText(a.cli, b.cli);
+      case "model-asc":
+        return compareText(a.role_config?.model, b.role_config?.model);
+      case "concurrency-desc":
+        return (b.max_concurrency || 1) - (a.max_concurrency || 1);
+      case "concurrency-asc":
+        return (a.max_concurrency || 1) - (b.max_concurrency || 1);
+      case "tasks-desc":
+        return stats(b).total - stats(a).total;
+      case "tasks-asc":
+        return stats(a).total - stats(b).total;
+      case "status-enabled":
+        return Number(b.enabled) - Number(a.enabled);
+      default:
+        return 0;
+    }
+  }
+  function sortAgents(list, sort = state.agentSort) {
+    const normalized = normalizeAgentSort(sort);
+    const stats = /* @__PURE__ */ new Map();
+    const getStats = (a) => {
+      if (!stats.has(a.id)) stats.set(a.id, agentTaskStats(a));
+      return stats.get(a.id);
+    };
+    return [...list].sort((a, b) => compareAgentValues(a, b, normalized, getStats) || compareText(a.name, b.name) || Number(a.id || 0) - Number(b.id || 0));
+  }
+  function setAgentSort(sort) {
+    state.agentSort = normalizeAgentSort(sort);
+    const select = document.getElementById("agentSort");
+    if (select && select.value !== state.agentSort) select.value = state.agentSort;
+    try {
+      localStorage.setItem("paihuo.agentSort", state.agentSort);
+    } catch (_) {
+    }
+    renderAgentList();
+  }
   function setAgentView(v) {
     state.agentView = v;
     const g = document.getElementById("segGrid"), t = document.getElementById("segTable");
@@ -2559,7 +2629,7 @@
       const rc = a.role_config || {};
       return [a.name, a.description, a.cli, rc.model].some((value) => String(value || "").toLowerCase().includes(q));
     });
-    return { list, query: q };
+    return { list: sortAgents(list), query: q };
   }
   function renderAgentEmpty(list, query) {
     const empty = document.getElementById("agentEmpty");
@@ -3987,6 +4057,7 @@
         } else if (path === "/history") {
           loadHistory();
         } else if (path === "/roles") {
+          renderAgentList();
           if (state.agentTab === "overview") renderAgentOverview(state.agentEditing);
         } else if (path === "/projects") {
           renderProjectList();
@@ -4080,6 +4151,12 @@
       } catch (_) {
       }
       setAgentView(av === "table" ? "table" : "grid");
+      let as = "name-asc";
+      try {
+        as = localStorage.getItem("paihuo.agentSort") || "name-asc";
+      } catch (_) {
+      }
+      setAgentSort(as);
     } else if (path === "/agents") {
       loadProvision();
     } else if (path === "/projects") {
@@ -4179,6 +4256,7 @@
   window.sendRoleStudioTest = sendRoleStudioTest;
   window.sendTaskInput = sendTaskInput;
   window.sendTerminalInput = sendTerminalInput;
+  window.setAgentSort = setAgentSort;
   window.setAgentView = setAgentView;
   window.setSkillTab = setSkillTab;
   window.setSkillView = setSkillView;

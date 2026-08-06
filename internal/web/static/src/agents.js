@@ -6,6 +6,69 @@ import { openTask } from "./task.js";
 
 export let dlSeq = 0;
 
+export const AGENT_SORT_OPTIONS = [
+  ["name-asc", "名称 A-Z"],
+  ["name-desc", "名称 Z-A"],
+  ["created-desc", "最近创建"],
+  ["created-asc", "最早创建"],
+  ["cli-asc", "CLI A-Z"],
+  ["model-asc", "模型 A-Z"],
+  ["concurrency-desc", "最大并发：高到低"],
+  ["concurrency-asc", "最大并发：低到高"],
+  ["tasks-desc", "任务数：多到少"],
+  ["tasks-asc", "任务数：少到多"],
+  ["status-enabled", "启用状态优先"],
+];
+
+function normalizeAgentSort(sort) {
+  return AGENT_SORT_OPTIONS.some(([value]) => value === sort) ? sort : "name-asc";
+}
+
+function compareText(a, b) {
+  return String(a || "").localeCompare(String(b || ""), "zh-CN", {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
+function compareAgentValues(a, b, sort, stats) {
+  switch (sort) {
+    case "name-asc": return compareText(a.name, b.name);
+    case "name-desc": return compareText(b.name, a.name);
+    case "created-desc": return compareText(b.created_at, a.created_at);
+    case "created-asc": return compareText(a.created_at, b.created_at);
+    case "cli-asc": return compareText(a.cli, b.cli);
+    case "model-asc": return compareText(a.role_config?.model, b.role_config?.model);
+    case "concurrency-desc": return (b.max_concurrency || 1) - (a.max_concurrency || 1);
+    case "concurrency-asc": return (a.max_concurrency || 1) - (b.max_concurrency || 1);
+    case "tasks-desc": return stats(b).total - stats(a).total;
+    case "tasks-asc": return stats(a).total - stats(b).total;
+    case "status-enabled": return Number(b.enabled) - Number(a.enabled);
+    default: return 0;
+  }
+}
+
+export function sortAgents(list, sort = state.agentSort) {
+  const normalized = normalizeAgentSort(sort);
+  const stats = new Map();
+  const getStats = a => {
+    if (!stats.has(a.id)) stats.set(a.id, agentTaskStats(a));
+    return stats.get(a.id);
+  };
+  return [...list].sort((a, b) =>
+    compareAgentValues(a, b, normalized, getStats)
+      || compareText(a.name, b.name)
+      || Number(a.id || 0) - Number(b.id || 0));
+}
+
+export function setAgentSort(sort) {
+  state.agentSort = normalizeAgentSort(sort);
+  const select = document.getElementById("agentSort");
+  if (select && select.value !== state.agentSort) select.value = state.agentSort;
+  try { localStorage.setItem("paihuo.agentSort", state.agentSort); } catch (_) {}
+  renderAgentList();
+}
+
 export function setAgentView(v) {
   state.agentView = v;
   const g = document.getElementById("segGrid"), t = document.getElementById("segTable");
@@ -36,7 +99,7 @@ export function filteredAgents() {
     return [a.name, a.description, a.cli, rc.model]
       .some(value => String(value || "").toLowerCase().includes(q));
   });
-  return { list, query: q };
+  return { list: sortAgents(list), query: q };
 }
 
 export function renderAgentEmpty(list, query) {

@@ -24,6 +24,19 @@
         <button id="segTable" onclick="setAgentView('table')">表格</button>
       </div>
       <input id="aSearch" class="inp" aria-label="搜索角色" placeholder="搜索角色…" oninput="renderAgentList()">
+      <select id="agentSort" class="sel-md" aria-label="角色排序方式" title="选择角色排序方式" onchange="setAgentSort(this.value)">
+        <option value="name-asc">名称 A-Z</option>
+        <option value="name-desc">名称 Z-A</option>
+        <option value="created-desc">最近创建</option>
+        <option value="created-asc">最早创建</option>
+        <option value="cli-asc">CLI A-Z</option>
+        <option value="model-asc">模型 A-Z</option>
+        <option value="concurrency-desc">最大并发：高到低</option>
+        <option value="concurrency-asc">最大并发：低到高</option>
+        <option value="tasks-desc">任务数：多到少</option>
+        <option value="tasks-asc">任务数：少到多</option>
+        <option value="status-enabled">启用状态优先</option>
+      </select>
       <span class="spacer"></span>
       <span id="agentCount" class="count-info"></span>
     </div>
