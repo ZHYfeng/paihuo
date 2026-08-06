@@ -34,7 +34,11 @@
         <tbody id="agentList"></tbody>
       </table>
     </div>
-    <div id="agentEmpty" class="empty hidden">还没有角色。每个角色绑定一种 CLI，配置按该 CLI 的官方文档深度定制。</div>
+    <div id="agentEmpty" class="empty hidden">
+      <b class="empty-title">创建第一个任务角色</b>
+      <span class="empty-copy">角色把一个本机 CLI、模型、技能与并发策略组合为可复用的执行配置。</span>
+      <button type="button" class="btn brand sm" onclick="openRoleStudio()">创建角色</button>
+    </div>
   </div>
 
   <!-- 角色详情 -->

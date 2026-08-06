@@ -5,8 +5,6 @@
     <h1>工作台</h1>
   </div>
   <span class="spacer"></span>
-  <span class="header-live"><i></i>本机中枢在线</span>
-  <span class="header-note">任务、项目与智能体实时概览</span>
   <span class="kbd-hint"><kbd>N</kbd></span>
   <button type="button" class="btn brand sm" onclick="openNewTask()">
     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -16,24 +14,18 @@
 
 <div class="page-content" id="dashShell">
   <!-- ① 统计条 -->
-  <section class="stats-strip" id="dashStats" aria-label="运行概览"></section>
+  <section class="stats-strip dashboard-stats" id="dashStats" aria-label="需要关注的运行指标"></section>
 
   <!-- ②③ 任务执行区 + 项目区 -->
   <div class="dash-grid">
     <section class="dash-main" aria-labelledby="dashExecutionTitle">
       <div class="dash-sec-head">
-        <span class="dash-sec-title" id="dashExecutionTitle">任务执行区</span>
+        <span class="dash-sec-title" id="dashExecutionTitle">待办与执行</span>
+        <span class="dash-sec-note">先处理审批，再跟进执行</span>
         <span class="spacer"></span>
         <a class="sec-link" href="/board">完整看板 <span class="arw">→</span></a>
       </div>
       <div class="dash-cols">
-        <div class="dash-col">
-          <div class="dash-col-head">
-            <span class="st-dot" style="background:var(--st-running);box-shadow:0 0 7px var(--st-running)"></span>
-            <span>进行中</span><span class="count" id="dashRunningCount"></span>
-          </div>
-          <div class="dash-list" id="dashRunning"></div>
-        </div>
         <div class="dash-col">
           <div class="dash-col-head">
             <span class="st-dot" style="background:var(--st-review);box-shadow:0 0 7px var(--st-review)"></span>
@@ -41,28 +33,32 @@
           </div>
           <div class="dash-list" id="dashReview"></div>
         </div>
+        <div class="dash-col">
+          <div class="dash-col-head">
+            <span class="st-dot" style="background:var(--st-running);box-shadow:0 0 7px var(--st-running)"></span>
+            <span>进行中</span><span class="count" id="dashRunningCount"></span>
+          </div>
+          <div class="dash-list" id="dashRunning"></div>
+        </div>
       </div>
     </section>
 
     <aside class="dash-side" aria-label="项目与运行环境">
-      <div class="dash-sec-head">
-        <span class="dash-sec-title">项目</span>
-        <span class="spacer"></span>
-        <button class="btn xs" onclick="openProjectModal()">新建</button>
+      <div class="dash-side-section">
+        <div class="dash-sec-head">
+          <span class="dash-sec-title">项目进展</span>
+          <span class="spacer"></span>
+          <button class="btn xs" onclick="openProjectModal()">新建</button>
+        </div>
+        <div class="dash-projects" id="dashProjects"></div>
       </div>
-      <div class="dash-projects" id="dashProjects"></div>
-
-      <div class="dash-sec-head dash-sec-gap">
-        <span class="dash-sec-title">智能体</span>
-        <span class="spacer"></span>
-        <a class="sec-link" href="/agents">管理 <span class="arw">→</span></a>
-      </div>
-      <div id="dashAgents" class="dash-agents"></div>
-      <div class="dash-links">
-        <a class="t-link" href="/roles">角色</a>
-        <a class="t-link" href="/skills">技能</a>
-        <a class="t-link" href="/history">历史</a>
-        <a class="t-link" href="/autopilots">定时任务</a>
+      <div class="dash-side-section dash-side-runtime">
+        <div class="dash-sec-head dash-sec-gap">
+          <span class="dash-sec-title">运行环境</span>
+          <span class="spacer"></span>
+          <a class="sec-link" href="/agents">管理 <span class="arw">→</span></a>
+        </div>
+        <div id="dashAgents" class="dash-agents"></div>
       </div>
     </aside>
   </div>

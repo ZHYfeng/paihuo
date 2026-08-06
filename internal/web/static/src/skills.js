@@ -265,11 +265,19 @@ export function renderSkillLib() {
   }
   const empty = document.getElementById("skillEmpty");
   if (empty) {
-    empty.textContent = lib.length === 0
-      ? "技能库为空。点击右上角「添加技能」，可导入单个目录或扫描一个目录树中的全部 skills。"
-      : `没有符合当前筛选条件的技能${query || tag ? "，可以清除搜索或标签筛选" : ""}`;
+    empty.innerHTML = lib.length === 0
+      ? `<b class="empty-title">沉淀第一个可复用技能</b>
+        <span class="empty-copy">导入单个技能目录，或扫描一个目录树中的全部 skills。</span>
+        <button type="button" class="btn brand sm" onclick="openSkillModal()">添加技能</button>`
+      : `<b class="empty-title">没有符合当前条件的技能</b>
+        <span class="empty-copy">清除搜索词与标签筛选后，再查看完整技能库。</span>
+        <button type="button" class="btn sm" onclick="document.getElementById('skillSearch').value='';document.getElementById('skillTagFilter').value='';renderSkillLib()">清除筛选</button>`;
     empty.classList.toggle("hidden", list.length > 0);
   }
+  const hasLibrary = lib.length > 0;
+  document.getElementById("skillDisplaySeg")?.classList.toggle("hidden", !hasLibrary);
+  document.getElementById("skillFilterControls")?.classList.toggle("hidden", !hasLibrary);
+  document.getElementById("skillManageControls")?.classList.toggle("hidden", !hasLibrary);
   const cnt = document.getElementById("skillCount");
   if (cnt) cnt.textContent = list.length === lib.length ? `${lib.length} 个技能` : `${list.length} / ${lib.length} 个技能`;
   syncSkillSelectionControls(groups);

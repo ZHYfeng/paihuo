@@ -41,9 +41,9 @@ export function renderDashTasks() {
   const rev = document.getElementById("dashReview");
   if (!run || !rev) return;
   const running = state.tasks.filter(t => ["queued", "claimed", "running"].includes(t.status))
-    .sort((a, b) => (a.created_at || "") < (b.created_at || "") ? 1 : -1).slice(0, 12);
+    .sort((a, b) => (a.created_at || "") < (b.created_at || "") ? 1 : -1).slice(0, 6);
   const review = state.tasks.filter(t => t.status === "awaiting_review")
-    .sort((a, b) => (a.created_at || "") < (b.created_at || "") ? 1 : -1).slice(0, 12);
+    .sort((a, b) => (a.created_at || "") < (b.created_at || "") ? 1 : -1).slice(0, 6);
   run.innerHTML = running.map(t => dashCardHTML(t)).join("") || dashEmpty(
     "执行队列已清空", "创建任务后，进度会在这里实时更新。",
     `<button type="button" class="btn xs" onclick="openNewTask()">派发任务</button>`);
@@ -73,18 +73,23 @@ export function renderDashProjects() {
     </div>`;
     return;
   }
-  box.innerHTML = active.map(p => {
+  const ranked = active.map(p => {
     const ts = state.tasks.filter(t => t.project_id === p.id);
     const done = ts.filter(t => t.status === "succeeded").length;
     const pct = ts.length ? Math.round(done / ts.length * 100) : 0;
     const inflight = ts.filter(t => ["queued", "claimed", "running", "awaiting_review"].includes(t.status)).length;
+    return { p, ts, pct, inflight };
+  }).sort((a, b) => b.inflight - a.inflight || a.p.name.localeCompare(b.p.name, "zh-CN"));
+  const visible = ranked.slice(0, 4);
+  box.innerHTML = visible.map(({ p, ts, pct, inflight }) => {
     return `<a class="dash-proj" href="/projects#/project/${p.id}">
       <div class="dp-top"><b title="${esc(p.name)}">${esc(p.name)}</b>
         ${inflight ? `<span class="badge running">${inflight} 活跃</span>` : `<span class="badge">${ts.length} 任务</span>`}</div>
       <div class="pc-progress"><div class="pp-bar"><div style="width:${pct}%"></div></div>
         <span class="pc-pct">${pct}%</span></div>
     </a>`;
-  }).join("") || `<div class="empty">暂无活跃项目</div>`;
+  }).join("") + (ranked.length > visible.length
+    ? `<a class="dash-more" href="/projects">查看其余 ${ranked.length - visible.length} 个项目 <span aria-hidden="true">→</span></a>` : "");
 }
 
 export async function loadDashAgents() {
@@ -94,8 +99,6 @@ export async function loadDashAgents() {
     if (!box) return;
     const installed = prov.filter(p => p.installed);
     const agents = state.agents || [];
-    const running = state.tasks.filter(t => t.status === "running").length;
-    const review = state.tasks.filter(t => t.status === "awaiting_review").length;
     box.innerHTML = `
       <div class="dash-prov">
         ${prov.map(p => `<span class="prov-chip ${p.installed ? "ok" : ""} ${p.login ? "login" : ""}" title="${esc(p.name)}${p.installed ? " " + esc(p.version) : " — 未安装"}${p.installed && !p.login ? "（未登录）" : ""}"><i aria-hidden="true"></i>${esc(p.name)}<span class="sr-only">${p.installed ? (p.login ? "已安装并登录" : "已安装，未登录") : "未安装"}</span></span>`).join("")}
@@ -103,8 +106,6 @@ export async function loadDashAgents() {
       <div class="dash-prov-meta">
         <span><b>${installed.length}/${prov.length}</b> 已安装</span>
         <span><b>${agents.filter(a => a.enabled).length}</b> 角色启用</span>
-        <span><b style="color:var(--st-running)">${running}</b> 运行中</span>
-        <span><b style="color:var(--st-review)">${review}</b> 待审批</span>
       </div>`;
   } catch (_) {}
 }

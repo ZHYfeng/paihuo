@@ -43,7 +43,11 @@
   <!-- Skills 库 -->
   <div id="skillShell">
     <div class="skill-groups" id="skillGrid"></div>
-    <div id="skillEmpty" class="empty hidden">技能库为空。点击右上角「添加技能」，可导入单个目录或扫描一个目录树中的全部 skills。</div>
+    <div id="skillEmpty" class="empty hidden">
+      <b class="empty-title">沉淀第一个可复用技能</b>
+      <span class="empty-copy">导入单个技能目录，或扫描一个目录树中的全部 skills。</span>
+      <button type="button" class="btn brand sm" onclick="openSkillModal()">添加技能</button>
+    </div>
   </div>
 
   <!-- Skill 详情 -->

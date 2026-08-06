@@ -21,7 +21,11 @@
       <thead><tr><th>名称</th><th>执行时间</th><th>角色</th><th>类型 / 项目</th><th>标题模板</th><th>上次执行</th><th>启用</th><th style="width:100px">操作</th></tr></thead>
       <tbody id="scheduleList"></tbody>
     </table>
-    <div id="scheduleEmpty" class="empty hidden">还没有定时任务，点击右上角「新建定时任务」</div>
+    <div id="scheduleEmpty" class="empty hidden">
+      <b class="empty-title">让重复工作自动运行</b>
+      <span class="empty-copy">创建周期计划，系统会按时生成任务并沿用项目交付顺序。</span>
+      <button type="button" class="btn brand sm" onclick="openScheduleModal()">新建定时任务</button>
+    </div>
   </div>
 </div>
 

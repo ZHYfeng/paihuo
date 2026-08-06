@@ -42,11 +42,15 @@ export function filteredAgents() {
 export function renderAgentEmpty(list, query) {
   const empty = document.getElementById("agentEmpty");
   if (!empty) return;
-  empty.textContent = list.length
-    ? ""
-    : query
-      ? "没有符合条件的角色"
-      : "还没有角色。每个角色绑定一种 CLI，配置按该 CLI 的官方文档深度定制。";
+  if (!list.length) {
+    empty.innerHTML = query
+      ? `<b class="empty-title">没有符合条件的角色</b>
+        <span class="empty-copy">尝试清除搜索词，查看全部任务角色。</span>
+        <button type="button" class="btn sm" onclick="document.getElementById('aSearch').value='';renderAgentList()">清除搜索</button>`
+      : `<b class="empty-title">创建第一个任务角色</b>
+        <span class="empty-copy">角色把一个本机 CLI、模型、技能与并发策略组合为可复用的执行配置。</span>
+        <button type="button" class="btn brand sm" onclick="openRoleStudio()">创建角色</button>`;
+  }
   empty.classList.toggle("hidden", list.length > 0);
 }
 

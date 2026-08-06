@@ -21,7 +21,11 @@
       <span id="projectCount" class="count-info"></span>
     </div>
     <div class="project-grid" id="projectGrid"></div>
-    <div id="projectEmpty" class="empty hidden">还没有项目。项目把任务和角色产出聚合到一起，并绑定工作目录：先建项目，再往看板里派活。</div>
+    <div id="projectEmpty" class="empty hidden">
+      <b class="empty-title">建立第一个项目工作区</b>
+      <span class="empty-copy">项目用于绑定工作目录，并把任务、进度和角色产出聚合到一起。</span>
+      <button type="button" class="btn brand sm" onclick="openProjectModal()">新建项目</button>
+    </div>
   </div>
 
   <!-- 项目详情 -->

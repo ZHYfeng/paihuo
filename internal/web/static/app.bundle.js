@@ -235,8 +235,8 @@
     const run = document.getElementById("dashRunning");
     const rev = document.getElementById("dashReview");
     if (!run || !rev) return;
-    const running = state.tasks.filter((t) => ["queued", "claimed", "running"].includes(t.status)).sort((a, b) => (a.created_at || "") < (b.created_at || "") ? 1 : -1).slice(0, 12);
-    const review = state.tasks.filter((t) => t.status === "awaiting_review").sort((a, b) => (a.created_at || "") < (b.created_at || "") ? 1 : -1).slice(0, 12);
+    const running = state.tasks.filter((t) => ["queued", "claimed", "running"].includes(t.status)).sort((a, b) => (a.created_at || "") < (b.created_at || "") ? 1 : -1).slice(0, 6);
+    const review = state.tasks.filter((t) => t.status === "awaiting_review").sort((a, b) => (a.created_at || "") < (b.created_at || "") ? 1 : -1).slice(0, 6);
     run.innerHTML = running.map((t) => dashCardHTML(t)).join("") || dashEmpty(
       "\u6267\u884C\u961F\u5217\u5DF2\u6E05\u7A7A",
       "\u521B\u5EFA\u4EFB\u52A1\u540E\uFF0C\u8FDB\u5EA6\u4F1A\u5728\u8FD9\u91CC\u5B9E\u65F6\u66F4\u65B0\u3002",
@@ -269,18 +269,22 @@
     </div>`;
       return;
     }
-    box.innerHTML = active.map((p) => {
+    const ranked = active.map((p) => {
       const ts = state.tasks.filter((t) => t.project_id === p.id);
       const done = ts.filter((t) => t.status === "succeeded").length;
       const pct = ts.length ? Math.round(done / ts.length * 100) : 0;
       const inflight = ts.filter((t) => ["queued", "claimed", "running", "awaiting_review"].includes(t.status)).length;
+      return { p, ts, pct, inflight };
+    }).sort((a, b) => b.inflight - a.inflight || a.p.name.localeCompare(b.p.name, "zh-CN"));
+    const visible = ranked.slice(0, 4);
+    box.innerHTML = visible.map(({ p, ts, pct, inflight }) => {
       return `<a class="dash-proj" href="/projects#/project/${p.id}">
       <div class="dp-top"><b title="${esc(p.name)}">${esc(p.name)}</b>
         ${inflight ? `<span class="badge running">${inflight} \u6D3B\u8DC3</span>` : `<span class="badge">${ts.length} \u4EFB\u52A1</span>`}</div>
       <div class="pc-progress"><div class="pp-bar"><div style="width:${pct}%"></div></div>
         <span class="pc-pct">${pct}%</span></div>
     </a>`;
-    }).join("") || `<div class="empty">\u6682\u65E0\u6D3B\u8DC3\u9879\u76EE</div>`;
+    }).join("") + (ranked.length > visible.length ? `<a class="dash-more" href="/projects">\u67E5\u770B\u5176\u4F59 ${ranked.length - visible.length} \u4E2A\u9879\u76EE <span aria-hidden="true">\u2192</span></a>` : "");
   }
   async function loadDashAgents() {
     try {
@@ -289,8 +293,6 @@
       if (!box) return;
       const installed = prov.filter((p) => p.installed);
       const agents = state.agents || [];
-      const running = state.tasks.filter((t) => t.status === "running").length;
-      const review = state.tasks.filter((t) => t.status === "awaiting_review").length;
       box.innerHTML = `
       <div class="dash-prov">
         ${prov.map((p) => `<span class="prov-chip ${p.installed ? "ok" : ""} ${p.login ? "login" : ""}" title="${esc(p.name)}${p.installed ? " " + esc(p.version) : " \u2014 \u672A\u5B89\u88C5"}${p.installed && !p.login ? "\uFF08\u672A\u767B\u5F55\uFF09" : ""}"><i aria-hidden="true"></i>${esc(p.name)}<span class="sr-only">${p.installed ? p.login ? "\u5DF2\u5B89\u88C5\u5E76\u767B\u5F55" : "\u5DF2\u5B89\u88C5\uFF0C\u672A\u767B\u5F55" : "\u672A\u5B89\u88C5"}</span></span>`).join("")}
@@ -298,8 +300,6 @@
       <div class="dash-prov-meta">
         <span><b>${installed.length}/${prov.length}</b> \u5DF2\u5B89\u88C5</span>
         <span><b>${agents.filter((a) => a.enabled).length}</b> \u89D2\u8272\u542F\u7528</span>
-        <span><b style="color:var(--st-running)">${running}</b> \u8FD0\u884C\u4E2D</span>
-        <span><b style="color:var(--st-review)">${review}</b> \u5F85\u5BA1\u6279</span>
       </div>`;
     } catch (_) {
     }
@@ -666,9 +666,17 @@
     }
     const empty = document.getElementById("skillEmpty");
     if (empty) {
-      empty.textContent = lib.length === 0 ? "\u6280\u80FD\u5E93\u4E3A\u7A7A\u3002\u70B9\u51FB\u53F3\u4E0A\u89D2\u300C\u6DFB\u52A0\u6280\u80FD\u300D\uFF0C\u53EF\u5BFC\u5165\u5355\u4E2A\u76EE\u5F55\u6216\u626B\u63CF\u4E00\u4E2A\u76EE\u5F55\u6811\u4E2D\u7684\u5168\u90E8 skills\u3002" : `\u6CA1\u6709\u7B26\u5408\u5F53\u524D\u7B5B\u9009\u6761\u4EF6\u7684\u6280\u80FD${query || tag ? "\uFF0C\u53EF\u4EE5\u6E05\u9664\u641C\u7D22\u6216\u6807\u7B7E\u7B5B\u9009" : ""}`;
+      empty.innerHTML = lib.length === 0 ? `<b class="empty-title">\u6C89\u6DC0\u7B2C\u4E00\u4E2A\u53EF\u590D\u7528\u6280\u80FD</b>
+        <span class="empty-copy">\u5BFC\u5165\u5355\u4E2A\u6280\u80FD\u76EE\u5F55\uFF0C\u6216\u626B\u63CF\u4E00\u4E2A\u76EE\u5F55\u6811\u4E2D\u7684\u5168\u90E8 skills\u3002</span>
+        <button type="button" class="btn brand sm" onclick="openSkillModal()">\u6DFB\u52A0\u6280\u80FD</button>` : `<b class="empty-title">\u6CA1\u6709\u7B26\u5408\u5F53\u524D\u6761\u4EF6\u7684\u6280\u80FD</b>
+        <span class="empty-copy">\u6E05\u9664\u641C\u7D22\u8BCD\u4E0E\u6807\u7B7E\u7B5B\u9009\u540E\uFF0C\u518D\u67E5\u770B\u5B8C\u6574\u6280\u80FD\u5E93\u3002</span>
+        <button type="button" class="btn sm" onclick="document.getElementById('skillSearch').value='';document.getElementById('skillTagFilter').value='';renderSkillLib()">\u6E05\u9664\u7B5B\u9009</button>`;
       empty.classList.toggle("hidden", list.length > 0);
     }
+    const hasLibrary = lib.length > 0;
+    document.getElementById("skillDisplaySeg")?.classList.toggle("hidden", !hasLibrary);
+    document.getElementById("skillFilterControls")?.classList.toggle("hidden", !hasLibrary);
+    document.getElementById("skillManageControls")?.classList.toggle("hidden", !hasLibrary);
     const cnt = document.getElementById("skillCount");
     if (cnt) cnt.textContent = list.length === lib.length ? `${lib.length} \u4E2A\u6280\u80FD` : `${list.length} / ${lib.length} \u4E2A\u6280\u80FD`;
     syncSkillSelectionControls(groups);
@@ -2449,7 +2457,13 @@
   function renderAgentEmpty(list, query) {
     const empty = document.getElementById("agentEmpty");
     if (!empty) return;
-    empty.textContent = list.length ? "" : query ? "\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u89D2\u8272" : "\u8FD8\u6CA1\u6709\u89D2\u8272\u3002\u6BCF\u4E2A\u89D2\u8272\u7ED1\u5B9A\u4E00\u79CD CLI\uFF0C\u914D\u7F6E\u6309\u8BE5 CLI \u7684\u5B98\u65B9\u6587\u6863\u6DF1\u5EA6\u5B9A\u5236\u3002";
+    if (!list.length) {
+      empty.innerHTML = query ? `<b class="empty-title">\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u89D2\u8272</b>
+        <span class="empty-copy">\u5C1D\u8BD5\u6E05\u9664\u641C\u7D22\u8BCD\uFF0C\u67E5\u770B\u5168\u90E8\u4EFB\u52A1\u89D2\u8272\u3002</span>
+        <button type="button" class="btn sm" onclick="document.getElementById('aSearch').value='';renderAgentList()">\u6E05\u9664\u641C\u7D22</button>` : `<b class="empty-title">\u521B\u5EFA\u7B2C\u4E00\u4E2A\u4EFB\u52A1\u89D2\u8272</b>
+        <span class="empty-copy">\u89D2\u8272\u628A\u4E00\u4E2A\u672C\u673A CLI\u3001\u6A21\u578B\u3001\u6280\u80FD\u4E0E\u5E76\u53D1\u7B56\u7565\u7EC4\u5408\u4E3A\u53EF\u590D\u7528\u7684\u6267\u884C\u914D\u7F6E\u3002</span>
+        <button type="button" class="btn brand sm" onclick="openRoleStudio()">\u521B\u5EFA\u89D2\u8272</button>`;
+    }
     empty.classList.toggle("hidden", list.length > 0);
   }
   function agentActionsHTML(a) {
@@ -3636,20 +3650,19 @@
     const counts = o.status_counts || [];
     const review = counts.find((s) => s.status === "awaiting_review");
     const today = o.daily && o.daily.length ? o.daily[o.daily.length - 1] : null;
-    const chips = [
-      ["\u8FDB\u884C\u4E2D", o.in_flight || 0, "var(--st-running)", "LIVE"],
-      ["\u5F85\u5BA1\u6279", review ? review.count : 0, "var(--st-review)", "REVIEW"],
-      ["\u4ECA\u65E5\u5B8C\u6210", today ? today.count : 0, "var(--st-done)", "TODAY"],
-      ["\u5B8C\u6210\u7387", fmtPct(o.success_rate), "var(--st-done)", "RATE"],
-      ["\u5E73\u5747\u8017\u65F6", fmtDur(o.avg_duration), "var(--fg-muted)", "SPEED"],
-      ["\u6D3B\u8DC3\u9879\u76EE", o.projects || 0, "var(--fg-muted)", "SCOPE"]
+    const boardChips = [
+      ["\u8FDB\u884C\u4E2D", o.in_flight || 0, "var(--st-running)"],
+      ["\u5F85\u5BA1\u6279", review ? review.count : 0, "var(--st-review)"],
+      ["\u4ECA\u65E5\u5B8C\u6210", today ? today.count : 0, "var(--st-done)"],
+      ["\u5B8C\u6210\u7387", fmtPct(o.success_rate), "var(--st-done)"],
+      ["\u5E73\u5747\u8017\u65F6", fmtDur(o.avg_duration), "var(--fg-muted)"],
+      ["\u6D3B\u8DC3\u9879\u76EE", o.projects || 0, "var(--fg-muted)"]
     ];
-    el.innerHTML = chips.map((c, i) => `<div class="stat-chip" style="--metric-color:${c[2]}" aria-label="${c[0]} ${c[1]}">
-    <span class="sc-index">0${i + 1}</span>
+    const chips = el.classList.contains("dashboard-stats") ? [boardChips[1], boardChips[0], boardChips[2], boardChips[3]] : boardChips;
+    el.innerHTML = chips.map((c) => `<div class="stat-chip" style="--metric-color:${c[2]}" aria-label="${c[0]} ${c[1]}">
     <span class="sc-dot"></span>
     <b>${c[1]}</b>
     <span class="sc-label">${c[0]}</span>
-    <small>${c[3]}</small>
   </div>`).join("");
   }
   function isMobileNav() {

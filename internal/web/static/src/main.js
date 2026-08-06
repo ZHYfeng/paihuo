@@ -90,20 +90,23 @@ export function renderStatsStrip() {
   const counts = o.status_counts || [];
   const review = counts.find(s => s.status === "awaiting_review");
   const today = o.daily && o.daily.length ? o.daily[o.daily.length - 1] : null;
-  const chips = [
-    ["进行中", o.in_flight || 0, "var(--st-running)", "LIVE"],
-    ["待审批", review ? review.count : 0, "var(--st-review)", "REVIEW"],
-    ["今日完成", today ? today.count : 0, "var(--st-done)", "TODAY"],
-    ["完成率", fmtPct(o.success_rate), "var(--st-done)", "RATE"],
-    ["平均耗时", fmtDur(o.avg_duration), "var(--fg-muted)", "SPEED"],
-    ["活跃项目", o.projects || 0, "var(--fg-muted)", "SCOPE"],
+  const boardChips = [
+    ["进行中", o.in_flight || 0, "var(--st-running)"],
+    ["待审批", review ? review.count : 0, "var(--st-review)"],
+    ["今日完成", today ? today.count : 0, "var(--st-done)"],
+    ["完成率", fmtPct(o.success_rate), "var(--st-done)"],
+    ["平均耗时", fmtDur(o.avg_duration), "var(--fg-muted)"],
+    ["活跃项目", o.projects || 0, "var(--fg-muted)"],
   ];
-  el.innerHTML = chips.map((c, i) => `<div class="stat-chip" style="--metric-color:${c[2]}" aria-label="${c[0]} ${c[1]}">
-    <span class="sc-index">0${i + 1}</span>
+  // 工作台只保留决策所需的四项指标；项目数和平均耗时已经在下方语境中呈现。
+  // 看板页保留完整六项，方便在筛选任务前查看全局运行基线。
+  const chips = el.classList.contains("dashboard-stats")
+    ? [boardChips[1], boardChips[0], boardChips[2], boardChips[3]]
+    : boardChips;
+  el.innerHTML = chips.map(c => `<div class="stat-chip" style="--metric-color:${c[2]}" aria-label="${c[0]} ${c[1]}">
     <span class="sc-dot"></span>
     <b>${c[1]}</b>
     <span class="sc-label">${c[0]}</span>
-    <small>${c[3]}</small>
   </div>`).join("");
 }
 
