@@ -80,7 +80,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		Perm       string `json:"perm"`
 		RunMode    string `json:"run_mode"`
 		Concurrent bool   `json:"concurrent"` // 是否并发执行（默认串行：同一项目同时只跑一个任务）
-		// dependency_mode: weak=按项目创建顺序自动依赖；strong=明确前置；none=独立。
+		// dependency_mode: weak=按项目执行顺序自动依赖；strong=明确前置；none=独立。
 		DependencyMode string `json:"dependency_mode"`
 		DependsOn      *int64 `json:"depends_on"`
 		BlockOnFailure bool   `json:"block_on_failure"`
@@ -262,7 +262,7 @@ func normalizeNewTaskDependency(tk *store.Task) error {
 		if tk.ProjectID == nil {
 			return fmt.Errorf("无项目任务不能使用自动前置依赖")
 		}
-		// 弱依赖的实际前置由 Store 以创建顺序确定，客户端不能指定。
+		// 弱依赖的实际前置由 Store 以项目执行顺序确定，客户端不能指定。
 		tk.DependsOn = nil
 		return nil
 	case store.DependencyStrong:
@@ -1301,6 +1301,49 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, p)
+}
+
+// reorderProjectTasks persists the order of queued implementation tasks in a
+// single project.  Merge tasks never appear in the request: the executor keeps
+// them in a separate, always-prioritized queue.
+func (s *Server) reorderProjectTasks(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if _, err := s.st.GetProject(id); err != nil {
+		writeErr(w, http.StatusNotFound, "项目不存在")
+		return
+	}
+	var in struct {
+		TaskIDs []int64 `json:"task_ids"`
+		Order   []int64 `json:"order"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	orderedIDs := in.TaskIDs
+	if len(orderedIDs) == 0 && in.Order != nil {
+		orderedIDs = in.Order
+	}
+	if err := s.st.ReorderProjectTasks(id, orderedIDs); err != nil {
+		if strings.Contains(err.Error(), "排序请求") {
+			writeErr(w, http.StatusConflict, err.Error())
+		} else {
+			writeErr(w, http.StatusBadRequest, err.Error())
+		}
+		return
+	}
+	if s.ex != nil {
+		s.ex.Wake()
+	}
+	projectID := id
+	tasks, err := s.st.ListTasksFiltered(store.TaskFilter{ProjectID: &projectID})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, tasks)
 }
 
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {

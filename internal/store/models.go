@@ -28,7 +28,7 @@ const (
 	PermReview = "review" // 人工审批：通过后创建同角色的代码合并任务
 )
 
-// 依赖模式。弱依赖由项目创建顺序自动形成；前置失败且没有要求阻塞时可
+// 依赖模式。弱依赖由项目执行顺序自动形成（默认按创建时间）；前置失败且没有要求阻塞时可
 // 跳过。强依赖是用户明确指定的前置交付，只有成功交付（Git 项目还要完成
 // 合并）才会放行。none 用于无项目或显式独立/并行任务。
 const (
@@ -108,6 +108,7 @@ type Task struct {
 	BaseCommit     string  `json:"base_commit"`     // 创建 worktree 时主分支 HEAD
 	ResumeOf       *int64  `json:"resume_of"`       // 续跑自哪个任务（复用其会话目录）
 	MergeOf        *int64  `json:"merge_of"`        // 合并任务整合自哪个源任务
+	SortOrder      int64   `json:"sort_order"`      // 项目内执行顺序（合并任务不参与排序）
 	CreatedAt      string  `json:"created_at"`
 	StartedAt      *string `json:"started_at"`
 	FinishedAt     *string `json:"finished_at"`

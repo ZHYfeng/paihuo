@@ -102,7 +102,7 @@ export function dependencyInfo(t) {
   const mode = t.dependency_mode || "none";
   if (mode === "none") return { mode, state: "ready", label: "独立任务", reason: "不等待项目中的其他交付" };
   if (mode === "weak" && !t.depends_on) {
-    return { mode, state: "ready", label: "自动顺序 · 首项", reason: "当前项目创建顺序中的第一项" };
+    return { mode, state: "ready", label: "自动顺序 · 首项", reason: "当前项目执行顺序中的第一项" };
   }
   const source = state.tasks.find(x => x.id === t.depends_on);
   const prefix = mode === "strong" ? "强依赖" : "自动顺序";
@@ -183,7 +183,7 @@ export function renderBoard() {
   const sourceTasks = tasks.filter(t => !isMergeTask(t));
   const mergeTasks = tasks.filter(isMergeTask);
   el.innerHTML =
-    boardSectionHTML("source", "实现任务", "项目任务默认按创建时间顺序交付；每项完成后会先处理自己的代码合并。", sourceTasks) +
+    boardSectionHTML("source", "实现任务", "项目任务默认按创建时间顺序交付，也可在项目页调整；每项完成后会先处理自己的代码合并。", sourceTasks) +
     boardSectionHTML("merge", "代码合并", "使用新的独立 worktree 验证、解决冲突并自动写入主分支。", mergeTasks);
   const c = document.getElementById("viewCount");
   if (c) c.textContent = `${sourceTasks.length} 个实现 · ${mergeTasks.length} 个合并`;
@@ -1032,9 +1032,9 @@ export function syncTaskDependency() {
     } else if (mode === "strong") {
       help.textContent = "明确前置是强依赖：无论前置是否设置失败可跳过，本任务都必须等它和其合并任务成功。";
     } else if (mode === "none") {
-      help.textContent = "独立任务不等待此前交付；后续默认任务仍会按创建顺序以本任务为前序。";
+      help.textContent = "独立任务不等待此前交付；后续默认任务仍会按项目执行顺序以本任务为前序。";
     } else {
-      help.textContent = "自动弱依赖：等待当前项目此前创建的交付；若前序失败且未设置阻塞，会跳过它继续执行。";
+      help.textContent = "自动弱依赖：等待当前项目此前顺序中的交付；若前序失败且未设置阻塞，会跳过它继续执行。";
     }
   }
 }

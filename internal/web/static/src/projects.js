@@ -75,16 +75,122 @@ export async function refreshProjectDetail() {
   } catch (_) {}
 }
 
+function projectTaskOrder(a, b) {
+  const ao = Number(a.sort_order) || 0;
+  const bo = Number(b.sort_order) || 0;
+  if (ao !== bo) return ao - bo;
+  const ac = a.created_at || "";
+  const bc = b.created_at || "";
+  return ac === bc ? a.id - b.id : ac.localeCompare(bc);
+}
+
+function queuedProjectTaskIDs(tasks) {
+  return tasks.filter(t => !isMergeTask(t) && t.status === "queued")
+    .sort(projectTaskOrder).map(t => t.id);
+}
+
+async function persistProjectTaskOrder(projectID, taskIDs) {
+  if (state.projectReorderBusy) return;
+  state.projectReorderBusy = true;
+  try {
+    await api(`/api/projects/${projectID}/tasks/order`, {
+      method: "PUT", body: JSON.stringify({ task_ids: taskIDs }),
+    });
+    await loadAll();
+    await refreshProjectDetail();
+    toast("任务顺序已更新");
+  } catch (e) {
+    toast(e.message, true);
+    await refreshProjectDetail();
+  } finally {
+    state.projectReorderBusy = false;
+  }
+}
+
+export async function moveProjectTask(projectID, taskID, direction) {
+  if (state.projectReorderBusy) return;
+  try {
+    const tasks = await api(`/api/tasks?project_id=${projectID}`);
+    const ids = queuedProjectTaskIDs(tasks);
+    const index = ids.indexOf(taskID);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= ids.length) return;
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    await persistProjectTaskOrder(projectID, ids);
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+export function startProjectTaskDrag(event, projectID, taskID) {
+  if (state.projectReorderBusy) {
+    event.preventDefault();
+    return;
+  }
+  event.stopPropagation();
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", `${projectID}:${taskID}`);
+  event.currentTarget.classList.add("dragging");
+}
+
+export function allowProjectTaskDrop(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  if (state.projectReorderBusy || event.currentTarget.dataset.reorderable !== "true") return;
+  event.dataTransfer.dropEffect = "move";
+  event.currentTarget.classList.add("drag-over");
+}
+
+export async function dropProjectTask(event, projectID, targetID) {
+  event.preventDefault();
+  event.stopPropagation();
+  document.querySelectorAll(".p-task-row.drag-over").forEach(el => el.classList.remove("drag-over"));
+  if (state.projectReorderBusy) return;
+  const raw = event.dataTransfer.getData("text/plain") || "";
+  const [sourceProject, sourceID] = raw.split(":").map(Number);
+  if (sourceProject !== projectID || !sourceID || sourceID === targetID) return;
+  const rows = [...document.querySelectorAll("#pdMain .p-task-row[data-reorderable='true']")];
+  const ids = rows.map(row => Number(row.dataset.taskId)).filter(Boolean);
+  const from = ids.indexOf(sourceID);
+  const target = ids.indexOf(targetID);
+  if (from < 0 || target < 0) return;
+  ids.splice(from, 1);
+  const targetAfterMove = ids.indexOf(targetID);
+  const rect = event.currentTarget.getBoundingClientRect();
+  const insertAt = event.clientY < rect.top + rect.height / 2 ? targetAfterMove : targetAfterMove + 1;
+  ids.splice(insertAt, 0, sourceID);
+  await persistProjectTaskOrder(projectID, ids);
+}
+
+export function endProjectTaskDrag(event) {
+  event.currentTarget.classList.remove("dragging");
+  document.querySelectorAll(".p-task-row.drag-over").forEach(el => el.classList.remove("drag-over"));
+}
+
 export function renderProjectDetail(p, s, tasks) {
   const main = document.getElementById("pdMain");
   const side = document.getElementById("pdSide");
   if (!main || !side) return;
   const counts = s.status_counts || [];
   const review = counts.find(c => c.status === "awaiting_review");
-  const sourceTasks = tasks.filter(t => !isMergeTask(t));
+  const sourceTasks = tasks.filter(t => !isMergeTask(t)).sort(projectTaskOrder);
   const mergeTasks = tasks.filter(isMergeTask);
-  const rowHTML = (items, merge) => items.map(t => `
-    <div class="p-task-row ${merge ? "merge-task-row" : ""}" onclick="openTask(${t.id})">
+  const rowHTML = (items, merge) => {
+    const pendingItems = merge ? [] : items.filter(t => t.status === "queued");
+    const pendingIndex = new Map(pendingItems.map((t, i) => [t.id, i]));
+    return items.map(t => {
+      const reorderable = !merge && t.status === "queued";
+      const index = pendingIndex.get(t.id);
+      const orderActions = reorderable && pendingItems.length > 1 ? `
+        <span class="task-order-actions" aria-label="调整执行顺序">
+          <button type="button" class="icon-btn" title="上移" aria-label="上移任务" ${index === 0 ? "disabled" : ""} onclick="event.stopPropagation();moveProjectTask(${p.id},${t.id},-1)">${icon("arrowUp")}</button>
+          <button type="button" class="icon-btn" title="下移" aria-label="下移任务" ${index === pendingItems.length - 1 ? "disabled" : ""} onclick="event.stopPropagation();moveProjectTask(${p.id},${t.id},1)">${icon("arrowDown")}</button>
+        </span>` : "";
+      return `
+    <div class="p-task-row ${merge ? "merge-task-row" : ""} ${reorderable ? "sortable-task-row" : ""}"
+      ${reorderable ? `data-task-id="${t.id}" data-reorderable="true" draggable="true" ondragstart="startProjectTaskDrag(event,${p.id},${t.id})" ondragover="allowProjectTaskDrop(event)" ondrop="dropProjectTask(event,${p.id},${t.id})" ondragend="endProjectTaskDrag(event)"` : ""}
+      onclick="openTask(${t.id})">
+      ${reorderable ? `<span class="task-drag-handle" title="拖动调整执行顺序" aria-label="拖动调整执行顺序">${icon("grip")}</span>` : ""}
       <span class="num">#${t.id}</span>
       <a class="t card-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a>
       ${merge ? `<span class="chip merge">合并 #${t.merge_of}</span>` : ""}
@@ -92,12 +198,15 @@ export function renderProjectDetail(p, s, tasks) {
       ${!merge && t.status === "queued" && dependencyInfo(t).state === "blocked" ? `<span class="chip dependency blocked" title="${esc(dependencyInfo(t).reason)}">${esc(dependencyInfo(t).stateLabel || "等待前序")}</span>` : ""}
       <span class="a">${t.agent_name ? `<span class="avatar sm">${esc(t.agent_name.slice(0, 1))}</span>${esc(t.agent_name)}` : "-"}</span>
       <span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>
+      ${orderActions}
       <span class="ops">
           ${canRetryTask(t)
           ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}${retryTaskLabel(t)}</button>` : ""}
         ${canDeleteTask(t) ? `<button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>` : ""}
       </span>
-    </div>`).join("");
+    </div>`;
+    }).join("");
+  };
 
   const agentsHTML = (s.agents || []).map(a => `
     <tr>
@@ -131,8 +240,9 @@ export function renderProjectDetail(p, s, tasks) {
     <div class="sec-title">近 14 天完成</div>
     ${dailyChartHTML(s.daily, 14)}
 
-    <div class="sec-title" style="display:flex;align-items:center;justify-content:space-between">
+    <div class="sec-title task-section-title">
       <span>任务 ${sourceTasks.length}</span>
+      <span class="section-note">待执行任务可拖动或用箭头调整顺序，默认按创建时间</span>
       <button class="btn sm brand" onclick="openProjectTask(${p.id})">${icon("plus")}新建任务</button>
     </div>
     <div class="p-task-list">

@@ -22,6 +22,7 @@ export const state = {
   agentTab: "overview",
   roleStudio: null,  // 唯一角色编辑器的草稿、助手对话与测试对话
   projectView: null, // 项目详情中的项目 id
+  projectReorderBusy: false,
   agentView: "grid",
   agentSort: "name-asc",
   skillLib: [],      // 注册到 paihuo 工作目录的技能库 [{id,name,description,tags,dir}]
@@ -77,6 +78,9 @@ export const ICONS = {
   terminal: "M4 17l6-5-6-5m8 10h8",
   chevL: "M15 18l-6-6 6-6",
   alert: "M12 3 2.5 20h19L12 3Zm0 7v5m0 3.5v.5",
+  arrowUp: "M12 19V5m-6 6 6-6 6 6",
+  arrowDown: "M12 5v14m6-6-6 6-6-6",
+  grip: "M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01",
 };
 export function icon(name, cls) {
   return `<svg class="ic ${cls || ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name] || ""}"/></svg>`;

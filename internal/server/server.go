@@ -230,6 +230,8 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("GET /api/projects", s.listProjects)
 	m.HandleFunc("POST /api/projects", s.createProject)
 	m.HandleFunc("PATCH /api/projects/{id}", s.patchProject)
+	m.HandleFunc("PUT /api/projects/{id}/tasks/order", s.reorderProjectTasks)
+	m.HandleFunc("PATCH /api/projects/{id}/tasks/order", s.reorderProjectTasks)
 	m.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
 
 	m.HandleFunc("GET /api/stats/overview", s.overviewStats)

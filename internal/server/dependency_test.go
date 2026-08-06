@@ -111,3 +111,54 @@ func TestCreateTaskDefaultsToWeakProjectDependencyAndProtectsReferencedDelete(t 
 		t.Fatalf("删除前置后弱依赖应被解除且后项保留: task=%+v err=%v", remaining, err)
 	}
 }
+
+func TestReorderProjectTasksEndpoint(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	hub := events.NewHub()
+	executor := exec.New(st, hub, t.TempDir(), "server-reorder-test.db")
+	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
+	agentID, err := st.CreateAgent(store.Agent{Name: "order-agent", CLI: "pi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, err := st.CreateProject(store.Project{Name: "order-project", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := func(title string) store.Task {
+		t.Helper()
+		body := fmt.Sprintf(`{"title":%q,"agent_id":%d,"project_id":%d}`, title, agentID, projectID)
+		req := httptest.NewRequest(http.MethodPost, "/api/tasks", strings.NewReader(body))
+		resp := httptest.NewRecorder()
+		s.createTask(resp, req)
+		if resp.Code != http.StatusCreated {
+			t.Fatalf("创建任务失败: code=%d body=%s", resp.Code, resp.Body.String())
+		}
+		var task store.Task
+		if err := json.Unmarshal(resp.Body.Bytes(), &task); err != nil {
+			t.Fatal(err)
+		}
+		return task
+	}
+	first, second, third := create("first"), create("second"), create("third")
+
+	orderBody := fmt.Sprintf(`{"task_ids":[%d,%d,%d]}`, third.ID, first.ID, second.ID)
+	req := httptest.NewRequest(http.MethodPut, "/api/projects/"+itoa(projectID)+"/tasks/order", strings.NewReader(orderBody))
+	req.SetPathValue("id", itoa(projectID))
+	resp := httptest.NewRecorder()
+	s.reorderProjectTasks(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("重排接口失败: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var tasks []store.Task
+	if err := json.Unmarshal(resp.Body.Bytes(), &tasks); err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 3 || tasks[0].ID != third.ID || tasks[1].ID != first.ID || tasks[2].ID != second.ID {
+		t.Fatalf("接口返回顺序异常: %+v", tasks)
+	}
+}

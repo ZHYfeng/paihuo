@@ -507,6 +507,120 @@ func TestCreateProjectTaskDependencies(t *testing.T) {
 	}
 }
 
+// 项目内待执行实现任务可以调整顺序；重排会同步弱依赖链，而代码合并
+// 任务不参与项目排序，并且在全局队列中仍然优先于实现任务。
+func TestReorderProjectQueuedTasks(t *testing.T) {
+	s := openTest(t)
+	agentID := mustAgent(t, s, "order-agent", true)
+	projectID, err := s.CreateProject(Project{Name: "order-project", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := func(title string) int64 {
+		t.Helper()
+		id, err := s.CreateTaskWithProjectDependency(Task{
+			Title: title, Status: StatusQueued, AgentID: &agentID, ProjectID: &projectID,
+			DependencyMode: DependencyWeak,
+		})
+		if err != nil {
+			t.Fatalf("创建 %s: %v", title, err)
+		}
+		return id
+	}
+	firstID, secondID, thirdID := create("first"), create("second"), create("third")
+	first, err := s.GetTask(firstID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mergeID, err := s.CreateTask(NewMergeTask(*first))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	projectTasks, err := s.ListTasksFiltered(TaskFilter{ProjectID: &projectID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projectTasks) < 4 || projectTasks[0].ID != firstID || projectTasks[1].ID != secondID || projectTasks[2].ID != thirdID || projectTasks[3].ID != mergeID {
+		t.Fatalf("默认项目顺序应按创建时间排列，得到 %+v", projectTasks)
+	}
+
+	if err := s.ReorderProjectTasks(projectID, []int64{thirdID, firstID, secondID}); err != nil {
+		t.Fatalf("重排项目任务失败: %v", err)
+	}
+	projectTasks, err = s.ListTasksFiltered(TaskFilter{ProjectID: &projectID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projectTasks[0].ID != thirdID || projectTasks[1].ID != firstID || projectTasks[2].ID != secondID || projectTasks[3].ID != mergeID {
+		t.Fatalf("重排后项目顺序异常，得到 %+v", projectTasks)
+	}
+	first, err = s.GetTask(firstID)
+	if err != nil || first.DependsOn == nil || *first.DependsOn != thirdID {
+		t.Fatalf("重排后弱依赖链未同步: task=%+v err=%v", first, err)
+	}
+	second, err := s.GetTask(secondID)
+	if err != nil || second.DependsOn == nil || *second.DependsOn != firstID {
+		t.Fatalf("重排后末项弱依赖未同步: task=%+v err=%v", second, err)
+	}
+
+	queued, err := s.ListQueuedTasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(queued) < 4 || queued[0].ID != mergeID || queued[1].ID != thirdID || queued[2].ID != firstID || queued[3].ID != secondID {
+		t.Fatalf("合并任务或项目执行顺序异常: %+v", queued)
+	}
+	if err := s.ReorderProjectTasks(projectID, []int64{thirdID, firstID, secondID, mergeID}); err == nil {
+		t.Fatal("合并任务不应进入可调整顺序的实现任务列表")
+	}
+}
+
+func TestMovingTaskIntoProjectAppendsItsSortOrder(t *testing.T) {
+	s := openTest(t)
+	firstProject, err := s.CreateProject(Project{Name: "first-order-project", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondProject, err := s.CreateProject(Project{Name: "second-order-project", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstID, err := s.CreateTask(Task{Title: "first", Status: StatusQueued, ProjectID: &firstProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	movedID, err := s.CreateTask(Task{Title: "moved", Status: StatusQueued})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondID, err := s.CreateTask(Task{Title: "second", Status: StatusQueued, ProjectID: &firstProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateTask(movedID, map[string]any{"project_id": firstProject}); err != nil {
+		t.Fatal(err)
+	}
+	projectTasks, err := s.ListTasksFiltered(TaskFilter{ProjectID: &firstProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projectTasks) != 3 || projectTasks[0].ID != firstID || projectTasks[1].ID != secondID || projectTasks[2].ID != movedID {
+		t.Fatalf("移入项目的任务应追加到末尾: %+v", projectTasks)
+	}
+
+	if err := s.UpdateTask(movedID, map[string]any{"project_id": secondProject}); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := s.GetTask(movedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved.SortOrder != 1 || moved.ProjectID == nil || *moved.ProjectID != secondProject {
+		t.Fatalf("移入新项目应从该项目末尾开始排序: %+v", moved)
+	}
+}
+
 func TestDeleteTaskRewiresWeakDependents(t *testing.T) {
 	s := openTest(t)
 	projectID, err := s.CreateProject(Project{Name: "delete-dependency-project", Status: "active"})
@@ -722,13 +836,13 @@ func TestMigrateAddsNewColumns(t *testing.T) {
 		s.Close()
 		t.Fatalf("drop merge index: %v", err)
 	}
-	for _, index := range []string{"idx_tasks_depends_on", "idx_schedules_project"} {
+	for _, index := range []string{"idx_tasks_depends_on", "idx_tasks_project_sort", "idx_schedules_project"} {
 		if _, err := s.db.Exec("DROP INDEX IF EXISTS " + index); err != nil {
 			s.Close()
 			t.Fatalf("drop %s: %v", index, err)
 		}
 	}
-	for _, col := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "tmux_log_offset", "run_mode", "concurrent", "depends_on", "dependency_mode", "block_on_failure"} {
+	for _, col := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "tmux_log_offset", "run_mode", "concurrent", "depends_on", "dependency_mode", "block_on_failure", "sort_order"} {
 		if _, err := s.db.Exec("ALTER TABLE tasks DROP COLUMN " + col); err != nil {
 			s.Close()
 			t.Fatalf("drop %s: %v", col, err)
@@ -759,7 +873,7 @@ func TestMigrateAddsNewColumns(t *testing.T) {
 	for _, r := range mustRows(t, s2, "PRAGMA table_info(tasks)") {
 		cols[r[1]] = true
 	}
-	for _, want := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "project_dir", "tmux_log_offset", "run_mode", "concurrent", "depends_on", "dependency_mode", "block_on_failure"} {
+	for _, want := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "project_dir", "tmux_log_offset", "run_mode", "concurrent", "depends_on", "dependency_mode", "block_on_failure", "sort_order"} {
 		if !cols[want] {
 			t.Fatalf("迁移后缺少列 %s（现有列: %v）", want, cols)
 		}

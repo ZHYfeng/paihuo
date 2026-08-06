@@ -33,6 +33,7 @@
     // 唯一角色编辑器的草稿、助手对话与测试对话
     projectView: null,
     // 项目详情中的项目 id
+    projectReorderBusy: false,
     agentView: "grid",
     agentSort: "name-asc",
     skillLib: [],
@@ -94,7 +95,10 @@
     history: "M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 3",
     terminal: "M4 17l6-5-6-5m8 10h8",
     chevL: "M15 18l-6-6 6-6",
-    alert: "M12 3 2.5 20h19L12 3Zm0 7v5m0 3.5v.5"
+    alert: "M12 3 2.5 20h19L12 3Zm0 7v5m0 3.5v.5",
+    arrowUp: "M12 19V5m-6 6 6-6 6 6",
+    arrowDown: "M12 5v14m6-6-6 6-6-6",
+    grip: "M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01"
   };
   function icon(name, cls) {
     return `<svg class="ic ${cls || ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name] || ""}"/></svg>`;
@@ -1425,7 +1429,7 @@
     const mode = t.dependency_mode || "none";
     if (mode === "none") return { mode, state: "ready", label: "\u72EC\u7ACB\u4EFB\u52A1", reason: "\u4E0D\u7B49\u5F85\u9879\u76EE\u4E2D\u7684\u5176\u4ED6\u4EA4\u4ED8" };
     if (mode === "weak" && !t.depends_on) {
-      return { mode, state: "ready", label: "\u81EA\u52A8\u987A\u5E8F \xB7 \u9996\u9879", reason: "\u5F53\u524D\u9879\u76EE\u521B\u5EFA\u987A\u5E8F\u4E2D\u7684\u7B2C\u4E00\u9879" };
+      return { mode, state: "ready", label: "\u81EA\u52A8\u987A\u5E8F \xB7 \u9996\u9879", reason: "\u5F53\u524D\u9879\u76EE\u6267\u884C\u987A\u5E8F\u4E2D\u7684\u7B2C\u4E00\u9879" };
     }
     const source = state.tasks.find((x) => x.id === t.depends_on);
     const prefix = mode === "strong" ? "\u5F3A\u4F9D\u8D56" : "\u81EA\u52A8\u987A\u5E8F";
@@ -1496,7 +1500,7 @@
     const tasks = filteredTasks();
     const sourceTasks = tasks.filter((t) => !isMergeTask(t));
     const mergeTasks = tasks.filter(isMergeTask);
-    el.innerHTML = boardSectionHTML("source", "\u5B9E\u73B0\u4EFB\u52A1", "\u9879\u76EE\u4EFB\u52A1\u9ED8\u8BA4\u6309\u521B\u5EFA\u65F6\u95F4\u987A\u5E8F\u4EA4\u4ED8\uFF1B\u6BCF\u9879\u5B8C\u6210\u540E\u4F1A\u5148\u5904\u7406\u81EA\u5DF1\u7684\u4EE3\u7801\u5408\u5E76\u3002", sourceTasks) + boardSectionHTML("merge", "\u4EE3\u7801\u5408\u5E76", "\u4F7F\u7528\u65B0\u7684\u72EC\u7ACB worktree \u9A8C\u8BC1\u3001\u89E3\u51B3\u51B2\u7A81\u5E76\u81EA\u52A8\u5199\u5165\u4E3B\u5206\u652F\u3002", mergeTasks);
+    el.innerHTML = boardSectionHTML("source", "\u5B9E\u73B0\u4EFB\u52A1", "\u9879\u76EE\u4EFB\u52A1\u9ED8\u8BA4\u6309\u521B\u5EFA\u65F6\u95F4\u987A\u5E8F\u4EA4\u4ED8\uFF0C\u4E5F\u53EF\u5728\u9879\u76EE\u9875\u8C03\u6574\uFF1B\u6BCF\u9879\u5B8C\u6210\u540E\u4F1A\u5148\u5904\u7406\u81EA\u5DF1\u7684\u4EE3\u7801\u5408\u5E76\u3002", sourceTasks) + boardSectionHTML("merge", "\u4EE3\u7801\u5408\u5E76", "\u4F7F\u7528\u65B0\u7684\u72EC\u7ACB worktree \u9A8C\u8BC1\u3001\u89E3\u51B3\u51B2\u7A81\u5E76\u81EA\u52A8\u5199\u5165\u4E3B\u5206\u652F\u3002", mergeTasks);
     const c = document.getElementById("viewCount");
     if (c) c.textContent = `${sourceTasks.length} \u4E2A\u5B9E\u73B0 \xB7 ${mergeTasks.length} \u4E2A\u5408\u5E76`;
   }
@@ -2272,9 +2276,9 @@
       } else if (mode === "strong") {
         help.textContent = "\u660E\u786E\u524D\u7F6E\u662F\u5F3A\u4F9D\u8D56\uFF1A\u65E0\u8BBA\u524D\u7F6E\u662F\u5426\u8BBE\u7F6E\u5931\u8D25\u53EF\u8DF3\u8FC7\uFF0C\u672C\u4EFB\u52A1\u90FD\u5FC5\u987B\u7B49\u5B83\u548C\u5176\u5408\u5E76\u4EFB\u52A1\u6210\u529F\u3002";
       } else if (mode === "none") {
-        help.textContent = "\u72EC\u7ACB\u4EFB\u52A1\u4E0D\u7B49\u5F85\u6B64\u524D\u4EA4\u4ED8\uFF1B\u540E\u7EED\u9ED8\u8BA4\u4EFB\u52A1\u4ECD\u4F1A\u6309\u521B\u5EFA\u987A\u5E8F\u4EE5\u672C\u4EFB\u52A1\u4E3A\u524D\u5E8F\u3002";
+        help.textContent = "\u72EC\u7ACB\u4EFB\u52A1\u4E0D\u7B49\u5F85\u6B64\u524D\u4EA4\u4ED8\uFF1B\u540E\u7EED\u9ED8\u8BA4\u4EFB\u52A1\u4ECD\u4F1A\u6309\u9879\u76EE\u6267\u884C\u987A\u5E8F\u4EE5\u672C\u4EFB\u52A1\u4E3A\u524D\u5E8F\u3002";
       } else {
-        help.textContent = "\u81EA\u52A8\u5F31\u4F9D\u8D56\uFF1A\u7B49\u5F85\u5F53\u524D\u9879\u76EE\u6B64\u524D\u521B\u5EFA\u7684\u4EA4\u4ED8\uFF1B\u82E5\u524D\u5E8F\u5931\u8D25\u4E14\u672A\u8BBE\u7F6E\u963B\u585E\uFF0C\u4F1A\u8DF3\u8FC7\u5B83\u7EE7\u7EED\u6267\u884C\u3002";
+        help.textContent = "\u81EA\u52A8\u5F31\u4F9D\u8D56\uFF1A\u7B49\u5F85\u5F53\u524D\u9879\u76EE\u6B64\u524D\u987A\u5E8F\u4E2D\u7684\u4EA4\u4ED8\uFF1B\u82E5\u524D\u5E8F\u5931\u8D25\u4E14\u672A\u8BBE\u7F6E\u963B\u585E\uFF0C\u4F1A\u8DF3\u8FC7\u5B83\u7EE7\u7EED\u6267\u884C\u3002";
       }
     }
   }
@@ -2418,16 +2422,114 @@
     } catch (_) {
     }
   }
+  function projectTaskOrder(a, b) {
+    const ao = Number(a.sort_order) || 0;
+    const bo = Number(b.sort_order) || 0;
+    if (ao !== bo) return ao - bo;
+    const ac = a.created_at || "";
+    const bc = b.created_at || "";
+    return ac === bc ? a.id - b.id : ac.localeCompare(bc);
+  }
+  function queuedProjectTaskIDs(tasks) {
+    return tasks.filter((t) => !isMergeTask(t) && t.status === "queued").sort(projectTaskOrder).map((t) => t.id);
+  }
+  async function persistProjectTaskOrder(projectID, taskIDs) {
+    if (state.projectReorderBusy) return;
+    state.projectReorderBusy = true;
+    try {
+      await api(`/api/projects/${projectID}/tasks/order`, {
+        method: "PUT",
+        body: JSON.stringify({ task_ids: taskIDs })
+      });
+      await loadAll();
+      await refreshProjectDetail();
+      toast("\u4EFB\u52A1\u987A\u5E8F\u5DF2\u66F4\u65B0");
+    } catch (e) {
+      toast(e.message, true);
+      await refreshProjectDetail();
+    } finally {
+      state.projectReorderBusy = false;
+    }
+  }
+  async function moveProjectTask(projectID, taskID, direction) {
+    if (state.projectReorderBusy) return;
+    try {
+      const tasks = await api(`/api/tasks?project_id=${projectID}`);
+      const ids = queuedProjectTaskIDs(tasks);
+      const index = ids.indexOf(taskID);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= ids.length) return;
+      [ids[index], ids[target]] = [ids[target], ids[index]];
+      await persistProjectTaskOrder(projectID, ids);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+  function startProjectTaskDrag(event, projectID, taskID) {
+    if (state.projectReorderBusy) {
+      event.preventDefault();
+      return;
+    }
+    event.stopPropagation();
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", `${projectID}:${taskID}`);
+    event.currentTarget.classList.add("dragging");
+  }
+  function allowProjectTaskDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (state.projectReorderBusy || event.currentTarget.dataset.reorderable !== "true") return;
+    event.dataTransfer.dropEffect = "move";
+    event.currentTarget.classList.add("drag-over");
+  }
+  async function dropProjectTask(event, projectID, targetID) {
+    event.preventDefault();
+    event.stopPropagation();
+    document.querySelectorAll(".p-task-row.drag-over").forEach((el) => el.classList.remove("drag-over"));
+    if (state.projectReorderBusy) return;
+    const raw = event.dataTransfer.getData("text/plain") || "";
+    const [sourceProject, sourceID] = raw.split(":").map(Number);
+    if (sourceProject !== projectID || !sourceID || sourceID === targetID) return;
+    const rows = [...document.querySelectorAll("#pdMain .p-task-row[data-reorderable='true']")];
+    const ids = rows.map((row) => Number(row.dataset.taskId)).filter(Boolean);
+    const from = ids.indexOf(sourceID);
+    const target = ids.indexOf(targetID);
+    if (from < 0 || target < 0) return;
+    ids.splice(from, 1);
+    const targetAfterMove = ids.indexOf(targetID);
+    const rect = event.currentTarget.getBoundingClientRect();
+    const insertAt = event.clientY < rect.top + rect.height / 2 ? targetAfterMove : targetAfterMove + 1;
+    ids.splice(insertAt, 0, sourceID);
+    await persistProjectTaskOrder(projectID, ids);
+  }
+  function endProjectTaskDrag(event) {
+    event.currentTarget.classList.remove("dragging");
+    document.querySelectorAll(".p-task-row.drag-over").forEach((el) => el.classList.remove("drag-over"));
+  }
   function renderProjectDetail(p, s, tasks) {
     const main = document.getElementById("pdMain");
     const side = document.getElementById("pdSide");
     if (!main || !side) return;
     const counts = s.status_counts || [];
     const review = counts.find((c) => c.status === "awaiting_review");
-    const sourceTasks = tasks.filter((t) => !isMergeTask(t));
+    const sourceTasks = tasks.filter((t) => !isMergeTask(t)).sort(projectTaskOrder);
     const mergeTasks = tasks.filter(isMergeTask);
-    const rowHTML = (items, merge) => items.map((t) => `
-    <div class="p-task-row ${merge ? "merge-task-row" : ""}" onclick="openTask(${t.id})">
+    const rowHTML = (items, merge) => {
+      const pendingItems = merge ? [] : items.filter((t) => t.status === "queued");
+      const pendingIndex = new Map(pendingItems.map((t, i) => [t.id, i]));
+      return items.map((t) => {
+        const reorderable = !merge && t.status === "queued";
+        const index = pendingIndex.get(t.id);
+        const orderActions = reorderable && pendingItems.length > 1 ? `
+        <span class="task-order-actions" aria-label="\u8C03\u6574\u6267\u884C\u987A\u5E8F">
+          <button type="button" class="icon-btn" title="\u4E0A\u79FB" aria-label="\u4E0A\u79FB\u4EFB\u52A1" ${index === 0 ? "disabled" : ""} onclick="event.stopPropagation();moveProjectTask(${p.id},${t.id},-1)">${icon("arrowUp")}</button>
+          <button type="button" class="icon-btn" title="\u4E0B\u79FB" aria-label="\u4E0B\u79FB\u4EFB\u52A1" ${index === pendingItems.length - 1 ? "disabled" : ""} onclick="event.stopPropagation();moveProjectTask(${p.id},${t.id},1)">${icon("arrowDown")}</button>
+        </span>` : "";
+        return `
+    <div class="p-task-row ${merge ? "merge-task-row" : ""} ${reorderable ? "sortable-task-row" : ""}"
+      ${reorderable ? `data-task-id="${t.id}" data-reorderable="true" draggable="true" ondragstart="startProjectTaskDrag(event,${p.id},${t.id})" ondragover="allowProjectTaskDrop(event)" ondrop="dropProjectTask(event,${p.id},${t.id})" ondragend="endProjectTaskDrag(event)"` : ""}
+      onclick="openTask(${t.id})">
+      ${reorderable ? `<span class="task-drag-handle" title="\u62D6\u52A8\u8C03\u6574\u6267\u884C\u987A\u5E8F" aria-label="\u62D6\u52A8\u8C03\u6574\u6267\u884C\u987A\u5E8F">${icon("grip")}</span>` : ""}
       <span class="num">#${t.id}</span>
       <a class="t card-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a>
       ${merge ? `<span class="chip merge">\u5408\u5E76 #${t.merge_of}</span>` : ""}
@@ -2435,11 +2537,14 @@
       ${!merge && t.status === "queued" && dependencyInfo(t).state === "blocked" ? `<span class="chip dependency blocked" title="${esc(dependencyInfo(t).reason)}">${esc(dependencyInfo(t).stateLabel || "\u7B49\u5F85\u524D\u5E8F")}</span>` : ""}
       <span class="a">${t.agent_name ? `<span class="avatar sm">${esc(t.agent_name.slice(0, 1))}</span>${esc(t.agent_name)}` : "-"}</span>
       <span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>
+      ${orderActions}
       <span class="ops">
           ${canRetryTask(t) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}${retryTaskLabel(t)}</button>` : ""}
         ${canDeleteTask(t) ? `<button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}\u5220\u9664</button>` : ""}
       </span>
-    </div>`).join("");
+    </div>`;
+      }).join("");
+    };
     const agentsHTML = (s.agents || []).map((a) => `
     <tr>
       <td class="t-title"><span class="avatar sm">${esc((a.agent_name || "?").slice(0, 1))}</span>
@@ -2471,8 +2576,9 @@
     <div class="sec-title">\u8FD1 14 \u5929\u5B8C\u6210</div>
     ${dailyChartHTML(s.daily, 14)}
 
-    <div class="sec-title" style="display:flex;align-items:center;justify-content:space-between">
+    <div class="sec-title task-section-title">
       <span>\u4EFB\u52A1 ${sourceTasks.length}</span>
+      <span class="section-note">\u5F85\u6267\u884C\u4EFB\u52A1\u53EF\u62D6\u52A8\u6216\u7528\u7BAD\u5934\u8C03\u6574\u987A\u5E8F\uFF0C\u9ED8\u8BA4\u6309\u521B\u5EFA\u65F6\u95F4</span>
       <button class="btn sm brand" onclick="openProjectTask(${p.id})">${icon("plus")}\u65B0\u5EFA\u4EFB\u52A1</button>
     </div>
     <div class="p-task-list">
@@ -4388,6 +4494,7 @@
   });
   window.addChip = addChip;
   window.agentTab = agentTab;
+  window.allowProjectTaskDrop = allowProjectTaskDrop;
   window.applyFilters = applyFilters;
   window.applyTemplate = applyTemplate;
   window.changeRoleStudioCli = changeRoleStudioCli;
@@ -4414,7 +4521,9 @@
   window.deleteSkillFromDetail = deleteSkillFromDetail;
   window.deleteTask = deleteTask;
   window.deleteTemplate = deleteTemplate;
+  window.dropProjectTask = dropProjectTask;
   window.endInteractiveTask = endInteractiveTask;
+  window.endProjectTaskDrag = endProjectTaskDrag;
   window.filterSkillOptions = filterSkillOptions;
   window.focusFullscreenTerminal = focusFullscreenTerminal;
   window.focusTaskTerminal = focusTaskTerminal;
@@ -4423,6 +4532,7 @@
   window.loadHistory = loadHistory;
   window.logout = logout;
   window.mkdirCurrent = mkdirCurrent;
+  window.moveProjectTask = moveProjectTask;
   window.openAgentDetail = openAgentDetail;
   window.openCurrentRoleEditor = openCurrentRoleEditor;
   window.openDirPicker = openDirPicker;
@@ -4469,6 +4579,7 @@
   window.setSkillView = setSkillView;
   window.setTaskStatus = setTaskStatus;
   window.setView = setView;
+  window.startProjectTaskDrag = startProjectTaskDrag;
   window.submitExt = submitExt;
   window.submitProject = submitProject;
   window.submitSchedule = submitSchedule;

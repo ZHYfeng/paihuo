@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   base_commit   TEXT NOT NULL DEFAULT '',
   resume_of     INTEGER REFERENCES tasks(id),
   merge_of      INTEGER,
+  sort_order    INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL,
   started_at  TEXT,
   finished_at TEXT,
@@ -159,6 +161,7 @@ func migrate(db *sql.DB) error {
 		"ALTER TABLE tasks ADD COLUMN depends_on INTEGER REFERENCES tasks(id)",
 		"ALTER TABLE tasks ADD COLUMN dependency_mode TEXT NOT NULL DEFAULT 'none'",
 		"ALTER TABLE tasks ADD COLUMN block_on_failure INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)",
 	} {
@@ -205,6 +208,7 @@ func migrate(db *sql.DB) error {
 	// 索引在迁移阶段创建：老库先补列再建索引；新库 schema 建表时列已存在
 	for _, stmt := range []string{
 		"CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)",
+		"CREATE INDEX IF NOT EXISTS idx_tasks_project_sort ON tasks(project_id, sort_order)",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)",
 		"CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_merge_of_unique ON tasks(merge_of) WHERE merge_of IS NOT NULL",
 	} {
@@ -214,6 +218,9 @@ func migrate(db *sql.DB) error {
 	}
 	// readonly 权限模式已移除：历史任务按完整权限继续执行
 	if _, err := db.Exec("UPDATE tasks SET perm='full' WHERE perm='readonly'"); err != nil {
+		return err
+	}
+	if err := backfillTaskSortOrder(db); err != nil {
 		return err
 	}
 	return nil
@@ -237,6 +244,84 @@ func columnExists(db *sql.DB, table, column string) (bool, error) {
 		}
 	}
 	return false, rows.Err()
+}
+
+// backfillTaskSortOrder upgrades project tasks from databases created before
+// the explicit order field existed.  Existing rows keep their current order
+// when possible; rows without an order fall back to creation time.
+func backfillTaskSortOrder(db *sql.DB) error {
+	type item struct {
+		id        int64
+		projectID int64
+		order     int64
+		createdAt string
+	}
+	rows, err := db.Query(`SELECT id, project_id, sort_order, created_at
+		FROM tasks
+		WHERE project_id IS NOT NULL AND merge_of IS NULL
+		ORDER BY project_id, created_at, id`)
+	if err != nil {
+		return err
+	}
+	items := make([]item, 0)
+	for rows.Next() {
+		var it item
+		if err := rows.Scan(&it.id, &it.projectID, &it.order, &it.createdAt); err != nil {
+			rows.Close()
+			return err
+		}
+		items = append(items, it)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	groups := make(map[int64][]item)
+	for _, it := range items {
+		groups[it.projectID] = append(groups[it.projectID], it)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for projectID, group := range groups {
+		hasMissing := false
+		for _, it := range group {
+			if it.order <= 0 {
+				hasMissing = true
+				break
+			}
+		}
+		if !hasMissing {
+			continue
+		}
+		sort.SliceStable(group, func(i, j int) bool {
+			left, right := group[i], group[j]
+			if left.order > 0 && right.order > 0 && left.order != right.order {
+				return left.order < right.order
+			}
+			if left.order > 0 && right.order <= 0 {
+				return true
+			}
+			if left.order <= 0 && right.order > 0 {
+				return false
+			}
+			if left.createdAt != right.createdAt {
+				return left.createdAt < right.createdAt
+			}
+			return left.id < right.id
+		})
+		for i, it := range group {
+			if _, err := tx.Exec("UPDATE tasks SET sort_order=? WHERE id=? AND project_id=? AND merge_of IS NULL", i+1, it.id, projectID); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
 }
 
 func tableExists(db *sql.DB, table string) (bool, error) {
@@ -277,6 +362,10 @@ func Now() string { return time.Now().UTC().Format(time.RFC3339) }
 // 通用更新
 
 func updateOne(db *sql.DB, table string, id int64, set map[string]any) error {
+	return updateOneExecer(db, table, id, set)
+}
+
+func updateOneExecer(execer sqlExecer, table string, id int64, set map[string]any) error {
 	if len(set) == 0 {
 		return nil
 	}
@@ -288,7 +377,7 @@ func updateOne(db *sql.DB, table string, id int64, set map[string]any) error {
 	}
 	vals = append(vals, Now(), id)
 	q := fmt.Sprintf("UPDATE %s SET %s, updated_at=? WHERE id=?", table, strings.Join(cols, ", "))
-	_, err := db.Exec(q, vals...)
+	_, err := execer.Exec(q, vals...)
 	return err
 }
 
@@ -432,13 +521,13 @@ func (s *Store) DeleteAgent(id int64) error {
 // taskCols 完整列（详情页用：含完整 body，驳回重做会追加修改意见）。
 const taskCols = `t.id, t.title, t.body, t.status, t.perm, t.run_mode, t.concurrent, t.agent_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.created_at, t.started_at, t.finished_at, t.updated_at`
+	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at`
 
 // taskColsBrief 列表列（看板/历史/项目页用）：body 截断到 400 字符，
 // 避免大提示词把列表接口载荷撑爆。列序与 taskCols 完全一致（scanTask 共用）。
 const taskColsBrief = `t.id, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.run_mode, t.concurrent, t.agent_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.created_at, t.started_at, t.finished_at, t.updated_at`
+	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at`
 
 func scanTask(rows scanner) (Task, error) {
 	var tk Task
@@ -449,7 +538,7 @@ func scanTask(rows scanner) (Task, error) {
 	var resumeOf, mergeOf sql.NullInt64
 	err := rows.Scan(&tk.ID, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &tk.RunMode, &concurrent, &agentID, &agentName,
 		&projectID, &projectName, &tk.ProjectDir, &parentID, &dependsOn, &tk.DependencyMode, &blockOnFailure, &scheduleID, &tk.Error, &exitCode,
-		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt)
+		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &tk.SortOrder, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt)
 	if err != nil {
 		return tk, err
 	}
@@ -522,7 +611,13 @@ func (s *Store) ListTasksFiltered(f TaskFilter) ([]Task, error) {
 		q += " AND t.status=?"
 		args = append(args, f.Status)
 	}
-	q += " ORDER BY t.created_at DESC, t.id DESC"
+	if f.ProjectID != nil {
+		// 项目详情按执行顺序展示；合并任务排在实现任务之后的独立分组中，
+		// 但这里仍保持稳定顺序，避免刷新时任务行跳动。
+		q += " ORDER BY CASE WHEN t.merge_of IS NOT NULL THEN 1 ELSE 0 END, t.sort_order, t.created_at, t.id"
+	} else {
+		q += " ORDER BY t.created_at DESC, t.id DESC"
+	}
 	if f.Limit > 0 {
 		q += " LIMIT ?"
 		args = append(args, f.Limit)
@@ -561,7 +656,31 @@ func (s *Store) ListQueuedTasks() ([]Task, error) {
 		}
 		out = append(out, tk)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Keep the existing global creation-time order across projects, while
+	// honoring a custom order whenever two implementation tasks belong to the
+	// same project. Merge tasks are always ahead of every implementation task.
+	sort.SliceStable(out, func(i, j int) bool { return queuedTaskLess(out[i], out[j]) })
+	return out, nil
+}
+
+func queuedTaskLess(a, b Task) bool {
+	aMerge := a.MergeOf != nil
+	bMerge := b.MergeOf != nil
+	if aMerge != bMerge {
+		return aMerge
+	}
+	if a.ProjectID != nil && b.ProjectID != nil && *a.ProjectID == *b.ProjectID {
+		if a.SortOrder != b.SortOrder {
+			return a.SortOrder < b.SortOrder
+		}
+	}
+	if a.CreatedAt != b.CreatedAt {
+		return a.CreatedAt < b.CreatedAt
+	}
+	return a.ID < b.ID
 }
 
 // ListRunningTasks 返回卡在执行态的任务（服务重启时用于重置）。
@@ -632,19 +751,56 @@ func prepareTaskForInsert(t *Task) {
 }
 
 func insertTask(execer sqlExecer, t Task) (int64, error) {
-	res, err := execer.Exec(`INSERT INTO tasks (title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	res, err := execer.Exec(`INSERT INTO tasks (title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, sort_order, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.Title, t.Body, t.Status, t.Perm, t.RunMode, boolInt(t.Concurrent), nullInt64(t.AgentID), nullInt64(t.ProjectID), t.ProjectDir,
-		nullInt64(t.ParentID), nullInt64(t.DependsOn), t.DependencyMode, boolInt(t.BlockOnFailure), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), t.CreatedAt, t.UpdatedAt)
+		nullInt64(t.ParentID), nullInt64(t.DependsOn), t.DependencyMode, boolInt(t.BlockOnFailure), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), t.SortOrder, t.CreatedAt, t.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
+// assignNextTaskSortOrder appends a new implementation task to its project's
+// current order.  A zero value is reserved for tasks without a project and
+// system-created merge tasks, which are ordered by their separate priority.
+func assignNextTaskSortOrder(tx *sql.Tx, t *Task) error {
+	if t.ProjectID == nil || t.MergeOf != nil || t.SortOrder > 0 {
+		return nil
+	}
+	var next int64
+	if err := tx.QueryRow(`SELECT COALESCE(MAX(sort_order), 0) + 1
+		FROM tasks WHERE project_id=? AND merge_of IS NULL`, *t.ProjectID).Scan(&next); err != nil {
+		return err
+	}
+	if next < 1 {
+		next = 1
+	}
+	t.SortOrder = next
+	return nil
+}
+
 func (s *Store) CreateTask(t Task) (int64, error) {
 	prepareTaskForInsert(&t)
-	return insertTask(s.db, t)
+	if t.ProjectID == nil || t.MergeOf != nil || t.SortOrder > 0 {
+		return insertTask(s.db, t)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	if err := assignNextTaskSortOrder(tx, &t); err != nil {
+		return 0, err
+	}
+	id, err := insertTask(tx, t)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // CreateTaskWithProjectDependency 创建用户或定时任务，并在同一事务中确定前置
@@ -663,6 +819,9 @@ func (s *Store) CreateTaskWithProjectDependency(t Task) (int64, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
+	if err := assignNextTaskSortOrder(tx, &t); err != nil {
+		return 0, err
+	}
 	if err := resolveNewTaskDependency(tx, &t); err != nil {
 		return 0, err
 	}
@@ -702,12 +861,12 @@ func resolveNewTaskDependency(tx *sql.Tx, t *Task) error {
 		}
 		return validateDependencyTarget(tx, *t.ProjectID, *t.DependsOn)
 	case DependencyWeak:
-		// 弱依赖由系统根据创建顺序决定，不能被客户端伪造为任意目标。
+		// 弱依赖由系统根据项目执行顺序决定，不能被客户端伪造为任意目标。
 		t.DependsOn = nil
 		var predecessor int64
 		err := tx.QueryRow(`SELECT id FROM tasks
 			WHERE project_id=? AND merge_of IS NULL
-			ORDER BY created_at DESC, id DESC LIMIT 1`, *t.ProjectID).Scan(&predecessor)
+			ORDER BY sort_order DESC, created_at DESC, id DESC LIMIT 1`, *t.ProjectID).Scan(&predecessor)
 		if err == sql.ErrNoRows {
 			return nil
 		}
@@ -902,10 +1061,10 @@ func inheritMergeFailurePolicy(tx *sql.Tx, sourceID int64, merge *Task) error {
 
 func insertMergeTask(tx *sql.Tx, merge Task) (int64, error) {
 	res, err := tx.Exec(`INSERT INTO tasks
-		(title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, sort_order, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		merge.Title, merge.Body, merge.Status, merge.Perm, merge.RunMode, boolInt(merge.Concurrent), nullInt64(merge.AgentID), nullInt64(merge.ProjectID), merge.ProjectDir,
-		nullInt64(merge.ParentID), nullInt64(merge.DependsOn), merge.DependencyMode, boolInt(merge.BlockOnFailure), nullInt64(merge.ScheduleID), nullInt64(merge.ResumeOf), nullInt64(merge.MergeOf), merge.CreatedAt, merge.UpdatedAt)
+		nullInt64(merge.ParentID), nullInt64(merge.DependsOn), merge.DependencyMode, boolInt(merge.BlockOnFailure), nullInt64(merge.ScheduleID), nullInt64(merge.ResumeOf), nullInt64(merge.MergeOf), merge.SortOrder, merge.CreatedAt, merge.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -913,7 +1072,236 @@ func insertMergeTask(tx *sql.Tx, merge Task) (int64, error) {
 }
 
 func (s *Store) UpdateTask(id int64, set map[string]any) error {
-	return updateOne(s.db, "tasks", id, set)
+	projectValue, changesProject := set["project_id"]
+	if !changesProject {
+		return updateOne(s.db, "tasks", id, set)
+	}
+
+	var targetProject sql.NullInt64
+	switch v := projectValue.(type) {
+	case nil:
+	case int64:
+		if v <= 0 {
+			return errors.New("project_id 非法")
+		}
+		targetProject = sql.NullInt64{Int64: v, Valid: true}
+	case int:
+		if v <= 0 {
+			return errors.New("project_id 非法")
+		}
+		targetProject = sql.NullInt64{Int64: int64(v), Valid: true}
+	default:
+		return errors.New("project_id 非法")
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var currentProject, mergeOf sql.NullInt64
+	var currentSortOrder int64
+	if err := tx.QueryRow("SELECT project_id, merge_of, sort_order FROM tasks WHERE id=?", id).
+		Scan(&currentProject, &mergeOf, &currentSortOrder); err != nil {
+		return err
+	}
+
+	updated := make(map[string]any, len(set)+1)
+	for key, value := range set {
+		updated[key] = value
+	}
+	sameProject := currentProject.Valid == targetProject.Valid &&
+		(!currentProject.Valid || currentProject.Int64 == targetProject.Int64)
+	if !targetProject.Valid || mergeOf.Valid {
+		updated["sort_order"] = int64(0)
+	} else if !sameProject || currentSortOrder <= 0 {
+		var next int64
+		if err := tx.QueryRow(`SELECT COALESCE(MAX(sort_order), 0) + 1
+			FROM tasks WHERE project_id=? AND merge_of IS NULL`, targetProject.Int64).Scan(&next); err != nil {
+			return err
+		}
+		if next < 1 {
+			next = 1
+		}
+		updated["sort_order"] = next
+	}
+	if err := updateOneExecer(tx, "tasks", id, updated); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ReorderProjectTasks changes only queued implementation tasks in one project.
+// Their existing order slots are reused so completed/running tasks stay in
+// their historical positions.  The caller must provide every currently queued
+// implementation task exactly once; this makes stale drag-and-drop requests
+// fail safely instead of silently losing a task from the order.
+func (s *Store) ReorderProjectTasks(projectID int64, orderedIDs []int64) error {
+	if projectID <= 0 {
+		return errors.New("项目 ID 非法")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists bool
+	if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM projects WHERE id=?)", projectID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("项目不存在")
+	}
+
+	type reorderTask struct {
+		id             int64
+		status         string
+		dependencyMode string
+		sortOrder      int64
+	}
+	rows, err := tx.Query(`SELECT id, status, dependency_mode, sort_order
+		FROM tasks
+		WHERE project_id=? AND merge_of IS NULL
+		ORDER BY CASE WHEN sort_order > 0 THEN sort_order ELSE 9223372036854775807 END,
+			created_at, id`, projectID)
+	if err != nil {
+		return err
+	}
+	all := make([]reorderTask, 0)
+	for rows.Next() {
+		var tk reorderTask
+		if err := rows.Scan(&tk.id, &tk.status, &tk.dependencyMode, &tk.sortOrder); err != nil {
+			rows.Close()
+			return err
+		}
+		all = append(all, tk)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	eligible := make(map[int64]bool)
+	positions := make([]int64, 0)
+	for i, tk := range all {
+		if tk.status != StatusQueued {
+			continue
+		}
+		eligible[tk.id] = true
+		position := tk.sortOrder
+		if position <= 0 {
+			position = int64(i + 1)
+		}
+		positions = append(positions, position)
+	}
+	if len(orderedIDs) != len(eligible) {
+		return errors.New("排序请求必须包含项目内全部待执行的实现任务")
+	}
+	seen := make(map[int64]bool, len(orderedIDs))
+	for _, id := range orderedIDs {
+		if !eligible[id] || seen[id] {
+			return errors.New("排序请求只能包含不重复的待执行实现任务")
+		}
+		seen[id] = true
+	}
+	now := Now()
+	for i, id := range orderedIDs {
+		if _, err := tx.Exec(`UPDATE tasks SET sort_order=?, updated_at=?
+			WHERE id=? AND project_id=? AND merge_of IS NULL AND status=?`, positions[i], now, id, projectID, StatusQueued); err != nil {
+			return err
+		}
+	}
+	if err := rebuildQueuedWeakDependencies(tx, projectID, now); err != nil {
+		return err
+	}
+	if err := validateProjectDependencyGraph(tx, projectID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// rebuildQueuedWeakDependencies keeps the persisted weak-dependency chain in
+// step with the visible project order. Strong and independent dependencies are
+// user choices and are left untouched. Merge tasks are intentionally excluded.
+func rebuildQueuedWeakDependencies(tx *sql.Tx, projectID int64, now string) error {
+	rows, err := tx.Query(`SELECT id, status, dependency_mode
+		FROM tasks
+		WHERE project_id=? AND merge_of IS NULL
+		ORDER BY CASE WHEN sort_order > 0 THEN sort_order ELSE 9223372036854775807 END,
+			created_at, id`, projectID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var predecessor *int64
+	for rows.Next() {
+		var id int64
+		var status, mode string
+		if err := rows.Scan(&id, &status, &mode); err != nil {
+			return err
+		}
+		if status == StatusQueued && mode == DependencyWeak {
+			var dependsOn any
+			if predecessor != nil {
+				dependsOn = *predecessor
+			}
+			if _, err := tx.Exec(`UPDATE tasks SET depends_on=?, updated_at=?
+				WHERE id=? AND project_id=? AND merge_of IS NULL AND status=? AND dependency_mode=?`,
+				dependsOn, now, id, projectID, StatusQueued, DependencyWeak); err != nil {
+				return err
+			}
+		}
+		current := id
+		predecessor = &current
+	}
+	return rows.Err()
+}
+
+func validateProjectDependencyGraph(tx *sql.Tx, projectID int64) error {
+	rows, err := tx.Query(`SELECT id, depends_on FROM tasks
+		WHERE project_id=? AND merge_of IS NULL`, projectID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	dependencies := make(map[int64]int64)
+	for rows.Next() {
+		var id int64
+		var dependsOn sql.NullInt64
+		if err := rows.Scan(&id, &dependsOn); err != nil {
+			return err
+		}
+		if dependsOn.Valid {
+			dependencies[id] = dependsOn.Int64
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	state := make(map[int64]uint8, len(dependencies))
+	var visit func(int64) bool
+	visit = func(id int64) bool {
+		switch state[id] {
+		case 1:
+			return false
+		case 2:
+			return true
+		}
+		state[id] = 1
+		if next, ok := dependencies[id]; ok && !visit(next) {
+			return false
+		}
+		state[id] = 2
+		return true
+	}
+	for id := range dependencies {
+		if !visit(id) {
+			return errors.New("排序请求会形成循环依赖")
+		}
+	}
+	return nil
 }
 
 // ResumeTask 原地续跑一个终态任务。任务身份、会话目录和 worktree 都由任务

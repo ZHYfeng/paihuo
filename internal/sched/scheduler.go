@@ -129,7 +129,7 @@ func (j *scheduleJob) Run() {
 			tk.ProjectDir = agent.ProjectDir // 与手工创建任务保持兼容回退
 		}
 		// 项目定时任务只是“按时创建新的普通任务”；真正的执行仍按该项目
-		// 的创建顺序弱依赖链排队，且完成后必须先走自己的合并子任务。
+		// 的项目执行顺序弱依赖链排队，且完成后必须先走自己的合并子任务。
 		tk.DependencyMode = store.DependencyWeak
 	}
 	id, err := j.s.st.CreateTaskWithProjectDependency(tk)
