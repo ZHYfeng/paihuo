@@ -4,13 +4,13 @@ import { refreshOverview } from "./main.js";
 import { openTask, rejectTask, setTaskStatus } from "./task.js";
 
 export function dashCardHTML(t, actions) {
-  return `<div class="card dash-card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
+  return `<article class="card dash-card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
     <div class="c-top">
       <span class="st-dot"></span><span class="c-id">#${t.id}</span>
       <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
       ${t.perm === "review" ? `<span class="chip review">审批</span>` : ""}
     </div>
-    <div class="c-title">${esc(t.title)}</div>
+    <a class="c-title card-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a>
     <div class="c-meta">
       ${t.project_name ? `<span class="chip">${esc(t.project_name)}</span>` : ""}
       <span class="c-foot">
@@ -18,6 +18,14 @@ export function dashCardHTML(t, actions) {
       </span>
     </div>
     ${actions ? `<div class="dash-actions" onclick="event.stopPropagation()">${actions}</div>` : ""}
+  </article>`;
+}
+
+function dashEmpty(title, detail, action) {
+  return `<div class="dash-empty">
+    <span class="dash-empty-mark" aria-hidden="true"><i></i></span>
+    <b>${title}</b><span>${detail}</span>
+    ${action || ""}
   </div>`;
 }
 
@@ -36,11 +44,15 @@ export function renderDashTasks() {
     .sort((a, b) => (a.created_at || "") < (b.created_at || "") ? 1 : -1).slice(0, 12);
   const review = state.tasks.filter(t => t.status === "awaiting_review")
     .sort((a, b) => (a.created_at || "") < (b.created_at || "") ? 1 : -1).slice(0, 12);
-  run.innerHTML = running.map(t => dashCardHTML(t)).join("") || `<div class="empty">暂无进行中任务</div>`;
+  run.innerHTML = running.map(t => dashCardHTML(t)).join("") || dashEmpty(
+    "执行队列已清空", "创建任务后，进度会在这里实时更新。",
+    `<button type="button" class="btn xs" onclick="openNewTask()">派发任务</button>`);
   rev.innerHTML = review.map(t => dashCardHTML(t,
     `<button class="btn xs brand" onclick="setTaskStatus(${t.id},'succeeded')">通过并合并</button>` +
     `<button class="btn xs" onclick="rejectTask(${t.id})">驳回</button>` +
-    `<button class="btn xs" onclick="openTask(${t.id})">查看详情</button>`)).join("") || `<div class="empty">无待审批任务</div>`;
+    `<button class="btn xs" onclick="openTask(${t.id})">查看详情</button>`)).join("") || dashEmpty(
+      "当前无需审批", "需要人工确认的交付会集中出现在这里。",
+      `<a class="btn xs" href="/history">查看历史</a>`);
   const rc = document.getElementById("dashRunningCount");
   if (rc) rc.textContent = running.length;
   const vc = document.getElementById("dashReviewCount");
@@ -66,12 +78,12 @@ export function renderDashProjects() {
     const done = ts.filter(t => t.status === "succeeded").length;
     const pct = ts.length ? Math.round(done / ts.length * 100) : 0;
     const inflight = ts.filter(t => ["queued", "claimed", "running", "awaiting_review"].includes(t.status)).length;
-    return `<div class="dash-proj" onclick="location.href='/projects#/project/${p.id}'">
+    return `<a class="dash-proj" href="/projects#/project/${p.id}">
       <div class="dp-top"><b title="${esc(p.name)}">${esc(p.name)}</b>
         ${inflight ? `<span class="badge running">${inflight} 活跃</span>` : `<span class="badge">${ts.length} 任务</span>`}</div>
       <div class="pc-progress"><div class="pp-bar"><div style="width:${pct}%"></div></div>
         <span class="pc-pct">${pct}%</span></div>
-    </div>`;
+    </a>`;
   }).join("") || `<div class="empty">暂无活跃项目</div>`;
 }
 
@@ -86,7 +98,7 @@ export async function loadDashAgents() {
     const review = state.tasks.filter(t => t.status === "awaiting_review").length;
     box.innerHTML = `
       <div class="dash-prov">
-        ${prov.map(p => `<span class="prov-chip ${p.installed ? "ok" : ""} ${p.login ? "login" : ""}" title="${esc(p.name)}${p.installed ? " " + esc(p.version) : " — 未安装"}${p.installed && !p.login ? "（未登录）" : ""}">${esc(p.name)}${p.installed ? (p.login ? " ✓" : " ⚠") : " ✗"}</span>`).join("")}
+        ${prov.map(p => `<span class="prov-chip ${p.installed ? "ok" : ""} ${p.login ? "login" : ""}" title="${esc(p.name)}${p.installed ? " " + esc(p.version) : " — 未安装"}${p.installed && !p.login ? "（未登录）" : ""}"><i aria-hidden="true"></i>${esc(p.name)}<span class="sr-only">${p.installed ? (p.login ? "已安装并登录" : "已安装，未登录") : "未安装"}</span></span>`).join("")}
       </div>
       <div class="dash-prov-meta">
         <span><b>${installed.length}/${prov.length}</b> 已安装</span>

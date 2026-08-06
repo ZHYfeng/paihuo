@@ -15,7 +15,7 @@ export function renderProjectList() {
     const done = sourceTasks.filter(t => t.status === "succeeded").length;
     const pct = sourceTasks.length ? done / sourceTasks.length * 100 : 0;
     const agents = new Set(ts.map(t => t.agent_name).filter(Boolean));
-    return `<div class="project-card" onclick="openProject(${p.id})">
+    return `<a class="project-card" href="/projects#/project/${p.id}">
       <div class="pc-top">
         <b>${esc(p.name)}</b>
         ${p.is_git ? `<span class="chip git-chip" title="git 仓库，任务将获得独立 worktree">git</span>` : `<span class="chip" title="非 git 仓库，任务直接在项目目录执行">非 git</span>`}
@@ -33,7 +33,7 @@ export function renderProjectList() {
         <span class="spacer"></span>
         <span class="pc-date">${(p.updated_at || p.created_at || "").slice(5, 16).replace("T", " ")}</span>
       </div>
-    </div>`;
+    </a>`;
   }).join("");
   const empty = document.getElementById("projectEmpty");
   if (empty) empty.classList.toggle("hidden", list.length > 0);
@@ -86,7 +86,7 @@ export function renderProjectDetail(p, s, tasks) {
   const rowHTML = (items, merge) => items.map(t => `
     <div class="p-task-row ${merge ? "merge-task-row" : ""}" onclick="openTask(${t.id})">
       <span class="num">#${t.id}</span>
-      <span class="t">${esc(t.title)}</span>
+      <a class="t card-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a>
       ${merge ? `<span class="chip merge">合并 #${t.merge_of}</span>` : ""}
       ${merge ? "" : dependencyChip(t)}
       ${!merge && t.status === "queued" && dependencyInfo(t).state === "blocked" ? `<span class="chip dependency blocked" title="${esc(dependencyInfo(t).reason)}">${esc(dependencyInfo(t).stateLabel || "等待前序")}</span>` : ""}
@@ -284,27 +284,30 @@ export async function dirLoad(path) {
     // 面包屑
     const el = document.getElementById("dirCrumb");
     const segs = d.path.split("/").filter(Boolean);
-    let html = `<span class="crumb-seg" data-p="/">/</span>`;
+    let html = `<button type="button" class="crumb-seg" data-p="/" aria-label="返回根目录">/</button>`;
     let cur = "";
     segs.forEach((s, i) => {
       cur += "/" + s;
       const last = i === segs.length - 1;
-      html += `<span class="crumb-sep">/</span>` +
-        `<span class="crumb-seg${last ? " cur" : ""}" data-p="${esc(cur)}">${esc(s)}</span>`;
+      html += `<span class="crumb-sep">/</span>` + (last
+        ? `<span class="crumb-seg cur" aria-current="location">${esc(s)}</span>`
+        : `<button type="button" class="crumb-seg" data-p="${esc(cur)}">${esc(s)}</button>`);
     });
     el.innerHTML = html;
     // 目录列表
     const list = document.getElementById("dirList");
     list.innerHTML = "";
     if (d.parent !== d.path) {
-      const up = document.createElement("div");
+      const up = document.createElement("button");
+      up.type = "button";
       up.className = "dir-row up";
       up.dataset.path = d.parent;
       up.innerHTML = icon("back") + `<span>上一级</span>`;
       list.appendChild(up);
     }
     d.dirs.forEach(n => {
-      const row = document.createElement("div");
+      const row = document.createElement("button");
+      row.type = "button";
       row.className = "dir-row";
       row.dataset.path = d.path.replace(/\/+$/, "") + "/" + n;
       row.innerHTML = icon("folder") + `<span class="dr-name">${esc(n)}</span>`;

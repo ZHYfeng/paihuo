@@ -15,7 +15,7 @@
 
 <div class="page-content">
   <!-- 统计条 -->
-  <div class="stats-strip" id="dashStats"></div>
+  <div class="stats-strip board-stats" id="dashStats" aria-label="任务运行概览"></div>
 
   <!-- 看板 / 列表 -->
   <div id="boardShell">
@@ -24,10 +24,10 @@
         <button id="segBoard" class="active" onclick="setView('board')">看板</button>
         <button id="segList" onclick="setView('list')">列表</button>
       </div>
-      <select id="fProject" class="sel-lg" onchange="applyFilters()"><option value="">全部项目</option></select>
+      <select id="fProject" class="sel-lg" aria-label="按项目筛选" onchange="applyFilters()"><option value="">全部项目</option></select>
       <a id="fProjectLink" class="chip-link" href="#" style="display:none" title="打开该项目的项目页">项目页 →</a>
-      <select id="fAgent" class="sel-md" onchange="applyFilters()"><option value="">全部角色</option></select>
-      <select id="fStatus" class="sel-sm" onchange="applyFilters()">
+      <select id="fAgent" class="sel-md" aria-label="按角色筛选" onchange="applyFilters()"><option value="">全部角色</option></select>
+      <select id="fStatus" class="sel-sm" aria-label="按状态筛选" onchange="applyFilters()">
         <option value="">全部状态</option>
         <option value="queued">待执行</option>
         <option value="running">执行中</option>

@@ -9,8 +9,8 @@
 </header>
 <div class="page-content">
   <div class="toolbar">
-    <select id="hAgent" class="sel-md" onchange="loadHistory()"><option value="">全部角色</option></select>
-    <select id="hStatus" class="sel-sm" onchange="loadHistory()">
+    <select id="hAgent" class="sel-md" aria-label="按角色筛选历史任务" onchange="loadHistory()"><option value="">全部角色</option></select>
+    <select id="hStatus" class="sel-sm" aria-label="按状态筛选历史任务" onchange="loadHistory()">
       <option value="">全部状态</option>
       <option value="succeeded">完成</option>
       <option value="failed">失败</option>
@@ -19,7 +19,7 @@
       <option value="queued">待执行</option>
       <option value="running">执行中</option>
     </select>
-    <input id="hDays" type="number" min="0" placeholder="最近N天" class="sel-xs" onchange="loadHistory()">
+    <input id="hDays" type="number" min="0" aria-label="筛选最近多少天的任务" placeholder="最近N天" class="sel-xs" onchange="loadHistory()">
     <button class="btn sm" onclick="loadHistory()">筛选</button>
     <span class="spacer"></span>
     <button class="btn sm" onclick="selectAllNonMergeTasks()">全选非合并任务</button>
@@ -27,7 +27,7 @@
     <button class="btn sm danger" onclick="cleanupHistory()">清理筛选结果</button>
   </div>
   <div class="list-wrap">
-    <table class="list-grid">
+    <table class="list-grid history-grid">
       <thead><tr>
         <th class="chk"><input type="checkbox" id="hCheckAll" onchange="toggleAll(this.checked)" aria-label="全选当前筛选结果" title="全选当前筛选结果"></th>
         <th>ID</th><th>标题</th><th>角色</th><th>项目</th><th>权限</th><th>状态</th><th>轮次</th><th>创建</th><th>结束</th><th style="width:110px">操作</th>

@@ -23,7 +23,7 @@
         <button id="segGrid" class="active" onclick="setAgentView('grid')">卡片</button>
         <button id="segTable" onclick="setAgentView('table')">表格</button>
       </div>
-      <input id="aSearch" class="inp" placeholder="搜索角色…" oninput="renderAgentList()">
+      <input id="aSearch" class="inp" aria-label="搜索角色" placeholder="搜索角色…" oninput="renderAgentList()">
       <span class="spacer"></span>
       <span id="agentCount" class="count-info"></span>
     </div>
@@ -65,7 +65,7 @@
     <div class="sub" id="agentModalSub">不同 CLI 有各自官方的可配置参数，表单随之深度定制</div>
     <input type="hidden" id="aId">
     <div class="row">
-      <label class="field">名称 <input id="aName" placeholder="如：编码工"></label>
+      <label class="field">名称 <input id="aName" data-autofocus placeholder="如：编码工"></label>
       <label class="field">CLI
         <select id="aCli" onchange="renderAgentModalSchema()"></select>
       </label>

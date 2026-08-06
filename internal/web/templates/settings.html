@@ -23,7 +23,7 @@
             <div class="s-sub">终态任务（完成/失败/取消）超过保留天数自动删除，含日志与会话。0 或留空 = 不自动清理</div>
           </div>
           <div class="s-ctl">
-            <input id="retentionDays" type="number" min="0" placeholder="天数">
+            <input id="retentionDays" type="number" min="0" aria-label="自动清理保留天数" placeholder="天数">
             <button class="btn sm" onclick="saveRetention()">保存</button>
           </div>
         </div>
@@ -33,8 +33,8 @@
             <div class="s-sub">按角色 / 时间批量删除历史任务（不可恢复）</div>
           </div>
           <div class="s-ctl">
-            <select id="cleanupAgent" class="sel-md"><option value="">全部角色</option></select>
-            <input id="cleanupDays" type="number" min="0" placeholder="早于N天" class="sel-xs">
+            <select id="cleanupAgent" class="sel-md" aria-label="选择要清理任务的角色"><option value="">全部角色</option></select>
+            <input id="cleanupDays" type="number" min="0" aria-label="清理早于多少天的任务" placeholder="早于N天" class="sel-xs">
             <button class="btn sm danger" onclick="runCleanup()">删除</button>
           </div>
         </div>
@@ -44,7 +44,7 @@
             <div class="s-sub">终态任务的独立工作目录（git worktree）保留天数，到期自动清理；0 = 立即清理</div>
           </div>
           <div class="s-ctl">
-            <input id="wtRetentionDays" type="number" min="0" placeholder="天数">
+            <input id="wtRetentionDays" type="number" min="0" aria-label="工作空间保留天数" placeholder="天数">
             <button class="btn sm" onclick="saveWtRetention()">保存</button>
           </div>
         </div>

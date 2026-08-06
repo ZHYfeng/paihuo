@@ -166,14 +166,14 @@ function skillGroups(skills = state.skillLib) {
 function skillCardHTML(s) {
   const selected = state.skillSelected.has(s.id);
   return `
-    <article class="skill-card${selected ? " selected" : ""}" tabindex="0" role="button" aria-label="查看技能 ${esc(s.name)}" onclick="openSkillDetail(${s.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSkillDetail(${s.id})}">
+    <article class="skill-card${selected ? " selected" : ""}" onclick="openSkillDetail(${s.id})">
       <div class="sk-top">
         <label class="skill-select" onclick="event.stopPropagation()" title="选择 ${esc(s.name)}">
           <input type="checkbox" data-skill-id="${s.id}" ${selected ? "checked" : ""} aria-label="选择技能 ${esc(s.name)}" onchange="toggleSkillSelection(${s.id}, this.checked)">
         </label>
         <span class="avatar">${esc((s.name || "?").slice(0, 1))}</span>
         <div class="sk-id">
-          <div class="sk-name">${esc(s.name)}</div>
+          <a class="sk-name card-primary-action" href="#/skill/${s.id}" onclick="event.stopPropagation()">${esc(s.name)}</a>
           <div class="sk-desc">${esc(s.description || "无描述")}</div>
         </div>
       </div>
@@ -197,7 +197,7 @@ function skillListRowHTML(s) {
     <td class="skill-list-check"><label class="skill-select" onclick="event.stopPropagation()" title="选择 ${esc(s.name)}">
       <input type="checkbox" data-skill-id="${s.id}" ${selected ? "checked" : ""} aria-label="选择技能 ${esc(s.name)}" onchange="toggleSkillSelection(${s.id}, this.checked)">
     </label></td>
-    <td><span class="skill-list-name"><span class="avatar">${esc((s.name || "?").slice(0, 1))}</span><span><b>${esc(s.name)}</b><small>${esc(s.description || "无描述")}</small></span></span></td>
+    <td><span class="skill-list-name"><span class="avatar">${esc((s.name || "?").slice(0, 1))}</span><span><a class="table-primary-action" href="#/skill/${s.id}" onclick="event.stopPropagation()">${esc(s.name)}</a><small>${esc(s.description || "无描述")}</small></span></span></td>
     <td><div class="skill-tags">${skillTagsHTML(s)}</div></td>
     <td><code class="skill-list-dir" title="${esc(s.source_path || s.dir || "-")}">${esc(skillGroupDirectory(s))}</code></td>
     <td class="num">${esc((s.created_at || "").slice(0, 10))}</td>

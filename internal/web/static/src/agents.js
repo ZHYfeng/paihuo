@@ -66,11 +66,11 @@ export function renderAgentGrid() {
   grid.innerHTML = list.map(a => {
     const rc = a.role_config || {};
     const st = agentTaskStats(a);
-    return `<div class="agent-card" data-agent-id="${a.id}" onclick="openAgentDetail(${a.id})">
+    return `<article class="agent-card" data-agent-id="${a.id}" onclick="openAgentDetail(${a.id})">
       <div class="ac-top">
         <span class="avatar lg av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
         <div class="ac-id">
-          <div class="ac-name">${esc(a.name)}</div>
+          <a class="ac-name card-primary-action" href="#/agent/${a.id}" onclick="event.stopPropagation()">${esc(a.name)}</a>
           <div class="ac-sub">${esc(a.description || "未设置描述")}</div>
         </div>
         <span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "启用" : "停用"}</span>
@@ -86,7 +86,7 @@ export function renderAgentGrid() {
         <span><b style="color:var(--st-review)">${st.review}</b> 待审批</span>
       </div>
       <div class="ac-ops">${agentActionsHTML(a)}</div>
-    </div>`;
+    </article>`;
   }).join("");
   renderAgentEmpty(list, query);
   const cnt = document.getElementById("agentCount");
@@ -102,7 +102,7 @@ export function renderAgentTable() {
     return `<tr onclick="openAgentDetail(${a.id})">
       <td><span style="display:flex;align-items:center;gap:8px">
         <span class="avatar av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
-        <b>${esc(a.name)}</b>
+        <a class="table-primary-action" href="#/agent/${a.id}" onclick="event.stopPropagation()">${esc(a.name)}</a>
         <span style="font-size:11px;color:var(--fg-faint)">${esc(a.description || "")}</span>
       </span></td>
       <td><span class="badge">${esc(a.cli)}</span></td>
@@ -243,7 +243,7 @@ export async function renderAgentOverview(a) {
           <table class="list-grid">
             <thead><tr><th>项目</th><th>任务</th><th>完成</th><th>失败</th><th>审批轮次</th><th>成功率</th><th>平均耗时</th></tr></thead>
             <tbody>${st.projects.map(ps => `
-              <tr ${ps.project_id > 0 ? `onclick="openProject(${ps.project_id})" style="cursor:pointer"` : ""}>
+              <tr ${ps.project_id > 0 ? `onclick="openProject(${ps.project_id})"` : ""}>
                 <td><a class="t-link" href="/projects#/project/${ps.project_id}">${esc(ps.project_name || "未命名")}</a></td>
                 <td class="num">${ps.total}</td>
                 <td class="num" style="color:var(--success)">${ps.succeeded}</td>
@@ -264,7 +264,7 @@ export async function renderAgentOverview(a) {
       box.innerHTML = recent.map(t => `
         <div class="p-task-row" onclick="openTask(${t.id})">
           <span class="num">#${t.id}</span>
-          <span class="t">${esc(t.title)}</span>
+          <a class="t card-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a>
           <span class="a">${esc(t.project_name || "-")}</span>
           <span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>
         </div>`).join("") || `<div class="empty">还没有任务</div>`;

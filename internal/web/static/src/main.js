@@ -1,6 +1,6 @@
 // 模块 main（由 scripts/split-frontend.py 生成）
 import { addChip, agentTab, agentTabFromCard, closeAgentDetail, deleteAgent, filterSkillOptions, hideAgentDetail, openAgentDetail, openAgentModal, refreshAgentCatalog, removeChip, renderAgentList, renderAgentModalSchema, renderAgentOverview, saveAgentConcurrency, saveAgentConfig, setAgentView, showAgentDetail, submitAgent, syncModelThinking, toggleAgent, toggleSkill } from "./agents.js";
-import { api, closeModal, esc, fmtDur, fmtPct, logout, state, toast } from "./core.js";
+import { activeModal, api, closeModal, esc, fmtDur, fmtPct, logout, state, toast } from "./core.js";
 import { loadDashboard } from "./dashboard.js";
 import { cleanupHistory, deleteSelected, loadHistory, selectAllNonMergeTasks, toggleAll, toggleRow } from "./history.js";
 import { closeProjectDetail, deleteProject, dirLoad, hideProjectDetail, mkdirCurrent, openDirPicker, openProject, openProjectModal, patchProject, pickDir, refreshProjectDetail, renderProjectList, showProjectDetail, submitProject } from "./projects.js";
@@ -90,16 +90,20 @@ export function renderStatsStrip() {
   const review = counts.find(s => s.status === "awaiting_review");
   const today = o.daily && o.daily.length ? o.daily[o.daily.length - 1] : null;
   const chips = [
-    ["进行中", o.in_flight || 0, "var(--st-running)"],
-    ["待审批", review ? review.count : 0, "var(--st-review)"],
-    ["今日完成", today ? today.count : 0, "var(--st-done)"],
-    ["完成率", fmtPct(o.success_rate), "var(--st-done)"],
-    ["平均耗时", fmtDur(o.avg_duration), "var(--fg-muted)"],
-    ["项目", o.projects || 0, "var(--fg-muted)"],
+    ["进行中", o.in_flight || 0, "var(--st-running)", "LIVE"],
+    ["待审批", review ? review.count : 0, "var(--st-review)", "REVIEW"],
+    ["今日完成", today ? today.count : 0, "var(--st-done)", "TODAY"],
+    ["完成率", fmtPct(o.success_rate), "var(--st-done)", "RATE"],
+    ["平均耗时", fmtDur(o.avg_duration), "var(--fg-muted)", "SPEED"],
+    ["活跃项目", o.projects || 0, "var(--fg-muted)", "SCOPE"],
   ];
-  el.innerHTML = chips.map(c => `<div class="stat-chip">
-    <span class="sc-dot" style="background:${c[2]}"></span>
-    <b>${c[1]}</b><span>${c[0]}</span></div>`).join("");
+  el.innerHTML = chips.map((c, i) => `<div class="stat-chip" style="--metric-color:${c[2]}" aria-label="${c[0]} ${c[1]}">
+    <span class="sc-index">0${i + 1}</span>
+    <span class="sc-dot"></span>
+    <b>${c[1]}</b>
+    <span class="sc-label">${c[0]}</span>
+    <small>${c[3]}</small>
+  </div>`).join("");
 }
 
 /* ============================================================
@@ -181,6 +185,17 @@ export function initShortcuts() {
   document.addEventListener("keydown", e => {
     const t = e.target;
     const inField = t && (t.matches("input, textarea, select") || t.isContentEditable);
+    const modal = activeModal();
+    if (e.key === "Tab" && modal) {
+      const focusable = [...modal.querySelectorAll("button:not([disabled]), [href], input:not([disabled]):not([type='hidden']), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")]
+        .filter(el => !el.closest(".hidden") && el.getClientRects().length);
+      if (focusable.length) {
+        const first = focusable[0], last = focusable[focusable.length - 1];
+        if (!modal.contains(document.activeElement)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+        else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
       e.preventDefault(); toggleSidebar(); return;
     }
@@ -191,7 +206,8 @@ export function initShortcuts() {
         syncSidebarControls();
         return;
       }
-      document.querySelectorAll(".modal:not(.hidden)").forEach(m => closeModal(m.id));
+      const modal = activeModal();
+      if (modal) closeModal(modal.id);
       return;
     }
     if (inField) return;
@@ -225,6 +241,7 @@ export function initShortcuts() {
       if (sb) { sb.classList.remove("mobile-open"); syncSidebarControls(); }
     }
   });
+  document.querySelectorAll(".modal").forEach(modal => modal.setAttribute("aria-hidden", modal.classList.contains("hidden") ? "true" : "false"));
 }
 
 

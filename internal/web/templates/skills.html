@@ -26,7 +26,7 @@
       <button id="segSkillList" onclick="setSkillView('list')">列表</button>
     </div>
     <div class="skill-filter-controls hidden" id="skillFilterControls">
-      <input id="skillSearch" class="inp" placeholder="搜索技能…" oninput="renderSkillLib()">
+      <input id="skillSearch" class="inp" aria-label="搜索技能" placeholder="搜索技能…" oninput="renderSkillLib()">
       <select id="skillTagFilter" onchange="renderSkillLib()" aria-label="按标签筛选技能">
         <option value="">全部标签</option>
       </select>
@@ -83,7 +83,7 @@
     <div class="sub">单个导入需要目录中含 <code>SKILL.md</code>；扫描会递归发现所选目录下的全部 skills，并复制到 paihuo 工作目录登记入库</div>
     <label class="field">技能目录 / 扫描根目录
       <span class="dir-input-row">
-        <input id="sSkillPath" placeholder="/path/to/skill-dir 或 skills-root" list="dlistSkill">
+        <input id="sSkillPath" data-autofocus placeholder="/path/to/skill-dir 或 skills-root" list="dlistSkill">
         <datalist id="dlistSkill"></datalist>
         <button type="button" class="btn sm" onclick="openDirPicker('sSkillPath')">
           <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
@@ -108,7 +108,7 @@
     <h3>添加扩展</h3>
     <div class="sub">pi install 官方命令：来源可以是本地目录或远程仓库</div>
     <label class="field">来源
-      <input id="extSource" placeholder="/path/to/extension 或 git 仓库地址">
+      <input id="extSource" data-autofocus placeholder="/path/to/extension 或 git 仓库地址">
     </label>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal('extModal')">取消</button>

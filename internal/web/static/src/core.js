@@ -110,9 +110,49 @@ export async function api(path, opts = {}) {
   return res.json();
 }
 
-export function openModal(id) { document.getElementById(id).classList.remove("hidden"); }
+export function activeModal() {
+  const modals = document.querySelectorAll(".modal:not(.hidden)");
+  return modals.length ? modals[modals.length - 1] : null;
+}
 
-export function closeModal(id) { document.getElementById(id).classList.add("hidden"); }
+export function openModal(id) {
+  const modal = document.getElementById(id);
+  if (!modal) return;
+  const previous = activeModal();
+  if (previous && previous !== modal) {
+    previous.setAttribute("aria-hidden", "true");
+    previous.removeAttribute("aria-modal");
+  }
+  modal._returnFocus = document.activeElement;
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-hidden", "false");
+  const label = modal.querySelector("[data-modal-title], h1, h2, h3, .t-title");
+  if (label) {
+    if (!label.id) label.id = `${id}Label`;
+    modal.setAttribute("aria-labelledby", label.id);
+  }
+  modal.classList.remove("hidden");
+  const target = modal.querySelector("[data-autofocus], [autofocus]") ||
+    modal.querySelector("input:not([type='hidden']), textarea, select, button, [href], [tabindex]:not([tabindex='-1'])");
+  target?.focus({ preventScroll: true });
+}
+
+export function closeModal(id) {
+  const modal = document.getElementById(id);
+  if (!modal) return;
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+  modal.removeAttribute("aria-modal");
+  const previous = activeModal();
+  if (previous) {
+    previous.setAttribute("aria-hidden", "false");
+    previous.setAttribute("aria-modal", "true");
+  }
+  const trigger = modal._returnFocus;
+  modal._returnFocus = null;
+  if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+}
 
 export async function logout() {
   try { await fetch("/logout", { method: "POST" }); } catch (_) {}

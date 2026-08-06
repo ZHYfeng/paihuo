@@ -191,7 +191,7 @@ export function renderBoard() {
 
 export function cardHTML(t) {
   const blocked = mergeBlockReason(t);
-  return `<div class="card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
+  return `<article class="card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
     <div class="c-top">
       <span class="st-dot"></span><span class="c-id">#${t.id}</span>
       <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
@@ -205,7 +205,7 @@ export function cardHTML(t) {
       ${t.concurrent ? `<span class="chip">并发</span>` : ""}
       ${t.review_rounds > 0 ? `<span class="chip">第${t.review_rounds}轮</span>` : ""}
     </div>
-    <div class="c-title">${esc(t.title)}</div>
+    <a class="c-title card-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a>
     ${t.body ? `<div class="c-desc">${esc(t.body)}</div>` : ""}
     <div class="c-meta">
       ${t.project_id && t.project_name ? `<a class="chip chip-link" href="/projects#/project/${t.project_id}" title="打开项目页" onclick="event.stopPropagation()">${esc(t.project_name)}</a>` : ""}
@@ -214,7 +214,7 @@ export function cardHTML(t) {
         ${t.error ? `<span style="color:var(--danger)">✗</span>` : ""}
       </span>
     </div>
-  </div>`;
+  </article>`;
 }
 
 export function renderList() {
@@ -224,7 +224,7 @@ export function renderList() {
   el.innerHTML = tasks.map(t => `
     <tr onclick="openTask(${t.id})">
       <td class="num">#${t.id}</td>
-      <td class="t-title">${esc(t.title)}</td>
+      <td class="t-title"><a class="table-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a></td>
       <td>${taskKindChip(t)}${dependencyChip(t)}${dependencyStateChip(t)}${mergeBlockReason(t) ? `<span class="chip merge-blocked">${mergeBlockReason(t)}</span>` : ""}</td>
       <td>${esc(t.agent_name || "-")}</td>
       <td>${t.project_id ? `<a class="t-link" href="/projects#/project/${t.project_id}" onclick="event.stopPropagation()">${esc(t.project_name || "-")}</a>` : esc(t.project_name || "-")}</td>
@@ -675,7 +675,7 @@ export async function loadChildren(id) {
         <summary><span>${title}</span><span class="section-meta">${done}/${items.length} 已结束</span></summary>
         <div class="task-subtask-list">` +
         items.map(k => `<div class="task-subtask" onclick="openTask(${k.id})">
-          <div class="c-title">#${k.id} ${esc(k.title)}</div>
+          <a class="c-title card-primary-action" href="#/issue/${k.id}" onclick="event.stopPropagation();openTask(${k.id});return false">#${k.id} ${esc(k.title)}</a>
           <div class="c-meta">${isMergeTask(k) ? `<span class="chip merge">代码合并</span>` : ""}<span class="badge ${k.status}" style="--st-color:${ST_COLOR[k.status]}"><span class="st-dot"></span>${STATUS_LABEL[k.status]}</span>
           <span style="font-size:11px;color:var(--fg-faint)">${esc(k.agent_name || "")}</span></div>
         </div>`).join("") + `</div></details>`;

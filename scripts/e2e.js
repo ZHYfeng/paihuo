@@ -53,6 +53,15 @@ function findChrome() {
 
   // 登录
   await page.goto(URL + "/login");
+  const loginReady = await page.evaluate(() => {
+    const card = document.querySelector(".login-card");
+    const input = document.getElementById("loginToken");
+    if (!card || !input) return false;
+    const style = getComputedStyle(card);
+    const rect = input.getBoundingClientRect();
+    return style.visibility !== "hidden" && Number(style.opacity) > 0.99 && rect.width > 0 && rect.height > 0;
+  });
+  loginReady ? ok("登录表单首屏可见") : fail("登录表单首屏不可见");
   await page.fill("input[type=password]", TOKEN);
   await page.click("button[type=submit]");
   await page.waitForTimeout(900);
@@ -226,15 +235,29 @@ function findChrome() {
   await page.waitForTimeout(700);
   await page.evaluate(() => openProjectModal());
   await page.waitForTimeout(300);
-  await page.evaluate(() => openDirPicker("pProjectDir"));
+  await page.locator("#projectModal .dir-input-row .btn").click();
   await page.waitForTimeout(500);
   const dir = await page.evaluate(() => {
     const m = document.getElementById("dirModal");
-    return !m.classList.contains("hidden") && document.querySelectorAll("#dirList > div").length > 0;
+    const parent = document.getElementById("projectModal");
+    const label = document.getElementById(m.getAttribute("aria-labelledby"));
+    return !m.classList.contains("hidden") &&
+      m.getAttribute("role") === "dialog" && m.getAttribute("aria-modal") === "true" &&
+      !!label?.textContent.trim() && m.contains(document.activeElement) &&
+      parent.getAttribute("aria-hidden") === "true" &&
+      document.querySelectorAll("#dirList > .dir-row").length > 0 &&
+      [...document.querySelectorAll("#dirList > .dir-row")].every(el => el.tagName === "BUTTON");
   });
-  dir ? ok("项目弹窗 + 目录选择器") : fail("项目弹窗/目录选择器异常");
-  await page.evaluate(() => closeModal("dirModal"));
-  await page.evaluate(() => closeModal("projectModal"));
+  dir ? ok("项目弹窗 + 可访问目录选择器") : fail("项目弹窗/目录选择器异常");
+  await page.keyboard.press("Escape");
+  const nestedModalReturn = await page.evaluate(() => {
+    const parent = document.getElementById("projectModal");
+    return document.getElementById("dirModal").classList.contains("hidden") &&
+      !parent.classList.contains("hidden") && parent.getAttribute("aria-hidden") === "false" &&
+      parent.contains(document.activeElement);
+  });
+  nestedModalReturn ? ok("嵌套弹窗关闭后恢复焦点") : fail("嵌套弹窗关闭或焦点恢复异常");
+  await page.keyboard.press("Escape");
 
   // 项目页直接派活：详情页新建任务按钮 → 弹窗预选项目（真实走 API 建/删，验证完整链路）
   const proj = await page.evaluate(async () => {

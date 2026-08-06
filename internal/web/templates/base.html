@@ -4,63 +4,65 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>派活 PaiHuo</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23d7fa89'/%3E%3Cstop offset='1' stop-color='%2374e0bc'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='15' fill='url(%23g)'/%3E%3Ctext x='32' y='44' font-size='32' font-weight='800' text-anchor='middle' fill='%2311150f' font-family='sans-serif'%3E派%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/app.css">
 <link rel="stylesheet" href="/static/vendor/xterm.css">
 </head>
 <body>
+<a class="skip-link" href="#main-content">跳到主要内容</a>
 <div class="shell">
-  <aside class="sidebar" id="sidebar">
+  <aside class="sidebar" id="sidebar" aria-label="主导航">
     <div class="sidebar-logo">
       <span class="logo-mark">派</span>
       <span class="text">
         <b>派活</b>
         <small>PAIHUO / OPS</small>
       </span>
-      <button class="sb-toggle" id="sbToggle" onclick="toggleSidebar()" title="收起侧边栏 (Ctrl+B)" aria-label="收起或展开侧边栏">
+      <button type="button" class="sb-toggle" id="sbToggle" onclick="toggleSidebar()" title="收起侧边栏 (Ctrl+B)" aria-label="收起或展开侧边栏">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
     </div>
-    <nav class="sidebar-nav">
+    <nav class="sidebar-nav" aria-label="功能导航">
       <div class="sidebar-group-label">工作区</div>
-      <a class="sidebar-link {{if eq .Active "dashboard"}}active{{end}}" href="/">
+      <a class="sidebar-link {{if eq .Active "dashboard"}}active{{end}}" href="/" aria-label="工作台" title="工作台" {{if eq .Active "dashboard"}}aria-current="page"{{end}}>
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h8v8H3zM13 3h8v5h-8zM13 11h8v10h-8zM3 14h8v7H3z"/></svg>
         <span>工作台</span>
       </a>
-      <a class="sidebar-link {{if eq .Active "board"}}active{{end}}" href="/board">
+      <a class="sidebar-link {{if eq .Active "board"}}active{{end}}" href="/board" aria-label="看板" title="看板" {{if eq .Active "board"}}aria-current="page"{{end}}>
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Zm5 2v10m4-10v6m4-6v10"/></svg>
         <span>看板</span>
         <span class="s-count" id="sbBoardCount"></span>
       </a>
-      <a class="sidebar-link {{if eq .Active "projects"}}active{{end}}" href="/projects">
+      <a class="sidebar-link {{if eq .Active "projects"}}active{{end}}" href="/projects" aria-label="项目" title="项目" {{if eq .Active "projects"}}aria-current="page"{{end}}>
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Zm5 3 5 5m0-5-5 5"/></svg>
         <span>项目</span>
         <span class="s-count" id="sbProjectCount"></span>
       </a>
-      <a class="sidebar-link {{if eq .Active "history"}}active{{end}}" href="/history">
+      <a class="sidebar-link {{if eq .Active "history"}}active{{end}}" href="/history" aria-label="历史" title="历史" {{if eq .Active "history"}}aria-current="page"{{end}}>
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 3"/></svg>
         <span>历史</span>
       </a>
       <div class="sidebar-group-label">管理</div>
-      <a class="sidebar-link {{if eq .Active "agents"}}active{{end}}" href="/agents">
+      <a class="sidebar-link {{if eq .Active "agents"}}active{{end}}" href="/agents" aria-label="智能体" title="智能体" {{if eq .Active "agents"}}aria-current="page"{{end}}>
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8Zm5-2V6a3 3 0 0 1 6 0v2M9 15h.01M15 15h.01"/></svg>
         <span>智能体</span>
       </a>
-      <a class="sidebar-link {{if eq .Active "roles"}}active{{end}}" href="/roles">
+      <a class="sidebar-link {{if eq .Active "roles"}}active{{end}}" href="/roles" aria-label="角色" title="角色" {{if eq .Active "roles"}}aria-current="page"{{end}}>
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 21a8 8 0 0 1 16 0"/></svg>
         <span>角色</span>
       </a>
-      <a class="sidebar-link {{if eq .Active "skills"}}active{{end}}" href="/skills">
+      <a class="sidebar-link {{if eq .Active "skills"}}active{{end}}" href="/skills" aria-label="技能" title="技能" {{if eq .Active "skills"}}aria-current="page"{{end}}>
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.4L19 10l-5.2 1.6L12 17l-1.8-5.4L5 10l5.2-1.6L12 3Z"/></svg>
         <span>技能</span>
       </a>
-      <a class="sidebar-link {{if eq .Active "autopilots"}}active{{end}}" href="/autopilots">
+      <a class="sidebar-link {{if eq .Active "autopilots"}}active{{end}}" href="/autopilots" aria-label="定时任务" title="定时任务" {{if eq .Active "autopilots"}}aria-current="page"{{end}}>
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg>
         <span>定时任务</span>
       </a>
       <div class="sidebar-group-label">系统</div>
-      <a class="sidebar-link {{if eq .Active "settings"}}active{{end}}" href="/settings">
+      <a class="sidebar-link {{if eq .Active "settings"}}active{{end}}" href="/settings" aria-label="设置" title="设置" {{if eq .Active "settings"}}aria-current="page"{{end}}>
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9l2.1 2.1m10 10 2.1 2.1m0-14.2-2.1 2.1m-10 10-2.1 2.1"/></svg>
         <span>设置</span>
       </a>
@@ -70,15 +72,15 @@
         <span class="runtime-dot"></span>
         <span class="runtime-copy"><b>本机执行</b><small>服务运行正常</small></span>
       </div>
-      <button class="sidebar-link logout-link" onclick="logout()">
+      <button type="button" class="sidebar-link logout-link" onclick="logout()">
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9"/></svg>
         <span>退出登录</span>
       </button>
     </div>
   </aside>
   <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar()" aria-hidden="true"></div>
-  <main class="main">
-    <button class="mobile-nav-toggle" id="mobileNavToggle" onclick="toggleSidebar()" aria-label="打开导航" aria-expanded="false" title="打开导航">
+  <main class="main" id="main-content" tabindex="-1">
+    <button type="button" class="mobile-nav-toggle" id="mobileNavToggle" onclick="toggleSidebar()" aria-label="打开导航" aria-expanded="false" title="打开导航">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
     {{template "content" .}}
@@ -102,7 +104,7 @@
     </div>
   </main>
 </div>
-<div id="toast" class="toast hidden"></div>
+<div id="toast" class="toast hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <!-- 新建任务弹窗（全站共享） -->
 <div class="modal hidden" id="taskModal">
@@ -117,7 +119,7 @@
     <label class="field">从模板填充
       <select id="tTemplate" onchange="applyTemplate()"><option value="">—</option></select>
     </label>
-    <label class="field">标题 <input id="tTitle" placeholder="要做什么"></label>
+    <label class="field">标题 <input id="tTitle" data-autofocus placeholder="要做什么"></label>
     <label class="field">任务内容
       <textarea id="tBody" rows="5" placeholder="给 agent 的详细指令；标题和这里的内容都会作为提示词传给 agent。"></textarea>
     </label>
@@ -173,7 +175,7 @@
     <h3 id="projectModalTitle">新建项目</h3>
     <div class="sub">项目是任务管理的维度：工作目录 + 聚合任务进度与 agent 统计</div>
     <input type="hidden" id="pId">
-    <label class="field">名称 <input id="pName" placeholder="如：公司官网重构"></label>
+    <label class="field">名称 <input id="pName" data-autofocus placeholder="如：公司官网重构"></label>
     <label class="field">工作目录
       <span class="dir-input-row">
         <input id="pProjectDir" placeholder="/path/to/project" list="dlistProj">
@@ -206,7 +208,7 @@
     <div class="dir-crumb" id="dirCrumb"></div>
     <div class="dir-list" id="dirList"></div>
     <div class="dir-new">
-      <input id="dirNewName" placeholder="新建子目录名（在当前目录下）" onkeydown="if(event.key==='Enter')mkdirCurrent()">
+      <input id="dirNewName" data-autofocus placeholder="新建子目录名（在当前目录下）" onkeydown="if(event.key==='Enter')mkdirCurrent()">
       <button class="btn sm" onclick="mkdirCurrent()">创建</button>
     </div>
     <div class="modal-actions">

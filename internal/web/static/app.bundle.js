@@ -125,11 +125,45 @@
     if (res.status === 204) return null;
     return res.json();
   }
+  function activeModal() {
+    const modals = document.querySelectorAll(".modal:not(.hidden)");
+    return modals.length ? modals[modals.length - 1] : null;
+  }
   function openModal(id) {
-    document.getElementById(id).classList.remove("hidden");
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    const previous = activeModal();
+    if (previous && previous !== modal) {
+      previous.setAttribute("aria-hidden", "true");
+      previous.removeAttribute("aria-modal");
+    }
+    modal._returnFocus = document.activeElement;
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-hidden", "false");
+    const label = modal.querySelector("[data-modal-title], h1, h2, h3, .t-title");
+    if (label) {
+      if (!label.id) label.id = `${id}Label`;
+      modal.setAttribute("aria-labelledby", label.id);
+    }
+    modal.classList.remove("hidden");
+    const target = modal.querySelector("[data-autofocus], [autofocus]") || modal.querySelector("input:not([type='hidden']), textarea, select, button, [href], [tabindex]:not([tabindex='-1'])");
+    target?.focus({ preventScroll: true });
   }
   function closeModal(id) {
-    document.getElementById(id).classList.add("hidden");
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modal.classList.add("hidden");
+    modal.setAttribute("aria-hidden", "true");
+    modal.removeAttribute("aria-modal");
+    const previous = activeModal();
+    if (previous) {
+      previous.setAttribute("aria-hidden", "false");
+      previous.setAttribute("aria-modal", "true");
+    }
+    const trigger = modal._returnFocus;
+    modal._returnFocus = null;
+    if (trigger?.isConnected) trigger.focus({ preventScroll: true });
   }
   async function logout() {
     try {
@@ -141,13 +175,13 @@
 
   // internal/web/static/src/dashboard.js
   function dashCardHTML(t, actions) {
-    return `<div class="card dash-card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
+    return `<article class="card dash-card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
     <div class="c-top">
       <span class="st-dot"></span><span class="c-id">#${t.id}</span>
       <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
       ${t.perm === "review" ? `<span class="chip review">\u5BA1\u6279</span>` : ""}
     </div>
-    <div class="c-title">${esc(t.title)}</div>
+    <a class="c-title card-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a>
     <div class="c-meta">
       ${t.project_name ? `<span class="chip">${esc(t.project_name)}</span>` : ""}
       <span class="c-foot">
@@ -155,6 +189,13 @@
       </span>
     </div>
     ${actions ? `<div class="dash-actions" onclick="event.stopPropagation()">${actions}</div>` : ""}
+  </article>`;
+  }
+  function dashEmpty(title, detail, action) {
+    return `<div class="dash-empty">
+    <span class="dash-empty-mark" aria-hidden="true"><i></i></span>
+    <b>${title}</b><span>${detail}</span>
+    ${action || ""}
   </div>`;
   }
   function loadDashboard() {
@@ -169,11 +210,19 @@
     if (!run || !rev) return;
     const running = state.tasks.filter((t) => ["queued", "claimed", "running"].includes(t.status)).sort((a, b) => (a.created_at || "") < (b.created_at || "") ? 1 : -1).slice(0, 12);
     const review = state.tasks.filter((t) => t.status === "awaiting_review").sort((a, b) => (a.created_at || "") < (b.created_at || "") ? 1 : -1).slice(0, 12);
-    run.innerHTML = running.map((t) => dashCardHTML(t)).join("") || `<div class="empty">\u6682\u65E0\u8FDB\u884C\u4E2D\u4EFB\u52A1</div>`;
+    run.innerHTML = running.map((t) => dashCardHTML(t)).join("") || dashEmpty(
+      "\u6267\u884C\u961F\u5217\u5DF2\u6E05\u7A7A",
+      "\u521B\u5EFA\u4EFB\u52A1\u540E\uFF0C\u8FDB\u5EA6\u4F1A\u5728\u8FD9\u91CC\u5B9E\u65F6\u66F4\u65B0\u3002",
+      `<button type="button" class="btn xs" onclick="openNewTask()">\u6D3E\u53D1\u4EFB\u52A1</button>`
+    );
     rev.innerHTML = review.map((t) => dashCardHTML(
       t,
       `<button class="btn xs brand" onclick="setTaskStatus(${t.id},'succeeded')">\u901A\u8FC7\u5E76\u5408\u5E76</button><button class="btn xs" onclick="rejectTask(${t.id})">\u9A73\u56DE</button><button class="btn xs" onclick="openTask(${t.id})">\u67E5\u770B\u8BE6\u60C5</button>`
-    )).join("") || `<div class="empty">\u65E0\u5F85\u5BA1\u6279\u4EFB\u52A1</div>`;
+    )).join("") || dashEmpty(
+      "\u5F53\u524D\u65E0\u9700\u5BA1\u6279",
+      "\u9700\u8981\u4EBA\u5DE5\u786E\u8BA4\u7684\u4EA4\u4ED8\u4F1A\u96C6\u4E2D\u51FA\u73B0\u5728\u8FD9\u91CC\u3002",
+      `<a class="btn xs" href="/history">\u67E5\u770B\u5386\u53F2</a>`
+    );
     const rc = document.getElementById("dashRunningCount");
     if (rc) rc.textContent = running.length;
     const vc = document.getElementById("dashReviewCount");
@@ -198,12 +247,12 @@
       const done = ts.filter((t) => t.status === "succeeded").length;
       const pct = ts.length ? Math.round(done / ts.length * 100) : 0;
       const inflight = ts.filter((t) => ["queued", "claimed", "running", "awaiting_review"].includes(t.status)).length;
-      return `<div class="dash-proj" onclick="location.href='/projects#/project/${p.id}'">
+      return `<a class="dash-proj" href="/projects#/project/${p.id}">
       <div class="dp-top"><b title="${esc(p.name)}">${esc(p.name)}</b>
         ${inflight ? `<span class="badge running">${inflight} \u6D3B\u8DC3</span>` : `<span class="badge">${ts.length} \u4EFB\u52A1</span>`}</div>
       <div class="pc-progress"><div class="pp-bar"><div style="width:${pct}%"></div></div>
         <span class="pc-pct">${pct}%</span></div>
-    </div>`;
+    </a>`;
     }).join("") || `<div class="empty">\u6682\u65E0\u6D3B\u8DC3\u9879\u76EE</div>`;
   }
   async function loadDashAgents() {
@@ -217,7 +266,7 @@
       const review = state.tasks.filter((t) => t.status === "awaiting_review").length;
       box.innerHTML = `
       <div class="dash-prov">
-        ${prov.map((p) => `<span class="prov-chip ${p.installed ? "ok" : ""} ${p.login ? "login" : ""}" title="${esc(p.name)}${p.installed ? " " + esc(p.version) : " \u2014 \u672A\u5B89\u88C5"}${p.installed && !p.login ? "\uFF08\u672A\u767B\u5F55\uFF09" : ""}">${esc(p.name)}${p.installed ? p.login ? " \u2713" : " \u26A0" : " \u2717"}</span>`).join("")}
+        ${prov.map((p) => `<span class="prov-chip ${p.installed ? "ok" : ""} ${p.login ? "login" : ""}" title="${esc(p.name)}${p.installed ? " " + esc(p.version) : " \u2014 \u672A\u5B89\u88C5"}${p.installed && !p.login ? "\uFF08\u672A\u767B\u5F55\uFF09" : ""}"><i aria-hidden="true"></i>${esc(p.name)}<span class="sr-only">${p.installed ? p.login ? "\u5DF2\u5B89\u88C5\u5E76\u767B\u5F55" : "\u5DF2\u5B89\u88C5\uFF0C\u672A\u767B\u5F55" : "\u672A\u5B89\u88C5"}</span></span>`).join("")}
       </div>
       <div class="dash-prov-meta">
         <span><b>${installed.length}/${prov.length}</b> \u5DF2\u5B89\u88C5</span>
@@ -494,14 +543,14 @@
   function skillCardHTML(s) {
     const selected = state.skillSelected.has(s.id);
     return `
-    <article class="skill-card${selected ? " selected" : ""}" tabindex="0" role="button" aria-label="\u67E5\u770B\u6280\u80FD ${esc(s.name)}" onclick="openSkillDetail(${s.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSkillDetail(${s.id})}">
+    <article class="skill-card${selected ? " selected" : ""}" onclick="openSkillDetail(${s.id})">
       <div class="sk-top">
         <label class="skill-select" onclick="event.stopPropagation()" title="\u9009\u62E9 ${esc(s.name)}">
           <input type="checkbox" data-skill-id="${s.id}" ${selected ? "checked" : ""} aria-label="\u9009\u62E9\u6280\u80FD ${esc(s.name)}" onchange="toggleSkillSelection(${s.id}, this.checked)">
         </label>
         <span class="avatar">${esc((s.name || "?").slice(0, 1))}</span>
         <div class="sk-id">
-          <div class="sk-name">${esc(s.name)}</div>
+          <a class="sk-name card-primary-action" href="#/skill/${s.id}" onclick="event.stopPropagation()">${esc(s.name)}</a>
           <div class="sk-desc">${esc(s.description || "\u65E0\u63CF\u8FF0")}</div>
         </div>
       </div>
@@ -524,7 +573,7 @@
     <td class="skill-list-check"><label class="skill-select" onclick="event.stopPropagation()" title="\u9009\u62E9 ${esc(s.name)}">
       <input type="checkbox" data-skill-id="${s.id}" ${selected ? "checked" : ""} aria-label="\u9009\u62E9\u6280\u80FD ${esc(s.name)}" onchange="toggleSkillSelection(${s.id}, this.checked)">
     </label></td>
-    <td><span class="skill-list-name"><span class="avatar">${esc((s.name || "?").slice(0, 1))}</span><span><b>${esc(s.name)}</b><small>${esc(s.description || "\u65E0\u63CF\u8FF0")}</small></span></span></td>
+    <td><span class="skill-list-name"><span class="avatar">${esc((s.name || "?").slice(0, 1))}</span><span><a class="table-primary-action" href="#/skill/${s.id}" onclick="event.stopPropagation()">${esc(s.name)}</a><small>${esc(s.description || "\u65E0\u63CF\u8FF0")}</small></span></span></td>
     <td><div class="skill-tags">${skillTagsHTML(s)}</div></td>
     <td><code class="skill-list-dir" title="${esc(s.source_path || s.dir || "-")}">${esc(skillGroupDirectory(s))}</code></td>
     <td class="num">${esc((s.created_at || "").slice(0, 10))}</td>
@@ -1145,7 +1194,7 @@
   }
   function cardHTML(t) {
     const blocked = mergeBlockReason(t);
-    return `<div class="card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
+    return `<article class="card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
     <div class="c-top">
       <span class="st-dot"></span><span class="c-id">#${t.id}</span>
       <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
@@ -1159,7 +1208,7 @@
       ${t.concurrent ? `<span class="chip">\u5E76\u53D1</span>` : ""}
       ${t.review_rounds > 0 ? `<span class="chip">\u7B2C${t.review_rounds}\u8F6E</span>` : ""}
     </div>
-    <div class="c-title">${esc(t.title)}</div>
+    <a class="c-title card-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a>
     ${t.body ? `<div class="c-desc">${esc(t.body)}</div>` : ""}
     <div class="c-meta">
       ${t.project_id && t.project_name ? `<a class="chip chip-link" href="/projects#/project/${t.project_id}" title="\u6253\u5F00\u9879\u76EE\u9875" onclick="event.stopPropagation()">${esc(t.project_name)}</a>` : ""}
@@ -1168,7 +1217,7 @@
         ${t.error ? `<span style="color:var(--danger)">\u2717</span>` : ""}
       </span>
     </div>
-  </div>`;
+  </article>`;
   }
   function renderList() {
     const el = document.getElementById("listBody");
@@ -1177,7 +1226,7 @@
     el.innerHTML = tasks.map((t) => `
     <tr onclick="openTask(${t.id})">
       <td class="num">#${t.id}</td>
-      <td class="t-title">${esc(t.title)}</td>
+      <td class="t-title"><a class="table-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a></td>
       <td>${taskKindChip(t)}${dependencyChip(t)}${dependencyStateChip(t)}${mergeBlockReason(t) ? `<span class="chip merge-blocked">${mergeBlockReason(t)}</span>` : ""}</td>
       <td>${esc(t.agent_name || "-")}</td>
       <td>${t.project_id ? `<a class="t-link" href="/projects#/project/${t.project_id}" onclick="event.stopPropagation()">${esc(t.project_name || "-")}</a>` : esc(t.project_name || "-")}</td>
@@ -1605,7 +1654,7 @@
         return `<details class="task-section task-subtasks ${merge ? "task-merge-children" : ""}"${open ? " open" : ""}>
         <summary><span>${title}</span><span class="section-meta">${done}/${items.length} \u5DF2\u7ED3\u675F</span></summary>
         <div class="task-subtask-list">` + items.map((k) => `<div class="task-subtask" onclick="openTask(${k.id})">
-          <div class="c-title">#${k.id} ${esc(k.title)}</div>
+          <a class="c-title card-primary-action" href="#/issue/${k.id}" onclick="event.stopPropagation();openTask(${k.id});return false">#${k.id} ${esc(k.title)}</a>
           <div class="c-meta">${isMergeTask(k) ? `<span class="chip merge">\u4EE3\u7801\u5408\u5E76</span>` : ""}<span class="badge ${k.status}" style="--st-color:${ST_COLOR[k.status]}"><span class="st-dot"></span>${STATUS_LABEL[k.status]}</span>
           <span style="font-size:11px;color:var(--fg-faint)">${esc(k.agent_name || "")}</span></div>
         </div>`).join("") + `</div></details>`;
@@ -1878,7 +1927,7 @@
       const done = sourceTasks.filter((t) => t.status === "succeeded").length;
       const pct = sourceTasks.length ? done / sourceTasks.length * 100 : 0;
       const agents = new Set(ts.map((t) => t.agent_name).filter(Boolean));
-      return `<div class="project-card" onclick="openProject(${p.id})">
+      return `<a class="project-card" href="/projects#/project/${p.id}">
       <div class="pc-top">
         <b>${esc(p.name)}</b>
         ${p.is_git ? `<span class="chip git-chip" title="git \u4ED3\u5E93\uFF0C\u4EFB\u52A1\u5C06\u83B7\u5F97\u72EC\u7ACB worktree">git</span>` : `<span class="chip" title="\u975E git \u4ED3\u5E93\uFF0C\u4EFB\u52A1\u76F4\u63A5\u5728\u9879\u76EE\u76EE\u5F55\u6267\u884C">\u975E git</span>`}
@@ -1896,7 +1945,7 @@
         <span class="spacer"></span>
         <span class="pc-date">${(p.updated_at || p.created_at || "").slice(5, 16).replace("T", " ")}</span>
       </div>
-    </div>`;
+    </a>`;
     }).join("");
     const empty = document.getElementById("projectEmpty");
     if (empty) empty.classList.toggle("hidden", list.length > 0);
@@ -1948,7 +1997,7 @@
     const rowHTML = (items, merge) => items.map((t) => `
     <div class="p-task-row ${merge ? "merge-task-row" : ""}" onclick="openTask(${t.id})">
       <span class="num">#${t.id}</span>
-      <span class="t">${esc(t.title)}</span>
+      <a class="t card-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a>
       ${merge ? `<span class="chip merge">\u5408\u5E76 #${t.merge_of}</span>` : ""}
       ${merge ? "" : dependencyChip(t)}
       ${!merge && t.status === "queued" && dependencyInfo(t).state === "blocked" ? `<span class="chip dependency blocked" title="${esc(dependencyInfo(t).reason)}">${esc(dependencyInfo(t).stateLabel || "\u7B49\u5F85\u524D\u5E8F")}</span>` : ""}
@@ -2125,25 +2174,27 @@
       dirState.path = d.path;
       const el = document.getElementById("dirCrumb");
       const segs = d.path.split("/").filter(Boolean);
-      let html = `<span class="crumb-seg" data-p="/">/</span>`;
+      let html = `<button type="button" class="crumb-seg" data-p="/" aria-label="\u8FD4\u56DE\u6839\u76EE\u5F55">/</button>`;
       let cur = "";
       segs.forEach((s, i) => {
         cur += "/" + s;
         const last = i === segs.length - 1;
-        html += `<span class="crumb-sep">/</span><span class="crumb-seg${last ? " cur" : ""}" data-p="${esc(cur)}">${esc(s)}</span>`;
+        html += `<span class="crumb-sep">/</span>` + (last ? `<span class="crumb-seg cur" aria-current="location">${esc(s)}</span>` : `<button type="button" class="crumb-seg" data-p="${esc(cur)}">${esc(s)}</button>`);
       });
       el.innerHTML = html;
       const list = document.getElementById("dirList");
       list.innerHTML = "";
       if (d.parent !== d.path) {
-        const up = document.createElement("div");
+        const up = document.createElement("button");
+        up.type = "button";
         up.className = "dir-row up";
         up.dataset.path = d.parent;
         up.innerHTML = icon("back") + `<span>\u4E0A\u4E00\u7EA7</span>`;
         list.appendChild(up);
       }
       d.dirs.forEach((n) => {
-        const row = document.createElement("div");
+        const row = document.createElement("button");
+        row.type = "button";
         row.className = "dir-row";
         row.dataset.path = d.path.replace(/\/+$/, "") + "/" + n;
         row.innerHTML = icon("folder") + `<span class="dr-name">${esc(n)}</span>`;
@@ -2250,11 +2301,11 @@
     grid.innerHTML = list.map((a) => {
       const rc = a.role_config || {};
       const st = agentTaskStats(a);
-      return `<div class="agent-card" data-agent-id="${a.id}" onclick="openAgentDetail(${a.id})">
+      return `<article class="agent-card" data-agent-id="${a.id}" onclick="openAgentDetail(${a.id})">
       <div class="ac-top">
         <span class="avatar lg av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
         <div class="ac-id">
-          <div class="ac-name">${esc(a.name)}</div>
+          <a class="ac-name card-primary-action" href="#/agent/${a.id}" onclick="event.stopPropagation()">${esc(a.name)}</a>
           <div class="ac-sub">${esc(a.description || "\u672A\u8BBE\u7F6E\u63CF\u8FF0")}</div>
         </div>
         <span class="badge ${a.enabled ? "succeeded" : "cancelled"}">${a.enabled ? "\u542F\u7528" : "\u505C\u7528"}</span>
@@ -2270,7 +2321,7 @@
         <span><b style="color:var(--st-review)">${st.review}</b> \u5F85\u5BA1\u6279</span>
       </div>
       <div class="ac-ops">${agentActionsHTML(a)}</div>
-    </div>`;
+    </article>`;
     }).join("");
     renderAgentEmpty(list, query);
     const cnt = document.getElementById("agentCount");
@@ -2285,7 +2336,7 @@
       return `<tr onclick="openAgentDetail(${a.id})">
       <td><span style="display:flex;align-items:center;gap:8px">
         <span class="avatar av-${esc(a.cli)}">${esc((a.name || "?").slice(0, 1))}</span>
-        <b>${esc(a.name)}</b>
+        <a class="table-primary-action" href="#/agent/${a.id}" onclick="event.stopPropagation()">${esc(a.name)}</a>
         <span style="font-size:11px;color:var(--fg-faint)">${esc(a.description || "")}</span>
       </span></td>
       <td><span class="badge">${esc(a.cli)}</span></td>
@@ -2423,7 +2474,7 @@
           <table class="list-grid">
             <thead><tr><th>\u9879\u76EE</th><th>\u4EFB\u52A1</th><th>\u5B8C\u6210</th><th>\u5931\u8D25</th><th>\u5BA1\u6279\u8F6E\u6B21</th><th>\u6210\u529F\u7387</th><th>\u5E73\u5747\u8017\u65F6</th></tr></thead>
             <tbody>${st.projects.map((ps) => `
-              <tr ${ps.project_id > 0 ? `onclick="openProject(${ps.project_id})" style="cursor:pointer"` : ""}>
+              <tr ${ps.project_id > 0 ? `onclick="openProject(${ps.project_id})"` : ""}>
                 <td><a class="t-link" href="/projects#/project/${ps.project_id}">${esc(ps.project_name || "\u672A\u547D\u540D")}</a></td>
                 <td class="num">${ps.total}</td>
                 <td class="num" style="color:var(--success)">${ps.succeeded}</td>
@@ -2444,7 +2495,7 @@
         box.innerHTML = recent.map((t) => `
         <div class="p-task-row" onclick="openTask(${t.id})">
           <span class="num">#${t.id}</span>
-          <span class="t">${esc(t.title)}</span>
+          <a class="t card-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a>
           <span class="a">${esc(t.project_name || "-")}</span>
           <span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>
         </div>`).join("") || `<div class="empty">\u8FD8\u6CA1\u6709\u4EFB\u52A1</div>`;
@@ -3198,16 +3249,20 @@
     const review = counts.find((s) => s.status === "awaiting_review");
     const today = o.daily && o.daily.length ? o.daily[o.daily.length - 1] : null;
     const chips = [
-      ["\u8FDB\u884C\u4E2D", o.in_flight || 0, "var(--st-running)"],
-      ["\u5F85\u5BA1\u6279", review ? review.count : 0, "var(--st-review)"],
-      ["\u4ECA\u65E5\u5B8C\u6210", today ? today.count : 0, "var(--st-done)"],
-      ["\u5B8C\u6210\u7387", fmtPct(o.success_rate), "var(--st-done)"],
-      ["\u5E73\u5747\u8017\u65F6", fmtDur(o.avg_duration), "var(--fg-muted)"],
-      ["\u9879\u76EE", o.projects || 0, "var(--fg-muted)"]
+      ["\u8FDB\u884C\u4E2D", o.in_flight || 0, "var(--st-running)", "LIVE"],
+      ["\u5F85\u5BA1\u6279", review ? review.count : 0, "var(--st-review)", "REVIEW"],
+      ["\u4ECA\u65E5\u5B8C\u6210", today ? today.count : 0, "var(--st-done)", "TODAY"],
+      ["\u5B8C\u6210\u7387", fmtPct(o.success_rate), "var(--st-done)", "RATE"],
+      ["\u5E73\u5747\u8017\u65F6", fmtDur(o.avg_duration), "var(--fg-muted)", "SPEED"],
+      ["\u6D3B\u8DC3\u9879\u76EE", o.projects || 0, "var(--fg-muted)", "SCOPE"]
     ];
-    el.innerHTML = chips.map((c) => `<div class="stat-chip">
-    <span class="sc-dot" style="background:${c[2]}"></span>
-    <b>${c[1]}</b><span>${c[0]}</span></div>`).join("");
+    el.innerHTML = chips.map((c, i) => `<div class="stat-chip" style="--metric-color:${c[2]}" aria-label="${c[0]} ${c[1]}">
+    <span class="sc-index">0${i + 1}</span>
+    <span class="sc-dot"></span>
+    <b>${c[1]}</b>
+    <span class="sc-label">${c[0]}</span>
+    <small>${c[3]}</small>
+  </div>`).join("");
   }
   function isMobileNav() {
     return window.matchMedia?.("(max-width: 900px)").matches || false;
@@ -3288,6 +3343,23 @@
     document.addEventListener("keydown", (e) => {
       const t = e.target;
       const inField = t && (t.matches("input, textarea, select") || t.isContentEditable);
+      const modal = activeModal();
+      if (e.key === "Tab" && modal) {
+        const focusable = [...modal.querySelectorAll("button:not([disabled]), [href], input:not([disabled]):not([type='hidden']), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")].filter((el) => !el.closest(".hidden") && el.getClientRects().length);
+        if (focusable.length) {
+          const first = focusable[0], last = focusable[focusable.length - 1];
+          if (!modal.contains(document.activeElement)) {
+            e.preventDefault();
+            (e.shiftKey ? last : first).focus();
+          } else if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
         e.preventDefault();
         toggleSidebar();
@@ -3300,7 +3372,8 @@
           syncSidebarControls();
           return;
         }
-        document.querySelectorAll(".modal:not(.hidden)").forEach((m) => closeModal(m.id));
+        const modal2 = activeModal();
+        if (modal2) closeModal(modal2.id);
         return;
       }
       if (inField) return;
@@ -3341,6 +3414,7 @@
         }
       }
     });
+    document.querySelectorAll(".modal").forEach((modal) => modal.setAttribute("aria-hidden", modal.classList.contains("hidden") ? "true" : "false"));
   }
   function route() {
     const h = location.hash;
