@@ -2794,7 +2794,6 @@
     document.getElementById("sPerm").value = sc ? sc.perm || "full" : "full";
     document.getElementById("sProject").value = sc && sc.project_id ? sc.project_id : "";
     document.getElementById("sBlockOnFailure").checked = !!sc?.block_on_failure;
-    document.getElementById("sEnabled").checked = sc ? sc.enabled : true;
     if (sc) document.getElementById("sAgent").value = sc.agent_id;
     openModal("scheduleModal");
   }
@@ -2808,12 +2807,11 @@
       agent_id: Number(document.getElementById("sAgent").value),
       project_id: Number(document.getElementById("sProject").value) || null,
       perm: document.getElementById("sPerm").value,
-      block_on_failure: document.getElementById("sBlockOnFailure").checked,
-      enabled: document.getElementById("sEnabled").checked
+      block_on_failure: document.getElementById("sBlockOnFailure").checked
     };
     try {
       if (id) await api(`/api/schedules/${id}`, { method: "PATCH", body: JSON.stringify(body) });
-      else await api("/api/schedules", { method: "POST", body: JSON.stringify(body) });
+      else await api("/api/schedules", { method: "POST", body: JSON.stringify({ ...body, enabled: true }) });
       closeModal("scheduleModal");
       await loadAll();
       renderScheduleList();
