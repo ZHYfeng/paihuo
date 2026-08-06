@@ -278,6 +278,44 @@ func TestCompleteTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 	}
 }
 
+func TestRecoverLostTaskCreatesOneMergeTaskAtomically(t *testing.T) {
+	s := openTest(t)
+	agentID := mustAgent(t, s, "recovery", true)
+	projectID, err := s.CreateProject(Project{Name: "proj", ProjectDir: t.TempDir(), Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceID, err := s.CreateTask(Task{
+		Title: "lost pane", Status: StatusFailed, Perm: PermFull,
+		AgentID: &agentID, ProjectID: &projectID, ProjectDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateTask(sourceID, map[string]any{"exit_code": -1, "error": "专用 tmux window task-1 已消失，且未留下退出码"}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := s.GetTask(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mergeID, err := s.RecoverLostTaskAndCreateMerge(sourceID, NewMergeTask(*source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := s.GetTask(sourceID)
+	if err != nil || recovered.Status != StatusSucceeded || recovered.ExitCode == nil || *recovered.ExitCode != 0 || recovered.Error != "" {
+		t.Fatalf("恢复后源任务状态异常: %+v err=%v", recovered, err)
+	}
+	merge, err := s.GetTask(mergeID)
+	if err != nil || merge.MergeOf == nil || *merge.MergeOf != sourceID {
+		t.Fatalf("恢复创建的合并任务异常: %+v err=%v", merge, err)
+	}
+	if _, err := s.RecoverLostTaskAndCreateMerge(sourceID, NewMergeTask(*source)); err == nil {
+		t.Fatal("重复恢复不应创建第二个合并任务")
+	}
+}
+
 // 并发开关：默认不并发（串行），显式勾选则完整往返保存。
 func TestTaskConcurrentDefaultsFalseAndRoundTrips(t *testing.T) {
 	s := openTest(t)

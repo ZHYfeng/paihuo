@@ -424,6 +424,9 @@ func TestTmuxRunnerArchivesFailureArtifacts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := os.WriteFile(r.lifecyclePath(taskID), []byte("started\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	archive, err := r.ArchiveFailureArtifacts(taskID, "window vanished")
 	if err != nil {
 		t.Fatalf("ArchiveFailureArtifacts: %v", err)
@@ -442,8 +445,15 @@ func TestTmuxRunnerArchivesFailureArtifacts(t *testing.T) {
 			t.Fatalf("归档文件 %s = %q err=%v，want %q", name, got, err, want)
 		}
 	}
+	events, err := os.ReadFile(filepath.Join(archive, "runner-events.log"))
+	if err != nil || !strings.Contains(string(events), "started\n") || !strings.Contains(string(events), "event=failure_archive_started") {
+		t.Fatalf("归档缺少生命周期审计: %q err=%v", events, err)
+	}
 	if _, err := os.Stat(r.logPath(taskID)); !os.IsNotExist(err) {
 		t.Fatalf("归档后当前 terminal.log 应不存在，err=%v", err)
+	}
+	if code, found, err := r.archivedAgentExitCode(taskID); err != nil || !found || code != 137 {
+		t.Fatalf("归档 agent 退出码 = (%d, %v, %v), want (137, true, nil)", code, found, err)
 	}
 	r.Cleanup(taskID)
 	if _, err := os.Stat(r.taskDir(taskID)); !os.IsNotExist(err) {

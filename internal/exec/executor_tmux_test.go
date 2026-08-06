@@ -176,6 +176,118 @@ func TestExecutorQueuesMergeTaskAfterSuccessfulFullTask(t *testing.T) {
 	}
 }
 
+// 生产中曾出现过：tmux 日志 pane 先消失，独立 Codex agent 随后才写入成功
+// 退出码。pane 不是 agent 的结果来源，执行器必须给持久退出码一个结算窗口，
+// 不能在第一次观察到 pane 不存在时立即把任务记为 failed/-1。
+func TestExecutorWaitsForDelayedDetachedExitCodeAfterPaneLoss(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	taskID, err := st.CreateTask(store.Task{Title: "late detached result", Status: store.StatusRunning})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionsRoot := t.TempDir()
+	e := New(st, events.NewHub(), sessionsRoot, "late-detached-result-test.db")
+	r := newTmuxRunnerAt(sessionsRoot, fmt.Sprintf("paihuo-missing-pane-%d", os.Getpid()))
+	e.runner = r
+	if err := os.MkdirAll(r.taskDir(taskID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// agent-output.log 是 Codex 已迁入独立 service 的持久标记；这里故意不
+	// 创建 tmux window，模拟 pane 已丢失且 systemd 正在收尾的极短窗口。
+	if err := os.WriteFile(r.agentOutputPath(taskID), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		_ = os.WriteFile(r.agentExitPath(taskID), []byte("0\n"), 0o600)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	code, err := e.waitTmux(ctx, ctx, &store.Task{ID: taskID})
+	if err != nil {
+		t.Fatalf("延迟写回 agent 退出码不应被误判为 pane 丢失: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("code=%d, want 0", code)
+	}
+}
+
+func TestExecutorRecoversArchivedSuccessfulLostTaskIntoMerge(t *testing.T) {
+	projectDir := initExecutorGitProject(t)
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	agentID, err := st.CreateAgent(store.Agent{Name: "recovery", CLI: tmuxAutoMergeTestCLI, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, err := st.CreateProject(store.Project{Name: "proj", ProjectDir: projectDir, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceID, err := st.CreateTask(store.Task{
+		Title: "archived successful task", Status: store.StatusFailed, Perm: store.PermFull,
+		AgentID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := st.GetTask(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionsRoot := t.TempDir()
+	sourceDir, branch, base, err := workspace.Ensure(*source, sessionsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "recovered.txt"), []byte("recovered\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateTask(sourceID, map[string]any{
+		"worktree_branch": branch,
+		"base_commit":     base,
+		"exit_code":       -1,
+		"error":           tmuxWindowLostError{taskID: sourceID}.Error(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	e := New(st, events.NewHub(), sessionsRoot, "recover-lost-result-test.db")
+	archive := filepath.Join(e.runner.taskDir(sourceID), "failure-20260806T000000.000000000Z")
+	if err := os.MkdirAll(archive, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archive, "agent-exit-code"), []byte("0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	e.recoverLostCompletions()
+
+	recovered, err := st.GetTask(sourceID)
+	if err != nil || recovered.Status != store.StatusSucceeded || recovered.ExitCode == nil || *recovered.ExitCode != 0 || recovered.Error != "" {
+		t.Fatalf("归档成功结果应恢复源任务: %+v err=%v", recovered, err)
+	}
+	children, err := st.ListChildren(sourceID)
+	if err != nil || len(children) != 1 {
+		t.Fatalf("恢复后应创建唯一合并任务: %+v err=%v", children, err)
+	}
+	if children[0].MergeOf == nil || *children[0].MergeOf != sourceID || children[0].Status != store.StatusQueued {
+		t.Fatalf("恢复创建的合并任务不正确: %+v", children[0])
+	}
+	if _, err := os.Stat(filepath.Join(sourceDir, "recovered.txt")); err != nil {
+		t.Fatalf("恢复不应丢失源任务工作区: %v", err)
+	}
+}
+
 func TestExecutorPreparesAndAutoMergesReviewMergeTask(t *testing.T) {
 	requireTmuxIntegration(t)
 	registry[tmuxReviewMergeTestCLI] = tmuxReviewMergeTestAdapter{}

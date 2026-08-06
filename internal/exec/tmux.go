@@ -22,11 +22,13 @@ import (
 // session；每个活动任务占用一个名为 task-<id> 的 window。不会接管用户的默认
 // tmux server，也绝不能读取用户 ~/.tmux.conf 中的恢复插件或 hook。
 type tmuxRunner struct {
-	mu      sync.Mutex
-	binary  string
-	socket  string
-	session string
-	root    string
+	mu            sync.Mutex
+	lifecycleMu   sync.Mutex
+	lifecycleSeen map[int64]map[string]struct{}
+	binary        string
+	socket        string
+	session       string
+	root          string
 }
 
 // tmuxConfigFile 让专用 server 不加载用户全局配置。paihuo 任务 window 的生命周期
@@ -48,11 +50,29 @@ type tmuxStartOptions struct {
 }
 
 type tmuxObservation struct {
-	Lines    []string
-	Offset   int64
-	Alive    bool
-	Done     bool
-	ExitCode int
+	Lines               []string
+	Offset              int64
+	Alive               bool
+	Done                bool
+	ExitCode            int
+	AwaitingAgentResult bool
+}
+
+// agentServiceState 描述独立 Codex agent transient service 的生命周期。tmux
+// pane 只是日志转发与等待层，agent service 才是实际代码执行者；尤其在
+// deactivating 阶段，agent wrapper 仍可能正在原子写入 agent-exit-code。
+type agentServiceState string
+
+const (
+	agentServiceUnknown      agentServiceState = "unknown"
+	agentServiceActivating   agentServiceState = "activating"
+	agentServiceActive       agentServiceState = "active"
+	agentServiceDeactivating agentServiceState = "deactivating"
+	agentServiceInactive     agentServiceState = "inactive"
+)
+
+func (s agentServiceState) isExecutingOrFinalizing() bool {
+	return s == agentServiceActivating || s == agentServiceActive || s == agentServiceDeactivating
 }
 
 func newTmuxRunner(sessionsRoot string) *tmuxRunner {
@@ -62,10 +82,11 @@ func newTmuxRunner(sessionsRoot string) *tmuxRunner {
 // newTmuxRunnerAt 供测试创建独立 socket；生产仅使用固定 paihuo socket。
 func newTmuxRunnerAt(sessionsRoot, socket string) *tmuxRunner {
 	return &tmuxRunner{
-		binary:  "tmux",
-		socket:  socket,
-		session: "paihuo",
-		root:    filepath.Join(sessionsRoot, ".tmux"),
+		binary:        "tmux",
+		socket:        socket,
+		session:       "paihuo",
+		root:          filepath.Join(sessionsRoot, ".tmux"),
+		lifecycleSeen: make(map[int64]map[string]struct{}),
 	}
 }
 
@@ -112,6 +133,12 @@ func (r *tmuxRunner) runnerCgroupPath(taskID int64) string {
 	return filepath.Join(r.taskDir(taskID), "runner-cgroup")
 }
 
+// lifecyclePath 是 task 专属的执行器审计轨迹。它只记录 tmux/service 生命周期
+// 与派活自身发起的停止动作，不记录角色环境或命令参数，避免把密钥写入诊断文件。
+func (r *tmuxRunner) lifecyclePath(taskID int64) string {
+	return filepath.Join(r.taskDir(taskID), "runner-events.log")
+}
+
 func (r *tmuxRunner) agentUnitPath(taskID int64) string {
 	return filepath.Join(r.taskDir(taskID), "agent-unit")
 }
@@ -143,6 +170,53 @@ func (r *tmuxRunner) tmuxWrapperPath(taskID int64) string {
 
 func (r *tmuxRunner) shellInitPath(taskID int64) string {
 	return filepath.Join(r.taskBinDir(taskID), "shell-init.sh")
+}
+
+func (r *tmuxRunner) resetLifecycle(taskID int64) {
+	r.lifecycleMu.Lock()
+	delete(r.lifecycleSeen, taskID)
+	r.lifecycleMu.Unlock()
+}
+
+func (r *tmuxRunner) recordLifecycle(taskID int64, event, detail string) {
+	if strings.ContainsAny(event, "\r\n") {
+		return
+	}
+	detail = strings.NewReplacer("\r", " ", "\n", " ").Replace(strings.TrimSpace(detail))
+	f, err := os.OpenFile(r.lifecyclePath(taskID), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return // 审计不能反过来阻止任务执行或故障归档。
+	}
+	defer f.Close()
+	_, _ = fmt.Fprintf(f, "%s event=%s %s\n", time.Now().UTC().Format(time.RFC3339Nano), event, detail)
+}
+
+func (r *tmuxRunner) recordLifecycleOnce(taskID int64, event, detail string) {
+	r.lifecycleMu.Lock()
+	seen := r.lifecycleSeen[taskID]
+	if seen == nil {
+		seen = make(map[string]struct{})
+		r.lifecycleSeen[taskID] = seen
+	}
+	if _, ok := seen[event]; ok {
+		r.lifecycleMu.Unlock()
+		return
+	}
+	seen[event] = struct{}{}
+	r.lifecycleMu.Unlock()
+	r.recordLifecycle(taskID, event, detail)
+}
+
+func (r *tmuxRunner) sessionWindowSnapshot() string {
+	out, err := osexec.Command(r.binary, r.commandArgs("list-windows", "-t", r.session, "-F", "#{window_id}:#{window_name}:panes=#{window_panes}:dead=#{pane_dead}")...).Output()
+	if err != nil {
+		return "unavailable"
+	}
+	text := strings.ReplaceAll(strings.TrimSpace(string(out)), "\n", ";")
+	if len(text) > 768 {
+		return text[:768]
+	}
+	return text
 }
 
 func (r *tmuxRunner) ensureSession() error {
@@ -194,7 +268,7 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, op
 	if err := r.ensureSession(); err != nil {
 		return err
 	}
-	if err := r.stopLocked(taskID); err != nil {
+	if err := r.stopLocked(taskID, "start_reset"); err != nil {
 		return err
 	}
 
@@ -205,11 +279,13 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, op
 	if err := os.Chmod(taskDir, 0o700); err != nil {
 		return fmt.Errorf("设置任务 tmux 目录权限失败: %w", err)
 	}
-	for _, path := range []string{r.exitPath(taskID), r.agentExitPath(taskID), r.gatePath(taskID), r.agentOutputPath(taskID), r.runnerCgroupPath(taskID), r.agentUnitPath(taskID), r.agentEnvPath(taskID), r.agentLaunchPath(taskID)} {
+	r.resetLifecycle(taskID)
+	for _, path := range []string{r.exitPath(taskID), r.agentExitPath(taskID), r.gatePath(taskID), r.agentOutputPath(taskID), r.runnerCgroupPath(taskID), r.lifecyclePath(taskID), r.agentUnitPath(taskID), r.agentEnvPath(taskID), r.agentLaunchPath(taskID)} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("重置 tmux 任务状态失败: %w", err)
 		}
 	}
+	r.recordLifecycle(taskID, "start_prepare", "target="+r.target(taskID))
 	if err := os.WriteFile(r.logPath(taskID), nil, 0o600); err != nil {
 		return fmt.Errorf("创建 tmux 终端日志失败: %w", err)
 	}
@@ -241,21 +317,24 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, op
 	if err := r.command(cmdArgs...); err != nil {
 		return err
 	}
+	r.recordLifecycle(taskID, "window_created", "target="+r.target(taskID))
 	if err := r.command("set-window-option", "-t", r.target(taskID), "remain-on-exit", "on"); err != nil {
-		_ = r.stopLocked(taskID)
+		_ = r.stopLocked(taskID, "start_failed")
 		return err
 	}
 	// pipe-pane 由 tmux 托管；即使 paihuo 进程崩溃，输出仍会进入磁盘文件，
 	// 下次启动时可按数据库偏移继续补收。
 	pipeCmd := "cat >> " + shQuote(r.logPath(taskID))
 	if err := r.command("pipe-pane", "-o", "-t", r.target(taskID), pipeCmd); err != nil {
-		_ = r.stopLocked(taskID)
+		_ = r.stopLocked(taskID, "start_failed")
 		return err
 	}
+	r.recordLifecycle(taskID, "output_pipe_ready", "source=agent-output.log")
 	if err := os.WriteFile(r.gatePath(taskID), []byte("start\n"), 0o600); err != nil {
-		_ = r.stopLocked(taskID)
+		_ = r.stopLocked(taskID, "start_failed")
 		return fmt.Errorf("启动 tmux 任务失败: %w", err)
 	}
+	r.recordLifecycle(taskID, "start_released", "gate=start")
 	return nil
 }
 
@@ -470,28 +549,64 @@ func (r *tmuxRunner) Poll(taskID, offset int64) (tmuxObservation, error) {
 	if err != nil {
 		return tmuxObservation{}, err
 	}
-	alive := r.hasWindow(taskID)
-	// Codex batch 的实际 agent 在独立 systemd service 中运行。它不依赖
-	// task pane 存活；pane 意外消失时只要 agent 仍在运行，就继续等待，并
-	// 从 agent-output.log 增量收集输出。这样不会因为日志转发层故障中断代码
-	// 执行，最终由 agent-exit-code 结算。
-	if !alive && !done && r.hasDetachedAgent(taskID) && r.agentServiceAlive(taskID) {
-		alive = true
-	}
-	if done && alive {
+	windowExists := r.hasWindow(taskID)
+	paneEnded := !windowExists
+	if windowExists {
 		dead, err := r.paneDead(taskID)
-		if err != nil && r.hasWindow(taskID) {
-			return tmuxObservation{}, fmt.Errorf("读取 tmux pane 状态失败: %w", err)
+		if err != nil {
+			// pane 在 list-panes 与 display-message 之间被移除是正常竞态；
+			// 重新确认后按 pane 已丢失处理，而不是把 tmux 查询错误误记为任务失败。
+			if r.hasWindow(taskID) {
+				return tmuxObservation{}, fmt.Errorf("读取 tmux pane 状态失败: %w", err)
+			}
+			windowExists = false
+			paneEnded = true
+		} else {
+			paneEnded = dead
 		}
-		if err == nil {
-			done = dead
+	}
+
+	detached := r.hasDetachedAgent(taskID)
+	agentState := agentServiceUnknown
+	if !done && detached && paneEnded {
+		agentState = r.agentServiceState(taskID)
+	}
+	if paneEnded {
+		event := "pane_dead"
+		if !windowExists {
+			event = "window_missing"
+		}
+		detail := "detached=" + strconv.FormatBool(detached) + " agent_service=" + string(agentState) + " session_windows=" + r.sessionWindowSnapshot()
+		r.recordLifecycleOnce(taskID, event, detail)
+	}
+	// agent-exit-code 是独立 Codex service 的持久结果；一旦出现即可直接
+	// 结算，不必等待日志 pane/tail 退出。原始输出文件已是同步来源，避免
+	// pane 收尾异常重新制造一次“没有退出码”的窗口。
+	if done && detached {
+		windowExists = false
+		paneEnded = true
+	}
+
+	alive := windowExists && !paneEnded
+	awaitingAgentResult := false
+	// Codex batch 的实际 agent 在独立 systemd service 中运行。pane 意外
+	// 消失（或已死）时，active/activating/deactivating 都不能视为任务失败；
+	// deactivating、已收走或查询不到 service 时都进入有限结果结算，不能在
+	// 第一次观察时立刻记为 failed/-1，也不能因卡在收尾态永久等待。
+	if !done && detached && paneEnded {
+		if agentState == agentServiceActivating || agentState == agentServiceActive {
+			alive = true
+		} else {
+			alive = true
+			awaitingAgentResult = true
+			r.recordLifecycleOnce(taskID, "awaiting_agent_result", "agent_service="+string(agentState))
 		}
 	}
 	lines, next, err := r.readLines(taskID, offset, done)
 	if err != nil {
 		return tmuxObservation{}, err
 	}
-	obs := tmuxObservation{Lines: lines, Offset: next, Done: done, ExitCode: code, Alive: alive}
+	obs := tmuxObservation{Lines: lines, Offset: next, Done: done, ExitCode: code, Alive: alive, AwaitingAgentResult: awaitingAgentResult}
 	if done {
 		return obs, nil
 	}
@@ -502,18 +617,59 @@ func (r *tmuxRunner) exitCode(taskID int64) (int, bool, error) {
 	// Detached Codex service 的结果优先于 pane wrapper 的结果。前者由
 	// service 自己原子写入，能跨越 task pane 异常关闭的边界。
 	for _, path := range []string{r.agentExitPath(taskID), r.exitPath(taskID)} {
-		b, err := os.ReadFile(path)
-		if errors.Is(err, os.ErrNotExist) {
+		code, found, err := readExitCode(path)
+		if err != nil {
+			return 0, false, err
+		}
+		if found {
+			return code, true, nil
+		}
+	}
+	return 0, false, nil
+}
+
+func readExitCode(path string) (int, bool, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("读取 tmux 退出码失败: %w", err)
+	}
+	code, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		return 0, false, fmt.Errorf("tmux 退出码非法: %w", err)
+	}
+	return code, true, nil
+}
+
+// archivedAgentExitCode 读取最新一次 pane 丢失归档中的持久 agent 退出码。
+// 它只用于恢复已经被旧版本误判为 failed/-1 的终态任务；正常运行仍由
+// exitCode 读取当前运行目录，避免把旧一轮结果带入续跑。
+func (r *tmuxRunner) archivedAgentExitCode(taskID int64) (int, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	entries, err := os.ReadDir(r.taskDir(taskID))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("读取 tmux 故障归档失败: %w", err)
+	}
+	// ReadDir 按文件名字典序返回；failure-<UTC timestamp> 因而末尾是最新归档。
+	for i := len(entries) - 1; i >= 0; i-- {
+		entry := entries[i]
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "failure-") {
 			continue
 		}
+		code, found, err := readExitCode(filepath.Join(r.taskDir(taskID), entry.Name(), "agent-exit-code"))
 		if err != nil {
-			return 0, false, fmt.Errorf("读取 tmux 退出码失败: %w", err)
+			return 0, false, fmt.Errorf("读取 tmux 故障归档 %s 失败: %w", entry.Name(), err)
 		}
-		code, err := strconv.Atoi(strings.TrimSpace(string(b)))
-		if err != nil {
-			return 0, false, fmt.Errorf("tmux 退出码非法: %w", err)
+		if found {
+			return code, true, nil
 		}
-		return code, true, nil
 	}
 	return 0, false, nil
 }
@@ -529,27 +685,37 @@ func (r *tmuxRunner) hasDetachedAgent(taskID int64) bool {
 // 这里故意把查询异常视为未存活：正常启动的 transient service 很快进入 active，
 // 若 service 根本没启动，原有 pane 丢失错误仍会提供清晰的启动失败信号。
 func (r *tmuxRunner) agentServiceAlive(taskID int64) bool {
+	return r.agentServiceState(taskID).isExecutingOrFinalizing()
+}
+
+func (r *tmuxRunner) agentServiceState(taskID int64) agentServiceState {
 	b, err := os.ReadFile(r.agentUnitPath(taskID))
 	if err != nil {
-		return false
+		return agentServiceUnknown
 	}
 	unit := strings.TrimSpace(string(b))
 	if unit == "" || unit != r.agentUnitName(taskID) {
-		return false
+		return agentServiceUnknown
 	}
 	systemctl, err := osexec.LookPath("systemctl")
 	if err != nil {
-		return false
+		return agentServiceUnknown
 	}
 	out, err := osexec.Command(systemctl, "--user", "show", unit, "--property=ActiveState", "--value").Output()
 	if err != nil {
-		return false
+		return agentServiceUnknown
 	}
 	switch strings.TrimSpace(string(out)) {
-	case "active", "activating":
-		return true
+	case string(agentServiceActivating):
+		return agentServiceActivating
+	case string(agentServiceActive):
+		return agentServiceActive
+	case string(agentServiceDeactivating):
+		return agentServiceDeactivating
+	case string(agentServiceInactive), "failed":
+		return agentServiceInactive
 	default:
-		return false
+		return agentServiceUnknown
 	}
 }
 
@@ -605,25 +771,41 @@ func (r *tmuxRunner) readLines(taskID, offset int64, flushTail bool) ([]string, 
 }
 
 func (r *tmuxRunner) Stop(taskID int64) error {
+	return r.StopWithReason(taskID, "external_request")
+}
+
+// StopWithReason 是所有由派活发起的窗口停止操作的唯一入口。原因写入任务
+// 专属审计轨迹，使 pane 后续丢失时可以区分系统主动清理与外部生命周期事件。
+func (r *tmuxRunner) StopWithReason(taskID int64, reason string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.stopLocked(taskID)
+	return r.stopLocked(taskID, reason)
 }
 
 // stopLocked 与 Start/SendText 共用同一把锁，避免取消恰好发生在 new-window
 // 与 pipe-pane 建立之间时相互抢占。调用方必须已持有 r.mu。
-func (r *tmuxRunner) stopLocked(taskID int64) error {
-	if err := r.stopAgentService(taskID); err != nil {
+func (r *tmuxRunner) stopLocked(taskID int64, reason string) error {
+	r.recordLifecycle(taskID, "stop_requested", "reason="+reason)
+	if err := r.stopAgentService(taskID, reason); err != nil {
+		r.recordLifecycle(taskID, "agent_service_stop_failed", "reason="+reason)
 		return err
 	}
 	if !r.hasWindow(taskID) {
+		r.recordLifecycle(taskID, "stop_window_absent", "reason="+reason)
 		return nil
 	}
+	r.recordLifecycle(taskID, "kill_window_requested", "reason="+reason+" target="+r.target(taskID))
 	err := r.command("kill-window", "-t", r.target(taskID))
 	// window 可能在 hasWindow 与 kill-window 之间被正常结算清理；对停止
 	// 语义而言它已经达到目标，不应把一次取消记作任务启动失败。
 	if err != nil && strings.Contains(err.Error(), "can't find window") {
+		r.recordLifecycle(taskID, "kill_window_raced", "reason="+reason)
 		return nil
+	}
+	if err != nil {
+		r.recordLifecycle(taskID, "kill_window_failed", "reason="+reason)
+	} else {
+		r.recordLifecycle(taskID, "kill_window_completed", "reason="+reason)
 	}
 	return err
 }
@@ -631,7 +813,7 @@ func (r *tmuxRunner) stopLocked(taskID int64) error {
 // stopAgentService 处理 Codex batch 从 tmux pane 迁出的 transient service。
 // tmux kill-window 只会结束 pane scope，不能保证结束同级 systemd service；因此
 // 这里必须先按 task 的稳定 unit 名停止 agent，避免取消或异常后留下孤儿进程。
-func (r *tmuxRunner) stopAgentService(taskID int64) error {
+func (r *tmuxRunner) stopAgentService(taskID int64, reason string) error {
 	b, err := os.ReadFile(r.agentUnitPath(taskID))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -643,6 +825,7 @@ func (r *tmuxRunner) stopAgentService(taskID int64) error {
 	if unit != r.agentUnitName(taskID) {
 		return fmt.Errorf("Codex agent service 记录非法: %q", unit)
 	}
+	r.recordLifecycle(taskID, "agent_service_stop_requested", "reason="+reason+" unit="+unit)
 	systemctl, err := osexec.LookPath("systemctl")
 	if err != nil {
 		return fmt.Errorf("未找到 systemctl，无法停止 Codex agent service: %w", err)
@@ -655,6 +838,7 @@ func (r *tmuxRunner) stopAgentService(taskID int64) error {
 			return fmt.Errorf("停止 Codex agent service %s 失败: %w: %s", unit, stopErr, msg)
 		}
 	}
+	r.recordLifecycle(taskID, "agent_service_stop_completed", "reason="+reason+" unit="+unit)
 	for _, path := range []string{r.agentUnitPath(taskID), r.agentEnvPath(taskID), r.agentLaunchPath(taskID)} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("清理 Codex agent 运行文件失败: %w", err)
@@ -705,7 +889,8 @@ func (r *tmuxRunner) ArchiveFailureArtifacts(taskID int64, reason string) (strin
 	if err := os.Mkdir(archiveDir, 0o700); err != nil {
 		return "", fmt.Errorf("创建 tmux 故障归档失败: %w", err)
 	}
-	for _, name := range []string{"terminal.log", "agent-output.log", "runner-cgroup", "run.sh", "exit-code", "agent-exit-code", "start"} {
+	r.recordLifecycle(taskID, "failure_archive_started", "")
+	for _, name := range []string{"terminal.log", "agent-output.log", "runner-cgroup", "runner-events.log", "run.sh", "exit-code", "agent-exit-code", "start"} {
 		from := filepath.Join(taskDir, name)
 		to := filepath.Join(archiveDir, name)
 		if err := os.Rename(from, to); errors.Is(err, os.ErrNotExist) {
@@ -725,8 +910,9 @@ func (r *tmuxRunner) ArchiveFailureArtifacts(taskID int64, reason string) (strin
 // Cleanup 只清理该任务的 window 与运行时文件（包括 failure-* 归档）；control
 // window / 专用 server 会保留。调用它意味着任务已被正常结算或显式删除。
 func (r *tmuxRunner) Cleanup(taskID int64) {
-	_ = r.Stop(taskID)
+	_ = r.StopWithReason(taskID, "cleanup")
 	_ = os.RemoveAll(r.taskDir(taskID))
+	r.resetLifecycle(taskID)
 }
 
 func (r *tmuxRunner) command(args ...string) error {

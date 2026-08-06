@@ -73,8 +73,87 @@ func (e *Executor) Start(ctx context.Context) {
 	if err := e.runner.ensureSession(); err != nil {
 		log.Printf("⚠ 专用 tmux 执行器未就绪: %v", err)
 	}
+	e.recoverLostCompletions()
 	e.recoverInterrupted(ctx)
 	go e.loop(ctx)
+}
+
+// recoverLostCompletions 修复旧执行器留下的一个非常窄的收尾竞态：pane 已
+// 消失，agent wrapper 稍后才写入成功退出码，任务却已被记为 failed/-1。只接受
+// 任务自身 failure-* 归档中的 agent-exit-code=0，绝不根据模型最终文本或猜测
+// 反推成功；恢复 Git 任务时仍通过原子方法创建唯一的合并子任务。
+func (e *Executor) recoverLostCompletions() {
+	tasks, err := e.st.ListTasksFiltered(store.TaskFilter{Status: store.StatusFailed})
+	if err != nil {
+		log.Printf("⚠ 扫描可恢复 tmux 任务失败: %v", err)
+		return
+	}
+	for _, tk := range tasks {
+		if !isRecoverablePaneLoss(tk) {
+			continue
+		}
+		code, found, err := e.runner.archivedAgentExitCode(tk.ID)
+		if err != nil {
+			e.log(tk.ID, "sys", "⚠ 读取故障归档退出码失败: "+err.Error())
+			continue
+		}
+		if !found || code != 0 {
+			continue
+		}
+
+		if tk.Perm == store.PermReview {
+			changed, err := e.st.RecoverLostTask(tk.ID, store.StatusAwaitingReview)
+			if err != nil || !changed {
+				msg := "状态已变化"
+				if err != nil {
+					msg = err.Error()
+				}
+				e.log(tk.ID, "sys", "⚠ 恢复待审批任务失败: "+msg)
+				continue
+			}
+			e.log(tk.ID, "sys", "↻ 已从归档确认 agent 成功退出，恢复为待审批")
+			e.publishTask(tk.ID)
+			continue
+		}
+
+		if tk.WorktreeBranch == "" {
+			changed, err := e.st.RecoverLostTask(tk.ID, store.StatusSucceeded)
+			if err != nil || !changed {
+				msg := "状态已变化"
+				if err != nil {
+					msg = err.Error()
+				}
+				e.log(tk.ID, "sys", "⚠ 恢复任务失败: "+msg)
+				continue
+			}
+			e.log(tk.ID, "sys", "↻ 已从归档确认 agent 成功退出，恢复为完成")
+			e.publishTask(tk.ID)
+			continue
+		}
+
+		if _, err := workspace.Snapshot(tk, e.sessionsRoot); err != nil {
+			e.log(tk.ID, "sys", "⚠ 恢复前保存任务工作区失败: "+err.Error())
+			continue
+		}
+		mergeID, err := e.st.RecoverLostTaskAndCreateMerge(tk.ID, store.NewMergeTask(tk))
+		if err != nil {
+			e.log(tk.ID, "sys", "⚠ 恢复任务并创建代码合并任务失败: "+err.Error())
+			continue
+		}
+		e.log(tk.ID, "sys", fmt.Sprintf("↻ 已从归档确认 agent 成功退出，恢复任务并创建代码合并任务 #%d", mergeID))
+		e.log(mergeID, "sys", fmt.Sprintf("⇄ 由恢复的任务 #%d 自动创建，等待整合代码", tk.ID))
+		e.publishTask(tk.ID)
+		e.publishTask(mergeID)
+		e.Wake()
+	}
+}
+
+func isRecoverablePaneLoss(tk store.Task) bool {
+	if tk.Status != store.StatusFailed || tk.ExitCode == nil || *tk.ExitCode != -1 {
+		return false
+	}
+	return strings.HasPrefix(tk.Error, "专用 tmux window task-") &&
+		strings.HasSuffix(tk.Error, "已消失，且未留下退出码")
 }
 
 // recoverInterrupted 服务重启时重新接管仍存在的专用 tmux window；只有找不到
@@ -141,7 +220,7 @@ func (e *Executor) CancelTask(id int64) {
 	}
 	// 任务可能正处于服务刚恢复、尚未来得及登记 cancel 的窗口；直接终止其
 	// 专用 tmux window 作为兜底。
-	_ = e.runner.Stop(id)
+	_ = e.runner.StopWithReason(id, "task_cancel")
 }
 
 // RemoveTask 在删除任务前停止 tmux window 并清理其运行时文件。
@@ -517,14 +596,21 @@ func (e *Executor) SendInput(taskID int64, text string) error {
 	return nil
 }
 
+// detachedResultSettleTimeout 是日志 pane 已结束、独立 Codex service 也已收尾
+// 但 agent-exit-code 尚未写入时的最大结算时间。该文件由同一 agent wrapper
+// 在退出前原子写入；短暂等待可覆盖 systemd --collect 与文件落盘的竞态，同时
+// 仍能让真正丢失的任务在有限时间内失败。
+const detachedResultSettleTimeout = 3 * time.Second
+
 // waitTmux 将 tmux pipe-pane 文件增量同步到 SQLite，并等待 window 内命令退出。
 // serviceCtx 取消表示 paihuo 自身退出，此时保留 task window；taskCtx 取消才终止任务。
 func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task) (int, error) {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
+	var awaitingResultSince time.Time
 	for {
 		if err := taskCtx.Err(); err != nil {
-			_ = e.runner.Stop(tk.ID)
+			_ = e.runner.StopWithReason(tk.ID, "task_context_cancel")
 			if obs, pollErr := e.runner.Poll(tk.ID, tk.TmuxLogOffset); pollErr == nil {
 				_ = e.syncTmuxOutput(tk, obs)
 			}
@@ -546,6 +632,22 @@ func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task)
 		if obs.Done {
 			return obs.ExitCode, exitError(obs.ExitCode)
 		}
+		if obs.AwaitingAgentResult {
+			if awaitingResultSince.IsZero() {
+				awaitingResultSince = time.Now()
+				e.log(tk.ID, "sys", "⏳ 日志 pane 已结束，等待独立 agent 写回退出结果")
+			}
+			if time.Since(awaitingResultSince) < detachedResultSettleTimeout {
+				select {
+				case <-serviceCtx.Done():
+				case <-taskCtx.Done():
+				case <-ticker.C:
+				}
+				continue
+			}
+			return -1, tmuxWindowLostError{taskID: tk.ID}
+		}
+		awaitingResultSince = time.Time{}
 		if !obs.Alive {
 			return -1, tmuxWindowLostError{taskID: tk.ID}
 		}
@@ -688,7 +790,7 @@ func (e *Executor) finishRun(tk store.Task, code int, runErr error, canceled boo
 func (e *Executor) preserveTmuxFailureArtifacts(taskID int64, reason string) {
 	// 如果异常发生在 Poll 失败而非窗口已消失的边界，先停止残留 window，避免一个
 	// 已标记失败的 task 继续在后台执行。
-	_ = e.runner.Stop(taskID)
+	_ = e.runner.StopWithReason(taskID, "failure_archive")
 	archive, err := e.runner.ArchiveFailureArtifacts(taskID, reason)
 	if err != nil {
 		e.log(taskID, "sys", "⚠ 保留 tmux 异常运行证据失败: "+err.Error())

@@ -619,6 +619,63 @@ func (s *Store) CompleteTaskAndCreateMerge(sourceID int64, merge Task) (int64, e
 	return mergeID, nil
 }
 
+// RecoverLostTaskAndCreateMerge 是 CompleteTaskAndCreateMerge 的故障恢复变体。
+// 调用方必须已经从该任务自己的运行归档中验证 agent-exit-code=0；这里再以
+// failed/-1 条件更新和同一事务内的合并任务创建，确保重复扫描不会产生重复合并。
+func (s *Store) RecoverLostTaskAndCreateMerge(sourceID int64, merge Task) (int64, error) {
+	prepareMergeTask(sourceID, &merge)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	now := Now()
+	res, err := tx.Exec(`UPDATE tasks
+		SET status='succeeded', finished_at=COALESCE(finished_at, ?), exit_code=0, error='', updated_at=?
+		WHERE id=? AND status='failed' AND exit_code=-1 AND perm='full' AND merge_of IS NULL`, now, now, sourceID)
+	if err != nil {
+		return 0, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return 0, errors.New("任务不再是可恢复的 pane 丢失失败")
+	}
+	mergeID, err := insertMergeTask(tx, merge)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return mergeID, nil
+}
+
+// RecoverLostTask 恢复已从自身归档验证成功、但被旧执行器记为 failed/-1 的
+// 无需合并任务。target 只允许 succeeded 或 awaiting_review，避免它成为绕过
+// 正常状态机的通用失败任务修改入口。
+func (s *Store) RecoverLostTask(sourceID int64, target string) (bool, error) {
+	if target != StatusSucceeded && target != StatusAwaitingReview {
+		return false, errors.New("非法恢复目标状态")
+	}
+	now := Now()
+	query := `UPDATE tasks
+		SET status=?, finished_at=COALESCE(finished_at, ?), exit_code=0, error='', updated_at=?
+		WHERE id=? AND status='failed' AND exit_code=-1 AND merge_of IS NULL`
+	args := []any{target, now, now, sourceID}
+	if target == StatusAwaitingReview {
+		query = `UPDATE tasks
+			SET status=?, finished_at=COALESCE(finished_at, ?), exit_code=0, error='',
+				review_rounds=review_rounds+1, updated_at=?
+			WHERE id=? AND status='failed' AND exit_code=-1 AND perm='review' AND merge_of IS NULL`
+	}
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 // ApproveTaskAndCreateMerge 原子完成 review 审批并创建唯一的合并任务。
 // 条件更新保证重复点击或并发请求不会生成两个合并任务。
 func (s *Store) ApproveTaskAndCreateMerge(sourceID int64, merge Task) (int64, error) {
