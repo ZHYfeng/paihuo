@@ -2,7 +2,7 @@
 // 而不是硬编码「常用模型」。结果带内存缓存，磁盘/命令探测失败时优雅降级为空。
 //
 // 权威来源是各 CLI 自带的模型列表命令（pi --list-models / omp models --json /
-// opencode models）：它们只列出本实例「实际可用」的模型（按凭据过滤），
+// opencode models --verbose）：它们只列出本实例「实际可用」的模型（按凭据过滤），
 // 而配置缓存文件（models-store.json / models.db）会包含无凭据 provider 的
 // 全量目录，直接解析会列出不可用的模型。
 package exec
@@ -92,9 +92,11 @@ func loadModelsDisk(id string) []string {
 
 var modelsCache struct {
 	sync.Mutex
-	at    time.Time
-	items map[string][]string
-	busy  map[string]chan struct{} // 进行中的探测：并发请求合并为一次，共享结果
+	at          time.Time
+	items       map[string][]string
+	catalog     map[string][]ModelInfo
+	busy        map[string]chan struct{} // 进行中的探测：并发请求合并为一次，共享结果
+	catalogBusy map[string]chan struct{}
 }
 
 // modelsProbeGate 让“强制刷新”和普通读取不会相互覆盖缓存：普通探测持有读锁，
@@ -157,17 +159,23 @@ func ModelThinkingOptions(in []ModelInfo) map[string][]string {
 	var all []string
 	for _, m := range in {
 		id := strings.TrimSpace(m.ID)
-		if id == "" || len(m.ThinkingLevels) == 0 {
+		if id == "" {
 			continue
 		}
 		levels := uniqueModelStrings(m.ThinkingLevels)
 		if len(levels) == 0 {
+			// 目录中明确存在该模型，但来源没有声明 thinking/variants；
+			// 记录空数组，前端才能区分“该模型无已知档位”和“模型不在
+			// 能力目录中”，避免错误回退到其它模型的并集。
+			if _, ok := out[id]; !ok {
+				out[id] = []string{}
+			}
 			continue
 		}
 		out[id] = levels
 		all = append(all, levels...)
 	}
-	if len(out) == 0 {
+	if len(all) == 0 {
 		return nil
 	}
 	out[""] = uniqueModelStrings(all)
@@ -187,6 +195,58 @@ func uniqueModelStrings(in []string) []string {
 	return out
 }
 
+// addModelInfo 去重模型目录，同时允许后面的配置/缓存来源补充前一个来源
+// 没有声明的能力。模型 ID 是唯一键；能力档位不做猜测，只接受来源明确
+// 报告的值。
+func addModelInfo(out *[]ModelInfo, pos map[string]int, m ModelInfo) {
+	m.ID = strings.TrimSpace(m.ID)
+	m.ThinkingLevels = uniqueModelStrings(m.ThinkingLevels)
+	if m.ID == "" {
+		return
+	}
+	if i, ok := pos[m.ID]; ok {
+		if len(m.ThinkingLevels) > 0 {
+			// 同一模型可能从多个明确来源出现（例如 OMP 配置中多个
+			// modelRole 使用不同后缀）；保留这些来源报告的能力并集。
+			(*out)[i].ThinkingLevels = uniqueModelStrings(append((*out)[i].ThinkingLevels, m.ThinkingLevels...))
+		}
+		return
+	}
+	pos[m.ID] = len(*out)
+	*out = append(*out, m)
+}
+
+func modelInfosFromIDs(ids []string) []ModelInfo {
+	out := make([]ModelInfo, 0, len(ids))
+	pos := make(map[string]int, len(ids))
+	for _, id := range ids {
+		addModelInfo(&out, pos, ModelInfo{ID: id})
+	}
+	return out
+}
+
+// orderThinkingLevels 让 OpenCode 的 variants（JSON 对象无顺序）在 UI 中
+// 保持用户熟悉的思考强度顺序；自定义 variant 放在标准档位之后并按名称排。
+func orderThinkingLevels(in []string) []string {
+	levels := uniqueModelStrings(in)
+	preferred := map[string]int{
+		"off": 0, "none": 1, "minimal": 2, "low": 3, "medium": 4,
+		"high": 5, "xhigh": 6, "max": 7, "ultra": 8, "auto": 9,
+	}
+	sort.SliceStable(levels, func(i, j int) bool {
+		ai, aok := preferred[strings.ToLower(levels[i])]
+		aj, bok := preferred[strings.ToLower(levels[j])]
+		if aok && bok {
+			return ai < aj
+		}
+		if aok != bok {
+			return aok
+		}
+		return levels[i] < levels[j]
+	})
+	return levels
+}
+
 // cachedModels 按适配器 id 缓存探测结果（TTL 内复用）。
 // 同一 id 的并发探测合并：后来的请求等先发者完成，避免重复跑 CLI。
 func cachedModels(id string, probe func() []string) []string {
@@ -196,7 +256,9 @@ func cachedModels(id string, probe func() []string) []string {
 	modelsCache.Lock()
 	if modelsCache.items == nil || time.Since(modelsCache.at) > modelsCacheTTL {
 		modelsCache.items = map[string][]string{}
+		modelsCache.catalog = map[string][]ModelInfo{}
 		modelsCache.busy = map[string]chan struct{}{}
+		modelsCache.catalogBusy = map[string]chan struct{}{}
 		modelsCache.at = time.Now()
 	}
 	if v, ok := modelsCache.items[id]; ok {
@@ -227,6 +289,48 @@ func cachedModels(id string, probe func() []string) []string {
 	return v
 }
 
+// cachedModelCatalog 是带逐模型能力的模型目录缓存。模型 ID 和能力必须
+// 共用一次 CLI 探测，否则打开 schema 时会先跑一遍 `models`，再跑一遍
+// `models --verbose/--json`，并且刷新按钮还可能把两次结果互相覆盖。
+func cachedModelCatalog(id string, probe func() []ModelInfo) []ModelInfo {
+	modelsProbeGate.RLock()
+	defer modelsProbeGate.RUnlock()
+
+	modelsCache.Lock()
+	if modelsCache.catalog == nil || time.Since(modelsCache.at) > modelsCacheTTL {
+		modelsCache.items = map[string][]string{}
+		modelsCache.catalog = map[string][]ModelInfo{}
+		modelsCache.busy = map[string]chan struct{}{}
+		modelsCache.catalogBusy = map[string]chan struct{}{}
+		modelsCache.at = time.Now()
+	}
+	if v, ok := modelsCache.catalog[id]; ok {
+		modelsCache.Unlock()
+		return v
+	}
+	if ch, ok := modelsCache.catalogBusy[id]; ok {
+		modelsCache.Unlock()
+		<-ch
+		modelsCache.Lock()
+		v := modelsCache.catalog[id]
+		modelsCache.Unlock()
+		return v
+	}
+	ch := make(chan struct{})
+	modelsCache.catalogBusy[id] = ch
+	modelsCache.Unlock()
+
+	v := probe()
+
+	modelsCache.Lock()
+	modelsCache.catalog[id] = v
+	modelsCache.items[id] = ModelIDs(v)
+	delete(modelsCache.catalogBusy, id)
+	close(ch)
+	modelsCache.Unlock()
+	return v
+}
+
 // RefreshModelCatalogs 强制重新从 Linux 主机探测全部已注册 CLI。它用于：
 // 服务每次启动（重新部署）、角色页的“刷新主机能力”按钮，以及 7 天周期任务。
 // 刷新只失效发现缓存，绝不会写入或覆盖 agents.role_config。
@@ -239,7 +343,9 @@ func RefreshModelCatalogs() {
 	modelsCache.Lock()
 	modelsCache.at = time.Time{}
 	modelsCache.items = nil
+	modelsCache.catalog = nil
 	modelsCache.busy = nil
+	modelsCache.catalogBusy = nil
 	modelsCache.Unlock()
 	modelsProbeGate.Unlock()
 
@@ -425,9 +531,13 @@ func piModelCandidates(defaultProvider, defaultModel string, rows [][2]string) [
 // models.db（model_cache 只取权威行）。
 
 func (a *ompAdapter) Models() []string {
-	return cachedModels("omp", func() []string {
+	return capModels(ModelIDs(a.ModelCatalog()), 80)
+}
+
+func (a *ompAdapter) ModelCatalog() []ModelInfo {
+	return cachedModelCatalog("omp", func() []ModelInfo {
 		home, _ := os.UserHomeDir()
-		return ompModelsProbe(home)
+		return ompModelCatalogProbe(home)
 	})
 }
 
@@ -436,57 +546,65 @@ func (a *ompAdapter) Models() []string {
 // 文件，且回退只保留凭据仍然有效的 provider（见 ompActiveProviders），
 // 避免列出 agent 实际不可用的模型。
 func ompModelsProbe(home string) []string {
-	var out []string
-	seen := map[string]bool{}
-	add := func(s string) {
-		if s != "" && !seen[s] {
-			seen[s] = true
-			out = append(out, s)
-		}
-	}
+	return capModels(ModelIDs(ompModelCatalogProbe(home)), 80)
+}
 
-	// 权威来源：omp models --json 按实际凭据过滤。
+// parseOmpModelsJSON 解析 `omp models --json` 的模型能力目录。OMP 的
+// `thinking` 是每个模型真实支持的档位，不能用 reasoning=true 猜测出一组
+// 全局选项；例如某个模型可能只声明 ["high", "max"]。
+func parseOmpModelsJSON(raw string) []ModelInfo {
+	var payload struct {
+		Models []struct {
+			Selector string   `json:"selector"`
+			Provider string   `json:"provider"`
+			ID       string   `json:"id"`
+			Thinking []string `json:"thinking"`
+		} `json:"models"`
+	}
+	if json.Unmarshal([]byte(raw), &payload) != nil {
+		return nil
+	}
+	out := make([]ModelInfo, 0, len(payload.Models))
+	pos := make(map[string]int, len(payload.Models))
+	for _, md := range payload.Models {
+		id := strings.TrimSpace(md.Selector)
+		if id == "" && md.Provider != "" && md.ID != "" {
+			id = strings.TrimSpace(md.Provider) + "/" + strings.TrimSpace(md.ID)
+		}
+		addModelInfo(&out, pos, ModelInfo{ID: id, ThinkingLevels: md.Thinking})
+	}
+	return out
+}
+
+func ompModelCatalogProbe(home string) []ModelInfo {
+	// 权威来源：omp models --json 按实际凭据过滤，并直接提供逐模型 thinking。
 	if raw, ok := cliOutput(probeTimeout, "omp", "models", "--json"); ok {
-		var m struct {
-			Models []struct {
-				Selector string `json:"selector"`
-				Provider string `json:"provider"`
-				ID       string `json:"id"`
-			} `json:"models"`
-		}
-		if json.Unmarshal([]byte(raw), &m) == nil {
-			for _, md := range m.Models {
-				if md.Selector != "" {
-					add(md.Selector)
-				} else if md.Provider != "" && md.ID != "" {
-					add(md.Provider + "/" + md.ID)
-				}
-			}
-		}
+		out := parseOmpModelsJSON(raw)
 		if len(out) > 0 {
-			saveModelsDisk("omp", out)
-			return capModels(out, 80)
+			ids := ModelIDs(out)
+			saveModelsDisk("omp", ids)
+			return capModelInfo(out, 80)
 		}
 	}
-	// 命令超时/失败：优先复用最近一次成功结果（死凭据过滤仍保证可用性）
+	// 命令超时/失败：磁盘缓存只保留模型 ID，不伪造 thinking 能力。
 	if disk := loadModelsDisk("omp"); disk != nil {
-		return disk
+		return capModelInfo(modelInfosFromIDs(disk), 80)
 	}
-	return ompModelsFallback(home)
+	return capModelInfo(ompModelsFallbackCatalog(home), 80)
 }
 
 // ompModelsFallback 是 omp 探测的命令失败/超时时的配置回退：
 // config.yml（modelRoles）+ models.yml + models.db（model_cache 只取
 // 权威行，且再按凭据仍然有效的 provider 过滤）。
 func ompModelsFallback(home string) []string {
-	var out []string
-	seen := map[string]bool{}
-	add := func(s string) {
-		if s != "" && !seen[s] {
-			seen[s] = true
-			out = append(out, s)
-		}
-	}
+	return capModels(ModelIDs(ompModelsFallbackCatalog(home)), 80)
+}
+
+func ompModelsFallbackCatalog(home string) []ModelInfo {
+	var out []ModelInfo
+	pos := map[string]int{}
+	add := func(s string) { addModelInfo(&out, pos, ModelInfo{ID: s}) }
+	addInfo := func(m ModelInfo) { addModelInfo(&out, pos, m) }
 
 	agentDir := filepath.Join(home, ".omp", "agent")
 
@@ -503,10 +621,14 @@ func ompModelsFallback(home string) []string {
 			}
 			v = strings.TrimSpace(v)
 			if strings.Contains(v, "/") {
+				thinking := ""
 				if i := strings.LastIndex(v, ":"); i > 0 && !strings.Contains(v[i:], "/") {
+					thinking = strings.TrimSpace(v[i+1:])
 					v = v[:i] // 去掉 :thinking 后缀
 				}
-				add(v)
+				// 这是用户配置中明确使用过的档位，不是根据模型名猜测；
+				// 命令探测失败时至少保留这条已验证的能力信息。
+				addInfo(ModelInfo{ID: v, ThinkingLevels: []string{thinking}})
 			}
 		}
 	}
@@ -547,20 +669,21 @@ func ompModelsFallback(home string) []string {
 					continue
 				}
 				var ms []struct {
-					Provider string `json:"provider"`
-					ID       string `json:"id"`
+					Provider string   `json:"provider"`
+					ID       string   `json:"id"`
+					Thinking []string `json:"thinking"`
 				}
 				if json.Unmarshal(b, &ms) == nil {
 					for _, m := range ms {
 						if m.ID != "" && (cred == nil || cred[m.Provider]) {
-							add(m.Provider + "/" + m.ID)
+							addInfo(ModelInfo{ID: m.Provider + "/" + m.ID, ThinkingLevels: m.Thinking})
 						}
 					}
 				}
 			}
 		}
 	}
-	return capModels(out, 80)
+	return out
 }
 
 // ompActiveProviders 返回 omp 实例中凭据仍然有效的提供商集合
@@ -589,42 +712,134 @@ func ompActiveProviders(home string) map[string]bool {
 }
 
 // ---------------------------------------------------------------------------
-// opencode：`opencode models` 命令输出（provider/model 每行一个）；
-// 失败时回退 ~/.config/opencode/opencode.json 的 model / small_model。
+// opencode：`opencode models --verbose` 输出每个 provider/model 的元数据，
+// 其中 variants 是该模型当前可用的逐模型思考档位。普通 `opencode models`
+// 只有 ID，不能用于推断 variant；命令失败时回退配置/磁盘缓存，但不猜测
+// 思考能力。
 
 func (a *openCodeAdapter) Models() []string {
-	return cachedModels("opencode", func() []string {
-		var out []string
-		seen := map[string]bool{}
-		add := func(s string) {
-			if s != "" && !seen[s] {
-				seen[s] = true
-				out = append(out, s)
-			}
-		}
-		if raw, ok := cliOutput(probeTimeout, "opencode", "models"); ok {
-			for _, line := range strings.Split(raw, "\n") {
-				add(strings.TrimSpace(line))
-			}
-			if len(out) > 0 {
-				saveModelsDisk("opencode", out)
-				return capModels(out, 60)
-			}
-		}
-		// opencode models 偶发走目录刷新超 30s：优先复用最近一次成功结果
-		if disk := loadModelsDisk("opencode"); disk != nil {
-			return disk
-		}
+	return capModels(ModelIDs(a.ModelCatalog()), 60)
+}
+
+func (a *openCodeAdapter) ModelCatalog() []ModelInfo {
+	return cachedModelCatalog("opencode", func() []ModelInfo {
 		home, _ := os.UserHomeDir()
-		var cfg struct {
-			Model      string `json:"model"`
-			SmallModel string `json:"small_model"`
-		}
-		readJSONFile(filepath.Join(home, ".config", "opencode", "opencode.json"), &cfg)
-		add(cfg.Model)
-		add(cfg.SmallModel)
-		return out
+		return opencodeModelCatalogProbe(home)
 	})
+}
+
+// parseOpenCodeVariantNames 支持当前 CLI 输出的 object 形式，也兼容文档
+// 中的数组形式。disabled variant 不属于可选档位。
+func parseOpenCodeVariantNames(raw json.RawMessage) []string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(raw, &object) == nil {
+		out := make([]string, 0, len(object))
+		for name, value := range object {
+			var cfg struct {
+				Disabled bool `json:"disabled"`
+			}
+			if json.Unmarshal(value, &cfg) == nil && cfg.Disabled {
+				continue
+			}
+			out = append(out, name)
+		}
+		return orderThinkingLevels(out)
+	}
+	var names []string
+	if json.Unmarshal(raw, &names) == nil {
+		return orderThinkingLevels(names)
+	}
+	var list []struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		Disabled bool   `json:"disabled"`
+	}
+	if json.Unmarshal(raw, &list) != nil {
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		if item.Disabled {
+			continue
+		}
+		name := item.ID
+		if name == "" {
+			name = item.Name
+		}
+		if name != "" {
+			out = append(out, name)
+		}
+	}
+	return orderThinkingLevels(out)
+}
+
+// parseOpenCodeVerboseModels 从带标题行的 verbose 输出中提取 JSON 对象。
+// `opencode models --verbose` 目前不是一个整体 JSON 文档，而是“模型 ID
+// 标题 + pretty JSON”重复输出；使用 Decoder 逐对象读取，避免依赖固定行号。
+func parseOpenCodeVerboseModels(raw string) []ModelInfo {
+	var out []ModelInfo
+	pos := map[string]int{}
+	for cursor := 0; cursor < len(raw); {
+		rel := strings.IndexByte(raw[cursor:], '{')
+		if rel < 0 {
+			break
+		}
+		start := cursor + rel
+		var model struct {
+			ID         string          `json:"id"`
+			ProviderID string          `json:"providerID"`
+			Provider   string          `json:"provider"`
+			Variants   json.RawMessage `json:"variants"`
+		}
+		decoder := json.NewDecoder(strings.NewReader(raw[start:]))
+		if err := decoder.Decode(&model); err != nil {
+			cursor = start + 1
+			continue
+		}
+		consumed := int(decoder.InputOffset())
+		if consumed <= 0 {
+			cursor = start + 1
+		} else {
+			cursor = start + consumed
+		}
+		provider := strings.TrimSpace(model.ProviderID)
+		if provider == "" {
+			provider = strings.TrimSpace(model.Provider)
+		}
+		if provider == "" || strings.TrimSpace(model.ID) == "" {
+			continue
+		}
+		addModelInfo(&out, pos, ModelInfo{
+			ID:             provider + "/" + strings.TrimSpace(model.ID),
+			ThinkingLevels: parseOpenCodeVariantNames(model.Variants),
+		})
+	}
+	return out
+}
+
+func opencodeModelCatalogProbe(home string) []ModelInfo {
+	if raw, ok := cliOutput(probeTimeout, "opencode", "models", "--verbose"); ok {
+		out := parseOpenCodeVerboseModels(raw)
+		if len(out) > 0 {
+			ids := ModelIDs(out)
+			saveModelsDisk("opencode", ids)
+			return capModelInfo(out, 60)
+		}
+	}
+	// opencode models 偶发走目录刷新超时：磁盘缓存只复用模型 ID，不能
+	// 把旧的/未知 variant 当成当前模型能力。
+	if disk := loadModelsDisk("opencode"); disk != nil {
+		return capModelInfo(modelInfosFromIDs(disk), 60)
+	}
+	var cfg struct {
+		Model      string `json:"model"`
+		SmallModel string `json:"small_model"`
+	}
+	readJSONFile(filepath.Join(home, ".config", "opencode", "opencode.json"), &cfg)
+	return modelInfosFromIDs([]string{cfg.Model, cfg.SmallModel})
 }
 
 // ---------------------------------------------------------------------------

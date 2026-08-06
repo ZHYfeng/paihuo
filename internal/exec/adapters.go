@@ -130,8 +130,8 @@ func shellJoin(parts []string) string {
 // ---------------------------------------------------------------------------
 // omp（Oh My Pi）：omp -p "提示词"
 // 角色映射：model→--model；system_prompt→--append-system-prompt；
-// skills→项目 .agents/skills + --skills 名称过滤；thinking low→--smol /
-// high→--slow；plugins→--config。
+// skills→项目 .agents/skills + --skills 名称过滤；thinking→--thinking；
+// plugins→--config。
 
 type ompAdapter struct{ baseAdapter }
 
@@ -155,11 +155,10 @@ func (a *ompAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	if len(skillNames) > 0 {
 		args = append(args, "--skills", strings.Join(skillNames, ","))
 	}
-	switch o.Role.Thinking {
-	case "low":
-		args = append(args, "--smol")
-	case "high":
-		args = append(args, "--slow")
+	if thinking := strings.TrimSpace(o.Role.Thinking); thinking != "" {
+		// --smol/--slow 选择的是 OMP 的模型角色，不是思考级别；思考档位
+		// 必须原样传给 --thinking（如 high、xhigh、max、auto）。
+		args = append(args, "--thinking", thinking)
 	}
 	for _, p := range o.Role.Plugins {
 		args = append(args, "--config", p)
@@ -191,8 +190,8 @@ func (a *ompAdapter) Warnings(o RunOptions) []string { return nil }
 func (a *ompAdapter) Schema() []Field {
 	fs := commonFields()
 	if f := byKey(fs, "thinking"); f != nil {
-		f.Options = []string{"", "low", "medium", "high"}
-		f.Help = "low→--smol（小模型快速模式）、high→--slow（深度推理）、medium 默认"
+		f.Options = []string{""}
+		f.Help = "按所选模型从 omp models --json 读取 thinking 档位，并原样传给 --thinking；模型未声明时不猜测"
 	}
 	if f := byKey(fs, "skills"); f != nil {
 		f.Help = "执行器把所选技能复制到任务 .agents/skills，并用官方 --skills 按名称过滤；任务提示会明确要求读取并遵循"
@@ -218,7 +217,7 @@ func (a *ompAdapter) Docs() string { return "https://omp.sh/docs" }
 
 // ---------------------------------------------------------------------------
 // opencode：opencode run --dir <dir> "提示词"
-// 角色映射：model→--model；thinking→--variant（minimal/high）；
+// 角色映射：model→--model；thinking→--variant（模型实际声明的 variant）；
 // custom.agent→--agent、custom.config→--config；系统提示词请用 opencode agent 定义。
 
 type openCodeAdapter struct{ baseAdapter }
@@ -228,11 +227,10 @@ func (a *openCodeAdapter) Build(o RunOptions) (string, []string, []string, error
 	if m := o.Role.Model; m != "" {
 		args = append(args, "--model", m)
 	}
-	switch o.Role.Thinking {
-	case "low":
-		args = append(args, "--variant", "minimal")
-	case "high":
-		args = append(args, "--variant", "high")
+	if thinking := strings.TrimSpace(o.Role.Thinking); thinking != "" {
+		// OpenCode 的 variant 名称是逐模型的，不能把 UI 的 low/high 映射
+		// 成另一个固定名称（例如 minimal）；直接传递目录中的真实名称。
+		args = append(args, "--variant", thinking)
 	}
 	if ag := o.Role.Custom["agent"]; ag != "" {
 		args = append(args, "--agent", ag)
@@ -262,10 +260,10 @@ func (a *openCodeAdapter) Schema() []Field {
 	return []Field{
 		{Key: "model", Label: "模型", Type: "text", Group: "模型与指令",
 			Placeholder: "留空用默认（探测本机实例实际配置）",
-			Help:        "--model；候选取自 `opencode models` 与本机配置"},
+			Help:        "--model；候选取自 `opencode models --verbose` 与本机配置"},
 		{Key: "thinking", Label: "思考级别", Type: "select", Group: "模型与指令",
-			Options: []string{"", "low", "medium", "high"},
-			Help:    "low→--variant minimal（省 token）、high→--variant high"},
+			Options: []string{""},
+			Help:    "按所选模型从 opencode models --verbose 读取 variants，并原样传给 --variant；模型未声明时不猜测"},
 		{Key: "instructions", Label: "指令", Type: "textarea", Group: "模型与指令",
 			Placeholder: "任务指令模板：每次执行前固定追加的指示",
 			Help:        "每次任务的固定指令前缀，注入到任务提示词之前（opencode 无官方 system prompt 参数，以提示词前缀方式生效）"},

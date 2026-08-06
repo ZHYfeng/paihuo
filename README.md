@@ -81,7 +81,7 @@ go build -o paihuo ./cmd/paihuo
 
 | CLI | 深度定制字段（来自官方文档） | 文档 |
 |---|---|---|
-| omp | model、system_prompt、instructions、thinking(`--smol/--slow`)、skills(`--add-dir`)、plugins(`--config`)、extra_args、env | [github.com/ohmygpt/omp](https://github.com/ohmygpt/omp) |
+| omp | model、system_prompt、instructions、thinking(`--thinking`)、skills(`--skills`)、plugins(`--config`)、extra_args、env | [github.com/ohmygpt/omp](https://github.com/ohmygpt/omp) |
 | opencode | model、thinking(`--variant`)、**agent**（opencode agent 定义）、**config**（配置文件叠加）、extra_args、env | [opencode.ai/docs](https://opencode.ai/docs) |
 | pi | model、system_prompt、instructions、extra_args、env（其余字段不在表单里出现） | [github.com/askpi/pi](https://github.com/askpi/pi) |
 | claude | model、system_prompt、instructions、skills、**permission_mode**（default / acceptEdits / plan / bypassPermissions）、**settings.json**、extra_args、env | [docs.anthropic.com](https://docs.anthropic.com/en/docs/claude-code/overview) |

@@ -3307,9 +3307,12 @@
     } catch (_) {
     }
     const model = String(input.value || "").trim();
-    const options = Array.isArray(byModel[model]) ? byModel[model] : fallback;
+    const hasModel = Object.prototype.hasOwnProperty.call(byModel, model);
+    let options = hasModel && Array.isArray(byModel[model]) ? byModel[model] : fallback;
+    if (hasModel && Array.isArray(fallback) && fallback.includes("") && !options.includes("")) options = ["", ...options];
     const current = select.value;
-    select.innerHTML = selectOptionsHTML(options, current);
+    const next = Array.isArray(options) && options.map(String).includes(current) ? current : "";
+    select.innerHTML = selectOptionsHTML(options, next);
   }
   function fieldControlHTML(f, rc, selectedModel = "") {
     const val = fieldValue(f, rc);
@@ -3317,7 +3320,14 @@
     const hasModelThinking = f.key === "thinking" && f.thinking_options_by_model;
     if (hasModelThinking) {
       attrs += ` data-thinking-options="${esc(JSON.stringify(f.thinking_options_by_model))}"`;
-      attrs += ` data-fallback-options="${esc(JSON.stringify(f.options || []))}"`;
+      let fallbackOptions = f.options || [];
+      if (Array.isArray(f.thinking_options_by_model[""])) {
+        fallbackOptions = f.thinking_options_by_model[""];
+        if (Array.isArray(f.options) && f.options.includes("") && !fallbackOptions.includes("")) {
+          fallbackOptions = ["", ...fallbackOptions];
+        }
+      }
+      attrs += ` data-fallback-options="${esc(JSON.stringify(fallbackOptions))}"`;
     }
     let ctl = "";
     if (f.type === "select") {

@@ -1372,7 +1372,7 @@ func (s *Server) listAgentSchemas(w http.ResponseWriter, r *http.Request) {
 	}
 	// 模型候选：探测该 CLI 在本机实例的实际配置，而非硬编码常用模型。
 	// 各 CLI 的探测命令耗时 1~4s（pi --list-models / omp models --json /
-	// opencode models），串行会把接口拖到十几秒、卡住前端首屏；并行探测
+	// opencode models --verbose），串行会把接口拖到十几秒、卡住前端首屏；并行探测
 	// 后总耗时 ≈ 最慢的一个（cachedModels 内部 singleflight 合并并发）。
 	var wg sync.WaitGroup
 	for i := range items {

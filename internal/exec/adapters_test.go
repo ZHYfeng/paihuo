@@ -67,13 +67,16 @@ func TestOmpAdapterBuild(t *testing.T) {
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"-p hi", "--no-pty", "--session-dir /s/x", "--model claude/claude-sonnet-4",
-		"--append-system-prompt sys", "--slow", "--skills skill-a,skill-b",
+		"--append-system-prompt sys", "--thinking high", "--skills skill-a,skill-b",
 		"--config /p.toml", "--tools read,edit,bash", "--max-time 30m",
 		"--profile work", "--provider claude", "--auto-approve", "--no-lsp",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("缺少参数 %q（完整: %s）", want, joined)
 		}
+	}
+	if strings.Contains(joined, "--smol") || strings.Contains(joined, "--slow") {
+		t.Fatalf("OMP 思考级别不应被误映射为模型角色 --smol/--slow: %s", joined)
 	}
 	if strings.Contains(joined, "--add-dir") {
 		t.Fatalf("旧参数 --add-dir 不应再出现: %s", joined)
@@ -84,13 +87,21 @@ func TestOmpAdapterBuild(t *testing.T) {
 func TestOmpSchemaAndPerm(t *testing.T) {
 	a := &ompAdapter{baseAdapter{id: "omp", name: "omp", bin: "omp"}}
 	keys := map[string]bool{}
+	var thinking *Field
 	for _, f := range a.Schema() {
 		keys[f.Key] = true
+		if f.Key == "thinking" {
+			copy := f
+			thinking = &copy
+		}
 	}
 	for _, want := range []string{"tools", "max_time", "profile", "provider"} {
 		if !keys[want] {
 			t.Fatalf("schema 缺少 %s", want)
 		}
+	}
+	if thinking == nil || strings.Join(thinking.Options, ",") != "" {
+		t.Fatalf("OMP 未探测到模型能力时只能保留默认思考档位: %+v", thinking)
 	}
 	if got := a.Docs(); got != "https://omp.sh/docs" {
 		t.Fatalf("Docs=%q", got)
@@ -176,6 +187,25 @@ func TestPiSchema(t *testing.T) {
 	}
 }
 
+func TestOpenCodeAdapterPassesVariantNameDirectly(t *testing.T) {
+	a := &openCodeAdapter{baseAdapter{id: "opencode", name: "opencode", bin: "opencode"}}
+	_, args, _, err := a.Build(RunOptions{
+		Dir:    "/repo",
+		Prompt: "hi",
+		Role:   store.RoleConfig{Model: "opencode/deepseek-v4-flash-free", Thinking: "max"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--variant max") {
+		t.Fatalf("OpenCode 应原样传递模型声明的 variant: %s", joined)
+	}
+	if strings.Contains(joined, "--variant minimal") {
+		t.Fatalf("OpenCode 不应把 low 猜测映射为 minimal: %s", joined)
+	}
+}
+
 func TestNativeSkillAdaptersDoNotTreatSkillsAsUnsupported(t *testing.T) {
 	claude := &claudeAdapter{baseAdapter{id: "claude", name: "claude", bin: "claude"}}
 	_, args, _, err := claude.Build(RunOptions{Prompt: "p", Role: store.RoleConfig{Skills: []string{"/skill"}}})
@@ -191,6 +221,9 @@ func TestNativeSkillAdaptersDoNotTreatSkillsAsUnsupported(t *testing.T) {
 	keys := map[string]bool{}
 	for _, field := range (&openCodeAdapter{baseAdapter{id: "opencode", name: "opencode", bin: "opencode"}}).Schema() {
 		keys[field.Key] = true
+		if field.Key == "thinking" && strings.Join(field.Options, ",") != "" {
+			t.Fatalf("OpenCode 未探测到模型能力时只能保留默认思考档位: %+v", field)
+		}
 	}
 	if !keys["skills"] {
 		t.Fatal("opencode schema must expose role skills")

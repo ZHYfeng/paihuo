@@ -531,9 +531,14 @@ export function syncModelThinking(input) {
   try { byModel = JSON.parse(select.dataset.thinkingOptions || "{}"); } catch (_) {}
   try { fallback = JSON.parse(select.dataset.fallbackOptions || "[]"); } catch (_) {}
   const model = String(input.value || "").trim();
-  const options = Array.isArray(byModel[model]) ? byModel[model] : fallback;
+  const hasModel = Object.prototype.hasOwnProperty.call(byModel, model);
+  let options = hasModel && Array.isArray(byModel[model]) ? byModel[model] : fallback;
+  // 能力目录中的模型即使没有声明任何档位，也只能保留“默认”；不能
+  // 回退到其它模型的并集。未知/手工输入的模型才使用保守并集。
+  if (hasModel && Array.isArray(fallback) && fallback.includes("") && !options.includes("")) options = ["", ...options];
   const current = select.value;
-  select.innerHTML = selectOptionsHTML(options, current);
+  const next = Array.isArray(options) && options.map(String).includes(current) ? current : "";
+  select.innerHTML = selectOptionsHTML(options, next);
 }
 
 export function fieldControlHTML(f, rc, selectedModel = "") {
@@ -542,7 +547,14 @@ export function fieldControlHTML(f, rc, selectedModel = "") {
   const hasModelThinking = f.key === "thinking" && f.thinking_options_by_model;
   if (hasModelThinking) {
     attrs += ` data-thinking-options="${esc(JSON.stringify(f.thinking_options_by_model))}"`;
-    attrs += ` data-fallback-options="${esc(JSON.stringify(f.options || []))}"`;
+    let fallbackOptions = f.options || [];
+    if (Array.isArray(f.thinking_options_by_model[""])) {
+      fallbackOptions = f.thinking_options_by_model[""];
+      if (Array.isArray(f.options) && f.options.includes("") && !fallbackOptions.includes("")) {
+        fallbackOptions = ["", ...fallbackOptions];
+      }
+    }
+    attrs += ` data-fallback-options="${esc(JSON.stringify(fallbackOptions))}"`;
   }
   let ctl = "";
   if (f.type === "select") {

@@ -2,6 +2,7 @@ package exec
 
 import (
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,6 +102,26 @@ func TestOmpActiveProvidersSkipsDisabled(t *testing.T) {
 	}
 }
 
+func TestOmpFallbackPreservesConfiguredThinkingSuffix(t *testing.T) {
+	home := t.TempDir()
+	agentDir := filepath.Join(home, ".omp", "agent")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := "modelRoles:\n  default: deepseek/deepseek-v4-flash:max\n  smol: deepseek/deepseek-v4-flash:off\n"
+	if err := os.WriteFile(filepath.Join(agentDir, "config.yml"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := ompModelsFallbackCatalog(home)
+	byID := map[string]ModelInfo{}
+	for _, model := range got {
+		byID[model.ID] = model
+	}
+	if levels := strings.Join(byID["deepseek/deepseek-v4-flash"].ThinkingLevels, ","); levels != "max,off" {
+		t.Fatalf("OMP 回退应保留配置中明确的 thinking 后缀，得到 %q（%v）", levels, got)
+	}
+}
+
 // pi 模型候选必须全部是 provider/model 限定形式。裸 id（如 deepseek-v4-flash、
 // glm-5.1）在多个 provider 存在同名模型时是歧义的（本机 deepseek 与
 // opencode-go 都有 deepseek-v4-flash / deepseek-v4-pro）：pi 对 --model 裸 id
@@ -142,6 +163,78 @@ opencode-go  glm-5.1            202.8K   32.8K    yes       no`)
 		if !strings.Contains(joined, want) {
 			t.Fatalf("应包含 %s，得到 %v", want, got)
 		}
+	}
+}
+
+func TestOmpModelsJSONPreservesPerModelThinkingLevels(t *testing.T) {
+	raw := `{"models":[
+  {"provider":"deepseek","id":"deepseek-v4-flash","selector":"deepseek/deepseek-v4-flash","reasoning":true,"thinking":["high","max"]},
+  {"provider":"zai","id":"glm-5.1","selector":"zai/glm-5.1","reasoning":true,"thinking":["low","medium","high"]},
+  {"provider":"plain","id":"chat","selector":"plain/chat","reasoning":false}
+]}`
+	got := parseOmpModelsJSON(raw)
+	if len(got) != 3 {
+		t.Fatalf("应解析出 3 个模型，得到 %v", got)
+	}
+	if strings.Join(got[0].ThinkingLevels, ",") != "high,max" {
+		t.Fatalf("OMP 第一模型的 thinking 档位错误: %v", got)
+	}
+	if len(got[2].ThinkingLevels) != 0 {
+		t.Fatalf("未声明 thinking 的模型不应猜测档位: %v", got[2])
+	}
+	opts := ModelThinkingOptions(got)
+	if strings.Join(opts[got[0].ID], ",") != "high,max" {
+		t.Fatalf("OMP schema 未保留逐模型档位: %v", opts)
+	}
+	if levels, ok := opts[got[2].ID]; !ok || len(levels) != 0 {
+		t.Fatalf("OMP 未声明档位的模型应记录为空能力集合: %v", opts)
+	}
+}
+
+func TestOpenCodeVerboseModelsPreservesVariants(t *testing.T) {
+	raw := `opencode/deepseek-v4-flash-free
+{
+  "id": "deepseek-v4-flash-free",
+  "providerID": "opencode",
+  "variants": {
+    "max": {"reasoningEffort": "max"},
+    "disabled": {"disabled": true},
+    "low": {"reasoningEffort": "low"},
+    "high": {"reasoningEffort": "high"}
+  }
+}
+opencode/big-pickle
+{
+  "id": "big-pickle",
+  "providerID": "opencode",
+  "variants": {}
+}`
+	got := parseOpenCodeVerboseModels(raw)
+	if len(got) != 2 {
+		t.Fatalf("应解析出 2 个 OpenCode 模型，得到 %v", got)
+	}
+	if got[0].ID != "opencode/deepseek-v4-flash-free" {
+		t.Fatalf("模型 selector 错误: %v", got)
+	}
+	if strings.Join(got[0].ThinkingLevels, ",") != "low,high,max" {
+		t.Fatalf("OpenCode variants 解析/排序错误: %v", got[0])
+	}
+	if len(got[1].ThinkingLevels) != 0 {
+		t.Fatalf("空 variants 不应猜测档位: %v", got[1])
+	}
+}
+
+func TestOpenCodeVariantNamesSupportsArrayForms(t *testing.T) {
+	if got := parseOpenCodeVariantNames(json.RawMessage(`["max", "low", "max"]`)); strings.Join(got, ",") != "low,max" {
+		t.Fatalf("OpenCode 字符串数组 variants 解析/排序错误: %v", got)
+	}
+	got := parseOpenCodeVariantNames(json.RawMessage(`[
+  {"name":"high"},
+  {"id":"disabled","disabled":true},
+  {"id":"low"}
+]`))
+	if strings.Join(got, ",") != "low,high" {
+		t.Fatalf("OpenCode 对象数组 variants 解析错误: %v", got)
 	}
 }
 
