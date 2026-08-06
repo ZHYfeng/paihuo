@@ -8,6 +8,8 @@ let termOldestSeq = 0;
 let termLoading = false;
 let ignoreTopScroll = false;
 let termInteractive = false;
+let termGeometryObserver = null;
+let termViewportResizeHandler = null;
 let taskTerm = null;
 let taskTermTask = null;
 let taskTermLogs = [];
@@ -112,10 +114,26 @@ function writeTerminalLogs(target, logs, emptyMessage = "（暂无输出）") {
 
 function syncFullscreenTerminalGeometry() {
   if (!term) return;
+  const host = document.getElementById("termX");
+  if (!host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
   try {
     if (termInteractive) term.resize(INTERACTIVE_TERM_COLS, INTERACTIVE_TERM_ROWS);
     else termFit?.fit();
   } catch (_) {}
+}
+
+function observeFullscreenTerminalGeometry() {
+  const host = document.getElementById("termX");
+  if (!host || termGeometryObserver) return;
+
+  termGeometryObserver = new ResizeObserver(() => {
+    requestAnimationFrame(syncFullscreenTerminalGeometry);
+  });
+  termGeometryObserver.observe(host);
+
+  termViewportResizeHandler = () => requestAnimationFrame(syncFullscreenTerminalGeometry);
+  window.addEventListener("resize", termViewportResizeHandler, { passive: true });
+  window.visualViewport?.addEventListener("resize", termViewportResizeHandler, { passive: true });
 }
 
 export function initTerm() {
@@ -130,8 +148,8 @@ export function initTerm() {
   term.onScroll(event => {
     if (event.position === 0 && !ignoreTopScroll) loadOlderTerminalLogs();
   });
+  observeFullscreenTerminalGeometry();
   syncFullscreenTerminalGeometry();
-  window.addEventListener("resize", syncFullscreenTerminalGeometry);
 }
 
 export function termWrite(content) {

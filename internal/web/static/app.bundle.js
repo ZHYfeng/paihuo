@@ -1063,6 +1063,8 @@
   var termLoading = false;
   var ignoreTopScroll = false;
   var termInteractive = false;
+  var termGeometryObserver = null;
+  var termViewportResizeHandler = null;
   var taskTerm = null;
   var taskTermTask = null;
   var taskTermLogs = [];
@@ -1166,11 +1168,24 @@
   }
   function syncFullscreenTerminalGeometry() {
     if (!term) return;
+    const host = document.getElementById("termX");
+    if (!host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
     try {
       if (termInteractive) term.resize(INTERACTIVE_TERM_COLS, INTERACTIVE_TERM_ROWS);
       else termFit?.fit();
     } catch (_) {
     }
+  }
+  function observeFullscreenTerminalGeometry() {
+    const host = document.getElementById("termX");
+    if (!host || termGeometryObserver) return;
+    termGeometryObserver = new ResizeObserver(() => {
+      requestAnimationFrame(syncFullscreenTerminalGeometry);
+    });
+    termGeometryObserver.observe(host);
+    termViewportResizeHandler = () => requestAnimationFrame(syncFullscreenTerminalGeometry);
+    window.addEventListener("resize", termViewportResizeHandler, { passive: true });
+    window.visualViewport?.addEventListener("resize", termViewportResizeHandler, { passive: true });
   }
   function initTerm() {
     if (term) return;
@@ -1184,8 +1199,8 @@
     term.onScroll((event) => {
       if (event.position === 0 && !ignoreTopScroll) loadOlderTerminalLogs();
     });
+    observeFullscreenTerminalGeometry();
     syncFullscreenTerminalGeometry();
-    window.addEventListener("resize", syncFullscreenTerminalGeometry);
   }
   function termWrite(content) {
     if (term) term.write(String(content ?? "") + "\r\n");
