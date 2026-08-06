@@ -47,7 +47,16 @@ type tmuxStartOptions struct {
 	IsolateProcessGroup bool
 	DetachTerminal      bool
 	IsolateCgroup       bool
+	TerminalColumns     int
+	TerminalRows        int
 }
+
+const (
+	// Pi 的 TUI 会把光标位置和分隔线写入输出流。固定 pane 画布后，浏览器可按
+	// 同一尺寸重放控制序列；否则 tmux attach 或浏览器宽度变化会破坏画面。
+	interactiveTerminalColumns = 80
+	interactiveTerminalRows    = 24
+)
 
 type tmuxObservation struct {
 	Lines               []string
@@ -232,18 +241,22 @@ func (r *tmuxRunner) ensureSession() error {
 	if _, err := osexec.LookPath(r.binary); err != nil {
 		return fmt.Errorf("未找到 tmux；专用任务执行器需要安装 tmux: %w", err)
 	}
-	if r.hasSession() {
-		return nil
+	if !r.hasSession() {
+		if err := os.MkdirAll(r.root, 0o700); err != nil {
+			return fmt.Errorf("创建 tmux 运行目录失败: %w", err)
+		}
+		if err := os.Chmod(r.root, 0o700); err != nil {
+			return fmt.Errorf("设置 tmux 运行目录权限失败: %w", err)
+		}
+		// control window 是该专用 session 的唯一常驻 pane。活动任务 window 会在
+		// 结束后删除，control window 保证 server/session 不会因为暂时没有任务而消失。
+		if err := r.command("new-session", "-d", "-s", r.session, "-n", "control", "-c", r.root, "--", "sleep", "2147483647"); err != nil {
+			return err
+		}
 	}
-	if err := os.MkdirAll(r.root, 0o700); err != nil {
-		return fmt.Errorf("创建 tmux 运行目录失败: %w", err)
-	}
-	if err := os.Chmod(r.root, 0o700); err != nil {
-		return fmt.Errorf("设置 tmux 运行目录权限失败: %w", err)
-	}
-	// control window 是该专用 session 的唯一常驻 pane。活动任务 window 会在
-	// 结束后删除，control window 保证 server/session 不会因为暂时没有任务而消失。
-	return r.command("new-session", "-d", "-s", r.session, "-n", "control", "-c", r.root, "--", "sleep", "2147483647")
+	// 专用 server 明确不读取用户 tmux.conf，因此 Pi 需要的扩展按键能力必须
+	// 由 PaiHuo 自己开启；否则每个交互会话都会显示警告，组合键也可能失效。
+	return r.command("set-option", "-s", "extended-keys", "on")
 }
 
 func (r *tmuxRunner) hasSession() bool {
@@ -327,6 +340,16 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, op
 		return err
 	}
 	r.recordLifecycle(taskID, "window_created", "target="+r.target(taskID))
+	if options.TerminalColumns > 0 && options.TerminalRows > 0 {
+		if err := r.command("set-window-option", "-t", r.target(taskID), "window-size", "manual"); err != nil {
+			_ = r.stopLocked(taskID, "start_failed")
+			return fmt.Errorf("固定交互终端尺寸失败: %w", err)
+		}
+		if err := r.command("resize-window", "-t", r.target(taskID), "-x", strconv.Itoa(options.TerminalColumns), "-y", strconv.Itoa(options.TerminalRows)); err != nil {
+			_ = r.stopLocked(taskID, "start_failed")
+			return fmt.Errorf("调整交互终端尺寸失败: %w", err)
+		}
+	}
 	if err := r.command("set-window-option", "-t", r.target(taskID), "remain-on-exit", "on"); err != nil {
 		_ = r.stopLocked(taskID, "start_failed")
 		return err

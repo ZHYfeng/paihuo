@@ -7,34 +7,73 @@ let termHasMore = false;
 let termOldestSeq = 0;
 let termLoading = false;
 let ignoreTopScroll = false;
+let termInteractive = false;
+let taskTerm = null;
+let taskTermTask = null;
+let taskTermLogs = [];
 
-export function initTerm() {
-  if (term) return;
-  term = new Terminal({
+// PaiHuo 的交互式 Pi pane 使用固定画布，避免浏览器宽度变化后重放 TUI
+// 控制序列时把光标、分隔线和输入区重新换行。该尺寸与执行器创建的 tmux
+// window 保持一致；窄屏通过横向滚动查看，不压缩或破坏终端坐标。
+export const INTERACTIVE_TERM_COLS = 80;
+export const INTERACTIVE_TERM_ROWS = 24;
+
+const TERM_THEME = {
+  background: "#070a08", foreground: "#c9d4e5", cursor: "#c7f36a",
+  selectionBackground: "rgba(199, 243, 106, .24)",
+  black: "#0b1019", red: "#f87171", green: "#34d399", yellow: "#fbbf24",
+  blue: "#38bdf8", magenta: "#a78bfa", cyan: "#22d3ee", white: "#c9d4e5",
+  brightBlack: "#5d6b84", brightRed: "#fca5a5", brightGreen: "#6ee7b7",
+  brightYellow: "#fde047", brightBlue: "#7dd3fc", brightMagenta: "#c4b5fd",
+  brightCyan: "#67e8f9", brightWhite: "#f1f5f9",
+};
+
+function terminalOptions(interactive = false, running = false) {
+  return {
+    ...(interactive ? { cols: INTERACTIVE_TERM_COLS, rows: INTERACTIVE_TERM_ROWS } : {}),
     fontFamily: "var(--font-mono)",
     fontSize: 12.5,
     lineHeight: 1.35,
     convertEol: true,
-    scrollback: 10000,
-    cursorBlink: true,
-    theme: {
-      background: "#060a13", foreground: "#c9d4e5", cursor: "#38bdf8",
-      selectionBackground: "rgba(56, 189, 248, .3)",
-      black: "#0b1019", red: "#f87171", green: "#34d399", yellow: "#fbbf24",
-      blue: "#38bdf8", magenta: "#a78bfa", cyan: "#22d3ee", white: "#c9d4e5",
-      brightBlack: "#5d6b84", brightRed: "#fca5a5", brightGreen: "#6ee7b7",
-      brightYellow: "#fde047", brightBlue: "#7dd3fc", brightMagenta: "#c4b5fd",
-      brightCyan: "#67e8f9", brightWhite: "#f1f5f9",
-    },
+    scrollback: interactive ? 3000 : 10000,
+    cursorBlink: interactive && running,
+    disableStdin: true,
+    theme: TERM_THEME,
+  };
+}
+
+function writeTerminalLogs(target, logs, emptyMessage = "（暂无输出）") {
+  if (!target) return;
+  if (!logs.length) {
+    target.write(`\x1b[90m${emptyMessage}\x1b[0m\r\n`);
+    return;
+  }
+  logs.forEach((l, index) => {
+    target.write(String(l.content ?? "") + "\r\n", index === logs.length - 1
+      ? () => target.scrollToBottom()
+      : undefined);
   });
+}
+
+function syncFullscreenTerminalGeometry() {
+  if (!term) return;
+  try {
+    if (termInteractive) term.resize(INTERACTIVE_TERM_COLS, INTERACTIVE_TERM_ROWS);
+    else termFit?.fit();
+  } catch (_) {}
+}
+
+export function initTerm() {
+  if (term) return;
+  term = new Terminal(terminalOptions(termInteractive, termInteractive));
   termFit = new FitAddon.FitAddon();
   term.loadAddon(termFit);
   term.open(document.getElementById("termX"));
   term.onScroll(event => {
     if (event.position === 0 && !ignoreTopScroll) loadOlderTerminalLogs();
   });
-  termFit.fit();
-  window.addEventListener("resize", () => { try { termFit.fit(); } catch (_) {} });
+  syncFullscreenTerminalGeometry();
+  window.addEventListener("resize", syncFullscreenTerminalGeometry);
 }
 
 export function termWrite(content) {
@@ -50,9 +89,9 @@ export function termAppendLog(l) {
 
 function renderTerminalWindow() {
   if (!term) return;
+  syncFullscreenTerminalGeometry();
   term.reset();
-  termLogs.forEach(l => termWrite(l.content));
-  if (!termLogs.length) term.write("\x1b[90m（暂无输出）\x1b[0m\r\n");
+  writeTerminalLogs(term, termLogs);
 }
 
 // xterm 本身适合渲染终端，但把数万条持久化日志一次写入仍会卡住页面。
@@ -90,10 +129,13 @@ async function loadOlderTerminalLogs() {
 
 export function openTerminal(id) {
   const t = state.tasks.find(x => x.id === id) || {};
+  termInteractive = t.run_mode === "interactive";
   document.getElementById("termTitle").textContent = `${t.agent_name || ""} · #${id} 对话`;
+  document.getElementById("termModal")?.classList.toggle("interactive-terminal-modal", termInteractive);
+  document.getElementById("termX")?.classList.toggle("interactive-term-body", termInteractive);
   openModal("termModal");
   initTerm();
-  setTimeout(() => { try { termFit.fit(); } catch (_) {} }, 30);
+  setTimeout(syncFullscreenTerminalGeometry, 30);
   state.termTask = id;
   termLogs = [];
   termHasMore = false;
@@ -124,6 +166,53 @@ export function closeTerminal() {
   const bar = document.getElementById("termInputBar");
   if (bar) bar.classList.add("hidden");
   closeModal("termModal");
+  document.getElementById("termModal")?.classList.remove("interactive-terminal-modal");
+  document.getElementById("termX")?.classList.remove("interactive-term-body");
+  termInteractive = false;
+}
+
+// 详情页中的交互式任务不能按普通日志逐行排版。Pi 输出的是带光标移动、
+// 擦除和同步刷新指令的 80×24 TUI；用第二个只读 xterm 按原始尺寸重放，
+// 才能得到与 tmux pane 一致的画面。
+export function closeTaskTerminal() {
+  if (taskTerm) {
+    try { taskTerm.dispose(); } catch (_) {}
+  }
+  taskTerm = null;
+  taskTermTask = null;
+  taskTermLogs = [];
+}
+
+export function openTaskTerminal(id, logs = [], running = false) {
+  const host = document.getElementById("taskTermX");
+  if (!host) return;
+  closeTaskTerminal();
+  taskTermTask = id;
+  taskTermLogs = [...logs];
+  taskTerm = new Terminal(terminalOptions(true, running));
+  taskTerm.open(host);
+  taskTerm.resize(INTERACTIVE_TERM_COLS, INTERACTIVE_TERM_ROWS);
+  writeTerminalLogs(taskTerm, taskTermLogs, "（交互终端等待输出）");
+}
+
+export function taskTermAppendLog(l) {
+  if (!taskTerm || taskTermTask !== l.task_id) return;
+  if (taskTermLogs.some(existing => existing.id === l.id)) return;
+  taskTermLogs.push(l);
+  taskTerm.write(String(l.content ?? "") + "\r\n", () => taskTerm?.scrollToBottom());
+}
+
+export function taskTerminalText() {
+  if (!taskTerm) return "";
+  const buffer = taskTerm.buffer.active;
+  const start = buffer.viewportY;
+  const end = Math.min(buffer.length, start + taskTerm.rows);
+  const lines = [];
+  for (let row = start; row < end; row++) {
+    lines.push(buffer.getLine(row)?.translateToString(true) || "");
+  }
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  return lines.join("\n");
 }
 
 // syncTerminalInput 与任务 SSE 同步：只有正在运行的交互式 Pi 任务才能收到

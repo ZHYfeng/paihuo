@@ -2927,3 +2927,49 @@ a.project-card:hover { color: inherit; text-decoration: none; }
   /* 最终页头样式在上方覆盖了早期移动端规则；给汉字标题留出菜单按钮安全区。 */
   .main > .page-header { padding-left: 56px; }
 }
+
+/* ============================================================
+   V9 · INTERACTIVE TERMINAL
+   Pi TUI 使用稳定的 80×24 坐标画布；窄屏保留画布并允许横向浏览。
+   ============================================================ */
+.interactive-term-body {
+  height: 342px; max-height: min(342px, 48vh); padding: 0;
+  overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y;
+  background: var(--inset); scrollbar-gutter: stable;
+}
+.interactive-term-canvas {
+  min-width: 100%; width: max-content; min-height: 336px;
+}
+.interactive-term-canvas .xterm { min-height: 336px; padding: 8px 10px; }
+.interactive-term-canvas .xterm-screen { min-width: max-content; }
+.interactive-task-log .term { border-color: rgba(199, 243, 106, .17); }
+.interactive-task-log .term-head { border-bottom-color: rgba(199, 243, 106, .13); }
+
+/* 后置的通用 modal 主题不应重新给终端盒增加 26px 内边距。 */
+.modal-box.term-modal {
+  width: min(1200px, calc(100vw - 48px)); height: min(86vh, 840px);
+  max-width: 1200px; max-height: 840px; padding: 0; overflow: hidden;
+}
+.interactive-terminal-modal .term-full {
+  overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y;
+}
+.interactive-terminal-modal .term-full .xterm-screen { min-width: max-content; }
+
+@media (max-width: 640px) {
+  .interactive-term-body { height: 330px; max-height: min(330px, 46vh); }
+  .interactive-term-canvas .xterm { padding: 8px 10px; }
+  .detail-side { width: auto; }
+
+  #termModal { padding: 0; align-items: stretch; }
+  #termModal .term-modal {
+    width: 100%; height: 100dvh; max-width: none; max-height: 100dvh;
+    border: 0; border-radius: 0;
+  }
+  #termModal .term-head {
+    min-height: 52px; padding: max(8px, env(safe-area-inset-top)) 12px 8px;
+  }
+  #termModal .term-input {
+    min-height: 62px; padding: 8px 10px max(8px, env(safe-area-inset-bottom));
+  }
+  #termModal .term-input .btn { min-width: 56px; }
+}

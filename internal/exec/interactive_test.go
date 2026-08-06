@@ -98,3 +98,44 @@ func TestExecutorSendsLiteralInputToInteractiveTask(t *testing.T) {
 		t.Fatalf("输入应记录为 in 日志，得到 %+v", logs)
 	}
 }
+
+func TestInteractiveTmuxUsesStableGeometryAndExtendedKeys(t *testing.T) {
+	requireTmuxIntegration(t)
+	sessionsRoot := t.TempDir()
+	socket := fmt.Sprintf("paihuo-interactive-geometry-test-%d", os.Getpid())
+	runner := newTmuxRunnerAt(sessionsRoot, socket)
+	_ = runner.command("kill-server")
+	t.Cleanup(func() { _ = runner.command("kill-server") })
+
+	if err := runner.ensureSession(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := osexec.Command("tmux", "-L", socket, "show-options", "-s", "-v", "extended-keys").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "on" {
+		t.Fatalf("专用 tmux 应开启 extended-keys，得到 %q", got)
+	}
+
+	const taskID = 91
+	if err := runner.Start(taskID, sessionsRoot, "sh", []string{"-c", "sleep 5"}, nil, tmuxStartOptions{
+		TerminalColumns: interactiveTerminalColumns,
+		TerminalRows:    interactiveTerminalRows,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = runner.Stop(taskID)
+		runner.Cleanup(taskID)
+	})
+	out, err = osexec.Command("tmux", "-L", socket, "display-message", "-p", "-t", runner.target(taskID),
+		"#{window_width}x#{window_height}:#{window_size_option}").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("%dx%d:manual", interactiveTerminalColumns, interactiveTerminalRows)
+	if got := strings.TrimSpace(string(out)); got != want {
+		t.Fatalf("交互终端尺寸不稳定: got %q want %q", got, want)
+	}
+}

@@ -5,7 +5,7 @@ import { loadHistory } from "./history.js";
 import { fillSelects, loadAll, refreshOverview } from "./main.js";
 import { refreshProjectDetail } from "./projects.js";
 import { loadTemplates } from "./skills.js";
-import { openTerminal, sendTaskInput, termAppendLog } from "./terminal.js";
+import { INTERACTIVE_TERM_COLS, INTERACTIVE_TERM_ROWS, closeTaskTerminal, openTaskTerminal, openTerminal, sendTaskInput, taskTermAppendLog, taskTerminalText, termAppendLog } from "./terminal.js";
 
 // 任务详情是全站共享的视图。打开时只临时隐藏当前页面原本可见的直属内容，
 // 关闭后精确恢复，避免破坏项目/角色页自身的列表与详情切换状态。
@@ -338,6 +338,7 @@ export function showDetail(id) {
 }
 
 export function hideDetail() {
+  closeTaskTerminal();
   document.getElementById("detailShell")?.classList.add("hidden");
   for (const child of detailBackground || []) child.classList.remove("hidden");
   detailBackground = null;
@@ -381,7 +382,8 @@ export function renderDetail(t) {
   const mergeTask = isMergeTask(t);
   const mergeSource = mergeTask ? state.tasks.find(x => x.id === t.merge_of) : null;
   const dependency = dependencyInfo(t);
-  const isInteractive = t.run_mode === "interactive" && t.status === "running";
+  const interactive = t.run_mode === "interactive";
+  const isInteractive = interactive && t.status === "running";
   const isLive = ["claimed", "running"].includes(t.status);
   const agent = state.agents.find(a => a.id === t.agent_id);
   const agentName = t.agent_name || "未指派";
@@ -390,9 +392,11 @@ export function renderDetail(t) {
   const bodyLength = (t.body || "").length;
   const createdAt = (t.created_at || "").slice(0, 16).replace("T", " ");
   const { visible: visibleLogs, errors: logErrors } = logStats();
-  const logMeta = state.logsHasMore
-    ? `已加载 ${visibleLogs}/${state.logsTotal} 条`
-    : `${visibleLogs} 条`;
+  const logMeta = interactive
+    ? `${isLive ? "实时画面" : "已归档画面"} · ${INTERACTIVE_TERM_COLS} × ${INTERACTIVE_TERM_ROWS}`
+    : state.logsHasMore
+      ? `已加载 ${visibleLogs}/${state.logsTotal} 条`
+      : `${visibleLogs} 条`;
   const dependencyAlert = !mergeTask && t.status === "queued" && dependency.state !== "ready"
     ? `<div class="task-alert"><span class="task-alert-title">${dependency.state === "skipped" ? "前序交付已跳过" : "等待前置交付"}</span><span>${esc(dependency.reason || "等待调度")}</span></div>` : "";
   const input = isInteractive ? `<div class="term-input detail-input">
@@ -424,12 +428,12 @@ export function renderDetail(t) {
       <summary><span>代码改动</span><span class="section-meta">等待审批</span></summary>
       <div id="diffBox"><div class="empty">加载改动中...</div></div>
     </details>` : ""}
-    <details class="task-section task-log-section"${isLive ? " open" : ""}>
-      <summary><span>执行记录</span><span class="section-meta" id="logMeta">${logMeta}${logErrors ? ` · ${logErrors} 个错误` : ""}</span></summary>
+    <details class="task-section task-log-section${interactive ? " interactive-task-log" : ""}"${isLive ? " open" : ""}>
+      <summary><span>${interactive ? "交互终端" : "执行记录"}</span><span class="section-meta" id="logMeta">${logMeta}${logErrors && !interactive ? ` · ${logErrors} 个错误` : ""}</span></summary>
       <div class="section-head">
         <div class="section-sub">${esc(agentName)} · ${runMode}</div>
         <div class="section-tools">
-          <button class="btn ghost xs" onclick="copyLogs()">${icon("copy")}复制</button>
+          <button class="btn ghost xs" onclick="copyLogs()">${icon("copy")}${interactive ? "复制画面" : "复制"}</button>
           <button class="btn ghost xs" onclick="openTerminal(${t.id})">${icon("expand")}全屏</button>
         </div>
       </div>
@@ -438,7 +442,9 @@ export function renderDetail(t) {
         <span class="term-dots"><i></i><i></i><i></i></span>
         <span class="t-title" title="${esc(t.project_dir || "")}">${esc(agentName)} · ${runMode}</span>
       </div>
-      <div class="term-body" id="logBox">${logsHTML()}</div>
+      ${interactive
+        ? `<div class="term-body interactive-term-body" id="logBox" role="region" aria-label="Pi 交互式终端画面"><div class="interactive-term-canvas" id="taskTermX"></div></div>`
+        : `<div class="term-body" id="logBox">${logsHTML()}</div>`}
       ${input}
       </div>
     </details>
@@ -447,7 +453,16 @@ export function renderDetail(t) {
       <div id="wsBox"><div class="empty">加载中...</div></div>
     </details>`;
   const box = document.getElementById("logBox");
-  if (box) {
+  const logSection = main.querySelector(".task-log-section");
+  const mountInteractiveTerminal = () => {
+    if (interactive && logSection?.open) openTaskTerminal(t.id, state.logs, t.status === "running");
+    else closeTaskTerminal();
+  };
+  if (interactive) {
+    mountInteractiveTerminal();
+    logSection?.addEventListener("toggle", mountInteractiveTerminal);
+  } else if (box) {
+    closeTaskTerminal();
     box.scrollTop = box.scrollHeight;
     box.addEventListener("scroll", () => {
       if (box.scrollTop <= 64) loadOlderLogs(box, t.id);
@@ -837,6 +852,12 @@ export function logStats() {
 function updateLogMeta() {
   const meta = document.getElementById("logMeta");
   if (!meta) return;
+  const task = state.tasks.find(t => t.id === state.selected);
+  if (task?.run_mode === "interactive") {
+    const live = ["claimed", "running"].includes(task.status);
+    meta.textContent = `${live ? "实时画面" : "已归档画面"} · ${INTERACTIVE_TERM_COLS} × ${INTERACTIVE_TERM_ROWS}`;
+    return;
+  }
   const { visible, errors } = logStats();
   const count = state.logsHasMore ? `已加载 ${visible}/${state.logsTotal} 条` : `${visible} 条`;
   meta.textContent = count + (errors ? ` · ${errors} 个错误` : "");
@@ -892,9 +913,14 @@ export function appendLog(l) {
     state.logsTotal = Math.max(state.logsTotal + 1, state.logs.length);
     const box = document.getElementById("logBox");
     if (box) {
-      const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 32;
-      box.insertAdjacentHTML("beforeend", logLineHTML(l));
-      if (atBottom) box.scrollTop = box.scrollHeight;
+      const task = state.tasks.find(t => t.id === l.task_id);
+      if (task?.run_mode === "interactive") {
+        taskTermAppendLog(l);
+      } else {
+        const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 32;
+        box.insertAdjacentHTML("beforeend", logLineHTML(l));
+        if (atBottom) box.scrollTop = box.scrollHeight;
+      }
       updateLogMeta();
     }
   }
@@ -904,6 +930,13 @@ export function appendLog(l) {
 export async function copyLogs() {
   try {
     if (!state.selected) return;
+    const task = state.tasks.find(t => t.id === state.selected);
+    const terminalView = task?.run_mode === "interactive" ? taskTerminalText() : "";
+    if (terminalView.trim()) {
+      await navigator.clipboard.writeText(terminalView);
+      toast("已复制当前终端画面");
+      return;
+    }
     const page = await fetchTaskLogs(state.selected, { all: true });
     await navigator.clipboard.writeText(page.logs.map(l => cleanLogContent(l.content)).filter(Boolean).join("\n"));
     toast("已复制对话内容");

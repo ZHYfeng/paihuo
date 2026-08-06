@@ -1058,51 +1058,77 @@
   var termOldestSeq = 0;
   var termLoading = false;
   var ignoreTopScroll = false;
-  function initTerm() {
-    if (term) return;
-    term = new Terminal({
+  var termInteractive = false;
+  var taskTerm = null;
+  var taskTermTask = null;
+  var taskTermLogs = [];
+  var INTERACTIVE_TERM_COLS = 80;
+  var INTERACTIVE_TERM_ROWS = 24;
+  var TERM_THEME = {
+    background: "#070a08",
+    foreground: "#c9d4e5",
+    cursor: "#c7f36a",
+    selectionBackground: "rgba(199, 243, 106, .24)",
+    black: "#0b1019",
+    red: "#f87171",
+    green: "#34d399",
+    yellow: "#fbbf24",
+    blue: "#38bdf8",
+    magenta: "#a78bfa",
+    cyan: "#22d3ee",
+    white: "#c9d4e5",
+    brightBlack: "#5d6b84",
+    brightRed: "#fca5a5",
+    brightGreen: "#6ee7b7",
+    brightYellow: "#fde047",
+    brightBlue: "#7dd3fc",
+    brightMagenta: "#c4b5fd",
+    brightCyan: "#67e8f9",
+    brightWhite: "#f1f5f9"
+  };
+  function terminalOptions(interactive = false, running = false) {
+    return {
+      ...interactive ? { cols: INTERACTIVE_TERM_COLS, rows: INTERACTIVE_TERM_ROWS } : {},
       fontFamily: "var(--font-mono)",
       fontSize: 12.5,
       lineHeight: 1.35,
       convertEol: true,
-      scrollback: 1e4,
-      cursorBlink: true,
-      theme: {
-        background: "#060a13",
-        foreground: "#c9d4e5",
-        cursor: "#38bdf8",
-        selectionBackground: "rgba(56, 189, 248, .3)",
-        black: "#0b1019",
-        red: "#f87171",
-        green: "#34d399",
-        yellow: "#fbbf24",
-        blue: "#38bdf8",
-        magenta: "#a78bfa",
-        cyan: "#22d3ee",
-        white: "#c9d4e5",
-        brightBlack: "#5d6b84",
-        brightRed: "#fca5a5",
-        brightGreen: "#6ee7b7",
-        brightYellow: "#fde047",
-        brightBlue: "#7dd3fc",
-        brightMagenta: "#c4b5fd",
-        brightCyan: "#67e8f9",
-        brightWhite: "#f1f5f9"
-      }
+      scrollback: interactive ? 3e3 : 1e4,
+      cursorBlink: interactive && running,
+      disableStdin: true,
+      theme: TERM_THEME
+    };
+  }
+  function writeTerminalLogs(target, logs, emptyMessage = "\uFF08\u6682\u65E0\u8F93\u51FA\uFF09") {
+    if (!target) return;
+    if (!logs.length) {
+      target.write(`\x1B[90m${emptyMessage}\x1B[0m\r
+`);
+      return;
+    }
+    logs.forEach((l, index) => {
+      target.write(String(l.content ?? "") + "\r\n", index === logs.length - 1 ? () => target.scrollToBottom() : void 0);
     });
+  }
+  function syncFullscreenTerminalGeometry() {
+    if (!term) return;
+    try {
+      if (termInteractive) term.resize(INTERACTIVE_TERM_COLS, INTERACTIVE_TERM_ROWS);
+      else termFit?.fit();
+    } catch (_) {
+    }
+  }
+  function initTerm() {
+    if (term) return;
+    term = new Terminal(terminalOptions(termInteractive, termInteractive));
     termFit = new FitAddon.FitAddon();
     term.loadAddon(termFit);
     term.open(document.getElementById("termX"));
     term.onScroll((event) => {
       if (event.position === 0 && !ignoreTopScroll) loadOlderTerminalLogs();
     });
-    termFit.fit();
-    window.addEventListener("resize", () => {
-      try {
-        termFit.fit();
-      } catch (_) {
-      }
-    });
+    syncFullscreenTerminalGeometry();
+    window.addEventListener("resize", syncFullscreenTerminalGeometry);
   }
   function termWrite(content) {
     if (term) term.write(String(content ?? "") + "\r\n");
@@ -1115,9 +1141,9 @@
   }
   function renderTerminalWindow() {
     if (!term) return;
+    syncFullscreenTerminalGeometry();
     term.reset();
-    termLogs.forEach((l) => termWrite(l.content));
-    if (!termLogs.length) term.write("\x1B[90m\uFF08\u6682\u65E0\u8F93\u51FA\uFF09\x1B[0m\r\n");
+    writeTerminalLogs(term, termLogs);
   }
   async function loadOlderTerminalLogs() {
     if (!state.termTask || !termHasMore || termLoading || !termOldestSeq) return;
@@ -1150,15 +1176,13 @@
   }
   function openTerminal(id) {
     const t = state.tasks.find((x) => x.id === id) || {};
+    termInteractive = t.run_mode === "interactive";
     document.getElementById("termTitle").textContent = `${t.agent_name || ""} \xB7 #${id} \u5BF9\u8BDD`;
+    document.getElementById("termModal")?.classList.toggle("interactive-terminal-modal", termInteractive);
+    document.getElementById("termX")?.classList.toggle("interactive-term-body", termInteractive);
     openModal("termModal");
     initTerm();
-    setTimeout(() => {
-      try {
-        termFit.fit();
-      } catch (_) {
-      }
-    }, 30);
+    setTimeout(syncFullscreenTerminalGeometry, 30);
     state.termTask = id;
     termLogs = [];
     termHasMore = false;
@@ -1192,6 +1216,49 @@
     const bar = document.getElementById("termInputBar");
     if (bar) bar.classList.add("hidden");
     closeModal("termModal");
+    document.getElementById("termModal")?.classList.remove("interactive-terminal-modal");
+    document.getElementById("termX")?.classList.remove("interactive-term-body");
+    termInteractive = false;
+  }
+  function closeTaskTerminal() {
+    if (taskTerm) {
+      try {
+        taskTerm.dispose();
+      } catch (_) {
+      }
+    }
+    taskTerm = null;
+    taskTermTask = null;
+    taskTermLogs = [];
+  }
+  function openTaskTerminal(id, logs = [], running = false) {
+    const host = document.getElementById("taskTermX");
+    if (!host) return;
+    closeTaskTerminal();
+    taskTermTask = id;
+    taskTermLogs = [...logs];
+    taskTerm = new Terminal(terminalOptions(true, running));
+    taskTerm.open(host);
+    taskTerm.resize(INTERACTIVE_TERM_COLS, INTERACTIVE_TERM_ROWS);
+    writeTerminalLogs(taskTerm, taskTermLogs, "\uFF08\u4EA4\u4E92\u7EC8\u7AEF\u7B49\u5F85\u8F93\u51FA\uFF09");
+  }
+  function taskTermAppendLog(l) {
+    if (!taskTerm || taskTermTask !== l.task_id) return;
+    if (taskTermLogs.some((existing) => existing.id === l.id)) return;
+    taskTermLogs.push(l);
+    taskTerm.write(String(l.content ?? "") + "\r\n", () => taskTerm?.scrollToBottom());
+  }
+  function taskTerminalText() {
+    if (!taskTerm) return "";
+    const buffer = taskTerm.buffer.active;
+    const start = buffer.viewportY;
+    const end = Math.min(buffer.length, start + taskTerm.rows);
+    const lines = [];
+    for (let row = start; row < end; row++) {
+      lines.push(buffer.getLine(row)?.translateToString(true) || "");
+    }
+    while (lines.length && !lines[lines.length - 1]) lines.pop();
+    return lines.join("\n");
   }
   function syncTerminalInput(t) {
     const bar = document.getElementById("termInputBar");
@@ -1514,6 +1581,7 @@
     refreshDetail(changed);
   }
   function hideDetail() {
+    closeTaskTerminal();
     document.getElementById("detailShell")?.classList.add("hidden");
     for (const child of detailBackground || []) child.classList.remove("hidden");
     detailBackground = null;
@@ -1558,7 +1626,8 @@
     const mergeTask = isMergeTask(t);
     const mergeSource2 = mergeTask ? state.tasks.find((x) => x.id === t.merge_of) : null;
     const dependency = dependencyInfo(t);
-    const isInteractive = t.run_mode === "interactive" && t.status === "running";
+    const interactive = t.run_mode === "interactive";
+    const isInteractive = interactive && t.status === "running";
     const isLive = ["claimed", "running"].includes(t.status);
     const agent = state.agents.find((a) => a.id === t.agent_id);
     const agentName = t.agent_name || "\u672A\u6307\u6D3E";
@@ -1567,7 +1636,7 @@
     const bodyLength = (t.body || "").length;
     const createdAt = (t.created_at || "").slice(0, 16).replace("T", " ");
     const { visible: visibleLogs, errors: logErrors } = logStats();
-    const logMeta = state.logsHasMore ? `\u5DF2\u52A0\u8F7D ${visibleLogs}/${state.logsTotal} \u6761` : `${visibleLogs} \u6761`;
+    const logMeta = interactive ? `${isLive ? "\u5B9E\u65F6\u753B\u9762" : "\u5DF2\u5F52\u6863\u753B\u9762"} \xB7 ${INTERACTIVE_TERM_COLS} \xD7 ${INTERACTIVE_TERM_ROWS}` : state.logsHasMore ? `\u5DF2\u52A0\u8F7D ${visibleLogs}/${state.logsTotal} \u6761` : `${visibleLogs} \u6761`;
     const dependencyAlert = !mergeTask && t.status === "queued" && dependency.state !== "ready" ? `<div class="task-alert"><span class="task-alert-title">${dependency.state === "skipped" ? "\u524D\u5E8F\u4EA4\u4ED8\u5DF2\u8DF3\u8FC7" : "\u7B49\u5F85\u524D\u7F6E\u4EA4\u4ED8"}</span><span>${esc(dependency.reason || "\u7B49\u5F85\u8C03\u5EA6")}</span></div>` : "";
     const input = isInteractive ? `<div class="term-input detail-input">
       <input id="taskInput" autocomplete="off" aria-label="\u53D1\u9001\u7ED9 Pi \u7684\u6D88\u606F" placeholder="\u53D1\u9001\u6D88\u606F\u7ED9 Pi\uFF08Enter \u53D1\u9001\uFF09" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();sendTaskInput(${t.id},'taskInput')}">
@@ -1598,12 +1667,12 @@
       <summary><span>\u4EE3\u7801\u6539\u52A8</span><span class="section-meta">\u7B49\u5F85\u5BA1\u6279</span></summary>
       <div id="diffBox"><div class="empty">\u52A0\u8F7D\u6539\u52A8\u4E2D...</div></div>
     </details>` : ""}
-    <details class="task-section task-log-section"${isLive ? " open" : ""}>
-      <summary><span>\u6267\u884C\u8BB0\u5F55</span><span class="section-meta" id="logMeta">${logMeta}${logErrors ? ` \xB7 ${logErrors} \u4E2A\u9519\u8BEF` : ""}</span></summary>
+    <details class="task-section task-log-section${interactive ? " interactive-task-log" : ""}"${isLive ? " open" : ""}>
+      <summary><span>${interactive ? "\u4EA4\u4E92\u7EC8\u7AEF" : "\u6267\u884C\u8BB0\u5F55"}</span><span class="section-meta" id="logMeta">${logMeta}${logErrors && !interactive ? ` \xB7 ${logErrors} \u4E2A\u9519\u8BEF` : ""}</span></summary>
       <div class="section-head">
         <div class="section-sub">${esc(agentName)} \xB7 ${runMode}</div>
         <div class="section-tools">
-          <button class="btn ghost xs" onclick="copyLogs()">${icon("copy")}\u590D\u5236</button>
+          <button class="btn ghost xs" onclick="copyLogs()">${icon("copy")}${interactive ? "\u590D\u5236\u753B\u9762" : "\u590D\u5236"}</button>
           <button class="btn ghost xs" onclick="openTerminal(${t.id})">${icon("expand")}\u5168\u5C4F</button>
         </div>
       </div>
@@ -1612,7 +1681,7 @@
         <span class="term-dots"><i></i><i></i><i></i></span>
         <span class="t-title" title="${esc(t.project_dir || "")}">${esc(agentName)} \xB7 ${runMode}</span>
       </div>
-      <div class="term-body" id="logBox">${logsHTML()}</div>
+      ${interactive ? `<div class="term-body interactive-term-body" id="logBox" role="region" aria-label="Pi \u4EA4\u4E92\u5F0F\u7EC8\u7AEF\u753B\u9762"><div class="interactive-term-canvas" id="taskTermX"></div></div>` : `<div class="term-body" id="logBox">${logsHTML()}</div>`}
       ${input}
       </div>
     </details>
@@ -1621,7 +1690,16 @@
       <div id="wsBox"><div class="empty">\u52A0\u8F7D\u4E2D...</div></div>
     </details>`;
     const box = document.getElementById("logBox");
-    if (box) {
+    const logSection = main.querySelector(".task-log-section");
+    const mountInteractiveTerminal = () => {
+      if (interactive && logSection?.open) openTaskTerminal(t.id, state.logs, t.status === "running");
+      else closeTaskTerminal();
+    };
+    if (interactive) {
+      mountInteractiveTerminal();
+      logSection?.addEventListener("toggle", mountInteractiveTerminal);
+    } else if (box) {
+      closeTaskTerminal();
       box.scrollTop = box.scrollHeight;
       box.addEventListener("scroll", () => {
         if (box.scrollTop <= 64) loadOlderLogs(box, t.id);
@@ -1981,6 +2059,12 @@
   function updateLogMeta() {
     const meta = document.getElementById("logMeta");
     if (!meta) return;
+    const task = state.tasks.find((t) => t.id === state.selected);
+    if (task?.run_mode === "interactive") {
+      const live = ["claimed", "running"].includes(task.status);
+      meta.textContent = `${live ? "\u5B9E\u65F6\u753B\u9762" : "\u5DF2\u5F52\u6863\u753B\u9762"} \xB7 ${INTERACTIVE_TERM_COLS} \xD7 ${INTERACTIVE_TERM_ROWS}`;
+      return;
+    }
     const { visible, errors } = logStats();
     const count = state.logsHasMore ? `\u5DF2\u52A0\u8F7D ${visible}/${state.logsTotal} \u6761` : `${visible} \u6761`;
     meta.textContent = count + (errors ? ` \xB7 ${errors} \u4E2A\u9519\u8BEF` : "");
@@ -2031,9 +2115,14 @@
       state.logsTotal = Math.max(state.logsTotal + 1, state.logs.length);
       const box = document.getElementById("logBox");
       if (box) {
-        const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 32;
-        box.insertAdjacentHTML("beforeend", logLineHTML(l));
-        if (atBottom) box.scrollTop = box.scrollHeight;
+        const task = state.tasks.find((t) => t.id === l.task_id);
+        if (task?.run_mode === "interactive") {
+          taskTermAppendLog(l);
+        } else {
+          const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 32;
+          box.insertAdjacentHTML("beforeend", logLineHTML(l));
+          if (atBottom) box.scrollTop = box.scrollHeight;
+        }
         updateLogMeta();
       }
     }
@@ -2042,6 +2131,13 @@
   async function copyLogs() {
     try {
       if (!state.selected) return;
+      const task = state.tasks.find((t) => t.id === state.selected);
+      const terminalView = task?.run_mode === "interactive" ? taskTerminalText() : "";
+      if (terminalView.trim()) {
+        await navigator.clipboard.writeText(terminalView);
+        toast("\u5DF2\u590D\u5236\u5F53\u524D\u7EC8\u7AEF\u753B\u9762");
+        return;
+      }
       const page = await fetchTaskLogs(state.selected, { all: true });
       await navigator.clipboard.writeText(page.logs.map((l) => cleanLogContent(l.content)).filter(Boolean).join("\n"));
       toast("\u5DF2\u590D\u5236\u5BF9\u8BDD\u5185\u5BB9");
