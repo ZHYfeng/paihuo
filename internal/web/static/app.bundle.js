@@ -151,6 +151,11 @@
     const modals = document.querySelectorAll(".modal:not(.hidden)");
     return modals.length ? modals[modals.length - 1] : null;
   }
+  function syncModalLayer() {
+    const main = document.querySelector(".main");
+    if (!main) return;
+    main.classList.toggle("modal-layer", Boolean(main.querySelector(".modal:not(.hidden)")));
+  }
   function openModal(id) {
     const modal = document.getElementById(id);
     if (!modal) return;
@@ -169,6 +174,7 @@
       modal.setAttribute("aria-labelledby", label.id);
     }
     modal.classList.remove("hidden");
+    syncModalLayer();
     const target = modal.querySelector("[data-autofocus], [autofocus]") || modal.querySelector("input:not([type='hidden']), textarea, select, button, [href], [tabindex]:not([tabindex='-1'])");
     target?.focus({ preventScroll: true });
   }
@@ -176,6 +182,7 @@
     const modal = document.getElementById(id);
     if (!modal) return;
     modal.classList.add("hidden");
+    syncModalLayer();
     modal.setAttribute("aria-hidden", "true");
     modal.removeAttribute("aria-modal");
     const previous = activeModal();

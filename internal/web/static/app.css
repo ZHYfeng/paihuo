@@ -1855,6 +1855,7 @@ button, [role="button"], a, input, select, textarea { -webkit-tap-highlight-colo
     radial-gradient(720px 360px at 2% 108%, rgba(114, 223, 189, .026), transparent 70%),
     var(--bg-page);
 }
+.main.modal-layer { z-index: 61; }
 .main::before {
   content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: .23;
   background-image:
@@ -2364,6 +2365,11 @@ a.project-card:hover { color: inherit; text-decoration: none; }
   .dash-sec-title { font-size: 10.5px; }
   .dash-sec-title::before { width: 12px; }
   .modal-box::before { margin-bottom: 13px; }
+  #roleStudioModal { padding: 0; }
+  #roleStudioModal .role-studio-modal {
+    width: 100%; height: 100dvh; max-height: 100dvh;
+    border-radius: 0;
+  }
   .role-studio-modal { width: 100%; height: calc(100dvh - 12px); max-height: calc(100dvh - 12px); border-radius: 20px 20px 0 0; }
   .role-studio-title { align-items: flex-start; flex-direction: column; gap: 4px; }
   .role-studio-title h2 { font-size: 16px; }

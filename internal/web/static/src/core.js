@@ -139,6 +139,14 @@ export function activeModal() {
   return modals.length ? modals[modals.length - 1] : null;
 }
 
+function syncModalLayer() {
+  const main = document.querySelector(".main");
+  if (!main) return;
+  // 页面内声明的弹窗位于 .main 的 isolation stacking context 中；提升
+  // 这个上下文后，弹窗才能盖住桌面端侧栏，但不会影响全局弹窗的层级。
+  main.classList.toggle("modal-layer", Boolean(main.querySelector(".modal:not(.hidden)")));
+}
+
 export function openModal(id) {
   const modal = document.getElementById(id);
   if (!modal) return;
@@ -157,6 +165,7 @@ export function openModal(id) {
     modal.setAttribute("aria-labelledby", label.id);
   }
   modal.classList.remove("hidden");
+  syncModalLayer();
   const target = modal.querySelector("[data-autofocus], [autofocus]") ||
     modal.querySelector("input:not([type='hidden']), textarea, select, button, [href], [tabindex]:not([tabindex='-1'])");
   target?.focus({ preventScroll: true });
@@ -166,6 +175,7 @@ export function closeModal(id) {
   const modal = document.getElementById(id);
   if (!modal) return;
   modal.classList.add("hidden");
+  syncModalLayer();
   modal.setAttribute("aria-hidden", "true");
   modal.removeAttribute("aria-modal");
   const previous = activeModal();
