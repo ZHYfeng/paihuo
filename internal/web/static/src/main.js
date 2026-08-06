@@ -2,7 +2,7 @@
 import { addChip, agentTab, closeAgentDetail, deleteAgent, hideAgentDetail, openAgentDetail, openAgentModal, refreshAgentCatalog, removeChip, renderAgentList, renderAgentModalSchema, renderAgentOverview, saveAgentConcurrency, saveAgentConfig, setAgentView, showAgentDetail, submitAgent, syncModelThinking, toggleSkill } from "./agents.js";
 import { api, closeModal, esc, fmtDur, fmtPct, logout, state, toast } from "./core.js";
 import { loadDashboard } from "./dashboard.js";
-import { cleanupHistory, deleteSelected, loadHistory, toggleAll, toggleRow } from "./history.js";
+import { cleanupHistory, deleteSelected, loadHistory, selectAllNonMergeTasks, toggleAll, toggleRow } from "./history.js";
 import { closeProjectDetail, deleteProject, dirLoad, hideProjectDetail, mkdirCurrent, openDirPicker, openProject, openProjectModal, patchProject, pickDir, refreshProjectDetail, renderProjectList, showProjectDetail, submitProject } from "./projects.js";
 import { appendInstLine, closeInstTerminal, copyText, createDefaultRole, installProvision, loadProvision, provState, refreshProvision } from "./provision.js";
 import { deleteSchedule, openScheduleModal, renderScheduleList, submitSchedule, toggleSchedule } from "./schedules.js";
@@ -459,6 +459,7 @@ window.saveAsTemplate = saveAsTemplate;
 window.saveRetention = saveRetention;
 window.saveWtRetention = saveWtRetention;
 window.scanSkills = scanSkills;
+window.selectAllNonMergeTasks = selectAllNonMergeTasks;
 window.sendTaskInput = sendTaskInput;
 window.sendTerminalInput = sendTerminalInput;
 window.setAgentView = setAgentView;

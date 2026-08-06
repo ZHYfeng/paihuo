@@ -18,13 +18,14 @@
     <input id="hDays" type="number" min="0" placeholder="最近N天" class="sel-xs" onchange="loadHistory()">
     <button class="btn sm" onclick="loadHistory()">筛选</button>
     <span class="spacer"></span>
+    <button class="btn sm" onclick="selectAllNonMergeTasks()">全选非合并任务</button>
     <button class="btn sm danger" onclick="deleteSelected()">删除选中（<span id="hSelCount">0</span>）</button>
     <button class="btn sm danger" onclick="cleanupHistory()">清理筛选结果</button>
   </div>
   <div class="list-wrap">
     <table class="list-grid">
       <thead><tr>
-        <th class="chk"><input type="checkbox" id="hCheckAll" onclick="toggleAll()"></th>
+        <th class="chk"><input type="checkbox" id="hCheckAll" onchange="toggleAll(this.checked)" aria-label="全选当前筛选结果" title="全选当前筛选结果"></th>
         <th>ID</th><th>标题</th><th>角色</th><th>项目</th><th>权限</th><th>状态</th><th>轮次</th><th>创建</th><th>结束</th><th style="width:110px">操作</th>
       </tr></thead>
       <tbody id="historyBody"></tbody>

@@ -25,7 +25,7 @@ export function renderHistory() {
   if (!body) return;
   body.innerHTML = state.history.map(t => `
     <tr data-id="${t.id}" class="${state.historySel.has(t.id) ? "selected" : ""}" onclick="toggleRow(this)">
-      <td class="chk"><input type="checkbox" ${state.historySel.has(t.id) ? "checked" : ""} onclick="event.stopPropagation()"></td>
+      <td class="chk"><input type="checkbox" ${state.historySel.has(t.id) ? "checked" : ""} onclick="event.stopPropagation()" onchange="toggleRow(this.closest('tr'), this.checked)" aria-label="选择任务 #${t.id}"></td>
       <td class="num">#${t.id}</td>
       <td class="t-title"><span class="t-link" onclick="event.stopPropagation();openTask(${t.id})">${esc(t.title)}</span>${isMergeTask(t) ? ` <span class="chip merge">合并 #${t.merge_of}</span>` : ""}</td>
       <td>${esc(t.agent_name || "-")}</td>
@@ -47,22 +47,41 @@ export function renderHistory() {
   if (empty) empty.classList.toggle("hidden", state.history.length > 0);
   const cnt = document.getElementById("hSelCount");
   if (cnt) cnt.textContent = state.historySel.size;
+  syncHistorySelectionControls();
 }
 
-export function toggleRow(tr) {
+function syncHistorySelectionControls() {
+  const checkAll = document.getElementById("hCheckAll");
+  if (!checkAll) return;
+  const selectedCount = state.history.reduce((count, t) => count + (state.historySel.has(t.id) ? 1 : 0), 0);
+  const hasHistory = state.history.length > 0;
+  checkAll.checked = hasHistory && selectedCount === state.history.length;
+  checkAll.indeterminate = selectedCount > 0 && selectedCount < state.history.length;
+}
+
+export function toggleRow(tr, checked) {
   const id = Number(tr.dataset.id);
-  if (state.historySel.has(id)) state.historySel.delete(id); else state.historySel.add(id);
-  tr.classList.toggle("selected", state.historySel.has(id));
+  const selected = typeof checked === "boolean" ? checked : !state.historySel.has(id);
+  if (selected) state.historySel.add(id); else state.historySel.delete(id);
+  tr.classList.toggle("selected", selected);
   const cb = tr.querySelector("input[type=checkbox]");
-  if (cb) cb.checked = state.historySel.has(id);
+  if (cb) cb.checked = selected;
   const cnt = document.getElementById("hSelCount");
   if (cnt) cnt.textContent = state.historySel.size;
+  syncHistorySelectionControls();
 }
 
-export function toggleAll() {
-  const all = document.getElementById("hCheckAll").checked;
+export function toggleAll(checked) {
+  const checkAll = document.getElementById("hCheckAll");
+  const all = typeof checked === "boolean" ? checked : Boolean(checkAll?.checked);
   state.historySel.clear();
   if (all) state.history.forEach(t => state.historySel.add(t.id));
+  renderHistory();
+}
+
+export function selectAllNonMergeTasks() {
+  state.historySel.clear();
+  state.history.filter(t => !isMergeTask(t)).forEach(t => state.historySel.add(t.id));
   renderHistory();
 }
 
