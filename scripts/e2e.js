@@ -98,6 +98,22 @@ function findChrome() {
   agentModal ? ok("角色弹窗（默认单并发）") : fail("角色弹窗未打开或默认最大并发异常");
   await page.evaluate(() => closeModal("agentModal"));
 
+  // 角色创建工作台：创建助手、草稿配置、被创建 Agent 测试三栏必须同时存在；
+  // 这里只验证工作台渲染和关闭，不触发真实 CLI，避免回归依赖外部模型额度。
+  await page.evaluate(() => openRoleStudio());
+  await page.waitForTimeout(350);
+  const roleStudio = await page.evaluate(() => {
+    const modal = document.getElementById("roleStudioModal");
+    return !!modal && !modal.classList.contains("hidden") &&
+      !!document.getElementById("rsCreatorChat") &&
+      !!document.getElementById("rsSchema") &&
+      !!document.getElementById("rsTestChat") &&
+      !!document.getElementById("rsCreatorAgent") &&
+      document.querySelectorAll(".rs-pane").length === 3;
+  });
+  roleStudio ? ok("角色创建工作台（三栏同时保留）") : fail("角色创建工作台未完整渲染");
+  await page.evaluate(() => closeModal("roleStudioModal"));
+
   // 角色详情页内联并发编辑器：改值保存后 API 应持久化（先改再还原，不污染数据）
   const agents = await page.evaluate(async () => await (await fetch("/api/agents")).json());
   if (!agents.length) ok("角色详情页并发编辑器（无角色，跳过）");

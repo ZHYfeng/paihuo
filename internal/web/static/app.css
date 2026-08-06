@@ -806,6 +806,76 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 .term-modal .term-body { flex: 1; max-height: none; }
 .hidden { display: none !important; }
 
+/* ============================================================
+   角色创建工作台
+   ============================================================ */
+.role-studio-modal {
+  width: min(1500px, 96vw); height: min(920px, 94vh); max-width: none;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: linear-gradient(155deg, rgba(255,255,255,.045), transparent 42%), #101612;
+  border: 1px solid rgba(228, 238, 226, .17); border-radius: 22px;
+  box-shadow: var(--sh-floating);
+}
+.role-studio-head {
+  display: flex; align-items: center; gap: 18px; padding: 15px 18px;
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.role-studio-title { display: flex; align-items: baseline; gap: 11px; min-width: 0; }
+.role-studio-title .page-kicker { margin: 0; }
+.role-studio-title h2 { margin: 0; font-size: 18px; font-weight: 680; letter-spacing: -.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rs-status { color: var(--fg-muted); font-size: 11px; white-space: nowrap; }
+.role-studio-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.rs-creator-select { display: flex; align-items: center; gap: 7px; color: var(--fg-muted); font-size: 11px; white-space: nowrap; }
+.rs-creator-select select { width: 170px; min-height: 32px; }
+.role-studio-grid { display: grid; grid-template-columns: minmax(260px, .9fr) minmax(360px, 1.2fr) minmax(260px, .9fr); gap: 1px; flex: 1; min-height: 0; background: var(--border); }
+.rs-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #101612; }
+.rs-creator-pane { background: linear-gradient(180deg, rgba(199,243,106,.035), transparent 42%), #101612; }
+.rs-test-pane { background: linear-gradient(180deg, rgba(116,224,188,.035), transparent 42%), #101612; }
+.rs-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 15px 11px; border-bottom: 1px solid rgba(228,238,226,.10); flex-shrink: 0; }
+.rs-pane-head h3 { margin: 3px 0 0; font-size: 14px; font-weight: 640; letter-spacing: -.02em; }
+.rs-eyebrow { color: var(--fg-faint); font: 8px/1 var(--font-mono); letter-spacing: .16em; }
+.rs-pane-head .badge { font-size: 10px; }
+.rs-pane-head .badge.running, .rs-status.running { color: var(--brand); border-color: rgba(199,243,106,.3); background: var(--brand-dim); }
+.rs-chat-log { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+.rs-chat-empty { height: 100%; min-height: 190px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; text-align: center; color: var(--fg-muted); font-size: 11px; line-height: 17px; padding: 20px; }
+.rs-chat-empty b { color: var(--fg); font-size: 12px; }
+.rs-empty-mark { width: 34px; height: 34px; display: grid; place-items: center; color: var(--brand); font-size: 22px; border: 1px solid rgba(199,243,106,.25); border-radius: 12px; margin-bottom: 2px; }
+.rs-message { max-width: 94%; margin-bottom: 12px; }
+.rs-message.user { margin-left: auto; }
+.rs-message-label { color: var(--fg-faint); font: 8px/1 var(--font-mono); letter-spacing: .11em; text-transform: uppercase; margin: 0 3px 5px; }
+.rs-message.user .rs-message-label { text-align: right; }
+.rs-message-body { padding: 9px 10px; border: 1px solid var(--border); border-radius: 11px 11px 11px 3px; color: var(--fg); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; background: rgba(255,255,255,.025); }
+.rs-message.user .rs-message-body { border-color: rgba(199,243,106,.24); border-radius: 11px 11px 3px 11px; background: var(--brand-dim); }
+.rs-quick-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 8px; }
+.rs-chat-form { padding: 10px 12px 12px; border-top: 1px solid rgba(228,238,226,.10); flex-shrink: 0; }
+.rs-chat-form textarea { width: 100%; resize: vertical; min-height: 68px; max-height: 150px; font-size: 12px; line-height: 17px; }
+.rs-form-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 7px; color: var(--fg-faint); font-size: 10px; line-height: 14px; }
+.rs-form-foot .btn { flex-shrink: 0; }
+.rs-draft-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 15px 18px; }
+.rs-draft-intro { color: var(--fg-muted); font-size: 11px; line-height: 17px; padding: 9px 10px; margin-bottom: 13px; border: 1px solid rgba(199,243,106,.14); border-radius: 10px; background: rgba(199,243,106,.045); }
+.rs-basic-row { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(130px, .8fr) minmax(105px, .55fr); gap: 9px; }
+.rs-draft-scroll .field { font-size: 11px; }
+.rs-draft-scroll .field > input, .rs-draft-scroll .field > select { margin-top: 5px; min-height: 34px; font-size: 12px; }
+.rs-draft-scroll > .field { margin-top: 10px; }
+.rs-draft-scroll #rsSchema { margin-top: 15px; }
+.rs-draft-scroll #rsSchema .schema-group { margin-bottom: 12px; }
+.rs-draft-scroll #rsSchema .schema-group-title { padding: 8px 0; }
+.rs-draft-scroll #rsSchema .schema-group-body { padding: 10px; border-radius: 10px; }
+.rs-diff { margin-top: 15px; border-top: 1px solid var(--border); padding-top: 11px; }
+.rs-diff summary { cursor: pointer; color: var(--fg-muted); font-size: 11px; }
+.rs-diff-body { display: flex; flex-direction: column; gap: 6px; margin-top: 9px; font-size: 10px; }
+.rs-diff-body > div { display: grid; grid-template-columns: 80px minmax(0, 1fr) 17px minmax(0, 1fr); align-items: center; gap: 5px; }
+.rs-diff-body b { color: var(--fg-muted); font-weight: 500; }
+.rs-diff-body .old, .rs-diff-body .new { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 5px; border-radius: 5px; }
+.rs-diff-body .old { color: var(--danger); background: rgba(248,113,113,.08); }
+.rs-diff-body .new { color: var(--success); background: rgba(52,211,153,.08); }
+.rs-diff-body .arrow { color: var(--fg-faint); text-align: center; }
+.rs-diff-empty { color: var(--fg-faint); }
+.rs-pane-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 15px 11px; border-top: 1px solid rgba(228,238,226,.10); flex-shrink: 0; }
+.rs-test-meta { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid rgba(228,238,226,.08); color: var(--fg); }
+.rs-test-meta b { display: block; font-size: 11px; font-weight: 600; }
+.rs-test-meta small { display: block; margin-top: 2px; color: var(--fg-faint); font-size: 10px; }
+
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes popIn {
   from { opacity: 0; transform: translateY(10px) scale(.965); }
@@ -2234,6 +2304,13 @@ a.project-card:hover { color: inherit; text-decoration: none; }
   .login-hero-copy h1 { font-size: 36px; }
   .login-hero-copy p, .login-proof { display: none; }
   .login-card { padding: 48px 38px; }
+  .role-studio-modal { width: 98vw; height: 94vh; }
+  .role-studio-head { align-items: flex-start; flex-direction: column; gap: 11px; padding: 13px 14px; }
+  .role-studio-head-actions { width: 100%; margin-left: 0; flex-wrap: wrap; }
+  .rs-creator-select { flex: 1 1 210px; }
+  .rs-creator-select select { flex: 1; width: auto; }
+  .role-studio-grid { grid-template-columns: 1fr; grid-template-rows: minmax(250px, .9fr) minmax(330px, 1.2fr) minmax(250px, .9fr); overflow-y: auto; }
+  .rs-pane { min-height: 250px; }
 }
 
 @media (max-width: 720px) {
@@ -2287,4 +2364,11 @@ a.project-card:hover { color: inherit; text-decoration: none; }
   .dash-sec-title { font-size: 10.5px; }
   .dash-sec-title::before { width: 12px; }
   .modal-box::before { margin-bottom: 13px; }
+  .role-studio-modal { width: 100%; height: calc(100dvh - 12px); max-height: calc(100dvh - 12px); border-radius: 20px 20px 0 0; }
+  .role-studio-title { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .role-studio-title h2 { font-size: 16px; }
+  .role-studio-head-actions .btn { flex: 1 1 auto; }
+  .role-studio-grid { grid-template-rows: minmax(260px, .9fr) minmax(390px, 1.2fr) minmax(260px, .9fr); }
+  .rs-basic-row { grid-template-columns: 1fr; gap: 0; }
+  .rs-pane-foot { align-items: flex-start; flex-direction: column; }
 }

@@ -9,10 +9,11 @@
   <button id="refreshAgentCatalog" class="btn sm" onclick="refreshAgentCatalog()" title="重新从 Linux 主机检测各 CLI 的模型与能力；不会修改角色配置">
     刷新主机能力
   </button>
-  <button class="btn brand sm" onclick="openAgentModal()">
+  <button class="btn brand sm" onclick="openRoleStudio()">
     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-    新建角色
+    AI 创建角色
   </button>
+  <button class="btn sm" onclick="openAgentModal()">手动创建</button>
 </header>
 <div class="page-content">
 
@@ -79,6 +80,82 @@
     <div class="modal-actions">
       <button class="btn" onclick="closeModal('agentModal')">取消</button>
       <button class="btn primary" onclick="submitAgent()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 角色创建工作台：创建助手、角色草稿、被创建 Agent 测试三栏同时保留。 -->
+<div class="modal hidden" id="roleStudioModal">
+  <div class="role-studio-modal">
+    <header class="role-studio-head">
+      <div class="role-studio-title">
+        <span class="page-kicker">ROLE STUDIO</span>
+        <h2 id="roleStudioTitle" data-modal-title>创建角色工作台</h2>
+        <span id="roleStudioStatus" class="rs-status">草稿 · 未发布</span>
+      </div>
+      <div class="role-studio-head-actions">
+        <label class="rs-creator-select">创建助手
+          <select id="rsCreatorAgent" aria-label="选择创建助手"></select>
+        </label>
+        <button class="btn sm" onclick="openRoleStudioManual()">手动配置</button>
+        <button class="btn sm primary" onclick="saveRoleStudio()">保存角色</button>
+        <button class="btn sm ghost" onclick="closeModal('roleStudioModal')" aria-label="关闭角色创建工作台">关闭</button>
+      </div>
+    </header>
+    <div class="role-studio-grid">
+      <section class="rs-pane rs-creator-pane" aria-label="创建角色 Agent">
+        <header class="rs-pane-head">
+          <div><span class="rs-eyebrow">DESIGN AGENT</span><h3>创建角色 Agent</h3></div>
+          <span id="rsCreatorState" class="badge">待命</span>
+        </header>
+        <div id="rsCreatorChat" class="rs-chat-log" aria-live="polite"></div>
+        <div class="rs-quick-actions">
+          <button class="btn xs" onclick="roleStudioQuickAsk('检查当前草稿是否完整，并给出最重要的三条改进建议。')">检查草稿</button>
+          <button class="btn xs" onclick="roleStudioQuickAsk('查看右侧测试记录，指出角色行为与目标不一致的地方，并提出修改。')">检查测试</button>
+        </div>
+        <form class="rs-chat-form" onsubmit="sendRoleStudioChat(event)">
+          <textarea id="rsCreatorInput" rows="3" placeholder="描述你希望这个角色负责什么，或直接说要怎么调整…"></textarea>
+          <div class="rs-form-foot"><span>助手只能修改草稿；发布需要你确认</span><button class="btn sm primary" type="submit">发送</button></div>
+        </form>
+      </section>
+
+      <section class="rs-pane rs-draft-pane" aria-label="角色草稿">
+        <header class="rs-pane-head">
+          <div><span class="rs-eyebrow">DRAFT CONFIGURATION</span><h3>角色草稿</h3></div>
+          <span id="rsDraftBadge" class="badge">未保存</span>
+        </header>
+        <div class="rs-draft-scroll">
+          <div class="rs-draft-intro">这里是当前可执行配置。创建助手的修改会显示在这里，测试 Agent 始终使用这份未发布草稿。</div>
+          <div class="row rs-basic-row">
+            <label class="field">名称 <input id="rsName" placeholder="如：首席前端工程师"></label>
+            <label class="field">CLI <select id="rsCli" onchange="changeRoleStudioCli()"></select></label>
+            <label class="field">最大并发 <input id="rsMaxConcurrency" type="number" min="1" step="1" value="1"></label>
+          </div>
+          <label class="field">描述 <input id="rsDescription" placeholder="这个角色负责什么"></label>
+          <div id="rsSchema"></div>
+          <details class="rs-diff" open>
+            <summary>与打开时版本的差异</summary>
+            <div id="rsDiffBody" class="rs-diff-body"></div>
+          </details>
+        </div>
+        <footer class="rs-pane-foot">
+          <span id="rsSkillNote" class="count-info"></span>
+          <button class="btn xs" onclick="openRoleStudioManual()">打开完整表单</button>
+        </footer>
+      </section>
+
+      <section class="rs-pane rs-test-pane" aria-label="被创建 Agent 测试">
+        <header class="rs-pane-head">
+          <div><span class="rs-eyebrow">LIVE PREVIEW</span><h3>被创建 Agent</h3></div>
+          <span id="rsTestState" class="badge">测试模式</span>
+        </header>
+        <div id="rsTestMeta" class="rs-test-meta"></div>
+        <div id="rsTestChat" class="rs-chat-log" aria-live="polite"></div>
+        <form class="rs-chat-form" onsubmit="sendRoleStudioTest(event)">
+          <textarea id="rsTestInput" rows="3" placeholder="给被创建 Agent 一个小任务，观察它是否符合角色预期…"></textarea>
+          <div class="rs-form-foot"><span>测试运行在临时目录，不会发布角色</span><button class="btn sm primary" type="submit">运行测试</button></div>
+        </form>
+      </section>
     </div>
   </div>
 </div>

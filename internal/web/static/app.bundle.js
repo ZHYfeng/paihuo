@@ -31,6 +31,8 @@
     agentTab: "overview",
     agentModalRC: {},
     // 新建/编辑弹窗中的临时 role_config
+    roleStudio: null,
+    // 角色创建工作台的草稿、创建助手对话与测试对话
     projectView: null,
     // 项目详情中的项目 id
     agentView: "grid",
@@ -2447,6 +2449,7 @@
   }
   function agentActionsHTML(a) {
     return `
+    <button class="btn xs" title="\u6253\u5F00\u89D2\u8272\u521B\u5EFA\u5DE5\u4F5C\u53F0\uFF0C\u53EF\u8BA9\u521B\u5EFA\u52A9\u624B\u8C03\u6574\u5E76\u6D4B\u8BD5\u8BE5\u89D2\u8272" onclick="event.stopPropagation();openRoleStudio(${a.id})">\u8BBE\u8BA1</button>
     <button class="btn xs" title="\u6253\u5F00\u8BE6\u60C5\u5E76\u5207\u5230\u914D\u7F6E tab" onclick="event.stopPropagation();agentTabFromCard(${a.id})">\u914D\u7F6E</button>
     <button class="btn xs" title="\u7F16\u8F91\u89D2\u8272\u57FA\u672C\u4FE1\u606F\u548C\u914D\u7F6E" onclick="event.stopPropagation();openAgentModal(${a.id})">\u7F16\u8F91</button>
     <button class="btn xs" title="${a.enabled ? "\u505C\u7528" : "\u542F\u7528"}\u89D2\u8272" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "\u505C\u7528" : "\u542F\u7528"}</button>
@@ -3010,6 +3013,7 @@
       if (id) await api(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify(body) });
       else await api("/api/agents", { method: "POST", body: JSON.stringify(body) });
       closeModal("agentModal");
+      state.roleStudio = null;
       await loadAll();
       renderAgentList();
     } catch (e) {
@@ -3120,6 +3124,319 @@
       toast("\u5DF2\u521B\u5EFA\u89D2\u8272\uFF0C\u53EF\u5728\u89D2\u8272\u9875\u7EE7\u7EED\u5B9A\u5236");
     } catch (e) {
       toast(e.message, true);
+    }
+  }
+
+  // internal/web/static/src/role_studio.js
+  function clone(value) {
+    return JSON.parse(JSON.stringify(value ?? {}));
+  }
+  function firstEnabledAgent(excludeID = 0) {
+    return state.agents.find((a) => a.enabled && a.id !== excludeID) || state.agents.find((a) => a.enabled) || state.agents[0] || null;
+  }
+  function blankDraft() {
+    const cli = Object.keys(state.schema || {})[0] || state.agents[0]?.cli || "";
+    return { name: "", description: "", cli, max_concurrency: 1, role_config: {} };
+  }
+  function draftFromAgent(agent) {
+    return {
+      name: agent?.name || "",
+      description: agent?.description || "",
+      cli: agent?.cli || Object.keys(state.schema || {})[0] || "",
+      max_concurrency: agent?.max_concurrency || 1,
+      role_config: clone(agent?.role_config || {})
+    };
+  }
+  function studioState() {
+    return state.roleStudio;
+  }
+  function currentDraftFromForm() {
+    const s = studioState();
+    if (!s) return null;
+    const draft = clone(s.draft);
+    draft.name = String(document.getElementById("rsName")?.value || "").trim();
+    draft.description = String(document.getElementById("rsDescription")?.value || "").trim();
+    draft.cli = String(document.getElementById("rsCli")?.value || draft.cli || "");
+    draft.max_concurrency = Number(document.getElementById("rsMaxConcurrency")?.value || 1);
+    const schema = state.schema[draft.cli];
+    const form = document.getElementById("rsSchema");
+    draft.role_config = schema && form ? readConfigFrom(schema, form) : clone(draft.role_config || {});
+    if (!Number.isInteger(draft.max_concurrency) || draft.max_concurrency < 1) draft.max_concurrency = 1;
+    return draft;
+  }
+  function roleStudioMessageHTML(message) {
+    const role = message.role === "user" ? "user" : "assistant";
+    return `<article class="rs-message ${role}">
+    <div class="rs-message-label">${role === "user" ? "\u4F60" : "\u521B\u5EFA\u52A9\u624B"}</div>
+    <div class="rs-message-body">${esc(message.content || "").replace(/\n/g, "<br>")}</div>
+  </article>`;
+  }
+  function testMessageHTML(message) {
+    const role = message.role === "user" ? "user" : "assistant";
+    return `<article class="rs-message ${role}">
+    <div class="rs-message-label">${role === "user" ? "\u6D4B\u8BD5\u8F93\u5165" : "\u88AB\u521B\u5EFA Agent"}</div>
+    <div class="rs-message-body">${esc(message.content || "").replace(/\n/g, "<br>")}</div>
+  </article>`;
+  }
+  function renderStudioMessages() {
+    const s = studioState();
+    if (!s) return;
+    const creator = document.getElementById("rsCreatorChat");
+    const test = document.getElementById("rsTestChat");
+    if (creator) {
+      creator.innerHTML = s.creatorMessages.length ? s.creatorMessages.map(roleStudioMessageHTML).join("") : `<div class="rs-chat-empty"><span class="rs-empty-mark">\u2726</span><b>\u63CF\u8FF0\u4F60\u60F3\u521B\u5EFA\u7684\u89D2\u8272</b><span>\u521B\u5EFA\u52A9\u624B\u4F1A\u5206\u6790\u76EE\u6807\u3001\u63A8\u8350 Skills\uFF0C\u5E76\u628A\u53EF\u6D4B\u8BD5\u7684\u914D\u7F6E\u653E\u5230\u4E2D\u95F4\u3002</span></div>`;
+      creator.scrollTop = creator.scrollHeight;
+    }
+    if (test) {
+      test.innerHTML = s.testMessages.length ? s.testMessages.map(testMessageHTML).join("") : `<div class="rs-chat-empty"><span class="rs-empty-mark">\u25CC</span><b>\u5148\u7ED9\u89D2\u8272\u4E00\u4E2A\u5C0F\u4EFB\u52A1</b><span>\u6D4B\u8BD5\u7ED3\u679C\u4F1A\u4FDD\u7559\u5728\u8FD9\u91CC\uFF0C\u521B\u5EFA\u52A9\u624B\u53EF\u4EE5\u8BFB\u53D6\u5E76\u7EE7\u7EED\u8C03\u6574\u8349\u7A3F\u3002</span></div>`;
+      test.scrollTop = test.scrollHeight;
+    }
+  }
+  function renderCreatorSelect() {
+    const s = studioState();
+    const select = document.getElementById("rsCreatorAgent");
+    if (!s || !select) return;
+    const candidates = state.agents.filter((a) => a.enabled || a.id === s.creatorAgentID);
+    select.innerHTML = candidates.length ? candidates.map((a) => `<option value="${a.id}" ${a.id === s.creatorAgentID ? "selected" : ""}>${esc(a.name)} \xB7 ${esc(a.cli)}</option>`).join("") : `<option value="">\u6682\u65E0\u53EF\u7528\u89D2\u8272</option>`;
+    select.disabled = !candidates.length;
+    select.onchange = () => {
+      s.creatorAgentID = Number(select.value) || 0;
+    };
+  }
+  function renderStudioDiff() {
+    const s = studioState();
+    const box = document.getElementById("rsDiffBody");
+    if (!s || !box) return;
+    const now = JSON.stringify(s.draft);
+    const base = JSON.stringify(s.baseDraft);
+    if (now === base) {
+      box.innerHTML = `<span class="rs-diff-empty">\u5C1A\u672A\u4FEE\u6539</span>`;
+      return;
+    }
+    const rows = [];
+    const fields = [
+      ["name", "\u540D\u79F0"],
+      ["description", "\u63CF\u8FF0"],
+      ["cli", "CLI"],
+      ["max_concurrency", "\u6700\u5927\u5E76\u53D1"]
+    ];
+    fields.forEach(([key, label]) => {
+      const before = s.baseDraft?.[key] ?? "";
+      const after = s.draft?.[key] ?? "";
+      if (String(before) !== String(after)) rows.push(`<div><b>${label}</b><span class="old">${esc(String(before || "\u672A\u8BBE\u7F6E"))}</span><span class="arrow">\u2192</span><span class="new">${esc(String(after || "\u672A\u8BBE\u7F6E"))}</span></div>`);
+    });
+    const oldCfg = s.baseDraft?.role_config || {};
+    const newCfg = s.draft?.role_config || {};
+    ["model", "system_prompt", "instructions", "thinking", "skills"].forEach((key) => {
+      if (JSON.stringify(oldCfg[key] ?? "") !== JSON.stringify(newCfg[key] ?? "")) {
+        const oldValue = Array.isArray(oldCfg[key]) ? `${oldCfg[key].length} \u9879` : String(oldCfg[key] || "\u672A\u8BBE\u7F6E");
+        const newValue = Array.isArray(newCfg[key]) ? `${newCfg[key].length} \u9879` : String(newCfg[key] || "\u672A\u8BBE\u7F6E");
+        rows.push(`<div><b>${esc(key)}</b><span class="old">${esc(oldValue)}</span><span class="arrow">\u2192</span><span class="new">${esc(newValue)}</span></div>`);
+      }
+    });
+    box.innerHTML = rows.length ? rows.join("") : `<span class="rs-diff-empty">\u914D\u7F6E\u6709\u53D8\u5316</span>`;
+  }
+  function renderStudioDraft() {
+    const s = studioState();
+    if (!s) return;
+    const d = s.draft;
+    const title = document.getElementById("roleStudioTitle");
+    if (title) title.textContent = d.name ? `\u8BBE\u8BA1\uFF1A${d.name}` : "\u521B\u5EFA\u89D2\u8272\u5DE5\u4F5C\u53F0";
+    const status = document.getElementById("roleStudioStatus");
+    if (status) status.textContent = s.agentID ? "\u7F16\u8F91\u8349\u7A3F \xB7 \u672A\u53D1\u5E03" : "\u65B0\u89D2\u8272\u8349\u7A3F \xB7 \u672A\u4FDD\u5B58";
+    const name = document.getElementById("rsName");
+    const desc = document.getElementById("rsDescription");
+    const conc = document.getElementById("rsMaxConcurrency");
+    if (name) name.value = d.name || "";
+    if (desc) desc.value = d.description || "";
+    if (conc) conc.value = d.max_concurrency || 1;
+    const cli = document.getElementById("rsCli");
+    if (cli) {
+      cli.innerHTML = Object.values(state.schema || {}).map((schema2) => `<option value="${esc(schema2.id)}">${esc(schema2.name)}</option>`).join("");
+      cli.value = d.cli;
+    }
+    const schema = state.schema[d.cli];
+    const schemaBox = document.getElementById("rsSchema");
+    if (schemaBox) schemaBox.innerHTML = schema ? schemaFormHTML(schema, d.role_config || {}) : `<div class="empty">CLI schema \u672A\u52A0\u8F7D</div>`;
+    const badge = document.getElementById("rsDraftBadge");
+    if (badge) badge.textContent = JSON.stringify(s.baseDraft) === JSON.stringify(d) ? "\u672A\u4FEE\u6539" : "\u6709\u672A\u4FDD\u5B58\u4FEE\u6539";
+    const skillCount = Array.isArray(d.role_config?.skills) ? d.role_config.skills.length : 0;
+    const note = document.getElementById("rsSkillNote");
+    if (note) note.textContent = skillCount ? `\u8FD0\u884C\u65F6\u4F1A\u542F\u7528 ${skillCount} \u4E2A\u89D2\u8272 Skills` : "\u5C1A\u672A\u9009\u62E9\u89D2\u8272 Skills";
+    const meta = document.getElementById("rsTestMeta");
+    if (meta) meta.innerHTML = `<span class="avatar sm av-${esc(d.cli)}">${esc((d.name || "?").slice(0, 1))}</span><span><b>${esc(d.name || "\u672A\u547D\u540D\u89D2\u8272")}</b><small>${esc(d.cli || "\u672A\u9009\u62E9 CLI")} \xB7 \u4F7F\u7528\u5F53\u524D\u8349\u7A3F\u6D4B\u8BD5</small></span>`;
+    renderStudioDiff();
+    renderStudioMessages();
+  }
+  async function openRoleStudio(id) {
+    const agent = id ? state.agents.find((a) => a.id === id) : null;
+    if (id && !agent) return toast("\u89D2\u8272\u4E0D\u5B58\u5728", true);
+    await loadSchema();
+    await loadSkillLib();
+    const existing = state.roleStudio;
+    if (!existing || existing.agentID !== (agent?.id || 0)) {
+      const draft = agent ? draftFromAgent(agent) : blankDraft();
+      const creator = firstEnabledAgent(agent?.id || 0);
+      state.roleStudio = {
+        agentID: agent?.id || 0,
+        agentEnabled: agent?.enabled ?? true,
+        creatorAgentID: creator?.id || 0,
+        draft,
+        baseDraft: clone(draft),
+        creatorMessages: [],
+        testMessages: [],
+        busy: false,
+        testBusy: false
+      };
+    }
+    renderCreatorSelect();
+    renderStudioDraft();
+    openModal("roleStudioModal");
+  }
+  function changeRoleStudioCli() {
+    const s = studioState();
+    if (!s) return;
+    const current = currentDraftFromForm();
+    const nextCLI = String(document.getElementById("rsCli")?.value || "");
+    const oldCfg = current.role_config || {};
+    current.cli = nextCLI;
+    current.role_config = {
+      model: oldCfg.model || "",
+      system_prompt: oldCfg.system_prompt || "",
+      instructions: oldCfg.instructions || "",
+      skills: Array.isArray(oldCfg.skills) ? oldCfg.skills : [],
+      thinking: oldCfg.thinking || "",
+      plugins: Array.isArray(oldCfg.plugins) ? oldCfg.plugins : [],
+      extra_args: Array.isArray(oldCfg.extra_args) ? oldCfg.extra_args : [],
+      env: oldCfg.env || {},
+      custom: {}
+    };
+    s.draft = current;
+    renderStudioDraft();
+  }
+  function roleStudioQuickAsk(message) {
+    const input = document.getElementById("rsCreatorInput");
+    if (!input) return;
+    input.value = message;
+    sendRoleStudioChat();
+  }
+  async function sendRoleStudioChat(event) {
+    event?.preventDefault?.();
+    const s = studioState();
+    const input = document.getElementById("rsCreatorInput");
+    const message = String(input?.value || "").trim();
+    if (!s || !message || s.busy) return;
+    s.draft = currentDraftFromForm();
+    const creator = state.agents.find((a) => a.id === s.creatorAgentID);
+    if (!creator) return toast("\u8BF7\u5148\u521B\u5EFA\u5E76\u542F\u7528\u4E00\u4E2A\u89D2\u8272\u4F5C\u4E3A\u521B\u5EFA\u52A9\u624B", true);
+    s.creatorMessages.push({ role: "user", content: message });
+    if (input) input.value = "";
+    s.busy = true;
+    setStudioBusy("rsCreatorState", true, "\u5206\u6790\u4E2D\u2026");
+    renderStudioMessages();
+    try {
+      const result = await api("/api/role-studio/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          creator_agent_id: s.creatorAgentID,
+          draft: s.draft,
+          message,
+          creator_messages: s.creatorMessages.slice(0, -1),
+          test_messages: s.testMessages
+        })
+      });
+      if (result?.draft) {
+        s.draft = result.draft;
+        renderStudioDraft();
+      }
+      s.creatorMessages.push({ role: "assistant", content: result?.message || "\u521B\u5EFA\u52A9\u624B\u6CA1\u6709\u8FD4\u56DE\u8BF4\u660E\u3002" });
+    } catch (e) {
+      s.creatorMessages.push({ role: "assistant", content: `\u8C03\u7528\u521B\u5EFA\u52A9\u624B\u5931\u8D25\uFF1A${e.message}` });
+    } finally {
+      s.busy = false;
+      setStudioBusy("rsCreatorState", false, "\u5F85\u547D");
+      renderStudioMessages();
+    }
+  }
+  async function sendRoleStudioTest(event) {
+    event?.preventDefault?.();
+    const s = studioState();
+    const input = document.getElementById("rsTestInput");
+    const message = String(input?.value || "").trim();
+    if (!s || !message || s.testBusy) return;
+    s.draft = currentDraftFromForm();
+    if (!s.draft.cli) return toast("\u8BF7\u5148\u9009\u62E9\u88AB\u521B\u5EFA Agent \u7684 CLI", true);
+    s.testMessages.push({ role: "user", content: message });
+    if (input) input.value = "";
+    s.testBusy = true;
+    setStudioBusy("rsTestState", true, "\u6267\u884C\u4E2D\u2026");
+    renderStudioDraft();
+    try {
+      const result = await api("/api/role-studio/test", {
+        method: "POST",
+        body: JSON.stringify({ draft: s.draft, message, test_messages: s.testMessages.slice(0, -1) })
+      });
+      s.testMessages.push({ role: "assistant", content: result?.output || "\u88AB\u521B\u5EFA Agent \u6CA1\u6709\u8FD4\u56DE\u5185\u5BB9\u3002" });
+    } catch (e) {
+      s.testMessages.push({ role: "assistant", content: `\u6D4B\u8BD5\u6267\u884C\u5931\u8D25\uFF1A${e.message}` });
+    } finally {
+      s.testBusy = false;
+      setStudioBusy("rsTestState", false, "\u6D4B\u8BD5\u6A21\u5F0F");
+      renderStudioMessages();
+    }
+  }
+  function setStudioBusy(id, busy, text) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.textContent = text;
+      el.classList.toggle("running", busy);
+    }
+    ["rsCreatorInput", "rsTestInput"].forEach((inputID) => {
+      const input = document.getElementById(inputID);
+      if (input && (inputID === "rsCreatorInput" && id === "rsCreatorState" || inputID === "rsTestInput" && id === "rsTestState")) input.disabled = busy;
+    });
+  }
+  function openRoleStudioManual() {
+    const s = studioState();
+    if (!s) return;
+    s.draft = currentDraftFromForm();
+    closeModal("roleStudioModal");
+    if (s.agentID) openAgentModal(s.agentID);
+    else openAgentModal();
+  }
+  async function saveRoleStudio() {
+    const s = studioState();
+    if (!s) return;
+    const draft = currentDraftFromForm();
+    if (!draft.name) return toast("\u89D2\u8272\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A", true);
+    if (!draft.cli) return toast("\u8BF7\u9009\u62E9\u89D2\u8272 CLI", true);
+    const body = {
+      name: draft.name,
+      description: draft.description,
+      cli: draft.cli,
+      max_concurrency: draft.max_concurrency,
+      enabled: s.agentEnabled,
+      role_config: draft.role_config
+    };
+    const save = document.querySelector("#roleStudioModal .role-studio-head-actions .primary");
+    if (save) {
+      save.disabled = true;
+      save.textContent = "\u4FDD\u5B58\u4E2D\u2026";
+    }
+    try {
+      const result = s.agentID ? await api(`/api/agents/${s.agentID}`, { method: "PATCH", body: JSON.stringify(body) }) : await api("/api/agents", { method: "POST", body: JSON.stringify(body) });
+      closeModal("roleStudioModal");
+      state.roleStudio = null;
+      await loadAll();
+      renderAgentList();
+      toast(s.agentID ? "\u89D2\u8272\u8349\u7A3F\u5DF2\u4FDD\u5B58" : `\u89D2\u8272\u5DF2\u521B\u5EFA\uFF1A${result?.name || draft.name}`);
+    } catch (e) {
+      toast(`\u4FDD\u5B58\u89D2\u8272\u5931\u8D25\uFF1A${e.message}`, true);
+    } finally {
+      if (save) {
+        save.disabled = false;
+        save.textContent = "\u4FDD\u5B58\u89D2\u8272";
+      }
     }
   }
 
@@ -3755,6 +4072,7 @@
   window.agentTabFromCard = agentTabFromCard;
   window.applyFilters = applyFilters;
   window.applyTemplate = applyTemplate;
+  window.changeRoleStudioCli = changeRoleStudioCli;
   window.cleanupHistory = cleanupHistory;
   window.closeAgentDetail = closeAgentDetail;
   window.closeDetail = closeDetail;
@@ -3791,6 +4109,8 @@
   window.openProject = openProject;
   window.openProjectModal = openProjectModal;
   window.openProjectTask = openProjectTask;
+  window.openRoleStudio = openRoleStudio;
+  window.openRoleStudioManual = openRoleStudioManual;
   window.openScheduleModal = openScheduleModal;
   window.openSkillDetail = openSkillDetail;
   window.openSkillModal = openSkillModal;
@@ -3810,15 +4130,19 @@
   window.renderProjectList = renderProjectList;
   window.renderSkillLib = renderSkillLib;
   window.resumeTask = resumeTask;
+  window.roleStudioQuickAsk = roleStudioQuickAsk;
   window.runCleanup = runCleanup;
   window.saveAgentConcurrency = saveAgentConcurrency;
   window.saveAgentConfig = saveAgentConfig;
   window.saveAsTemplate = saveAsTemplate;
   window.saveRetention = saveRetention;
+  window.saveRoleStudio = saveRoleStudio;
   window.saveSkillTags = saveSkillTags;
   window.saveWtRetention = saveWtRetention;
   window.scanSkills = scanSkills;
   window.selectAllNonMergeTasks = selectAllNonMergeTasks;
+  window.sendRoleStudioChat = sendRoleStudioChat;
+  window.sendRoleStudioTest = sendRoleStudioTest;
   window.sendTaskInput = sendTaskInput;
   window.sendTerminalInput = sendTerminalInput;
   window.setAgentView = setAgentView;

@@ -53,6 +53,7 @@ export function renderAgentEmpty(list, query) {
 
 export function agentActionsHTML(a) {
   return `
+    <button class="btn xs" title="打开角色创建工作台，可让创建助手调整并测试该角色" onclick="event.stopPropagation();openRoleStudio(${a.id})">设计</button>
     <button class="btn xs" title="打开详情并切到配置 tab" onclick="event.stopPropagation();agentTabFromCard(${a.id})">配置</button>
     <button class="btn xs" title="编辑角色基本信息和配置" onclick="event.stopPropagation();openAgentModal(${a.id})">编辑</button>
     <button class="btn xs" title="${a.enabled ? "停用" : "启用"}角色" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "停用" : "启用"}</button>
@@ -643,6 +644,8 @@ export async function submitAgent() {
     if (id) await api(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify(body) });
     else await api("/api/agents", { method: "POST", body: JSON.stringify(body) });
     closeModal("agentModal");
+    // 从角色创建工作台切到手动表单后，旧草稿不能覆盖刚保存的配置。
+    state.roleStudio = null;
     await loadAll();
     renderAgentList();
   } catch (e) { toast(e.message, true); }

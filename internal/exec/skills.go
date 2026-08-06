@@ -40,6 +40,17 @@ type roleSkillsManifest struct {
 	Roots   []string `json:"roots"`
 }
 
+// PrepareRoleSkillsForWorkspace 供角色创建工作台等短生命周期执行场景复用
+// 正式任务的技能物化逻辑。调用方负责提供位于 workspace 内的清单路径，
+// 返回的 cleanup 应在命令结束后调用；它不会触碰 workspace 外的源技能目录。
+func PrepareRoleSkillsForWorkspace(workspaceDir, cli, manifestPath string, taskID int64, selected []string) (skillDirs, skillNames []string, cleanup func(), err error) {
+	prepared, err := prepareRoleSkills(taskID, workspaceDir, cli, manifestPath, selected)
+	if err != nil {
+		return nil, nil, func() {}, err
+	}
+	return prepared.SkillDirs, prepared.SkillNames, func() { _ = cleanupRoleSkills(manifestPath) }, nil
+}
+
 // prepareRoleSkills 将选中的技能复制到 CLI 原生的项目技能目录。每个任务
 // 使用带 task id 的唯一目录名，避免并发任务互相覆盖；SKILL.md 的 name
 // 同步改成该目录名，以满足 OpenCode 的目录/name 一致性要求。
