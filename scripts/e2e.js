@@ -107,6 +107,114 @@ function findChrome() {
   roleStudio ? ok("角色统一编辑器（三栏同时保留）") : fail("角色统一编辑器未完整渲染");
   await page.evaluate(() => closeModal("roleStudioModal"));
 
+  // 复制角色应打开一个新的创建草稿：沿用源角色的执行配置，但生成不冲突
+  // 的副本名称；保存后再清理临时数据，避免污染 E2E 环境。
+  const copyProbe = await page.evaluate(async () => {
+    const all = await (await fetch("/api/agents")).json();
+    if (!all.length) return { skipped: true };
+    const source = all[0];
+    await copyRole(source.id);
+    const draft = {
+      name: document.getElementById("rsName")?.value || "",
+      cli: document.getElementById("rsCli")?.value || "",
+      maxConcurrency: document.getElementById("rsMaxConcurrency")?.value || "",
+      title: document.getElementById("roleStudioTitle")?.textContent || "",
+      status: document.getElementById("roleStudioStatus")?.textContent || "",
+      copyActionCount: document.querySelectorAll('[aria-label^="复制角色 "]').length,
+      sourceName: source.name,
+      sourceCLI: source.cli,
+      sourceConcurrency: String(source.max_concurrency || 1),
+    };
+    const save = document.querySelector("#roleStudioModal .role-studio-head-actions .primary");
+    if (!save) return { skipped: false, draft, created: null };
+    await saveRoleStudio();
+    return { skipped: false, draft };
+  });
+  if (copyProbe.skipped) ok("角色复制创建（无角色，跳过）");
+  else {
+    const copyDraftOK = copyProbe.draft.name !== copyProbe.draft.sourceName &&
+      copyProbe.draft.name.includes("副本") &&
+      copyProbe.draft.title.includes(copyProbe.draft.sourceName) &&
+      copyProbe.draft.status.includes("复制草稿") &&
+      copyProbe.draft.copyActionCount > 0 &&
+      copyProbe.draft.cli === copyProbe.draft.sourceCLI &&
+      copyProbe.draft.maxConcurrency === copyProbe.draft.sourceConcurrency;
+    copyDraftOK ? ok("从现有角色打开复制草稿") : fail(`角色复制草稿不完整：${JSON.stringify(copyProbe.draft)}`);
+    await page.waitForFunction(async name => {
+      const all = await (await fetch("/api/agents")).json();
+      return all.some(a => a.name === name);
+    }, copyProbe.draft.name, { timeout: 6000 }).catch(() => {});
+    const copied = await page.evaluate(async name => {
+      const all = await (await fetch("/api/agents")).json();
+      return all.find(a => a.name === name) || null;
+    }, copyProbe.draft.name);
+    if (copied) {
+      const persisted = copied.cli === copyProbe.draft.sourceCLI &&
+        Number(copied.max_concurrency || 1) === Number(copyProbe.draft.sourceConcurrency);
+      persisted ? ok("角色副本保存配置") : fail(`角色副本配置未保存：${JSON.stringify(copied)}`);
+      await page.evaluate(async id => {
+        await fetch("/api/agents/" + id, { method: "DELETE" });
+      }, copied.id);
+      // loadAll 是 ES module 内部导出，不是模板全局函数；重新加载角色页
+      // 走真实首屏初始化，避免清理逻辑依赖未公开的模块函数。
+      await page.reload();
+      await page.waitForTimeout(350);
+    } else {
+      fail("角色副本保存失败");
+    }
+  }
+  await page.evaluate(() => closeModal("roleStudioModal"));
+
+  // 从详情页复制后，保存应打开新副本详情，而不是留下旧角色详情壳。
+  const detailCopyProbe = await page.evaluate(async () => {
+    const all = await (await fetch("/api/agents")).json();
+    if (!all.length) return { skipped: true };
+    const source = all[0];
+    const waitFor = check => new Promise(resolve => {
+      const started = Date.now();
+      const poll = () => {
+        if (check() || Date.now() - started > 3000) return resolve();
+        setTimeout(poll, 40);
+      };
+      poll();
+    });
+    openAgentDetail(source.id);
+    await waitFor(() => document.getElementById("adCrumb")?.textContent.includes(source.name));
+    await copyCurrentRole();
+    const name = document.getElementById("rsName")?.value || "";
+    await saveRoleStudio();
+    await waitFor(() => !document.getElementById("agentDetailShell")?.classList.contains("hidden"));
+    const created = (await (await fetch("/api/agents")).json()).find(a => a.name === name) || null;
+    return {
+      skipped: false,
+      name,
+      detailHidden: document.getElementById("agentDetailShell")?.classList.contains("hidden"),
+      listHidden: document.getElementById("agentListShell")?.classList.contains("hidden"),
+      crumb: document.getElementById("adCrumb")?.textContent || "",
+      hash: location.hash,
+      expectedHash: created ? `#/agent/${created.id}` : "",
+    };
+  });
+  if (detailCopyProbe.skipped) ok("角色详情页复制（无角色，跳过）");
+  else {
+    const detailCopyOK = !detailCopyProbe.detailHidden && detailCopyProbe.listHidden &&
+      detailCopyProbe.crumb.includes(detailCopyProbe.name) &&
+      detailCopyProbe.hash === detailCopyProbe.expectedHash;
+    detailCopyOK ? ok("角色详情页复制后打开新副本") : fail(`角色详情页复制后视图异常：${JSON.stringify(detailCopyProbe)}`);
+    const copied = await page.evaluate(async name => {
+      const all = await (await fetch("/api/agents")).json();
+      return all.find(a => a.name === name) || null;
+    }, detailCopyProbe.name);
+    if (copied) {
+      await page.evaluate(async id => { await fetch("/api/agents/" + id, { method: "DELETE" }); }, copied.id);
+      await page.reload();
+      await page.waitForTimeout(350);
+    } else {
+      fail("角色详情页复制副本保存失败");
+    }
+  }
+  await page.evaluate(() => closeModal("roleStudioModal"));
+
   // 详情页编辑必须以当前详情角色为准。先打开角色 A 的工作台留下草稿，
   // 再切到角色 B；如果错误复用了旧的 roleStudio.agentID，这里会重新打开 A。
   const editorSwitch = await page.evaluate(async () => {

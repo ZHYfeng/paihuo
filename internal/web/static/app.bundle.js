@@ -2646,6 +2646,7 @@
   function agentActionsHTML(a) {
     return `
     <button class="btn xs" title="\u6253\u5F00\u552F\u4E00\u89D2\u8272\u7F16\u8F91\u5668\uFF0C\u7F16\u8F91\u914D\u7F6E\u5E76\u6D4B\u8BD5\u89D2\u8272" onclick="event.stopPropagation();openRoleStudio(${a.id})">\u7F16\u8F91</button>
+    <button class="btn xs" title="\u590D\u5236\u6B64\u89D2\u8272\u7684\u914D\u7F6E\uFF0C\u521B\u5EFA\u4E00\u4E2A\u65B0\u89D2\u8272" aria-label="\u590D\u5236\u89D2\u8272 ${esc(a.name)}" onclick="event.stopPropagation();copyRole(${a.id})">${icon("copy")}\u590D\u5236</button>
     <button class="btn xs" title="${a.enabled ? "\u505C\u7528" : "\u542F\u7528"}\u89D2\u8272" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "\u505C\u7528" : "\u542F\u7528"}</button>
     <button class="btn xs danger" title="\u5220\u9664\u89D2\u8272" aria-label="\u5220\u9664\u89D2\u8272 ${esc(a.name)}" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}</button>`;
   }
@@ -3257,6 +3258,33 @@
       role_config: clone(agent?.role_config || {})
     };
   }
+  function nextRoleCopyName(agent) {
+    const source = String(agent?.name || "\u672A\u547D\u540D\u89D2\u8272").trim() || "\u672A\u547D\u540D\u89D2\u8272";
+    const base = `${source}\uFF08\u526F\u672C\uFF09`;
+    const names = new Set(state.agents.map((a) => String(a.name || "").trim()));
+    if (!names.has(base)) return base;
+    for (let n = 2; n < 1e4; n++) {
+      const candidate = `${source}\uFF08\u526F\u672C ${n}\uFF09`;
+      if (!names.has(candidate)) return candidate;
+    }
+    return `${source}\uFF08\u526F\u672C ${Date.now()}\uFF09`;
+  }
+  function createStudioState({ draft, agentID = 0, agentEnabled = true, excludeAgentID = 0, mode = "create", sourceAgentName = "" }) {
+    const creator = firstEnabledAgent(excludeAgentID);
+    return {
+      agentID,
+      agentEnabled,
+      creatorAgentID: creator?.id || 0,
+      draft,
+      baseDraft: clone(draft),
+      creatorMessages: [],
+      testMessages: [],
+      busy: false,
+      testBusy: false,
+      mode,
+      sourceAgentName
+    };
+  }
   function studioState() {
     return state.roleStudio;
   }
@@ -3351,9 +3379,11 @@
     if (!s) return;
     const d = s.draft;
     const title = document.getElementById("roleStudioTitle");
-    if (title) title.textContent = d.name ? `\u7F16\u8F91\uFF1A${d.name}` : "\u521B\u5EFA\u89D2\u8272";
+    if (title) {
+      title.textContent = s.mode === "copy" ? `\u590D\u5236\uFF1A${s.sourceAgentName || d.name}` : s.agentID ? `\u7F16\u8F91\uFF1A${d.name}` : "\u521B\u5EFA\u89D2\u8272";
+    }
     const status = document.getElementById("roleStudioStatus");
-    if (status) status.textContent = s.agentID ? "\u7F16\u8F91\u8349\u7A3F \xB7 \u672A\u53D1\u5E03" : "\u65B0\u89D2\u8272\u8349\u7A3F \xB7 \u672A\u4FDD\u5B58";
+    if (status) status.textContent = s.mode === "copy" ? "\u590D\u5236\u8349\u7A3F \xB7 \u672A\u4FDD\u5B58" : s.agentID ? "\u7F16\u8F91\u8349\u7A3F \xB7 \u672A\u53D1\u5E03" : "\u65B0\u89D2\u8272\u8349\u7A3F \xB7 \u672A\u4FDD\u5B58";
     const name = document.getElementById("rsName");
     const desc = document.getElementById("rsDescription");
     const conc = document.getElementById("rsMaxConcurrency");
@@ -3386,19 +3416,32 @@
     const existing = state.roleStudio;
     if (!existing || existing.agentID !== (agent?.id || 0)) {
       const draft = agent ? draftFromAgent(agent) : blankDraft();
-      const creator = firstEnabledAgent(agent?.id || 0);
-      state.roleStudio = {
+      state.roleStudio = createStudioState({
+        draft,
         agentID: agent?.id || 0,
         agentEnabled: agent?.enabled ?? true,
-        creatorAgentID: creator?.id || 0,
-        draft,
-        baseDraft: clone(draft),
-        creatorMessages: [],
-        testMessages: [],
-        busy: false,
-        testBusy: false
-      };
+        excludeAgentID: agent?.id || 0,
+        mode: agent ? "edit" : "create"
+      });
     }
+    renderCreatorSelect();
+    renderStudioDraft();
+    openModal("roleStudioModal");
+  }
+  async function copyRole(id) {
+    const agent = state.agents.find((a) => a.id === id);
+    if (!agent) return toast("\u89D2\u8272\u4E0D\u5B58\u5728", true);
+    await loadSchema();
+    await loadSkillLib();
+    const draft = draftFromAgent(agent);
+    draft.name = nextRoleCopyName(agent);
+    state.roleStudio = createStudioState({
+      draft,
+      agentEnabled: true,
+      excludeAgentID: agent.id,
+      mode: "copy",
+      sourceAgentName: agent.name
+    });
     renderCreatorSelect();
     renderStudioDraft();
     openModal("roleStudioModal");
@@ -3406,6 +3449,10 @@
   function openCurrentRoleEditor() {
     const id = state.agentEditing?.id;
     if (id) openRoleStudio(id);
+  }
+  function copyCurrentRole() {
+    const id = state.agentEditing?.id;
+    return id ? copyRole(id) : Promise.resolve();
   }
   function changeRoleStudioCli() {
     const s = studioState();
@@ -3535,9 +3582,15 @@
       state.roleStudio = null;
       await loadAll();
       const detailVisible = !document.getElementById("agentDetailShell")?.classList.contains("hidden");
-      if (s.agentID && detailVisible) showAgentDetail(s.agentID);
-      else renderAgentList();
-      toast(s.agentID ? "\u89D2\u8272\u8349\u7A3F\u5DF2\u4FDD\u5B58" : `\u89D2\u8272\u5DF2\u521B\u5EFA\uFF1A${result?.name || draft.name}`);
+      if (s.mode === "copy" && detailVisible && result?.id) {
+        showAgentDetail(result.id);
+        openAgentDetail(result.id);
+      } else if (s.agentID && detailVisible) showAgentDetail(s.agentID);
+      else {
+        if (detailVisible) hideAgentDetail();
+        renderAgentList();
+      }
+      toast(s.mode === "copy" ? `\u89D2\u8272\u526F\u672C\u5DF2\u521B\u5EFA\uFF1A${result?.name || draft.name}` : s.agentID ? "\u89D2\u8272\u8349\u7A3F\u5DF2\u4FDD\u5B58" : `\u89D2\u8272\u5DF2\u521B\u5EFA\uFF1A${result?.name || draft.name}`);
     } catch (e) {
       toast(`\u4FDD\u5B58\u89D2\u8272\u5931\u8D25\uFF1A${e.message}`, true);
     } finally {
@@ -4194,7 +4247,9 @@
   window.closeProjectDetail = closeProjectDetail;
   window.closeSkillDetail = closeSkillDetail;
   window.closeTerminal = closeTerminal;
+  window.copyCurrentRole = copyCurrentRole;
   window.copyLogs = copyLogs;
+  window.copyRole = copyRole;
   window.copySkillContent = copySkillContent;
   window.copyText = copyText;
   window.createDefaultRole = createDefaultRole;

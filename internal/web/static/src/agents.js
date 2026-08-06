@@ -120,6 +120,7 @@ export function renderAgentEmpty(list, query) {
 export function agentActionsHTML(a) {
   return `
     <button class="btn xs" title="打开唯一角色编辑器，编辑配置并测试角色" onclick="event.stopPropagation();openRoleStudio(${a.id})">编辑</button>
+    <button class="btn xs" title="复制此角色的配置，创建一个新角色" aria-label="复制角色 ${esc(a.name)}" onclick="event.stopPropagation();copyRole(${a.id})">${icon("copy")}复制</button>
     <button class="btn xs" title="${a.enabled ? "停用" : "启用"}角色" onclick="event.stopPropagation();toggleAgent(${a.id})">${a.enabled ? "停用" : "启用"}</button>
     <button class="btn xs danger" title="删除角色" aria-label="删除角色 ${esc(a.name)}" onclick="event.stopPropagation();deleteAgent(${a.id})">${icon("trash")}</button>`;
 }

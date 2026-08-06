@@ -1,7 +1,7 @@
 // 角色编辑器：创建助手对话、配置与被创建 Agent 测试保持在同一屏。
 import { api, closeModal, esc, openModal, state, toast } from "./core.js";
 import { loadAll, loadSchema } from "./main.js";
-import { readConfigFrom, renderAgentList, schemaFormHTML, showAgentDetail } from "./agents.js";
+import { hideAgentDetail, openAgentDetail, readConfigFrom, renderAgentList, schemaFormHTML, showAgentDetail } from "./agents.js";
 import { loadSkillLib } from "./skills.js";
 
 function clone(value) {
@@ -24,6 +24,35 @@ function draftFromAgent(agent) {
     cli: agent?.cli || Object.keys(state.schema || {})[0] || "",
     max_concurrency: agent?.max_concurrency || 1,
     role_config: clone(agent?.role_config || {}),
+  };
+}
+
+function nextRoleCopyName(agent) {
+  const source = String(agent?.name || "未命名角色").trim() || "未命名角色";
+  const base = `${source}（副本）`;
+  const names = new Set(state.agents.map(a => String(a.name || "").trim()));
+  if (!names.has(base)) return base;
+  for (let n = 2; n < 10000; n++) {
+    const candidate = `${source}（副本 ${n}）`;
+    if (!names.has(candidate)) return candidate;
+  }
+  return `${source}（副本 ${Date.now()}）`;
+}
+
+function createStudioState({ draft, agentID = 0, agentEnabled = true, excludeAgentID = 0, mode = "create", sourceAgentName = "" }) {
+  const creator = firstEnabledAgent(excludeAgentID);
+  return {
+    agentID,
+    agentEnabled,
+    creatorAgentID: creator?.id || 0,
+    draft,
+    baseDraft: clone(draft),
+    creatorMessages: [],
+    testMessages: [],
+    busy: false,
+    testBusy: false,
+    mode,
+    sourceAgentName,
   };
 }
 
@@ -135,9 +164,15 @@ function renderStudioDraft() {
   if (!s) return;
   const d = s.draft;
   const title = document.getElementById("roleStudioTitle");
-  if (title) title.textContent = d.name ? `编辑：${d.name}` : "创建角色";
+  if (title) {
+    title.textContent = s.mode === "copy"
+      ? `复制：${s.sourceAgentName || d.name}`
+      : (s.agentID ? `编辑：${d.name}` : "创建角色");
+  }
   const status = document.getElementById("roleStudioStatus");
-  if (status) status.textContent = s.agentID ? "编辑草稿 · 未发布" : "新角色草稿 · 未保存";
+  if (status) status.textContent = s.mode === "copy"
+    ? "复制草稿 · 未保存"
+    : (s.agentID ? "编辑草稿 · 未发布" : "新角色草稿 · 未保存");
   const name = document.getElementById("rsName");
   const desc = document.getElementById("rsDescription");
   const conc = document.getElementById("rsMaxConcurrency");
@@ -171,19 +206,35 @@ export async function openRoleStudio(id) {
   const existing = state.roleStudio;
   if (!existing || existing.agentID !== (agent?.id || 0)) {
     const draft = agent ? draftFromAgent(agent) : blankDraft();
-    const creator = firstEnabledAgent(agent?.id || 0);
-    state.roleStudio = {
+    state.roleStudio = createStudioState({
+      draft,
       agentID: agent?.id || 0,
       agentEnabled: agent?.enabled ?? true,
-      creatorAgentID: creator?.id || 0,
-      draft,
-      baseDraft: clone(draft),
-      creatorMessages: [],
-      testMessages: [],
-      busy: false,
-      testBusy: false,
-    };
+      excludeAgentID: agent?.id || 0,
+      mode: agent ? "edit" : "create",
+    });
   }
+  renderCreatorSelect();
+  renderStudioDraft();
+  openModal("roleStudioModal");
+}
+
+export async function copyRole(id) {
+  const agent = state.agents.find(a => a.id === id);
+  if (!agent) return toast("角色不存在", true);
+  await loadSchema();
+  await loadSkillLib();
+  const draft = draftFromAgent(agent);
+  draft.name = nextRoleCopyName(agent);
+  // 复制的是角色配置；新角色默认启用，避免无意中把已停用的源角色状态
+  // 带到新记录里；保存后用户仍可在列表中调整启用状态。
+  state.roleStudio = createStudioState({
+    draft,
+    agentEnabled: true,
+    excludeAgentID: agent.id,
+    mode: "copy",
+    sourceAgentName: agent.name,
+  });
   renderCreatorSelect();
   renderStudioDraft();
   openModal("roleStudioModal");
@@ -194,6 +245,11 @@ export function openCurrentRoleEditor() {
   // 保留未保存内容，不能让它把后续切换到的详情角色“带回”旧角色。
   const id = state.agentEditing?.id;
   if (id) openRoleStudio(id);
+}
+
+export function copyCurrentRole() {
+  const id = state.agentEditing?.id;
+  return id ? copyRole(id) : Promise.resolve();
 }
 
 export function changeRoleStudioCli() {
@@ -328,9 +384,18 @@ export async function saveRoleStudio() {
     state.roleStudio = null;
     await loadAll();
     const detailVisible = !document.getElementById("agentDetailShell")?.classList.contains("hidden");
-    if (s.agentID && detailVisible) showAgentDetail(s.agentID);
-    else renderAgentList();
-    toast(s.agentID ? "角色草稿已保存" : `角色已创建：${result?.name || draft.name}`);
+    if (s.mode === "copy" && detailVisible && result?.id) {
+      showAgentDetail(result.id);
+      openAgentDetail(result.id);
+    }
+    else if (s.agentID && detailVisible) showAgentDetail(s.agentID);
+    else {
+      if (detailVisible) hideAgentDetail();
+      renderAgentList();
+    }
+    toast(s.mode === "copy"
+      ? `角色副本已创建：${result?.name || draft.name}`
+      : (s.agentID ? "角色草稿已保存" : `角色已创建：${result?.name || draft.name}`));
   } catch (e) {
     toast(`保存角色失败：${e.message}`, true);
   } finally {
