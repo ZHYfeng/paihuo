@@ -504,6 +504,22 @@
     const tags = skillTags(skill);
     return tags.length ? tags.map((tag) => `<span class="skill-tag">${esc(tag)}</span>`).join("") : `<span class="skill-tag muted">\u672A\u5206\u7C7B</span>`;
   }
+  function skillTagsEditorHTML(skill) {
+    const inputId = `skill-tags-${skill.id}`;
+    return `
+    <div class="skill-tags-row">
+      <div class="skill-tags" aria-label="\u5F53\u524D\u6807\u7B7E">${skillTagsHTML(skill)}</div>
+      <button type="button" class="btn xs ghost skill-tags-edit" data-skill-tags-toggle="${skill.id}"
+        aria-controls="skill-tag-editor-${skill.id}" aria-expanded="false"
+        onclick="event.stopPropagation();toggleSkillTagsEditor(${skill.id})">\u7F16\u8F91\u6807\u7B7E</button>
+    </div>
+    <div class="skill-tag-editor hidden" id="skill-tag-editor-${skill.id}" onclick="event.stopPropagation()">
+      <input id="${inputId}" class="skill-tags-input" value="${esc(skillTags(skill).join(", "))}"
+        aria-label="\u7F16\u8F91 ${esc(skill.name)} \u7684\u6807\u7B7E" placeholder="\u6807\u7B7E\uFF0C\u7528\u9017\u53F7\u5206\u9694"
+        onkeydown="if (event.key === 'Enter') { event.preventDefault(); saveSkillTagsInline(${skill.id}, this); }">
+      <button type="button" class="btn xs primary" onclick="saveSkillTagsInline(${skill.id}, this)">\u4FDD\u5B58</button>
+    </div>`;
+  }
   function parseTagInput(raw) {
     const seen = /* @__PURE__ */ new Set();
     return String(raw || "").split(/[,，\n]/).map((tag) => tag.trim()).filter((tag) => {
@@ -582,7 +598,7 @@
         </div>
       </div>
       <div class="sk-meta">
-        <div class="skill-tags">${skillTagsHTML(s)}</div>
+        ${skillTagsEditorHTML(s)}
         <span class="chip" title="${esc(s.dir)}">\u526F\u672C\uFF1A${esc(s.dir)}</span>
       </div>
       <div class="sk-foot">
@@ -601,7 +617,7 @@
       <input type="checkbox" data-skill-id="${s.id}" ${selected ? "checked" : ""} aria-label="\u9009\u62E9\u6280\u80FD ${esc(s.name)}" onchange="toggleSkillSelection(${s.id}, this.checked)">
     </label></td>
     <td><span class="skill-list-name"><span class="avatar">${esc((s.name || "?").slice(0, 1))}</span><span><a class="table-primary-action" href="#/skill/${s.id}" onclick="event.stopPropagation()">${esc(s.name)}</a><small>${esc(s.description || "\u65E0\u63CF\u8FF0")}</small></span></span></td>
-    <td><div class="skill-tags">${skillTagsHTML(s)}</div></td>
+    <td>${skillTagsEditorHTML(s)}</td>
     <td><code class="skill-list-dir" title="${esc(s.source_path || s.dir || "-")}">${esc(skillGroupDirectory(s))}</code></td>
     <td class="num">${esc((s.created_at || "").slice(0, 10))}</td>
     <td><span class="ops"><button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s.id})">\u8BE6\u60C5${icon("expand")}</button><button class="btn xs danger" onclick="event.stopPropagation();deleteSkill(${s.id})">${icon("trash")}\u5220\u9664</button></span></td>
@@ -715,6 +731,53 @@
       renderSkillLib();
       toast(`\u5DF2\u5220\u9664 ${result.count ?? ids.length} \u4E2A\u6280\u80FD`);
     } catch (e) {
+      toast(e.message, true);
+    }
+  }
+  function toggleSkillTagsEditor(id) {
+    const editor = document.getElementById(`skill-tag-editor-${id}`);
+    if (!editor) return;
+    const opening = editor.classList.contains("hidden");
+    editor.classList.toggle("hidden", !opening);
+    document.querySelector(`[data-skill-tags-toggle="${id}"]`)?.setAttribute("aria-expanded", String(opening));
+    if (opening) {
+      const input = document.getElementById(`skill-tags-${id}`);
+      requestAnimationFrame(() => {
+        input?.focus();
+        input?.select();
+      });
+    }
+  }
+  async function persistSkillTags(id, tags) {
+    const updated = await api(`/api/skills/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ tags })
+    });
+    const index = state.skillLib.findIndex((item) => item.id === id);
+    if (index >= 0) state.skillLib[index] = { ...state.skillLib[index], ...updated };
+    if (state.skillDetail?.id === id) state.skillDetail = { ...state.skillDetail, ...updated };
+    syncSkillTagFilter();
+    return updated;
+  }
+  async function saveSkillTagsInline(id, source) {
+    const input = document.getElementById(`skill-tags-${id}`);
+    if (!input) return;
+    const editor = input.closest(".skill-tag-editor");
+    const button = source?.tagName === "BUTTON" ? source : editor?.querySelector("button");
+    const tags = parseTagInput(input.value);
+    if (button) {
+      button.disabled = true;
+      button.textContent = "\u4FDD\u5B58\u4E2D\u2026";
+    }
+    try {
+      await persistSkillTags(id, tags);
+      renderSkillLib();
+      toast(tags.length ? "\u6807\u7B7E\u5DF2\u4FDD\u5B58" : "\u5DF2\u6E05\u9664\u6807\u7B7E");
+    } catch (e) {
+      if (button?.isConnected) {
+        button.disabled = false;
+        button.textContent = "\u4FDD\u5B58";
+      }
       toast(e.message, true);
     }
   }
@@ -851,18 +914,11 @@
     const input = document.getElementById("sdTags");
     const tags = parseTagInput(input?.value || "");
     try {
-      const updated = await api(`/api/skills/${skill.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ tags })
-      });
-      const index = state.skillLib.findIndex((item) => item.id === skill.id);
-      if (index >= 0) state.skillLib[index] = { ...state.skillLib[index], ...updated };
-      state.skillDetail = { ...skill, ...updated };
+      await persistSkillTags(skill.id, tags);
       const side = document.getElementById("sdSide");
       if (side) side.innerHTML = skillDetailSideHTML(state.skillDetail);
       const display = document.getElementById("sdTagsDisplay");
       if (display) display.innerHTML = skillTagsHTML(state.skillDetail);
-      syncSkillTagFilter();
       toast(tags.length ? "\u6807\u7B7E\u5DF2\u4FDD\u5B58" : "\u5DF2\u6E05\u9664\u6807\u7B7E");
     } catch (e) {
       toast(e.message, true);
@@ -4060,6 +4116,7 @@
   window.saveRetention = saveRetention;
   window.saveRoleStudio = saveRoleStudio;
   window.saveSkillTags = saveSkillTags;
+  window.saveSkillTagsInline = saveSkillTagsInline;
   window.saveWtRetention = saveWtRetention;
   window.scanSkills = scanSkills;
   window.selectAllNonMergeTasks = selectAllNonMergeTasks;
@@ -4091,5 +4148,6 @@
   window.toggleSkill = toggleSkill;
   window.toggleSkillGroup = toggleSkillGroup;
   window.toggleSkillSelection = toggleSkillSelection;
+  window.toggleSkillTagsEditor = toggleSkillTagsEditor;
   window.wsDiscard = wsDiscard;
 })();

@@ -92,6 +92,23 @@ function skillTagsHTML(skill) {
     : `<span class="skill-tag muted">未分类</span>`;
 }
 
+function skillTagsEditorHTML(skill) {
+  const inputId = `skill-tags-${skill.id}`;
+  return `
+    <div class="skill-tags-row">
+      <div class="skill-tags" aria-label="当前标签">${skillTagsHTML(skill)}</div>
+      <button type="button" class="btn xs ghost skill-tags-edit" data-skill-tags-toggle="${skill.id}"
+        aria-controls="skill-tag-editor-${skill.id}" aria-expanded="false"
+        onclick="event.stopPropagation();toggleSkillTagsEditor(${skill.id})">编辑标签</button>
+    </div>
+    <div class="skill-tag-editor hidden" id="skill-tag-editor-${skill.id}" onclick="event.stopPropagation()">
+      <input id="${inputId}" class="skill-tags-input" value="${esc(skillTags(skill).join(", "))}"
+        aria-label="编辑 ${esc(skill.name)} 的标签" placeholder="标签，用逗号分隔"
+        onkeydown="if (event.key === 'Enter') { event.preventDefault(); saveSkillTagsInline(${skill.id}, this); }">
+      <button type="button" class="btn xs primary" onclick="saveSkillTagsInline(${skill.id}, this)">保存</button>
+    </div>`;
+}
+
 function parseTagInput(raw) {
   const seen = new Set();
   return String(raw || "").split(/[,，\n]/).map(tag => tag.trim()).filter(tag => {
@@ -178,7 +195,7 @@ function skillCardHTML(s) {
         </div>
       </div>
       <div class="sk-meta">
-        <div class="skill-tags">${skillTagsHTML(s)}</div>
+        ${skillTagsEditorHTML(s)}
         <span class="chip" title="${esc(s.dir)}">副本：${esc(s.dir)}</span>
       </div>
       <div class="sk-foot">
@@ -198,7 +215,7 @@ function skillListRowHTML(s) {
       <input type="checkbox" data-skill-id="${s.id}" ${selected ? "checked" : ""} aria-label="选择技能 ${esc(s.name)}" onchange="toggleSkillSelection(${s.id}, this.checked)">
     </label></td>
     <td><span class="skill-list-name"><span class="avatar">${esc((s.name || "?").slice(0, 1))}</span><span><a class="table-primary-action" href="#/skill/${s.id}" onclick="event.stopPropagation()">${esc(s.name)}</a><small>${esc(s.description || "无描述")}</small></span></span></td>
-    <td><div class="skill-tags">${skillTagsHTML(s)}</div></td>
+    <td>${skillTagsEditorHTML(s)}</td>
     <td><code class="skill-list-dir" title="${esc(s.source_path || s.dir || "-")}">${esc(skillGroupDirectory(s))}</code></td>
     <td class="num">${esc((s.created_at || "").slice(0, 10))}</td>
     <td><span class="ops"><button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s.id})">详情${icon("expand")}</button><button class="btn xs danger" onclick="event.stopPropagation();deleteSkill(${s.id})">${icon("trash")}删除</button></span></td>
@@ -318,6 +335,56 @@ export async function deleteSelectedSkills() {
     renderSkillLib();
     toast(`已删除 ${result.count ?? ids.length} 个技能`);
   } catch (e) { toast(e.message, true); }
+}
+
+export function toggleSkillTagsEditor(id) {
+  const editor = document.getElementById(`skill-tag-editor-${id}`);
+  if (!editor) return;
+  const opening = editor.classList.contains("hidden");
+  editor.classList.toggle("hidden", !opening);
+  document.querySelector(`[data-skill-tags-toggle="${id}"]`)?.setAttribute("aria-expanded", String(opening));
+  if (opening) {
+    const input = document.getElementById(`skill-tags-${id}`);
+    requestAnimationFrame(() => {
+      input?.focus();
+      input?.select();
+    });
+  }
+}
+
+async function persistSkillTags(id, tags) {
+  const updated = await api(`/api/skills/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ tags }),
+  });
+  const index = state.skillLib.findIndex(item => item.id === id);
+  if (index >= 0) state.skillLib[index] = { ...state.skillLib[index], ...updated };
+  if (state.skillDetail?.id === id) state.skillDetail = { ...state.skillDetail, ...updated };
+  syncSkillTagFilter();
+  return updated;
+}
+
+export async function saveSkillTagsInline(id, source) {
+  const input = document.getElementById(`skill-tags-${id}`);
+  if (!input) return;
+  const editor = input.closest(".skill-tag-editor");
+  const button = source?.tagName === "BUTTON" ? source : editor?.querySelector("button");
+  const tags = parseTagInput(input.value);
+  if (button) {
+    button.disabled = true;
+    button.textContent = "保存中…";
+  }
+  try {
+    await persistSkillTags(id, tags);
+    renderSkillLib();
+    toast(tags.length ? "标签已保存" : "已清除标签");
+  } catch (e) {
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.textContent = "保存";
+    }
+    toast(e.message, true);
+  }
 }
 
 function formatSkillBytes(size) {
@@ -459,18 +526,11 @@ export async function saveSkillTags() {
   const input = document.getElementById("sdTags");
   const tags = parseTagInput(input?.value || "");
   try {
-    const updated = await api(`/api/skills/${skill.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ tags }),
-    });
-    const index = state.skillLib.findIndex(item => item.id === skill.id);
-    if (index >= 0) state.skillLib[index] = { ...state.skillLib[index], ...updated };
-    state.skillDetail = { ...skill, ...updated };
+    await persistSkillTags(skill.id, tags);
     const side = document.getElementById("sdSide");
     if (side) side.innerHTML = skillDetailSideHTML(state.skillDetail);
     const display = document.getElementById("sdTagsDisplay");
     if (display) display.innerHTML = skillTagsHTML(state.skillDetail);
-    syncSkillTagFilter();
     toast(tags.length ? "标签已保存" : "已清除标签");
   } catch (e) { toast(e.message, true); }
 }

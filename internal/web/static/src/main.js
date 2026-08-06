@@ -8,7 +8,7 @@ import { appendInstLine, closeInstTerminal, copyText, createDefaultRole, install
 import { changeRoleStudioCli, openCurrentRoleEditor, openRoleStudio, roleStudioQuickAsk, saveRoleStudio, sendRoleStudioChat, sendRoleStudioTest } from "./role_studio.js";
 import { deleteSchedule, openScheduleModal, renderScheduleList, submitSchedule, syncScheduleFields, toggleSchedule } from "./schedules.js";
 import { loadSettings, runCleanup, saveRetention, saveWtRetention } from "./settings.js";
-import { closeSkillDetail, copySkillContent, deleteSelectedSkills, deleteSkill, deleteSkillFromDetail, deleteTemplate, hideSkillDetail, loadSkillLib, loadTemplates, openExtModal, openSkillDetail, openSkillModal, removeExt, renderSkillLib, saveSkillTags, scanSkills, setSkillTab, setSkillView, showSkillDetail, submitExt, submitSkill, toggleAllSkills, toggleSkillGroup, toggleSkillSelection } from "./skills.js";
+import { closeSkillDetail, copySkillContent, deleteSelectedSkills, deleteSkill, deleteSkillFromDetail, deleteTemplate, hideSkillDetail, loadSkillLib, loadTemplates, openExtModal, openSkillDetail, openSkillModal, removeExt, renderSkillLib, saveSkillTags, saveSkillTagsInline, scanSkills, setSkillTab, setSkillView, showSkillDetail, submitExt, submitSkill, toggleAllSkills, toggleSkillGroup, toggleSkillSelection, toggleSkillTagsEditor } from "./skills.js";
 import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskConcurrency, syncTaskDependency, syncTaskRunMode, wsDiscard } from "./task.js";
 import { closeTerminal, openTerminal, sendTaskInput, sendTerminalInput, syncTerminalInput } from "./terminal.js";
 
@@ -487,6 +487,7 @@ window.saveAsTemplate = saveAsTemplate;
 window.saveRetention = saveRetention;
 window.saveRoleStudio = saveRoleStudio;
 window.saveSkillTags = saveSkillTags;
+window.saveSkillTagsInline = saveSkillTagsInline;
 window.saveWtRetention = saveWtRetention;
 window.scanSkills = scanSkills;
 window.selectAllNonMergeTasks = selectAllNonMergeTasks;
@@ -518,6 +519,7 @@ window.toggleSidebar = toggleSidebar;
 window.toggleSkill = toggleSkill;
 window.toggleSkillGroup = toggleSkillGroup;
 window.toggleSkillSelection = toggleSkillSelection;
+window.toggleSkillTagsEditor = toggleSkillTagsEditor;
 window.wsDiscard = wsDiscard;
 
 // ===== 页面生命周期 =====
