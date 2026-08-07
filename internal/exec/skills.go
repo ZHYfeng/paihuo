@@ -771,18 +771,25 @@ func writeJSONAtomic(path string, v any) error {
 	return nil
 }
 
-// codexSkillsRoot 返回 codex 的 USER scope 技能目录：优先 $CODEX_HOME/skills
-// （codex 配置目录下的 skills/，只被 codex 扫描，不会混入 pi/omp 等其它
-// CLI 的上下文），否则回退 $HOME/.agents/skills。
+// codexSkillsRoot 返回 codex 的 USER scope 技能目录，按优先级：
+//  1. $CODEX_HOME/skills（显式设置时）；
+//  2. ~/.codex/skills（codex 的 CODEX_HOME 默认配置目录）；
+//  3. $HOME/.agents/skills（官方文档 USER scope 兜底）。
+//
+// 前两个位置只被 codex 扫描，不会混入 pi/omp 等其它 CLI 的上下文。
 func codexSkillsRoot() (string, error) {
 	if home := strings.TrimSpace(os.Getenv("CODEX_HOME")); home != "" {
 		return filepath.Join(home, "skills"), nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	userHome, err := os.UserHomeDir()
+	if err != nil || userHome == "" {
 		return "", fmt.Errorf("无法确定用户主目录（%v），不能挂载 codex 技能", err)
 	}
-	return filepath.Join(home, ".agents", "skills"), nil
+	codexHome := filepath.Join(userHome, ".codex")
+	if fi, err := os.Stat(codexHome); err == nil && fi.IsDir() {
+		return filepath.Join(codexHome, "skills"), nil
+	}
+	return filepath.Join(userHome, ".agents", "skills"), nil
 }
 
 // MountCodexSkills 把角色技能视图以 symlink 挂到 codex 的 USER scope 技能

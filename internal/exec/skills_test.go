@@ -407,14 +407,33 @@ func TestMountCodexSkillsAndCleanup(t *testing.T) {
 		}
 	})
 
-	t.Run("无 CODEX_HOME 回退 $HOME/.agents/skills", func(t *testing.T) {
+	t.Run("无 CODEX_HOME 优先 ~/.codex/skills", func(t *testing.T) {
 		home := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		t.Setenv("HOME", home)
 		t.Setenv("CODEX_HOME", "")
 		if err := MountCodexSkills(43, mount, manifest); err != nil {
 			t.Fatal(err)
 		}
-		link := filepath.Join(home, ".agents", "skills", "paihuo-43-1-alpha")
+		link := filepath.Join(home, ".codex", "skills", "paihuo-43-1-alpha")
+		if fi, _ := os.Lstat(link); fi.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("应挂到 ~/.codex/skills（codex 默认配置目录）: %v", fi)
+		}
+		if err := cleanupRoleSkills(manifest); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("无 ~/.codex 兜底 $HOME/.agents/skills", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("CODEX_HOME", "")
+		if err := MountCodexSkills(45, mount, manifest); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(home, ".agents", "skills", "paihuo-45-1-alpha")
 		if fi, _ := os.Lstat(link); fi.Mode()&os.ModeSymlink == 0 {
 			t.Fatalf("应回退到 $HOME/.agents/skills: %v", fi)
 		}
