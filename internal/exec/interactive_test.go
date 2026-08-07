@@ -283,3 +283,41 @@ func TestInteractiveTmuxUsesStableGeometryAndExtendedKeys(t *testing.T) {
 		t.Fatalf("交互终端尺寸不稳定: got %q want %q", got, want)
 	}
 }
+
+// Resize 把浏览器 xterm 的尺寸同步到运行中的交互窗口；调整后窗口保持
+// manual 模式且按新尺寸重绘（agent 收到 SIGWINCH）。
+func TestInteractiveTmuxResizeFollowsBrowser(t *testing.T) {
+	requireTmuxIntegration(t)
+	sessionsRoot := t.TempDir()
+	socket := fmt.Sprintf("paihuo-interactive-resize-test-%d", os.Getpid())
+	runner := newTmuxRunnerAt(sessionsRoot, socket)
+	_ = runner.command("kill-server")
+	t.Cleanup(func() { _ = runner.command("kill-server") })
+
+	if err := runner.ensureSession(); err != nil {
+		t.Fatal(err)
+	}
+	const taskID = 92
+	if err := runner.Start(taskID, sessionsRoot, "sh", []string{"-c", "sleep 5"}, nil, tmuxStartOptions{
+		TerminalColumns: interactiveTerminalColumns,
+		TerminalRows:    interactiveTerminalRows,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = runner.Stop(taskID)
+		runner.Cleanup(taskID)
+	})
+
+	if err := runner.Resize(taskID, 132, 42); err != nil {
+		t.Fatalf("Resize 失败: %v", err)
+	}
+	out, err := osexec.Command("tmux", "-L", socket, "display-message", "-p", "-t", runner.target(taskID),
+		"#{window_width}x#{window_height}:#{window-size}").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "132x42:manual"; strings.TrimSpace(string(out)) != want {
+		t.Fatalf("Resize 后尺寸不正确: got %q want %q", strings.TrimSpace(string(out)), want)
+	}
+}

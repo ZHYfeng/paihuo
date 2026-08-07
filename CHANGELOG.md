@@ -14,6 +14,7 @@ This file records notable user-facing and maintainer-facing changes. The format 
 
 ### Changed
 
+- 交互式任务终端不再固定 80×24：浏览器 xterm 按容器自适应（FitAddon），尺寸经新增的 `POST /api/tasks/{id}/resize` 同步给 tmux 窗口，agent 收到 SIGWINCH 后按新画布重绘 TUI（任务启动默认仍为 80×24，打开终端后即跟随浏览器）。
 - 移除已废弃的 `POST /api/workspace/{id}/merge` 手工合并端点（代码合并在合并任务成功结算时自动执行，前端早已不再调用）。
 - 清理静态检查发现的死代码：`ompModelsProbe`、`importSkill` 包装、`nullStr`、`terminalStats` 常量、`Scheduler.stopped` 字段、测试内未用的 `execGit` 等。
 - 修复 tmux 3.5 的格式变量兼容性：交互终端尺寸断言改用 `#{window-size}`（旧 `window_size_option` 已移除），测试恢复通过。

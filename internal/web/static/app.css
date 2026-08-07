@@ -2942,7 +2942,8 @@ a.project-card:hover { color: inherit; text-decoration: none; }
 
 /* ============================================================
    V9 · INTERACTIVE TERMINAL
-   Agent TUI 使用稳定的 80×24 坐标画布；窄屏保留画布并允许横向浏览。
+   Agent TUI 画布跟随浏览器：xterm 按容器 fit，尺寸经 resize API
+   同步到 tmux 窗口（agent 收到 SIGWINCH 重绘），不再固定 80×24。
    ============================================================ */
 .interactive-term-body {
   height: 342px; max-height: min(342px, 48vh); padding: 0;
@@ -2950,10 +2951,9 @@ a.project-card:hover { color: inherit; text-decoration: none; }
   background: var(--inset); scrollbar-gutter: stable;
 }
 .interactive-term-canvas {
-  min-width: 100%; width: max-content; min-height: 336px;
+  min-width: 100%; width: 100%; height: 100%;
 }
-.interactive-term-canvas .xterm { min-height: 336px; padding: 8px 10px; }
-.interactive-term-canvas .xterm-screen { min-width: max-content; }
+.interactive-term-canvas .xterm { padding: 8px 10px; }
 .interactive-term-canvas .terminal-writable,
 .interactive-terminal-modal .terminal-writable { cursor: text; }
 .terminal-input-help {
@@ -2973,8 +2973,6 @@ a.project-card:hover { color: inherit; text-decoration: none; }
   min-width: 0; min-height: 0;
   overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y;
 }
-.interactive-terminal-modal .term-full .xterm { min-width: max-content; }
-.interactive-terminal-modal .term-full .xterm-screen { min-width: max-content; }
 
 /* 任务“全屏”是视口级工作区；安装输出仍使用上面的普通大弹窗尺寸。 */
 #termModal {

@@ -967,6 +967,28 @@ func (r *tmuxRunner) SendKeystrokes(taskID int64, keys string) error {
 	return nil
 }
 
+// Resize 把浏览器 xterm 的当前尺寸同步到运行中的交互任务窗口。tmux 在
+// manual 模式下只认 resize-window，调整后 pane 内的 agent 收到 SIGWINCH
+// 并按新画布重绘 TUI；持久化日志按原始字节流继续追加，重放不受影响。
+func (r *tmuxRunner) Resize(taskID int64, cols, rows int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.hasWindow(taskID) {
+		return fmt.Errorf("交互终端 task-%d 不存在", taskID)
+	}
+	dead, err := r.paneDead(taskID)
+	if err != nil {
+		return fmt.Errorf("读取交互终端状态失败: %w", err)
+	}
+	if dead {
+		return fmt.Errorf("交互终端 task-%d 已退出", taskID)
+	}
+	if err := r.command("resize-window", "-t", r.target(taskID), "-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows)); err != nil {
+		return fmt.Errorf("调整交互终端尺寸失败: %w", err)
+	}
+	return nil
+}
+
 // ArchiveFailureArtifacts 将异常中断前留下的运行文件移入当前任务目录中的独立
 // failure-* 子目录。下一次续跑同一任务时可以安全地创建新的 terminal.log/run.sh，
 // 而这份证据会保留到任务被删除为止。

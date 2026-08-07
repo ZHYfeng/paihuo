@@ -277,6 +277,30 @@ func normalizeNewTaskDependency(tk *store.Task) error {
 
 // sendTaskInput 把已登录用户的整行消息或 xterm 原始按键送进运行中的 agent
 // 交互式 pane；两种模式互斥，避免同一请求被重复提交。
+// resizeTask 把浏览器交互终端的尺寸同步给运行中的任务窗口（tmux resize-window）。
+func (s *Server) resizeTask(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if _, err := s.st.GetTask(id); err != nil {
+		writeErr(w, http.StatusNotFound, "任务不存在")
+		return
+	}
+	var in struct {
+		Cols int `json:"cols"`
+		Rows int `json:"rows"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if err := s.ex.Resize(id, in.Cols, in.Rows); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"resized": true})
+}
+
 func (s *Server) sendTaskInput(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {

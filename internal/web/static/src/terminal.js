@@ -15,9 +15,10 @@ let taskTermTask = null;
 let taskTermLogs = [];
 const terminalKeyQueues = new Map();
 
-// PaiHuo 的交互式 agent pane 使用固定画布，避免浏览器宽度变化后重放 TUI
-// 控制序列时把光标、分隔线和输入区重新换行。该尺寸与执行器创建的 tmux
-// window 保持一致；窄屏通过横向滚动查看，不压缩或破坏终端坐标。
+// PaiHuo 的交互式 agent pane 由浏览器 xterm 的实时尺寸驱动：打开终端时
+// FitAddon 按容器 fit，并把 cols/rows 通过 resize API 同步给 tmux 窗口
+// （agent 收到 SIGWINCH 后按新画布重绘）。这两个常量只是终端构造时的
+// 初始值与 tmux 启动默认，打开后即被浏览器实际尺寸覆盖。
 export const INTERACTIVE_TERM_COLS = 80;
 export const INTERACTIVE_TERM_ROWS = 24;
 
@@ -48,6 +49,19 @@ function terminalOptions(interactive = false, running = false) {
 function interactiveTaskRunning(taskID) {
   const task = state.tasks.find(t => t.id === taskID);
   return task?.run_mode === "interactive" && task?.status === "running";
+}
+
+// 浏览器 xterm 的尺寸变化（fit 后）经 resize API 同步给 tmux 窗口。
+// 任务不在运行/窗口已清理时后端返回 400，静默忽略；拖拽窗口时防抖只发最后一次。
+let geometryReportTimer = null;
+function reportTerminalGeometry(taskID, cols, rows) {
+  if (!taskID || !cols || !rows) return;
+  clearTimeout(geometryReportTimer);
+  geometryReportTimer = setTimeout(() => {
+    api(`/api/tasks/${taskID}/resize`, {
+      method: "POST", body: JSON.stringify({ cols, rows }),
+    }).catch(() => {});
+  }, 150);
 }
 
 // xterm 的 onData 会为普通文字、Tab、方向键和组合键产生终端字节序列。
@@ -117,8 +131,10 @@ function syncFullscreenTerminalGeometry() {
   const host = document.getElementById("termX");
   if (!host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
   try {
-    if (termInteractive) term.resize(INTERACTIVE_TERM_COLS, INTERACTIVE_TERM_ROWS);
-    else termFit?.fit();
+    termFit?.fit();
+    if (termInteractive && state.termTask) {
+      reportTerminalGeometry(state.termTask, term.cols, term.rows);
+    }
   } catch (_) {}
 }
 
@@ -235,6 +251,7 @@ export function openTerminal(id) {
 }
 
 export function closeTerminal() {
+  clearTimeout(geometryReportTimer);
   configureTerminalInput(term, false);
   state.termTask = null; // 停止向已关闭的弹窗追加日志
   termLogs = [];
@@ -248,13 +265,30 @@ export function closeTerminal() {
   termInteractive = false;
 }
 
+// 详情页交互终端跟随容器尺寸：侧栏/窗口变化时重新 fit 并同步给 tmux。
+let taskTermFit = null;
+let taskTermResizeObserver = null;
+function observeTaskTerminalGeometry() {
+  const host = document.getElementById("taskTermX");
+  if (!host || taskTermResizeObserver) return;
+  taskTermResizeObserver = new ResizeObserver(() => {
+    if (!taskTerm || !taskTermFit) return;
+    try { taskTermFit.fit(); } catch (_) {}
+    reportTerminalGeometry(taskTermTask, taskTerm.cols, taskTerm.rows);
+  });
+  taskTermResizeObserver.observe(host);
+}
+
 // 详情页中的交互式任务不能按普通日志逐行排版。TUI 输出的是带光标移动、
-// 擦除和同步刷新指令的 80×24 TUI；用第二个只读 xterm 按原始尺寸重放，
-// 才能得到与 tmux pane 一致的画面。
+// 擦除和同步刷新指令的 ANSI 控制序列流；用只读 xterm 按与 tmux 窗口同步
+// 的尺寸重放，才能得到与 pane 一致的画面。
 export function closeTaskTerminal() {
   if (taskTerm) {
     try { taskTerm.dispose(); } catch (_) {}
   }
+  taskTermResizeObserver?.disconnect();
+  taskTermResizeObserver = null;
+  taskTermFit = null;
   taskTerm = null;
   taskTermTask = null;
   taskTermLogs = [];
@@ -267,10 +301,14 @@ export function openTaskTerminal(id, logs = [], running = false) {
   taskTermTask = id;
   taskTermLogs = [...logs];
   taskTerm = new Terminal(terminalOptions(true, running));
+  taskTermFit = new FitAddon.FitAddon();
+  taskTerm.loadAddon(taskTermFit);
   taskTerm.open(host);
-  taskTerm.resize(INTERACTIVE_TERM_COLS, INTERACTIVE_TERM_ROWS);
+  taskTermFit.fit();
   taskTerm.onData(keys => queueTerminalKeystrokes(id, keys));
   configureTerminalInput(taskTerm, running);
+  observeTaskTerminalGeometry();
+  reportTerminalGeometry(id, taskTerm.cols, taskTerm.rows);
   writeTerminalLogs(taskTerm, taskTermLogs, "（交互终端等待输出）");
 }
 

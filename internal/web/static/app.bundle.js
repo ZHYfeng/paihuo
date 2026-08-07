@@ -1110,6 +1110,18 @@
     const task = state.tasks.find((t) => t.id === taskID);
     return task?.run_mode === "interactive" && task?.status === "running";
   }
+  var geometryReportTimer = null;
+  function reportTerminalGeometry(taskID, cols, rows) {
+    if (!taskID || !cols || !rows) return;
+    clearTimeout(geometryReportTimer);
+    geometryReportTimer = setTimeout(() => {
+      api(`/api/tasks/${taskID}/resize`, {
+        method: "POST",
+        body: JSON.stringify({ cols, rows })
+      }).catch(() => {
+      });
+    }, 150);
+  }
   async function flushTerminalKeystrokes(taskID, queue) {
     queue.sending = true;
     try {
@@ -1171,8 +1183,10 @@
     const host = document.getElementById("termX");
     if (!host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
     try {
-      if (termInteractive) term.resize(INTERACTIVE_TERM_COLS, INTERACTIVE_TERM_ROWS);
-      else termFit?.fit();
+      termFit?.fit();
+      if (termInteractive && state.termTask) {
+        reportTerminalGeometry(state.termTask, term.cols, term.rows);
+      }
     } catch (_) {
     }
   }
@@ -1281,6 +1295,7 @@
     });
   }
   function closeTerminal() {
+    clearTimeout(geometryReportTimer);
     configureTerminalInput(term, false);
     state.termTask = null;
     termLogs = [];
@@ -1293,6 +1308,21 @@
     document.getElementById("termX")?.classList.remove("interactive-term-body");
     termInteractive = false;
   }
+  var taskTermFit = null;
+  var taskTermResizeObserver = null;
+  function observeTaskTerminalGeometry() {
+    const host = document.getElementById("taskTermX");
+    if (!host || taskTermResizeObserver) return;
+    taskTermResizeObserver = new ResizeObserver(() => {
+      if (!taskTerm || !taskTermFit) return;
+      try {
+        taskTermFit.fit();
+      } catch (_) {
+      }
+      reportTerminalGeometry(taskTermTask, taskTerm.cols, taskTerm.rows);
+    });
+    taskTermResizeObserver.observe(host);
+  }
   function closeTaskTerminal() {
     if (taskTerm) {
       try {
@@ -1300,6 +1330,9 @@
       } catch (_) {
       }
     }
+    taskTermResizeObserver?.disconnect();
+    taskTermResizeObserver = null;
+    taskTermFit = null;
     taskTerm = null;
     taskTermTask = null;
     taskTermLogs = [];
@@ -1311,10 +1344,14 @@
     taskTermTask = id;
     taskTermLogs = [...logs];
     taskTerm = new Terminal(terminalOptions(true, running));
+    taskTermFit = new FitAddon.FitAddon();
+    taskTerm.loadAddon(taskTermFit);
     taskTerm.open(host);
-    taskTerm.resize(INTERACTIVE_TERM_COLS, INTERACTIVE_TERM_ROWS);
+    taskTermFit.fit();
     taskTerm.onData((keys) => queueTerminalKeystrokes(id, keys));
     configureTerminalInput(taskTerm, running);
+    observeTaskTerminalGeometry();
+    reportTerminalGeometry(id, taskTerm.cols, taskTerm.rows);
     writeTerminalLogs(taskTerm, taskTermLogs, "\uFF08\u4EA4\u4E92\u7EC8\u7AEF\u7B49\u5F85\u8F93\u51FA\uFF09");
   }
   function focusTaskTerminal() {

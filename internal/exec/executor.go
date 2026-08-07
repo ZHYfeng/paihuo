@@ -763,6 +763,21 @@ func (e *Executor) validateInteractiveInputTarget(taskID int64) error {
 	return nil
 }
 
+// Resize 同步浏览器 xterm 的尺寸到交互任务窗口。只对运行中的交互式任务
+// 生效；任务结束或窗口丢失后由 tmuxRunner.Resize 拒绝。
+func (e *Executor) Resize(taskID int64, cols, rows int) error {
+	if err := e.validateInteractiveInputTarget(taskID); err != nil {
+		return err
+	}
+	if cols < minInteractiveCols || cols > maxInteractiveCols {
+		return fmt.Errorf("终端列数必须在 %d-%d 之间", minInteractiveCols, maxInteractiveCols)
+	}
+	if rows < minInteractiveRows || rows > maxInteractiveRows {
+		return fmt.Errorf("终端行数必须在 %d-%d 之间", minInteractiveRows, maxInteractiveRows)
+	}
+	return e.runner.Resize(taskID, cols, rows)
+}
+
 // SendInput 将一条人工消息送入正在运行的交互式任务。输入必须是单行，
 // 以保证它在 agent TUI 中是一条原子消息；复杂的初始指令仍由任务内容承载。
 func (e *Executor) SendInput(taskID int64, text string) error {
@@ -805,6 +820,11 @@ func (e *Executor) SendKeystrokes(taskID int64, keys string) error {
 }
 
 const (
+	// 交互终端尺寸上下限。浏览器端 xterm fit 后的实际尺寸在此范围内同步到
+	// tmux；下限避免 resize-window 拒绝极小窗口，上限防止误传巨值刷爆 pane。
+	minInteractiveCols, maxInteractiveCols = 20, 400
+	minInteractiveRows, maxInteractiveRows = 5, 120
+
 	// detachedResultSettleTimeout 只适用于已确认独立 Codex service 正在收尾
 	// 或已经结束、但 agent-exit-code 尚未写入的最终结算窗口。该文件由同一
 	// agent wrapper 在退出前原子写入；15 秒覆盖 systemd --collect 与文件

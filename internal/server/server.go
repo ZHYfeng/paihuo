@@ -188,6 +188,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("DELETE /api/tasks/{id}", s.deleteTask)
 	m.HandleFunc("POST /api/tasks/{id}/resume", s.resumeTask)
 	m.HandleFunc("POST /api/tasks/{id}/input", s.sendTaskInput)
+	m.HandleFunc("POST /api/tasks/{id}/resize", s.resizeTask)
 	m.HandleFunc("GET /api/tasks/{id}/logs", s.getTaskLogs)
 	m.HandleFunc("GET /api/tasks/{id}/diff", s.taskDiff)
 	m.HandleFunc("GET /api/tasks/{id}/children", s.getTaskChildren)
