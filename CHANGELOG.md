@@ -14,6 +14,9 @@ This file records notable user-facing and maintainer-facing changes. The format 
 
 ### Changed
 
+- **任务 tmux 窗口名加 `ph-` 前缀**（`ph-task-<ID>`）：tmux 对窗口名做唯一前缀匹配，外部命令 `kill-window -t paihuo:task-1` 会因 `task-1` 是 `task-116` 等的前缀而误杀任务窗口（任务 116/123 因此两次失败）；加前缀后此类输入不再匹配任务窗口（报错或仅命中 control 回退）。运行目录仍为 `task-<ID>`，与历史任务目录/归档兼容。
+- 任务窗口创建后切回 control 为会话当前窗口：外部 kill-window 目标解析回退时不再以任务窗口为靶。
+- 窗口消失且无退出码时增加 3 秒宽限重读：正常完成的短任务不再因退出码落盘竞态被误判为窗口丢失。
 - 「结束会话」按 CLI 发送正确的退出命令：pi 为 `/quit`（`/exit` 只会被当普通对话消息，pi 不会退出），其余 CLI（omp/opencode/claude/codex）为 `/exit`。新增 `POST /api/tasks/{id}/end-session` 由后端按角色 CLI 决定命令，前端不再硬编码。
 - 交互式任务终端不再固定 80×24：浏览器 xterm 按容器自适应（FitAddon），尺寸经新增的 `POST /api/tasks/{id}/resize` 同步给 tmux 窗口，agent 收到 SIGWINCH 后按新画布重绘 TUI（任务启动默认仍为 80×24，打开终端后即跟随浏览器）。
 - 移除已废弃的 `POST /api/workspace/{id}/merge` 手工合并端点（代码合并在合并任务成功结算时自动执行，前端早已不再调用）。

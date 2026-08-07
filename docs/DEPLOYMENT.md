@@ -155,12 +155,18 @@ ls -t /home/yu/paihuo/paihuo.pre-* | tail -n +2 | xargs -r rm -f
 ## 6. 观察与运维
 
 - **任务执行**：所有任务运行在专用 tmux server（`tmux -L paihuo`）的
-  `paihuo` session 中，活动任务各占 `task-<id>` window。服务重启会重新
-  接管仍在运行的 window；如需在服务器上直接观察：
+  `paihuo` session 中，活动任务各占 `ph-task-<id>` window（带 `ph-` 前缀，
+  避免 `kill-window -t paihuo:task-1` 这类输入因 tmux 窗口名前缀匹配误杀
+  任务窗口）。服务重启会重新接管仍在运行的 window；如需在服务器上直接观察：
 
   ```bash
   tmux -L paihuo attach -t paihuo
   ```
+
+  > ⚠ **不要在 attach 后执行 `kill-window`/`kill-pane` 结束任务**：tmux 直接
+  > 杀窗口会让 run.sh 来不及写退出码，任务必然结算为 failed（且无法恢复）；
+  > 结束任务请用 Web 详情页的「结束会话」按钮（pi 发 `/quit`、其余 CLI 发
+  > `/exit`，agent 正常退出并按成功结算）。
 
 - **自动清理**：服务每小时执行一次——按 `retention_days` 删除超期历史、
   按 `worktree_retention_days`（默认 7 天）清理过期 worktree、清理孤儿

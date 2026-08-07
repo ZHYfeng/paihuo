@@ -103,7 +103,11 @@ func newTmuxRunnerAt(sessionsRoot, socket string) *tmuxRunner {
 }
 
 func (r *tmuxRunner) taskName(taskID int64) string {
-	return fmt.Sprintf("task-%d", taskID)
+	// 带 ph- 前缀：tmux 对窗口名做唯一前缀匹配，外部命令（如
+	// `kill-window -t paihuo:task-1`）会因 task-1 是 task-116 的前缀而误杀
+	// 任务窗口；加前缀后这类输入不再匹配任何任务窗口（只会报错或命中
+	// 无害的 control 回退）。
+	return fmt.Sprintf("ph-task-%d", taskID)
 }
 
 func (r *tmuxRunner) target(taskID int64) string {
@@ -111,7 +115,8 @@ func (r *tmuxRunner) target(taskID int64) string {
 }
 
 func (r *tmuxRunner) taskDir(taskID int64) string {
-	return filepath.Join(r.root, r.taskName(taskID))
+	// 运行目录保持 task-<ID>：与历史任务目录/归档兼容（删除任务时按此清理）。
+	return filepath.Join(r.root, fmt.Sprintf("task-%d", taskID))
 }
 
 // skillManifestPath 保存角色技能副本的清单。它位于任务运行目录而不是
@@ -339,6 +344,10 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, op
 	if err := r.command(cmdArgs...); err != nil {
 		return err
 	}
+	// 任务窗口创建后立即切回 control：tmux 对不存在的 target（如外部误用
+	// `kill-window -t paihuo:task-1`）会回退到「会话当前窗口」，不能让任务
+	// 窗口成为回退目标而被误杀。paihuo 自身的命令都带显式 target，不受影响。
+	_ = r.command("select-window", "-t", r.session+":control")
 	r.recordLifecycle(taskID, "window_created", "target="+r.target(taskID))
 	if options.TerminalColumns > 0 && options.TerminalRows > 0 {
 		if err := r.command("set-window-option", "-t", r.target(taskID), "window-size", "manual"); err != nil {

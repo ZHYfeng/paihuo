@@ -943,6 +943,27 @@ func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task)
 		awaitingResultSince = time.Time{}
 		unknownQuietSince = time.Time{}
 		if !obs.Alive {
+			// 窗口消失时退出码文件可能仍在落盘（run.sh 先写退出码再退出，但
+			// 外部 kill-window 可能恰好在写入窗口内发生）。短暂宽限后重读一次：
+			// 正常完成的短任务不再被误判为窗口丢失，真异常仍按原路径结算失败。
+			select {
+			case <-serviceCtx.Done():
+			case <-taskCtx.Done():
+			case <-time.After(3 * time.Second):
+			}
+			obs, err = e.runner.Poll(tk.ID, tk.TmuxLogOffset)
+			if err != nil {
+				return -1, err
+			}
+			if err := e.syncTmuxOutput(tk, obs); err != nil {
+				return -1, err
+			}
+			if obs.Done {
+				return obs.ExitCode, exitError(obs.ExitCode)
+			}
+			if obs.Alive {
+				continue
+			}
 			return -1, tmuxWindowLostError{taskID: tk.ID}
 		}
 		select {
