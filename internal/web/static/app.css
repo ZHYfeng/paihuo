@@ -3151,3 +3151,65 @@ a.project-card:hover { color: inherit; text-decoration: none; }
   .p-task-row .t { min-width: 0; }
   .p-task-row .a { max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
+
+/* V10 · 移动端任务首屏
+   指标是辅助信息，不能把待办任务推到首屏之外；小屏下改成紧凑的横向指标带，
+   同时收紧工作台和看板的上下留白，任务卡片保持纵向滚动。 */
+@media (max-width: 720px) {
+  .page-content > .board-stats,
+  #dashShell .dashboard-stats {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0;
+    margin: 8px 12px 0;
+    padding: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    border-radius: 13px;
+  }
+
+  .page-content > .board-stats::-webkit-scrollbar,
+  #dashShell .dashboard-stats::-webkit-scrollbar { display: none; }
+
+  .page-content > .board-stats > .stat-chip,
+  #dashShell .dashboard-stats > .stat-chip {
+    flex: 0 0 124px;
+    min-height: 64px;
+    padding: 10px 10px 9px 15px;
+    border-right: 1px solid var(--border) !important;
+    border-bottom: 0 !important;
+  }
+
+  .page-content > .board-stats > .stat-chip:last-child,
+  #dashShell .dashboard-stats > .stat-chip:last-child { border-right: 0 !important; }
+
+  .page-content > .board-stats > .stat-chip b,
+  #dashShell .dashboard-stats > .stat-chip b {
+    font-size: 17px;
+    line-height: 20px;
+  }
+
+  .page-content > .board-stats > .stat-chip .sc-dot,
+  #dashShell .dashboard-stats > .stat-chip .sc-dot { height: 24px; }
+
+  #dashShell .dash-grid {
+    gap: 16px;
+    padding: 12px 12px 24px;
+  }
+
+  #dashShell .dash-sec-head {
+    min-height: 28px;
+    margin-bottom: 8px;
+  }
+
+  #boardShell > .toolbar {
+    padding: 6px 12px;
+    gap: 6px;
+  }
+
+  #boardShell .board-view {
+    padding: 10px 12px 20px;
+    gap: 10px;
+  }
+}
