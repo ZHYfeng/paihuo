@@ -871,6 +871,10 @@ func TestExecutorCodexNonGitProjectSkipGitCheckAndSkillMountLifecycle(t *testing
 	origHome := os.Getenv("HOME")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// 本用例验证 HOME/.agents/skills 回退路径。开发机通常设置了
+	// CODEX_HOME；若继承它，生产代码会按设计优先挂载到
+	// CODEX_HOME/skills，而 mock 仍检查临时 HOME，产生环境相关的假失败。
+	t.Setenv("CODEX_HOME", "")
 	t.Cleanup(func() { _ = os.Setenv("HOME", origHome) })
 
 	// 非 git 项目目录
