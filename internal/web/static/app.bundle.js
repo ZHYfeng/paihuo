@@ -2649,9 +2649,11 @@
       ${reorderable ? `<span class="task-drag-handle" title="\u62D6\u52A8\u8C03\u6574\u6267\u884C\u987A\u5E8F" aria-label="\u62D6\u52A8\u8C03\u6574\u6267\u884C\u987A\u5E8F">${icon("grip")}</span>` : ""}
       <span class="num">#${t.id}</span>
       <a class="t card-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a>
-      ${merge ? `<span class="chip merge">\u5408\u5E76 #${t.merge_of}</span>` : ""}
-      ${merge ? "" : dependencyChip(t)}
-      ${!merge && t.status === "queued" && dependencyInfo(t).state === "blocked" ? `<span class="chip dependency blocked" title="${esc(dependencyInfo(t).reason)}">${esc(dependencyInfo(t).stateLabel || "\u7B49\u5F85\u524D\u5E8F")}</span>` : ""}
+      <span class="task-row-tags">
+        ${merge ? `<span class="chip merge">\u5408\u5E76 #${t.merge_of}</span>` : ""}
+        ${merge ? "" : dependencyChip(t)}
+        ${!merge && t.status === "queued" && dependencyInfo(t).state === "blocked" ? `<span class="chip dependency blocked" title="${esc(dependencyInfo(t).reason)}">${esc(dependencyInfo(t).stateLabel || "\u7B49\u5F85\u524D\u5E8F")}</span>` : ""}
+      </span>
       <span class="a">${t.agent_name ? `<span class="avatar sm">${esc(t.agent_name.slice(0, 1))}</span>${esc(t.agent_name)}` : "-"}</span>
       <span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>
       ${orderActions}

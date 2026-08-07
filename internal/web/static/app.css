@@ -1057,6 +1057,7 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
 .p-task-row:hover { border-color: var(--border-strong); background: var(--raised); }
 .p-task-row .num { font-size: 11px; color: var(--fg-faint); font-variant-numeric: tabular-nums; flex-shrink: 0; }
 .p-task-row .t { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p-task-row .task-row-tags { display: contents; }
 .p-task-row .a { font-size: 12px; color: var(--fg-muted); flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; }
 .p-task-row .ops { display: flex; gap: 4px; flex-shrink: 0; }
 .sortable-task-row { cursor: grab; user-select: none; }
@@ -1815,6 +1816,95 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   .task-section-title { flex-wrap: wrap; }
   .task-section-title .section-note { order: 3; flex: 1 0 100%; margin-left: 0; }
   .task-order-actions .icon-btn { width: 44px; height: 44px; }
+
+  /* 项目详情中的任务行在窄屏下变为三层卡片，避免标题和操作互相挤压。 */
+  #projectDetailShell .p-task-row {
+    display: grid;
+    grid-template-columns: 20px 30px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "handle id title actions"
+      "handle id tags status"
+      "handle id agent order";
+    gap: 8px;
+    align-items: center;
+    padding: 12px;
+  }
+  /* 已完成、失败及合并任务没有拖拽句柄，不应为隐藏的首列保留空间。 */
+  #projectDetailShell .p-task-row:not(.sortable-task-row) {
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "id title actions"
+      "id tags status"
+      "id agent order";
+  }
+  #projectDetailShell .p-task-row > * { min-width: 0; }
+  #projectDetailShell .p-task-row .task-drag-handle {
+    grid-area: handle;
+    align-self: start;
+    padding-top: 3px;
+  }
+  #projectDetailShell .p-task-row .num {
+    grid-area: id;
+    align-self: start;
+    padding-top: 3px;
+  }
+  #projectDetailShell .p-task-row .t {
+    grid-area: title;
+    display: -webkit-box;
+    max-height: 36px;
+    line-height: 18px;
+    white-space: normal;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  #projectDetailShell .p-task-row .task-row-tags {
+    grid-area: tags;
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  #projectDetailShell .p-task-row .task-row-tags .chip {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #projectDetailShell .p-task-row .a {
+    grid-area: agent;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #projectDetailShell .p-task-row .badge {
+    grid-area: status;
+    justify-self: end;
+    white-space: nowrap;
+  }
+  #projectDetailShell .p-task-row .task-order-actions {
+    grid-area: order;
+    justify-self: end;
+    min-height: 44px;
+  }
+  #projectDetailShell .p-task-row .ops {
+    grid-area: actions;
+    justify-content: flex-end;
+    min-height: 44px;
+  }
+  #projectDetailShell .p-task-row .ops .btn {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0;
+    font-size: 0;
+  }
+  #projectDetailShell .p-task-row .ops .btn .ic,
+  #projectDetailShell .p-task-row .task-order-actions .ic { width: 16px; height: 16px; }
   .prop-row { grid-template-columns: 72px minmax(0, 1fr); }
   .row { flex-direction: column; gap: 0; }
   .tab-bar { overflow-x: auto; padding: 0 12px; }

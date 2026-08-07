@@ -193,9 +193,11 @@ export function renderProjectDetail(p, s, tasks) {
       ${reorderable ? `<span class="task-drag-handle" title="拖动调整执行顺序" aria-label="拖动调整执行顺序">${icon("grip")}</span>` : ""}
       <span class="num">#${t.id}</span>
       <a class="t card-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a>
-      ${merge ? `<span class="chip merge">合并 #${t.merge_of}</span>` : ""}
-      ${merge ? "" : dependencyChip(t)}
-      ${!merge && t.status === "queued" && dependencyInfo(t).state === "blocked" ? `<span class="chip dependency blocked" title="${esc(dependencyInfo(t).reason)}">${esc(dependencyInfo(t).stateLabel || "等待前序")}</span>` : ""}
+      <span class="task-row-tags">
+        ${merge ? `<span class="chip merge">合并 #${t.merge_of}</span>` : ""}
+        ${merge ? "" : dependencyChip(t)}
+        ${!merge && t.status === "queued" && dependencyInfo(t).state === "blocked" ? `<span class="chip dependency blocked" title="${esc(dependencyInfo(t).reason)}">${esc(dependencyInfo(t).stateLabel || "等待前序")}</span>` : ""}
+      </span>
       <span class="a">${t.agent_name ? `<span class="avatar sm">${esc(t.agent_name.slice(0, 1))}</span>${esc(t.agent_name)}` : "-"}</span>
       <span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span>
       ${orderActions}
