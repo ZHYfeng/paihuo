@@ -49,7 +49,7 @@ func TestApproveReviewTaskSnapshotsChangesAndQueuesMergeAgent(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewHub()
 	sessionsRoot := filepath.Join(base, "sessions")
-	executor := paiexec.New(st, hub, sessionsRoot, "review-merge-test.db")
+	executor := paiexec.NewForTest(st, hub, sessionsRoot, "review-merge-test.db", "review-merge-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", filepath.Join(base, "skills"))
 	agentID, err := st.CreateAgent(store.Agent{Name: "pi", CLI: "pi", Enabled: true})
 	if err != nil {
@@ -132,7 +132,7 @@ func TestDeleteTaskRemovesTaskTreeWorktrees(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewHub()
 	sessionsRoot := filepath.Join(base, "sessions")
-	executor := paiexec.New(st, hub, sessionsRoot, "delete-worktree-test.db")
+	executor := paiexec.NewForTest(st, hub, sessionsRoot, "delete-worktree-test.db", "delete-worktree-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", filepath.Join(base, "skills"))
 	agentID, err := st.CreateAgent(store.Agent{Name: "pi", CLI: "pi", Enabled: true})
 	if err != nil {
@@ -210,7 +210,7 @@ func TestWorkspaceMergeGuards(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewHub()
-	executor := paiexec.New(st, hub, t.TempDir(), "workspace-merge-guard-test.db")
+	executor := paiexec.NewForTest(st, hub, t.TempDir(), "workspace-merge-guard-test.db", "workspace-merge-guard-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
 	taskID, err := st.CreateTask(store.Task{Title: "ordinary", Status: store.StatusSucceeded, Perm: store.PermFull})
 	if err != nil {

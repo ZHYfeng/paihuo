@@ -75,6 +75,15 @@ func New(st *store.Store, hub *events.Hub, sessionsRoot, instanceID string) *Exe
 	}
 }
 
+// NewForTest 与 New 相同，但 tmux runner 使用独立 socket，避免测试触碰
+// 生产 tmux 服务器（New 的 runner 固定使用 -L paihuo 与 session paihuo，
+// 与线上实例共用同一 tmux server）。socket 必须是合法的 tmux socket 名。
+func NewForTest(st *store.Store, hub *events.Hub, sessionsRoot, instanceID, socket string) *Executor {
+	e := New(st, hub, sessionsRoot, instanceID)
+	e.runner = newTmuxRunnerAt(sessionsRoot, socket)
+	return e
+}
+
 func (e *Executor) Start(ctx context.Context) {
 	// 启动时就建立唯一的专用 session。即使暂时没有任务，运维也可直接
 	// attach 观察；实际任务只会增减各自的 task-<id> window。

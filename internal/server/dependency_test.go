@@ -21,7 +21,7 @@ func TestCreateTaskDefaultsToWeakProjectDependencyAndProtectsReferencedDelete(t 
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewHub()
-	executor := exec.New(st, hub, t.TempDir(), "server-dependency-test.db")
+	executor := exec.NewForTest(st, hub, t.TempDir(), "server-dependency-test.db", "server-dependency-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
 	agentID, err := st.CreateAgent(store.Agent{Name: "agent", CLI: "pi", Enabled: true})
 	if err != nil {
@@ -119,7 +119,7 @@ func TestReorderProjectTasksEndpoint(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewHub()
-	executor := exec.New(st, hub, t.TempDir(), "server-reorder-test.db")
+	executor := exec.NewForTest(st, hub, t.TempDir(), "server-reorder-test.db", "server-reorder-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
 	agentID, err := st.CreateAgent(store.Agent{Name: "order-agent", CLI: "pi", Enabled: true})
 	if err != nil {

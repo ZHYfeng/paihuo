@@ -21,7 +21,7 @@ func TestCreateInteractiveTaskSupportsEveryAgentAndDefaultsRemainBatch(t *testin
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewHub()
-	executor := exec.New(st, hub, t.TempDir(), "server-input-test.db")
+	executor := exec.NewForTest(st, hub, t.TempDir(), "server-input-test.db", "server-input-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
 
 	agentIDs := make(map[string]int64)
@@ -99,7 +99,7 @@ func TestInteractiveInputRequiresExactlyOnePayloadMode(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewHub()
-	executor := exec.New(st, hub, t.TempDir(), "server-input-payload-test.db")
+	executor := exec.NewForTest(st, hub, t.TempDir(), "server-input-payload-test.db", "server-input-payload-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
 	agentID, err := st.CreateAgent(store.Agent{Name: "pi", CLI: "pi", Enabled: true})
 	if err != nil {
@@ -132,7 +132,7 @@ func TestPatchTaskChangesAssignedAgent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewHub()
-	executor := exec.New(st, hub, t.TempDir(), "server-task-agent-patch-test.db")
+	executor := exec.NewForTest(st, hub, t.TempDir(), "server-task-agent-patch-test.db", "server-task-agent-patch-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
 
 	fromID, err := st.CreateAgent(store.Agent{Name: "from", CLI: "pi", Enabled: true, ProjectDir: "/from"})
@@ -225,7 +225,7 @@ func TestResumeTaskRequeuesOriginalTask(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewHub()
-	executor := exec.New(st, hub, t.TempDir(), "server-resume-test.db")
+	executor := exec.NewForTest(st, hub, t.TempDir(), "server-resume-test.db", "server-resume-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
 
 	agentID, err := st.CreateAgent(store.Agent{Name: "pi", CLI: "pi", Enabled: true})
@@ -296,7 +296,7 @@ func TestResumeTaskDoesNotBypassExistingMergeTask(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewHub()
-	executor := exec.New(st, hub, t.TempDir(), "server-resume-merge-test.db")
+	executor := exec.NewForTest(st, hub, t.TempDir(), "server-resume-merge-test.db", "server-resume-merge-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
 	agentID, err := st.CreateAgent(store.Agent{Name: "pi", CLI: "pi", Enabled: true})
 	if err != nil {

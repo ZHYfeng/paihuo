@@ -20,7 +20,7 @@ func TestAgentMaxConcurrencyDefaultsValidatesAndUpdates(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewHub()
-	executor := exec.New(st, hub, t.TempDir(), "server-agent-concurrency-test.db")
+	executor := exec.NewForTest(st, hub, t.TempDir(), "server-agent-concurrency-test.db", "server-agent-concurrency-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
 
 	create := func(body string) (*httptest.ResponseRecorder, store.Agent) {

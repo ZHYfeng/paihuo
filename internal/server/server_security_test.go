@@ -24,7 +24,7 @@ func newSecurityTestServer(t *testing.T, token string) *Server {
 
 	root := t.TempDir()
 	hub := events.NewHub()
-	executor := paiexec.New(st, hub, filepath.Join(root, "sessions"), filepath.Join(root, "paihuo.db"))
+	executor := paiexec.NewForTest(st, hub, filepath.Join(root, "sessions"), filepath.Join(root, "paihuo.db"), "paihuo-security-test")
 	return New(st, hub, executor, sched.New(st, hub, executor), token, filepath.Join(root, "skills"))
 }
 
