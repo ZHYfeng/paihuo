@@ -718,6 +718,10 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		fail(err.Error())
 		return
 	}
+	// 记录窗口初始尺寸：任务结束后前端按此重放最后画面。
+	if !batch {
+		_ = e.st.UpdateTerminalSize(tk.ID, options.TerminalColumns, options.TerminalRows)
+	}
 	code, runErr := e.waitTmux(ctx, rctx, &tk)
 	e.finishRun(tk, code, runErr, rctx.Err() != nil)
 }
@@ -784,7 +788,11 @@ func (e *Executor) Resize(taskID int64, cols, rows int) error {
 	if rows < minInteractiveRows || rows > maxInteractiveRows {
 		return fmt.Errorf("终端行数必须在 %d-%d 之间", minInteractiveRows, maxInteractiveRows)
 	}
-	return e.runner.Resize(taskID, cols, rows)
+	if err := e.runner.Resize(taskID, cols, rows); err != nil {
+		return err
+	}
+	// 同步成功后记录尺寸，供任务结束后按原尺寸重放画面。
+	return e.st.UpdateTerminalSize(taskID, cols, rows)
 }
 
 // EndSession 向运行中的交互式任务发送该 CLI 的退出命令（pi 为 /quit，

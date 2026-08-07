@@ -1065,9 +1065,11 @@
   var termInteractive = false;
   var termGeometryObserver = null;
   var termViewportResizeHandler = null;
+  var termMode = "logs";
   var taskTerm = null;
   var taskTermTask = null;
   var taskTermLogs = [];
+  var taskTermMode = "logs";
   var terminalKeyQueues = /* @__PURE__ */ new Map();
   var INTERACTIVE_TERM_COLS = 80;
   var INTERACTIVE_TERM_ROWS = 24;
@@ -1093,9 +1095,9 @@
     brightCyan: "#67e8f9",
     brightWhite: "#f1f5f9"
   };
-  function terminalOptions(interactive = false, running = false) {
+  function terminalOptions(interactive = false, running = false, size = null) {
     return {
-      ...interactive ? { cols: INTERACTIVE_TERM_COLS, rows: INTERACTIVE_TERM_ROWS } : {},
+      ...interactive ? { cols: size?.cols ?? INTERACTIVE_TERM_COLS, rows: size?.rows ?? INTERACTIVE_TERM_ROWS } : {},
       fontFamily: "var(--font-mono)",
       fontSize: 12.5,
       lineHeight: 1.35,
@@ -1178,13 +1180,40 @@
       target.write(String(l.content ?? "") + "\r\n", index === logs.length - 1 ? () => target.scrollToBottom() : void 0);
     });
   }
+  function scaleTerminalToContainer(term2, host) {
+    const el = term2?.element;
+    if (!el || !host) return;
+    const rowsEl = el.querySelector(".xterm-rows");
+    const natW = rowsEl?.offsetWidth || el.offsetWidth;
+    const natH = rowsEl?.offsetHeight || el.offsetHeight;
+    const padW = el.offsetWidth - el.clientWidth;
+    const padH = el.offsetHeight - el.clientHeight;
+    const cw = host.clientWidth, ch = host.clientHeight;
+    if (!natW || !natH || !cw || !ch) return;
+    const visW = natW + padW, visH = natH + padH;
+    const s = Math.min(cw / visW, ch / visH);
+    el.style.transformOrigin = "0 0";
+    el.style.transform = `scale(${s}) translate(${(cw - visW * s) / 2 / s}px, ${(ch - visH * s) / 2 / s}px)`;
+  }
+  function scaleTaskTerminalToContainer() {
+    const host = document.getElementById("taskTermX");
+    if (!taskTerm || !host) return;
+    scaleTerminalToContainer(taskTerm, host);
+  }
+  function scheduleRepeatedScale(fn) {
+    for (const ms of [80, 250, 600]) setTimeout(fn, ms);
+  }
   function syncFullscreenTerminalGeometry() {
     if (!term) return;
     const host = document.getElementById("termX");
     if (!host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
     try {
+      if (termMode === "replay") {
+        scaleTerminalToContainer(term, host);
+        return;
+      }
       termFit?.fit();
-      if (termInteractive && state.termTask) {
+      if (termMode === "live" && state.termTask) {
         reportTerminalGeometry(state.termTask, term.cols, term.rows);
       }
     } catch (_) {
@@ -1263,11 +1292,17 @@
   function openTerminal(id) {
     const t = state.tasks.find((x) => x.id === id) || {};
     termInteractive = t.run_mode === "interactive";
+    termMode = termInteractive ? t.status === "running" ? "live" : "replay" : "logs";
     document.getElementById("termTitle").textContent = `${t.agent_name || ""} \xB7 #${id} \u5BF9\u8BDD`;
     document.getElementById("termModal")?.classList.toggle("interactive-terminal-modal", termInteractive);
     document.getElementById("termX")?.classList.toggle("interactive-term-body", termInteractive);
+    document.getElementById("termX")?.classList.toggle("interactive-term-replay", termMode === "replay");
     openModal("termModal");
     initTerm();
+    if (termMode === "replay") {
+      term.resize(t.terminal_cols || INTERACTIVE_TERM_COLS, t.terminal_rows || INTERACTIVE_TERM_ROWS);
+      scheduleRepeatedScale(() => syncFullscreenTerminalGeometry());
+    }
     setTimeout(syncFullscreenTerminalGeometry, 30);
     state.termTask = id;
     termLogs = [];
@@ -1305,8 +1340,9 @@
     if (bar) bar.classList.add("hidden");
     closeModal("termModal");
     document.getElementById("termModal")?.classList.remove("interactive-terminal-modal");
-    document.getElementById("termX")?.classList.remove("interactive-term-body");
+    document.getElementById("termX")?.classList.remove("interactive-term-body", "interactive-term-replay");
     termInteractive = false;
+    termMode = "logs";
   }
   var taskTermFit = null;
   var taskTermResizeObserver = null;
@@ -1314,7 +1350,12 @@
     const host = document.getElementById("taskTermX");
     if (!host || taskTermResizeObserver) return;
     taskTermResizeObserver = new ResizeObserver(() => {
-      if (!taskTerm || !taskTermFit) return;
+      if (!taskTerm) return;
+      if (taskTermMode === "replay") {
+        requestAnimationFrame(scaleTaskTerminalToContainer);
+        return;
+      }
+      if (!taskTermFit) return;
       try {
         taskTermFit.fit();
       } catch (_) {
@@ -1324,34 +1365,49 @@
     taskTermResizeObserver.observe(host);
   }
   function closeTaskTerminal() {
-    if (taskTerm) {
-      try {
-        taskTerm.dispose();
-      } catch (_) {
-      }
-    }
+    const old = taskTerm;
     taskTermResizeObserver?.disconnect();
     taskTermResizeObserver = null;
     taskTermFit = null;
     taskTerm = null;
     taskTermTask = null;
     taskTermLogs = [];
+    taskTermMode = "logs";
+    document.getElementById("logBox")?.classList.remove("interactive-term-replay");
+    if (old) setTimeout(() => {
+      try {
+        old.dispose();
+      } catch (_) {
+      }
+    }, 0);
   }
   function openTaskTerminal(id, logs = [], running = false) {
     const host = document.getElementById("taskTermX");
     if (!host) return;
+    const t = state.tasks.find((x) => x.id === id) || {};
     closeTaskTerminal();
     taskTermTask = id;
     taskTermLogs = [...logs];
-    taskTerm = new Terminal(terminalOptions(true, running));
-    taskTermFit = new FitAddon.FitAddon();
-    taskTerm.loadAddon(taskTermFit);
+    taskTermMode = running ? "live" : "replay";
+    taskTerm = new Terminal(terminalOptions(true, running, running ? null : {
+      cols: t.terminal_cols || INTERACTIVE_TERM_COLS,
+      rows: t.terminal_rows || INTERACTIVE_TERM_ROWS
+    }));
     taskTerm.open(host);
-    taskTermFit.fit();
+    if (running) {
+      taskTermFit = new FitAddon.FitAddon();
+      taskTerm.loadAddon(taskTermFit);
+      taskTermFit.fit();
+      reportTerminalGeometry(id, taskTerm.cols, taskTerm.rows);
+    }
     taskTerm.onData((keys) => queueTerminalKeystrokes(id, keys));
     configureTerminalInput(taskTerm, running);
     observeTaskTerminalGeometry();
-    reportTerminalGeometry(id, taskTerm.cols, taskTerm.rows);
+    document.getElementById("logBox")?.classList.toggle("interactive-term-replay", !running);
+    if (!running) {
+      scaleTaskTerminalToContainer();
+      scheduleRepeatedScale(scaleTaskTerminalToContainer);
+    }
     writeTerminalLogs(taskTerm, taskTermLogs, "\uFF08\u4EA4\u4E92\u7EC8\u7AEF\u7B49\u5F85\u8F93\u51FA\uFF09");
   }
   function focusTaskTerminal() {
@@ -1380,6 +1436,12 @@
     const enabled = t?.run_mode === "interactive" && t?.status === "running";
     bar?.classList.toggle("hidden", !enabled);
     configureTerminalInput(term, enabled);
+    if (t) {
+      const agent = state.agents.find((a) => a.id === t.agent_id);
+      const exitCmd = agent?.cli === "pi" ? "/quit" : "/exit";
+      const help = document.getElementById("termInputHelp");
+      if (help) help.innerHTML = `\u70B9\u51FB\u7EC8\u7AEF\u76F4\u63A5\u8F93\u5165 \xB7 Tab / \u2191 / \u2193 \u7531\u5F53\u524D CLI \u5904\u7406 \xB7 <code>${exitCmd}</code> \u7ED3\u675F`;
+    }
   }
   function focusFullscreenTerminal() {
     term?.focus();
@@ -1728,10 +1790,10 @@
     const bodyLength = (t.body || "").length;
     const createdAt = (t.created_at || "").slice(0, 16).replace("T", " ");
     const { visible: visibleLogs, errors: logErrors } = logStats();
-    const logMeta = interactive ? `${isLive ? "\u5B9E\u65F6\u753B\u9762" : "\u5DF2\u5F52\u6863\u753B\u9762"} \xB7 ${INTERACTIVE_TERM_COLS} \xD7 ${INTERACTIVE_TERM_ROWS}` : state.logsHasMore ? `\u5DF2\u52A0\u8F7D ${visibleLogs}/${state.logsTotal} \u6761` : `${visibleLogs} \u6761`;
+    const logMeta = interactive ? isLive ? "\u5B9E\u65F6\u753B\u9762 \xB7 \u8DDF\u968F\u6D4F\u89C8\u5668\u5C3A\u5BF8" : `\u5DF2\u5F52\u6863\u753B\u9762 \xB7 ${t.terminal_cols || INTERACTIVE_TERM_COLS} \xD7 ${t.terminal_rows || INTERACTIVE_TERM_ROWS}` : state.logsHasMore ? `\u5DF2\u52A0\u8F7D ${visibleLogs}/${state.logsTotal} \u6761` : `${visibleLogs} \u6761`;
     const dependencyAlert = !mergeTask && t.status === "queued" && dependency.state !== "ready" ? `<div class="task-alert"><span class="task-alert-title">${dependency.state === "skipped" ? "\u524D\u5E8F\u4EA4\u4ED8\u5DF2\u8DF3\u8FC7" : "\u7B49\u5F85\u524D\u7F6E\u4EA4\u4ED8"}</span><span>${esc(dependency.reason || "\u7B49\u5F85\u8C03\u5EA6")}</span></div>` : "";
     const input = isInteractive ? `<div class="term-input detail-input terminal-input-help">
-      <span>\u70B9\u51FB\u7EC8\u7AEF\u76F4\u63A5\u8F93\u5165 \xB7 Tab / \u2191 / \u2193 \u7531\u5F53\u524D CLI \u5904\u7406 \xB7 <code>/exit</code> \u7ED3\u675F</span>
+      <span>\u70B9\u51FB\u7EC8\u7AEF\u76F4\u63A5\u8F93\u5165 \xB7 Tab / \u2191 / \u2193 \u7531\u5F53\u524D CLI \u5904\u7406 \xB7 <code>${agent?.cli === "pi" ? "/quit" : "/exit"}</code> \u7ED3\u675F</span>
       <button class="btn sm" onclick="focusTaskTerminal()">\u805A\u7126\u8F93\u5165</button>
     </div>` : "";
     main.innerHTML = `
@@ -2157,7 +2219,7 @@
     const task = state.tasks.find((t) => t.id === state.selected);
     if (task?.run_mode === "interactive") {
       const live = ["claimed", "running"].includes(task.status);
-      meta.textContent = `${live ? "\u5B9E\u65F6\u753B\u9762" : "\u5DF2\u5F52\u6863\u753B\u9762"} \xB7 ${INTERACTIVE_TERM_COLS} \xD7 ${INTERACTIVE_TERM_ROWS}`;
+      meta.textContent = live ? "\u5B9E\u65F6\u753B\u9762 \xB7 \u8DDF\u968F\u6D4F\u89C8\u5668\u5C3A\u5BF8" : `\u5DF2\u5F52\u6863\u753B\u9762 \xB7 ${task.terminal_cols || INTERACTIVE_TERM_COLS} \xD7 ${task.terminal_rows || INTERACTIVE_TERM_ROWS}`;
       return;
     }
     const { visible, errors } = logStats();
@@ -2283,7 +2345,7 @@
     if (interactive) interactive.disabled = !agent;
     if (!agent && select.value === "interactive") select.value = "batch";
     if (help) {
-      help.textContent = agent ? `\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u4EA4\u4E92\u5F0F\u4F1A\u4FDD\u7559 ${agent.name} \u7684\u539F\u751F\u7EC8\u7AEF\uFF0C\u76F4\u5230\u4F60\u53D1\u9001 /exit\u3002` : "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u9009\u62E9\u89D2\u8272\u540E\u53EF\u542F\u7528\u5176\u4EA4\u4E92\u5F0F\u7EC8\u7AEF\u3002";
+      help.textContent = agent ? `\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u4EA4\u4E92\u5F0F\u4F1A\u4FDD\u7559 ${agent.name} \u7684\u539F\u751F\u7EC8\u7AEF\uFF0C\u76F4\u5230\u4F60\u53D1\u9001 ${agent.cli === "pi" ? "/quit" : "/exit"}\u3002` : "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u9009\u62E9\u89D2\u8272\u540E\u53EF\u542F\u7528\u5176\u4EA4\u4E92\u5F0F\u7EC8\u7AEF\u3002";
     }
   }
   function syncTaskDependency() {

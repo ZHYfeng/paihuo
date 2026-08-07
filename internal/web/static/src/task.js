@@ -393,14 +393,16 @@ export function renderDetail(t) {
   const createdAt = (t.created_at || "").slice(0, 16).replace("T", " ");
   const { visible: visibleLogs, errors: logErrors } = logStats();
   const logMeta = interactive
-    ? `${isLive ? "实时画面" : "已归档画面"} · ${INTERACTIVE_TERM_COLS} × ${INTERACTIVE_TERM_ROWS}`
+    ? isLive
+      ? "实时画面 · 跟随浏览器尺寸"
+      : `已归档画面 · ${t.terminal_cols || INTERACTIVE_TERM_COLS} × ${t.terminal_rows || INTERACTIVE_TERM_ROWS}`
     : state.logsHasMore
       ? `已加载 ${visibleLogs}/${state.logsTotal} 条`
       : `${visibleLogs} 条`;
   const dependencyAlert = !mergeTask && t.status === "queued" && dependency.state !== "ready"
     ? `<div class="task-alert"><span class="task-alert-title">${dependency.state === "skipped" ? "前序交付已跳过" : "等待前置交付"}</span><span>${esc(dependency.reason || "等待调度")}</span></div>` : "";
   const input = isInteractive ? `<div class="term-input detail-input terminal-input-help">
-      <span>点击终端直接输入 · Tab / ↑ / ↓ 由当前 CLI 处理 · <code>/exit</code> 结束</span>
+      <span>点击终端直接输入 · Tab / ↑ / ↓ 由当前 CLI 处理 · <code>${agent?.cli === "pi" ? "/quit" : "/exit"}</code> 结束</span>
       <button class="btn sm" onclick="focusTaskTerminal()">聚焦输入</button>
     </div>` : "";
   main.innerHTML = `
@@ -858,7 +860,9 @@ function updateLogMeta() {
   const task = state.tasks.find(t => t.id === state.selected);
   if (task?.run_mode === "interactive") {
     const live = ["claimed", "running"].includes(task.status);
-    meta.textContent = `${live ? "实时画面" : "已归档画面"} · ${INTERACTIVE_TERM_COLS} × ${INTERACTIVE_TERM_ROWS}`;
+    meta.textContent = live
+      ? "实时画面 · 跟随浏览器尺寸"
+      : `已归档画面 · ${task.terminal_cols || INTERACTIVE_TERM_COLS} × ${task.terminal_rows || INTERACTIVE_TERM_ROWS}`;
     return;
   }
   const { visible, errors } = logStats();
@@ -997,7 +1001,7 @@ export function syncTaskRunMode() {
   if (!agent && select.value === "interactive") select.value = "batch";
   if (help) {
     help.textContent = agent
-      ? `批处理会自动结算；交互式会保留 ${agent.name} 的原生终端，直到你发送 /exit。`
+      ? `批处理会自动结算；交互式会保留 ${agent.name} 的原生终端，直到你发送 ${agent.cli === "pi" ? "/quit" : "/exit"}。`
       : "批处理会自动结算；选择角色后可启用其交互式终端。";
   }
 }

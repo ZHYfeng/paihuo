@@ -10,9 +10,14 @@ let ignoreTopScroll = false;
 let termInteractive = false;
 let termGeometryObserver = null;
 let termViewportResizeHandler = null;
+// 全屏终端的显示模式：live=运行中（fit+resize 同步 tmux）｜replay=已结束
+// （按录制尺寸重放并缩放适配容器）｜logs=批处理日志。
+let termMode = "logs";
 let taskTerm = null;
 let taskTermTask = null;
 let taskTermLogs = [];
+// 详情页终端显示模式：live=运行中（fit+resize 同步）｜replay=已结束（缩放重放）。
+let taskTermMode = "logs";
 const terminalKeyQueues = new Map();
 
 // PaiHuo 的交互式 agent pane 由浏览器 xterm 的实时尺寸驱动：打开终端时
@@ -32,9 +37,9 @@ const TERM_THEME = {
   brightCyan: "#67e8f9", brightWhite: "#f1f5f9",
 };
 
-function terminalOptions(interactive = false, running = false) {
+function terminalOptions(interactive = false, running = false, size = null) {
   return {
-    ...(interactive ? { cols: INTERACTIVE_TERM_COLS, rows: INTERACTIVE_TERM_ROWS } : {}),
+    ...(interactive ? { cols: size?.cols ?? INTERACTIVE_TERM_COLS, rows: size?.rows ?? INTERACTIVE_TERM_ROWS } : {}),
     fontFamily: "var(--font-mono)",
     fontSize: 12.5,
     lineHeight: 1.35,
@@ -126,13 +131,53 @@ function writeTerminalLogs(target, logs, emptyMessage = "（暂无输出）") {
   });
 }
 
+// 已结束任务的终端画面按录制尺寸重放，并用 transform 缩放适配容器：
+// 录制帧无法 reflow，fit 只会造成换行错位/大片留白。缩放不改变缓冲区
+// 尺寸，xterm 按原尺寸重放，视觉上整体缩放到容器内完整显示。
+// 注意 .xterm 元素本身是块级盒子（宽度=容器宽度），真实帧宽高要从
+// .xterm-rows（cols×cellW × rows×cellH）读取，padding 另计。
+function scaleTerminalToContainer(term, host) {
+  const el = term?.element;
+  if (!el || !host) return;
+  const rowsEl = el.querySelector(".xterm-rows");
+  const natW = rowsEl?.offsetWidth || el.offsetWidth;
+  const natH = rowsEl?.offsetHeight || el.offsetHeight;
+  const padW = el.offsetWidth - el.clientWidth;
+  const padH = el.offsetHeight - el.clientHeight;
+  const cw = host.clientWidth, ch = host.clientHeight;
+  if (!natW || !natH || !cw || !ch) return;
+  const visW = natW + padW, visH = natH + padH;
+  const s = Math.min(cw / visW, ch / visH);
+  el.style.transformOrigin = "0 0";
+  // translate 处于缩放后的坐标系，除以 s 得到容器像素偏移；居中留白对称。
+  el.style.transform = `scale(${s}) translate(${(cw - visW * s) / 2 / s}px, ${(ch - visH * s) / 2 / s}px)`;
+}
+
+function scaleTaskTerminalToContainer() {
+  const host = document.getElementById("taskTermX");
+  if (!taskTerm || !host) return;
+  scaleTerminalToContainer(taskTerm, host);
+}
+
+// xterm 的字体度量在首次渲染后才确定：刚 open 时的缩放可能基于未测量
+// 的宽高（偏小），导致重放帧超出容器被裁掉最后一行。挂载后短暂重算
+// 几次直到稳定（幂等，多余计算无害；后续窗口尺寸变化由 ResizeObserver
+// 继续驱动）。
+function scheduleRepeatedScale(fn) {
+  for (const ms of [80, 250, 600]) setTimeout(fn, ms);
+}
+
 function syncFullscreenTerminalGeometry() {
   if (!term) return;
   const host = document.getElementById("termX");
   if (!host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
   try {
+    if (termMode === "replay") {
+      scaleTerminalToContainer(term, host);
+      return;
+    }
     termFit?.fit();
-    if (termInteractive && state.termTask) {
+    if (termMode === "live" && state.termTask) {
       reportTerminalGeometry(state.termTask, term.cols, term.rows);
     }
   } catch (_) {}
@@ -222,11 +267,22 @@ async function loadOlderTerminalLogs() {
 export function openTerminal(id) {
   const t = state.tasks.find(x => x.id === id) || {};
   termInteractive = t.run_mode === "interactive";
+  // 运行中的交互任务：fit + resize 同步 tmux（agent 按新画布重绘）；
+  // 已结束的交互任务：按录制尺寸重放 + 缩放适配；批处理：普通日志视图。
+  termMode = termInteractive
+    ? (t.status === "running" ? "live" : "replay")
+    : "logs";
   document.getElementById("termTitle").textContent = `${t.agent_name || ""} · #${id} 对话`;
   document.getElementById("termModal")?.classList.toggle("interactive-terminal-modal", termInteractive);
   document.getElementById("termX")?.classList.toggle("interactive-term-body", termInteractive);
+  document.getElementById("termX")?.classList.toggle("interactive-term-replay", termMode === "replay");
   openModal("termModal");
   initTerm();
+  if (termMode === "replay") {
+    // 录制尺寸可能小于初始 80×24（打开过终端后结束的任务），先对齐再缩放。
+    term.resize(t.terminal_cols || INTERACTIVE_TERM_COLS, t.terminal_rows || INTERACTIVE_TERM_ROWS);
+    scheduleRepeatedScale(() => syncFullscreenTerminalGeometry());
+  }
   setTimeout(syncFullscreenTerminalGeometry, 30);
   state.termTask = id;
   termLogs = [];
@@ -261,18 +317,26 @@ export function closeTerminal() {
   if (bar) bar.classList.add("hidden");
   closeModal("termModal");
   document.getElementById("termModal")?.classList.remove("interactive-terminal-modal");
-  document.getElementById("termX")?.classList.remove("interactive-term-body");
+  document.getElementById("termX")?.classList.remove("interactive-term-body", "interactive-term-replay");
   termInteractive = false;
+  termMode = "logs";
 }
 
-// 详情页交互终端跟随容器尺寸：侧栏/窗口变化时重新 fit 并同步给 tmux。
+// 详情页交互终端：运行中按容器 fit 并同步给 tmux（live）；已结束按录制
+// 尺寸重放并缩放适配容器（replay，agent 不会再重绘，fit 只会错位/留白）。
 let taskTermFit = null;
 let taskTermResizeObserver = null;
 function observeTaskTerminalGeometry() {
   const host = document.getElementById("taskTermX");
   if (!host || taskTermResizeObserver) return;
   taskTermResizeObserver = new ResizeObserver(() => {
-    if (!taskTerm || !taskTermFit) return;
+    if (!taskTerm) return;
+    if (taskTermMode === "replay") {
+      // 录制帧不跟随容器尺寸，只重算缩放；首次 observe 回调即完成初始适配。
+      requestAnimationFrame(scaleTaskTerminalToContainer);
+      return;
+    }
+    if (!taskTermFit) return;
     try { taskTermFit.fit(); } catch (_) {}
     reportTerminalGeometry(taskTermTask, taskTerm.cols, taskTerm.rows);
   });
@@ -283,32 +347,48 @@ function observeTaskTerminalGeometry() {
 // 擦除和同步刷新指令的 ANSI 控制序列流；用只读 xterm 按与 tmux 窗口同步
 // 的尺寸重放，才能得到与 pane 一致的画面。
 export function closeTaskTerminal() {
-  if (taskTerm) {
-    try { taskTerm.dispose(); } catch (_) {}
-  }
+  const old = taskTerm;
   taskTermResizeObserver?.disconnect();
   taskTermResizeObserver = null;
   taskTermFit = null;
   taskTerm = null;
   taskTermTask = null;
   taskTermLogs = [];
+  taskTermMode = "logs";
+  document.getElementById("logBox")?.classList.remove("interactive-term-replay");
+  // xterm 的 Viewport 在 open() 时 setTimeout(syncScrollArea)；若在下一个
+  // 宏任务前 dispose，该回调会读取已清空的 _renderer.value 抛 TypeError。
+  // 延迟到下一个宏任务再 dispose：旧终端的内部定时器先于 dispose 触发。
+  if (old) setTimeout(() => { try { old.dispose(); } catch (_) {} }, 0);
 }
 
 export function openTaskTerminal(id, logs = [], running = false) {
   const host = document.getElementById("taskTermX");
   if (!host) return;
+  const t = state.tasks.find(x => x.id === id) || {};
   closeTaskTerminal();
   taskTermTask = id;
   taskTermLogs = [...logs];
-  taskTerm = new Terminal(terminalOptions(true, running));
-  taskTermFit = new FitAddon.FitAddon();
-  taskTerm.loadAddon(taskTermFit);
+  taskTermMode = running ? "live" : "replay";
+  taskTerm = new Terminal(terminalOptions(true, running, running ? null : {
+    cols: t.terminal_cols || INTERACTIVE_TERM_COLS,
+    rows: t.terminal_rows || INTERACTIVE_TERM_ROWS,
+  }));
   taskTerm.open(host);
-  taskTermFit.fit();
+  if (running) {
+    taskTermFit = new FitAddon.FitAddon();
+    taskTerm.loadAddon(taskTermFit);
+    taskTermFit.fit();
+    reportTerminalGeometry(id, taskTerm.cols, taskTerm.rows);
+  }
   taskTerm.onData(keys => queueTerminalKeystrokes(id, keys));
   configureTerminalInput(taskTerm, running);
   observeTaskTerminalGeometry();
-  reportTerminalGeometry(id, taskTerm.cols, taskTerm.rows);
+  document.getElementById("logBox")?.classList.toggle("interactive-term-replay", !running);
+  if (!running) {
+    scaleTaskTerminalToContainer();
+    scheduleRepeatedScale(scaleTaskTerminalToContainer);
+  }
   writeTerminalLogs(taskTerm, taskTermLogs, "（交互终端等待输出）");
 }
 
@@ -337,12 +417,19 @@ export function taskTerminalText() {
 }
 
 // syncTerminalInput 与任务 SSE 同步：只有正在运行的交互式任务才能收到
-// 原始按键，任务退出后立即收起提示栏并把终端切回只读。
+// 原始按键，任务退出后立即收起提示栏并把终端切回只读。提示文案中的退出
+// 命令按 CLI 显示（pi 为 /quit，其余 /exit）。
 export function syncTerminalInput(t) {
   const bar = document.getElementById("termInputBar");
   const enabled = t?.run_mode === "interactive" && t?.status === "running";
   bar?.classList.toggle("hidden", !enabled);
   configureTerminalInput(term, enabled);
+  if (t) {
+    const agent = state.agents.find(a => a.id === t.agent_id);
+    const exitCmd = agent?.cli === "pi" ? "/quit" : "/exit";
+    const help = document.getElementById("termInputHelp");
+    if (help) help.innerHTML = `点击终端直接输入 · Tab / ↑ / ↓ 由当前 CLI 处理 · <code>${exitCmd}</code> 结束`;
+  }
 }
 
 // sendTaskInput 通过服务端再转交给专用 tmux；浏览器不接触 tmux socket，也不

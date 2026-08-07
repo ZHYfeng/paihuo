@@ -207,6 +207,36 @@ func TestTaskRunModeDefaultsBatchAndRoundTripsInteractive(t *testing.T) {
 	}
 }
 
+// 交互终端尺寸随 resize 同步持久化；任务结束后前端按此尺寸重放画面。
+func TestTaskTerminalSizePersistsAndRoundTrips(t *testing.T) {
+	s := openTest(t)
+	id, err := s.CreateTask(Task{Title: "term", Status: StatusRunning, RunMode: RunModeInteractive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk, err := s.GetTask(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk.TerminalCols != 0 || tk.TerminalRows != 0 {
+		t.Fatalf("新任务不应有终端尺寸，得到 %dx%d", tk.TerminalCols, tk.TerminalRows)
+	}
+	if err := s.UpdateTerminalSize(id, 132, 42); err != nil {
+		t.Fatal(err)
+	}
+	tk, err = s.GetTask(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk.TerminalCols != 132 || tk.TerminalRows != 42 {
+		t.Fatalf("终端尺寸未持久化，得到 %dx%d", tk.TerminalCols, tk.TerminalRows)
+	}
+	// 批处理任务也可安全调用（前端只对交互任务上报，防御性清零）。
+	if err := s.UpdateTerminalSize(id, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestApproveReviewTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 	s := openTest(t)
 	a := mustAgent(t, s, "reviewer", true)

@@ -162,6 +162,8 @@ func migrate(db *sql.DB) error {
 		"ALTER TABLE tasks ADD COLUMN dependency_mode TEXT NOT NULL DEFAULT 'none'",
 		"ALTER TABLE tasks ADD COLUMN block_on_failure INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE tasks ADD COLUMN terminal_cols INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE tasks ADD COLUMN terminal_rows INTEGER NOT NULL DEFAULT 0",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)",
 	} {
@@ -514,13 +516,13 @@ func (s *Store) DeleteAgent(id int64) error {
 // taskCols 完整列（详情页用：含完整 body，驳回重做会追加修改意见）。
 const taskCols = `t.id, t.title, t.body, t.status, t.perm, t.run_mode, t.concurrent, t.agent_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at`
+	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows`
 
 // taskColsBrief 列表列（看板/历史/项目页用）：body 截断到 400 字符，
 // 避免大提示词把列表接口载荷撑爆。列序与 taskCols 完全一致（scanTask 共用）。
 const taskColsBrief = `t.id, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.run_mode, t.concurrent, t.agent_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at`
+	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows`
 
 func scanTask(rows scanner) (Task, error) {
 	var tk Task
@@ -531,7 +533,7 @@ func scanTask(rows scanner) (Task, error) {
 	var resumeOf, mergeOf sql.NullInt64
 	err := rows.Scan(&tk.ID, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &tk.RunMode, &concurrent, &agentID, &agentName,
 		&projectID, &projectName, &tk.ProjectDir, &parentID, &dependsOn, &tk.DependencyMode, &blockOnFailure, &scheduleID, &tk.Error, &exitCode,
-		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &tk.SortOrder, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt)
+		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &tk.SortOrder, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt, &tk.TerminalCols, &tk.TerminalRows)
 	if err != nil {
 		return tk, err
 	}
@@ -1581,6 +1583,14 @@ func (s *Store) MarkTaskSucceededAwaitingMerge(sourceID int64) (bool, error) {
 // 不更新 updated_at，避免高频终端输出扰动任务的业务更新时间。
 func (s *Store) UpdateTmuxLogOffset(id int64, offset int64) error {
 	_, err := s.db.Exec("UPDATE tasks SET tmux_log_offset=? WHERE id=?", offset, id)
+	return err
+}
+
+// UpdateTerminalSize 记录交互任务终端最近一次同步到 tmux 窗口的尺寸。
+// 任务结束后前端按此尺寸重放最后画面（缩放适配容器），而不是按浏览器
+// 容器 fit 重排导致画面错位/大片留白。不更新 updated_at（同日志偏移）。
+func (s *Store) UpdateTerminalSize(id int64, cols, rows int) error {
+	_, err := s.db.Exec("UPDATE tasks SET terminal_cols=?, terminal_rows=? WHERE id=?", cols, rows, id)
 	return err
 }
 

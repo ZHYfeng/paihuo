@@ -103,12 +103,14 @@ type Task struct {
 	ExitCode       *int    `json:"exit_code"`
 	ReviewNote     string  `json:"review_note"`
 	ReviewRounds   int     `json:"review_rounds"`
-	TmuxLogOffset  int64   `json:"-"`               // 已从专用 tmux 原始日志同步到 SQLite 的字节偏移
-	WorktreeBranch string  `json:"worktree_branch"` // 任务隔离 worktree 分支（paihuo/task-<id>）
-	BaseCommit     string  `json:"base_commit"`     // 创建 worktree 时主分支 HEAD
-	ResumeOf       *int64  `json:"resume_of"`       // 续跑自哪个任务（复用其会话目录）
-	MergeOf        *int64  `json:"merge_of"`        // 合并任务整合自哪个源任务
-	SortOrder      int64   `json:"sort_order"`      // 项目内执行顺序（合并任务不参与排序）
+	TmuxLogOffset  int64   `json:"-"`                       // 已从专用 tmux 原始日志同步到 SQLite 的字节偏移
+	WorktreeBranch string  `json:"worktree_branch"`         // 任务隔离 worktree 分支（paihuo/task-<id>）
+	BaseCommit     string  `json:"base_commit"`             // 创建 worktree 时主分支 HEAD
+	ResumeOf       *int64  `json:"resume_of"`               // 续跑自哪个任务（复用其会话目录）
+	MergeOf        *int64  `json:"merge_of"`                // 合并任务整合自哪个源任务
+	SortOrder      int64   `json:"sort_order"`              // 项目内执行顺序（合并任务不参与排序）
+	TerminalCols   int     `json:"terminal_cols,omitempty"` // 交互终端最近同步尺寸（列）；0=未同步（默认 80）
+	TerminalRows   int     `json:"terminal_rows,omitempty"` // 交互终端最近同步尺寸（行）；0=未同步（默认 24）
 	CreatedAt      string  `json:"created_at"`
 	StartedAt      *string `json:"started_at"`
 	FinishedAt     *string `json:"finished_at"`

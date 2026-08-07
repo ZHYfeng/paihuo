@@ -2950,10 +2950,24 @@ a.project-card:hover { color: inherit; text-decoration: none; }
   overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y;
   background: var(--inset); scrollbar-gutter: stable;
 }
+/* 已结束任务的重放模式：录制帧按原尺寸重放 + transform 缩放适配，
+   布局盒超出容器时隐藏滚动条，避免出现多余的滚动条/滚动区。 */
+.interactive-term-body.interactive-term-replay {
+  overflow: hidden;
+}
+#termX.interactive-term-replay {
+  overflow: hidden;
+}
 .interactive-term-canvas {
   min-width: 100%; width: 100%; height: 100%;
 }
-.interactive-term-canvas .xterm { padding: 8px 10px; }
+.interactive-term-canvas .xterm {
+  padding: 8px 10px;
+}
+.interactive-term-canvas .xterm,
+#termX .xterm {
+  transform-origin: 0 0;
+}
 .interactive-term-canvas .terminal-writable,
 .interactive-terminal-modal .terminal-writable { cursor: text; }
 .terminal-input-help {

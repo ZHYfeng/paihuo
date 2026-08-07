@@ -6,6 +6,11 @@ This file records notable user-facing and maintainer-facing changes. The format 
 
 ### Added
 
+- **已结束交互任务的终端画面按录制尺寸重放并缩放适配容器**：运行中打开过终端的任务会在数据库记录最后同步的 tmux 窗口尺寸（`terminal_cols`/`terminal_rows`，Start 与每次 resize 持久化）；任务结束后详情页/全屏终端按该尺寸重放最后画面，并用 transform 缩放居中完整显示，不再按浏览器容器 fit 重排——录制帧无法 reflow，fit 只会造成长行错误换行、TUI 状态栏错位与大屏大片留白。未记录尺寸的任务回退 80×24。运行中的任务仍保持 fit + resize 同步 tmux（agent 收到 SIGWINCH 按新画布重绘）。
+- 修复 xterm 在终端被快速重建（任务 SSE 触发详情页重渲染）时的未捕获异常：`Terminal.open()` 内部 `setTimeout(syncScrollArea)` 在旧终端 dispose 后触发会读取已清空的 renderer 抛 TypeError，现在旧终端延迟到下一个宏任务再 dispose。
+- 交互终端尺寸标签不再硬编码 80×24：运行中显示「实时画面 · 跟随浏览器尺寸」，已结束显示「已归档画面 · <录制尺寸>」。
+- 终端输入提示的退出命令按 CLI 显示：pi 显示 `/quit`，其余 CLI 显示 `/exit`（此前提示一律 `/exit`，与「结束会话」按钮的实际行为不一致）。
+
 - Reproducible frontend tooling through `package.json` and `package-lock.json`.
 - `make` targets for build, test, race detection, frontend synchronization, and the full quality gate.
 - GitHub CI, CodeQL, Dependabot, issue forms, and a pull-request checklist.
