@@ -669,12 +669,13 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	if !isGitProject && agent.CLI == "codex" && agent.RoleConfig.Custom["execution_mode"] != "yolo" {
 		ro.SkipGitCheck = true
 	}
+	// 技能上下文属于角色 system prompt，不混入用户任务指令。
+	if skillPrompt := buildRoleSkillsPrompt(preparedSkills.Bindings); skillPrompt != "" {
+		ro.Role.SystemPrompt = AppendSystemPrompt(ro.Role.SystemPrompt, skillPrompt)
+	}
 	// instructions：任务指令模板，追加在提示词之前（适配器可按 CLI 映射为官方参数）
 	if instr := strings.TrimSpace(agent.RoleConfig.Instructions); instr != "" {
 		ro.Prompt = instr + "\n\n" + ro.Prompt
-	}
-	if skillPrompt := buildRoleSkillsPrompt(preparedSkills.Bindings); skillPrompt != "" {
-		ro.Prompt = skillPrompt + "\n\n" + ro.Prompt
 	}
 	// 任务专属会话目录：会话隔离（同角色多任务互不干扰）；续跑任务复用原任务会话
 	sessID := tk.ID

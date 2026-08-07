@@ -305,7 +305,7 @@ func (s *Server) runRoleStudio(parent context.Context, role store.RoleConfig, cl
 		prompt = instr + "\n\n" + prompt
 	}
 	if skillPrompt := roleStudioPreparedSkillsPrompt(role.Skills); skillPrompt != "" {
-		prompt = skillPrompt + "\n\n" + prompt
+		role.SystemPrompt = paiexec.AppendSystemPrompt(role.SystemPrompt, skillPrompt)
 	}
 	bin, args, env, err := adapter.Build(paiexec.RunOptions{
 		Dir: workdir, Prompt: prompt, Role: role,

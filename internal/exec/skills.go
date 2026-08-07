@@ -46,7 +46,7 @@ type RoleSkillMount struct {
 	ClaudePlugin   string             // claude --plugin-dir 用（RoleDir 本身）
 	OmpOverlay     string             // overlay.yml 路径（omp --config 用）
 	OpencodeConfig string             // OPENCODE_CONFIG_CONTENT JSON 串
-	Bindings       []roleSkillBinding // 任务提示词展示用
+	Bindings       []roleSkillBinding // system prompt 展示用
 	Warnings       []string           // 对账发现的非致命问题（缺技能/断裂/回退）
 }
 

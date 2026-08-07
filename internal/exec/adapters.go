@@ -229,7 +229,7 @@ func (a *ompAdapter) Schema() []Field {
 		f.Help = "按所选模型从 omp models --json 读取 thinking 档位，并原样传给 --thinking；模型未声明时不猜测"
 	}
 	if f := byKey(fs, "skills"); f != nil {
-		f.Help = "执行器把所选技能挂载为角色级技能目录（symlink 视图），经 omp --config overlay（含全局 customDirectories 合并）加载；任务提示会明确要求读取并遵循"
+		f.Help = "执行器把所选技能挂载为角色级技能目录（symlink 视图），经 omp --config overlay（含全局 customDirectories 合并）加载；system prompt 会列出已启用技能"
 	}
 	fs = append(fs,
 		Field{Key: "tools", Label: "工具白名单", Type: "list", Group: "执行",

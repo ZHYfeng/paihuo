@@ -7,6 +7,24 @@ import (
 	"paihuo/internal/store"
 )
 
+func TestAppendSystemPrompt(t *testing.T) {
+	tests := []struct {
+		name, base, addition, want string
+	}{
+		{name: "empty base", addition: "技能上下文", want: "技能上下文"},
+		{name: "empty addition", base: "角色定位", want: "角色定位"},
+		{name: "both", base: "角色定位", addition: "技能上下文", want: "角色定位\n\n技能上下文"},
+		{name: "trim boundaries", base: "  角色定位  ", addition: "  技能上下文  ", want: "角色定位\n\n技能上下文"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := AppendSystemPrompt(tt.base, tt.addition); got != tt.want {
+				t.Fatalf("system prompt=%q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTaskPromptIncludesTitleAndBody(t *testing.T) {
 	tk := store.Task{Title: "修复看板", Body: "新增项目入口。\n\n保持现有样式。"}
 	want := "任务标题：修复看板\n\n任务内容：\n新增项目入口。\n\n保持现有样式。"

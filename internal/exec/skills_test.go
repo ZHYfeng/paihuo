@@ -48,7 +48,7 @@ func TestPrepareRoleSkillsUsesNativeRootsAndCleansUp(t *testing.T) {
 	}
 	prompt := buildRoleSkillsPrompt(prepared.Bindings)
 	if want := "当前角色拥有以下技能：\n- design"; prompt != want {
-		t.Fatalf("skill prompt=%q, want %q", prompt, want)
+		t.Fatalf("skill system prompt=%q, want %q", prompt, want)
 	}
 	for _, unwanted := range []string{"PaiHuo", "SKILL.md", binding.Dir, "必须阅读", "工作流程", "references", "不要修改或提交"} {
 		if strings.Contains(prompt, unwanted) {
