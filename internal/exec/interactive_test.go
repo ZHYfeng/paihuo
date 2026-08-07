@@ -274,7 +274,7 @@ func TestInteractiveTmuxUsesStableGeometryAndExtendedKeys(t *testing.T) {
 		runner.Cleanup(taskID)
 	})
 	out, err = osexec.Command("tmux", "-L", socket, "display-message", "-p", "-t", runner.target(taskID),
-		"#{window_width}x#{window_height}:#{window_size_option}").Output()
+		"#{window_width}x#{window_height}:#{window-size}").Output()
 	if err != nil {
 		t.Fatal(err)
 	}

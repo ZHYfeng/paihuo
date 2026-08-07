@@ -221,7 +221,6 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("POST /api/extensions/install", s.installExtension)
 	m.HandleFunc("DELETE /api/extensions/{name}", s.removeExtension)
 	m.HandleFunc("GET /api/workspace/{id}", s.workspaceStatus)
-	m.HandleFunc("POST /api/workspace/{id}/merge", s.workspaceMerge)
 	m.HandleFunc("POST /api/workspace/{id}/discard", s.workspaceDiscard)
 	m.HandleFunc("POST /api/workspace/git-init", s.workspaceGitInit)
 	m.HandleFunc("GET /api/fs/dirs", s.fsDirs)

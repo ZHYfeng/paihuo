@@ -1,4 +1,4 @@
-// 模块 dashboard（由 scripts/split-frontend.py 生成）
+// 模块 dashboard（由 scripts/gen-globals.py 维护导入/导出）
 import { ST_COLOR, api, esc, state } from "./core.js";
 import { refreshOverview } from "./main.js";
 import { openTask, rejectTask, setTaskStatus } from "./task.js";

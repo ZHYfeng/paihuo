@@ -1,4 +1,4 @@
-// 模块 history（由 scripts/split-frontend.py 生成）
+// 模块 history（由 scripts/gen-globals.py 维护导入/导出）
 import { PERM_LABEL, STATUS_LABEL, ST_COLOR, api, esc, icon, state, toast } from "./core.js";
 import { loadAll } from "./main.js";
 import { canDeleteTask, canRetryTask, deleteTask, isMergeTask, openTask, retryTaskLabel, setTaskStatus } from "./task.js";

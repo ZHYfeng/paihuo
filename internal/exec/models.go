@@ -541,14 +541,6 @@ func (a *ompAdapter) ModelCatalog() []ModelInfo {
 	})
 }
 
-// ompModelsProbe 是 omp 的模型候选探测（home 可注入，便于测试）。
-// 权威来源 `omp models --json` 按实际凭据过滤；失败时才回退解析配置
-// 文件，且回退只保留凭据仍然有效的 provider（见 ompActiveProviders），
-// 避免列出 agent 实际不可用的模型。
-func ompModelsProbe(home string) []string {
-	return capModels(ModelIDs(ompModelCatalogProbe(home)), 80)
-}
-
 // parseOmpModelsJSON 解析 `omp models --json` 的模型能力目录。OMP 的
 // `thinking` 是每个模型真实支持的档位，不能用 reasoning=true 猜测出一组
 // 全局选项；例如某个模型可能只声明 ["high", "max"]。

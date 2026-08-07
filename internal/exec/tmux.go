@@ -896,7 +896,7 @@ func (r *tmuxRunner) stopAgentService(taskID int64, reason string) error {
 	}
 	unit := strings.TrimSpace(string(b))
 	if unit != r.agentUnitName(taskID) {
-		return fmt.Errorf("Codex agent service 记录非法: %q", unit)
+		return fmt.Errorf("codex agent service 记录非法: %q", unit)
 	}
 	r.recordLifecycle(taskID, "agent_service_stop_requested", "reason="+reason+" unit="+unit)
 	systemctl, err := osexec.LookPath("systemctl")

@@ -1,4 +1,4 @@
-// 模块 main（由 scripts/split-frontend.py 生成）
+// 模块 main（由 scripts/gen-globals.py 维护导入/导出）
 import { addChip, agentTab, closeAgentDetail, deleteAgent, filterSkillOptions, hideAgentDetail, openAgentDetail, refreshAgentCatalog, removeChip, renderAgentList, renderAgentOverview, saveAgentConcurrency, setAgentSort, setAgentView, showAgentDetail, syncModelThinking, toggleAgent, toggleSkill } from "./agents.js";
 import { activeModal, api, closeModal, esc, fmtDur, fmtPct, logout, state, toast } from "./core.js";
 import { loadDashboard } from "./dashboard.js";

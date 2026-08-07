@@ -1,4 +1,4 @@
-// 模块 agents（由 scripts/split-frontend.py 生成）
+// 模块 agents（由 scripts/gen-globals.py 维护导入/导出）
 import { STATUS_LABEL, ST_COLOR, api, esc, fmtDur, fmtPct, icon, state, toast } from "./core.js";
 import { loadAll, loadSchema } from "./main.js";
 import { dailyChartHTML, openProject, statusBarHTML } from "./projects.js";

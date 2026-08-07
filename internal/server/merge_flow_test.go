@@ -201,7 +201,9 @@ func TestDeleteTaskRemovesTaskTreeWorktrees(t *testing.T) {
 	}
 }
 
-func TestWorkspaceMergeRejectsOrdinaryTask(t *testing.T) {
+// 合并不再提供手工端点（已由合并任务成功时自动执行），测试其余护栏：
+// 丢弃保护、源任务重试保护、合并任务重试/删除保护。
+func TestWorkspaceMergeGuards(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -214,20 +216,13 @@ func TestWorkspaceMergeRejectsOrdinaryTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/workspace/"+itoa(taskID)+"/merge", nil)
-	req.SetPathValue("id", itoa(taskID))
-	resp := httptest.NewRecorder()
-	s.workspaceMerge(resp, req)
-	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "普通任务不能直接合并") {
-		t.Fatalf("普通任务应被拒绝直接合并: code=%d body=%s", resp.Code, resp.Body.String())
-	}
 	mergeID, err := st.CreateTask(store.NewMergeTask(store.Task{ID: taskID, Title: "ordinary"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/workspace/"+itoa(taskID)+"/discard", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/workspace/"+itoa(taskID)+"/discard", nil)
 	req.SetPathValue("id", itoa(taskID))
-	resp = httptest.NewRecorder()
+	resp := httptest.NewRecorder()
 	s.workspaceDiscard(resp, req)
 	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "代码合并任务尚未成功") {
 		t.Fatalf("有待处理合并任务的源任务不应丢弃 worktree: code=%d body=%s", resp.Code, resp.Body.String())
@@ -249,15 +244,6 @@ func TestWorkspaceMergeRejectsOrdinaryTask(t *testing.T) {
 	s.workspaceDiscard(resp, req)
 	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "代码合并任务尚未成功") {
 		t.Fatalf("未成功的代码合并任务不应丢弃 worktree: code=%d body=%s", resp.Code, resp.Body.String())
-	}
-
-	// 手工合并会绕过状态结算，现统一由合并任务成功时自动执行。
-	req = httptest.NewRequest(http.MethodPost, "/api/workspace/"+itoa(mergeID)+"/merge", nil)
-	req.SetPathValue("id", itoa(mergeID))
-	resp = httptest.NewRecorder()
-	s.workspaceMerge(resp, req)
-	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "代码合并由合并任务成功结算时自动执行") {
-		t.Fatalf("代码合并任务不应允许手工合并: code=%d body=%s", resp.Code, resp.Body.String())
 	}
 
 	// 成功的合并任务已写入主分支，不能被通用重试入口再次排队。

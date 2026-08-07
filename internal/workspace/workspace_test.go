@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -231,11 +230,4 @@ func TestCleanup(t *testing.T) {
 	if out, _ := git(proj, "branch", "--list", "paihuo/task-9"); out != "" {
 		t.Fatal("任务分支未被清理")
 	}
-}
-
-func execGit(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	return string(out), err
 }

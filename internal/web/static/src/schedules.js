@@ -1,4 +1,4 @@
-// 模块 schedules（由 scripts/split-frontend.py 生成）
+// 模块 schedules（由 scripts/gen-globals.py 维护导入/导出）
 import { api, closeModal, esc, openModal, state, toast, icon } from "./core.js";
 import { fillSelects, loadAll } from "./main.js";
 

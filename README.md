@@ -12,7 +12,7 @@
 
 ## 快速开始
 
-运行环境：Linux、Go 1.24+、`tmux`；若要使用 Git worktree 隔离，还需要 `git`。各 agent CLI 可按需在 Web 的 Agents 页面安装。
+运行环境：Linux、Go 1.25+、`tmux`；若要使用 Git worktree 隔离，还需要 `git`。各 agent CLI 可按需在 Web 的 Agents 页面安装。
 
 ```bash
 # 构建
@@ -22,6 +22,9 @@ cd paihuo && go build -o paihuo ./cmd/paihuo
 export PAIHUO_TOKEN="$(openssl rand -hex 32)"
 ./paihuo
 ```
+
+> 生产部署（systemd 托管、升级/回滚、备份恢复、本机实例参考）见 **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**；
+> systemd 服务文件模板在 `deploy/systemd/`。
 
 默认仅监听 `127.0.0.1:8080`。若通过反向代理暴露服务，请在代理处配置 HTTPS，并显式监听公开地址：
 
@@ -37,6 +40,7 @@ export PAIHUO_TOKEN="$(openssl rand -hex 32)"
 
 ### 生产部署建议
 
+- 完整的部署、升级、备份与运维流程见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)（含本机 systemd 实例：`/home/yu/paihuo`、用户服务 `paihuo.service`、`token.env` 注入令牌、`KillMode=process` 保证任务窗格跨重启存活）。
 - 将服务置于受信任网络或 TLS 反向代理之后；不要把未受保护的端口直接暴露到公网。
 - 使用高熵、专用于 PaiHuo 的令牌，并以环境变量或密钥管理工具注入，而非写入 shell 历史或截图。
 - 用运行 PaiHuo 的同一系统用户安装 agent CLI；它能访问的文件与凭据就是任务可触及的边界。
@@ -156,7 +160,7 @@ go build -o paihuo ./cmd/paihuo
 
 ## 开发
 
-产品规划与分阶段实施计划见 [docs/PLAN.md](docs/PLAN.md)（Agent 安装管理 / worktree 任务空间 / 终端式观察）。
+产品规划、信息架构与实施状态见 [docs/PLAN.md](docs/PLAN.md)；生产部署见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
 
 ```bash
 npm ci                    # 前端构建与浏览器测试工具

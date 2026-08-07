@@ -1,4 +1,4 @@
-// 模块 provision（由 scripts/split-frontend.py 生成）
+// 模块 provision（由 scripts/gen-globals.py 维护导入/导出）
 import { api, closeModal, esc, openModal, toast } from "./core.js";
 
 export let provState = { prov: [], instCli: null };

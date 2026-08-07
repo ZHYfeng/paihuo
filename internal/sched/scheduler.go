@@ -16,12 +16,11 @@ import (
 )
 
 type Scheduler struct {
-	st      *store.Store
-	hub     *events.Hub
-	ex      *exec.Executor
-	cron    *cron.Cron
-	mu      chan struct{} // 串行化重载
-	stopped bool
+	st   *store.Store
+	hub  *events.Hub
+	ex   *exec.Executor
+	cron *cron.Cron
+	mu   chan struct{} // 串行化重载
 }
 
 func New(st *store.Store, hub *events.Hub, ex *exec.Executor) *Scheduler {

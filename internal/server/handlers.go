@@ -742,23 +742,6 @@ func (s *Server) workspaceStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, workspace.Status(*tk, s.sessionsRoot))
 }
 
-func (s *Server) workspaceMerge(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r)
-	if !ok {
-		return
-	}
-	tk, err := s.st.GetTask(id)
-	if err != nil {
-		writeErr(w, http.StatusNotFound, "任务不存在")
-		return
-	}
-	if tk.MergeOf == nil {
-		writeErr(w, http.StatusConflict, "普通任务不能直接合并；请等待系统创建的代码合并任务")
-		return
-	}
-	writeErr(w, http.StatusConflict, "代码合并由合并任务成功结算时自动执行；失败请重试该合并任务")
-}
-
 func (s *Server) workspaceDiscard(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
@@ -1700,11 +1683,6 @@ func isPathWithin(path, dir string) bool {
 	}
 	rel, err := filepath.Rel(filepath.Clean(absDir), filepath.Clean(absPath))
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-// importSkill 把一个已经校验过的技能目录复制到 paihuo 的工作目录并登记。
-func (s *Server) importSkill(src string) (store.Skill, error) {
-	return s.importSkillWithTags(src, nil)
 }
 
 // importSkillWithTags 把 frontmatter 中的标签与本次导入附加的标签合并，

@@ -381,13 +381,6 @@ func updateOneExecer(execer sqlExecer, table string, id int64, set map[string]an
 	return err
 }
 
-func nullStr(p *string) any {
-	if p == nil {
-		return nil
-	}
-	return *p
-}
-
 func nullInt64(p *int64) any {
 	if p == nil {
 		return nil
@@ -2224,8 +2217,6 @@ func (s *Store) DeleteProject(id int64) error {
 
 // ---------------------------------------------------------------------------
 // 统计（维度二：项目进度 + agent 产出）
-
-const terminalStats = `t.status IN ('succeeded','failed','cancelled')`
 
 // statusCountsOf 按状态聚合计数。
 func (s *Store) statusCountsOf(where string, args ...any) ([]StatusCount, int, error) {

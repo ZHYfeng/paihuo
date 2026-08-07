@@ -1,4 +1,4 @@
-// 模块 task（由 scripts/split-frontend.py 生成）
+// 模块 task（由 scripts/gen-globals.py 维护导入/导出）
 import { BOARD_COLS, STATUS_LABEL, ST_COLOR, api, closeModal, esc, fetchTaskLogs, icon, openModal, state, toast } from "./core.js";
 import { loadDashboard } from "./dashboard.js";
 import { loadHistory } from "./history.js";

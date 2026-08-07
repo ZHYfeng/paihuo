@@ -10,7 +10,10 @@ func TestExecutorAgentSlotsHonorLimitAndRecoveringTasks(t *testing.T) {
 	e := &Executor{active: make(map[int64]int)}
 	const agentID = int64(17)
 
-	if !e.reserveAgentSlot(agentID, 2) || !e.reserveAgentSlot(agentID, 2) {
+	if !e.reserveAgentSlot(agentID, 2) {
+		t.Fatal("前两个槽位应可获取")
+	}
+	if !e.reserveAgentSlot(agentID, 2) {
 		t.Fatal("前两个槽位应可获取")
 	}
 	if e.reserveAgentSlot(agentID, 2) {

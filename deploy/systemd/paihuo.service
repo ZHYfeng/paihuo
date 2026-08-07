@@ -1,0 +1,15 @@
+[Unit]
+Description=paihuo - personal agent dispatcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/yu/paihuo
+ExecStart=/home/yu/paihuo/paihuo --addr 0.0.0.0:8080 --db /home/yu/paihuo/paihuo.db
+EnvironmentFile=/home/yu/paihuo/token.env
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

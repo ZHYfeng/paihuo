@@ -279,8 +279,7 @@ func (s *Server) runRoleStudio(parent context.Context, role store.RoleConfig, cl
 	if !ok {
 		return "", fmt.Errorf("未知 CLI: %s", cli)
 	}
-	bin, err := adapter.Detect()
-	if err != nil {
+	if _, err := adapter.Detect(); err != nil {
 		return "", err
 	}
 	root := filepath.Join(s.sessionsRoot, ".role-studio")

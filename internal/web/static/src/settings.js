@@ -1,4 +1,4 @@
-// 模块 settings（由 scripts/split-frontend.py 生成）
+// 模块 settings（由 scripts/gen-globals.py 维护导入/导出）
 import { api, toast } from "./core.js";
 import { loadAll } from "./main.js";
 

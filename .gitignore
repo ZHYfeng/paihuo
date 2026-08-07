@@ -10,6 +10,7 @@ paihuo.db*
 /test-results/
 /coverage.out
 /coverage.html
+.tmp/
 .env
 .env.*
 !.env.example
