@@ -16,3 +16,4 @@ if [ -z "${NODE_PATH:-}" ] && [ ! -d node_modules ]; then
 fi
 
 node scripts/e2e.js
+node scripts/role-studio-copy.e2e.js

@@ -8,7 +8,9 @@
   "scripts": {
     "build:frontend": "./scripts/build-frontend.sh",
     "check:frontend": "./scripts/build-frontend.sh --check",
-    "test:e2e": "./scripts/e2e.sh"
+    "test:e2e": "./scripts/e2e.sh",
+    "test:e2e:terminal": "node scripts/terminal-layout.e2e.js",
+    "test:e2e:role-copy": "node scripts/role-studio-copy.e2e.js"
   },
   "devDependencies": {
     "esbuild": "0.28.1",

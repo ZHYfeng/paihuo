@@ -60,7 +60,7 @@ function studioState() {
   return state.roleStudio;
 }
 
-function currentDraftFromForm() {
+function currentDraftFromForm(options = {}) {
   const s = studioState();
   if (!s) return null;
   const draft = clone(s.draft);
@@ -68,7 +68,10 @@ function currentDraftFromForm() {
   draft.description = String(document.getElementById("rsDescription")?.value || "").trim();
   draft.cli = String(document.getElementById("rsCli")?.value || draft.cli || "");
   draft.max_concurrency = Number(document.getElementById("rsMaxConcurrency")?.value || 1);
-  const schema = state.schema[draft.cli];
+  // CLI onchange fires after the select already contains the new value while
+  // rsSchema still contains controls rendered from the previous CLI. Callers
+  // handling that transition can name the schema that owns the current form.
+  const schema = state.schema[options.formCLI || draft.cli];
   const form = document.getElementById("rsSchema");
   draft.role_config = schema && form ? readConfigFrom(schema, form) : clone(draft.role_config || {});
   if (!Number.isInteger(draft.max_concurrency) || draft.max_concurrency < 1) draft.max_concurrency = 1;
@@ -255,20 +258,25 @@ export function copyCurrentRole() {
 export function changeRoleStudioCli() {
   const s = studioState();
   if (!s) return;
-  const current = currentDraftFromForm();
+  const previousCLI = String(s.draft?.cli || "");
   const nextCLI = String(document.getElementById("rsCli")?.value || "");
+  const current = currentDraftFromForm({ formCLI: previousCLI });
+  if (!current) return;
   const oldCfg = current.role_config || {};
   current.cli = nextCLI;
+  if (!nextCLI || nextCLI === previousCLI) {
+    s.draft = current;
+    renderStudioDraft();
+    return;
+  }
+  // model/thinking and the remaining adapter settings belong to the source
+  // CLI. Carrying them into a copied role can create a valid-looking but
+  // unrunnable target role. Only role semantics shared by every CLI migrate;
+  // the target form supplies its own defaults and model catalog.
   current.role_config = {
-    model: oldCfg.model || "",
     system_prompt: oldCfg.system_prompt || "",
     instructions: oldCfg.instructions || "",
     skills: Array.isArray(oldCfg.skills) ? oldCfg.skills : [],
-    thinking: oldCfg.thinking || "",
-    plugins: Array.isArray(oldCfg.plugins) ? oldCfg.plugins : [],
-    extra_args: Array.isArray(oldCfg.extra_args) ? oldCfg.extra_args : [],
-    env: oldCfg.env || {},
-    custom: {},
   };
   s.draft = current;
   renderStudioDraft();

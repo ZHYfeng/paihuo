@@ -186,6 +186,12 @@ export function restoreSidebar() {
 /* ---- 全局快捷键 ----
    N 新建任务（看板页）  / 聚焦搜索  Esc 关闭弹窗  Ctrl/Cmd+B 折叠侧边栏 */
 export function initShortcuts() {
+  const closeActiveModal = modal => {
+    // 全屏终端关闭时还要停止日志追加、清理输入态，并把 tmux 几何尺寸
+    // 归还给详情终端；不能只隐藏通用 modal 外壳。
+    if (modal?.id === "termModal") closeTerminal();
+    else if (modal) closeModal(modal.id);
+  };
   document.addEventListener("keydown", e => {
     const t = e.target;
     const inField = t && (t.matches("input, textarea, select") || t.isContentEditable);
@@ -214,7 +220,7 @@ export function initShortcuts() {
         return;
       }
       const modal = activeModal();
-      if (modal) closeModal(modal.id);
+      closeActiveModal(modal);
       return;
     }
     if (inField) return;
@@ -232,7 +238,7 @@ export function initShortcuts() {
   // 点击弹窗背景关闭
   document.addEventListener("click", e => {
     if (e.target && e.target.classList && e.target.classList.contains("modal")) {
-      closeModal(e.target.id);
+      closeActiveModal(e.target);
     }
   });
   // 目录选择器事件委托（全站共享：agents / projects / skills）

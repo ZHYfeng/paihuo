@@ -32,10 +32,13 @@ func TestCodexYoloAdapterBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"exec", "--disable code_mode_host", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "完成任务"} {
+	for _, want := range []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "完成任务"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("Codex YOLO 缺少参数 %q: %s", want, joined)
 		}
+	}
+	if strings.Contains(joined, "code_mode_host") {
+		t.Fatalf("Codex YOLO 不应关闭已安装的 code-mode host: %s", joined)
 	}
 
 	_, safeArgs, _, err := a.Build(RunOptions{Prompt: "完成任务"})
@@ -45,8 +48,8 @@ func TestCodexYoloAdapterBuild(t *testing.T) {
 	if strings.Contains(strings.Join(safeArgs, " "), "dangerously-bypass") {
 		t.Fatalf("safe 模式不应隐式启用 YOLO: %s", strings.Join(safeArgs, " "))
 	}
-	if !strings.Contains(strings.Join(safeArgs, " "), "--disable code_mode_host") {
-		t.Fatalf("Codex 任务应关闭不稳定的 code-mode-host: %s", strings.Join(safeArgs, " "))
+	if strings.Contains(strings.Join(safeArgs, " "), "code_mode_host") {
+		t.Fatalf("Codex safe 模式不应关闭已安装的 code-mode host: %s", strings.Join(safeArgs, " "))
 	}
 }
 

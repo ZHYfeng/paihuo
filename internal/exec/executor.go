@@ -304,7 +304,7 @@ func (e *Executor) recoverInterrupted(ctx context.Context) {
 		return
 	}
 	for _, tk := range tasks {
-		obs, err := e.runner.Poll(tk.ID, tk.TmuxLogOffset)
+		obs, err := e.pollTmux(&tk)
 		if err != nil {
 			e.markInterrupted(tk, "服务重启，未找到可恢复的 tmux 任务")
 			continue
@@ -866,8 +866,8 @@ func (e *Executor) SendKeystrokes(taskID int64, keys string) error {
 const (
 	// 交互终端尺寸上下限。浏览器端 xterm fit 后的实际尺寸在此范围内同步到
 	// tmux；下限避免 resize-window 拒绝极小窗口，上限防止误传巨值刷爆 pane。
-	minInteractiveCols, maxInteractiveCols = 20, 400
-	minInteractiveRows, maxInteractiveRows = 5, 120
+	minInteractiveCols, maxInteractiveCols = 20, 1000
+	minInteractiveRows, maxInteractiveRows = 5, 300
 
 	// detachedResultSettleTimeout 只适用于已确认独立 Codex service 正在收尾
 	// 或已经结束、但 agent-exit-code 尚未写入的最终结算窗口。该文件由同一
@@ -884,6 +884,13 @@ const (
 
 // waitTmux 将 tmux pipe-pane 文件增量同步到 SQLite，并等待 window 内命令退出。
 // serviceCtx 取消表示 paihuo 自身退出，此时保留 task window；taskCtx 取消才终止任务。
+func (e *Executor) pollTmux(tk *store.Task) (tmuxObservation, error) {
+	if tk.RunMode == store.RunModeInteractive {
+		return e.runner.PollInteractive(tk.ID, tk.TmuxLogOffset)
+	}
+	return e.runner.Poll(tk.ID, tk.TmuxLogOffset)
+}
+
 func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task) (int, error) {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
@@ -893,18 +900,18 @@ func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task)
 	for {
 		if err := taskCtx.Err(); err != nil {
 			_ = e.runner.StopWithReason(tk.ID, "task_context_cancel")
-			if obs, pollErr := e.runner.Poll(tk.ID, tk.TmuxLogOffset); pollErr == nil {
+			if obs, pollErr := e.pollTmux(tk); pollErr == nil {
 				_ = e.syncTmuxOutput(tk, obs)
 			}
 			return -1, err
 		}
 		if serviceCtx.Err() != nil {
-			if obs, pollErr := e.runner.Poll(tk.ID, tk.TmuxLogOffset); pollErr == nil {
+			if obs, pollErr := e.pollTmux(tk); pollErr == nil {
 				_ = e.syncTmuxOutput(tk, obs)
 			}
 			return -1, errExecutorStopping
 		}
-		obs, err := e.runner.Poll(tk.ID, tk.TmuxLogOffset)
+		obs, err := e.pollTmux(tk)
 		if err != nil {
 			return -1, err
 		}
@@ -968,7 +975,7 @@ func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task)
 			case <-taskCtx.Done():
 			case <-time.After(3 * time.Second):
 			}
-			obs, err = e.runner.Poll(tk.ID, tk.TmuxLogOffset)
+			obs, err = e.pollTmux(tk)
 			if err != nil {
 				return -1, err
 			}
@@ -992,8 +999,14 @@ func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task)
 }
 
 func (e *Executor) syncTmuxOutput(tk *store.Task, obs tmuxObservation) error {
+	stream := "out"
+	if tk.RunMode == store.RunModeInteractive {
+		// 交互 TUI 是连续字节流，不是逐行日志。term 让前端不插入换行，
+		// 从而保留输入回显、光标移动和同步重绘控制序列。
+		stream = "term"
+	}
 	for _, line := range obs.Lines {
-		l, err := e.st.AppendLog(store.TaskLog{TaskID: tk.ID, Stream: "out", Content: line})
+		l, err := e.st.AppendLog(store.TaskLog{TaskID: tk.ID, Stream: stream, Content: line})
 		if err != nil {
 			return err
 		}

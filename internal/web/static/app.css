@@ -4,6 +4,14 @@
    结构：Primitive → Semantic → Component → Layout → Responsive
    ============================================================ */
 
+@font-face {
+  font-family: "Symbols Nerd Font Mono";
+  src: url("/static/vendor/SymbolsNerdFontMono-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
 :root {
   /* ---- Primitive: raw palette ---- */
   --ph-carbon-1000: #050705;
@@ -87,6 +95,7 @@
   /* ---- 字体 ---- */
   --font-sans: "Inter Variable", Inter, "SF Pro Text", "Avenir Next", -apple-system, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
   --font-mono: "Geist Mono", "JetBrains Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
+  --font-terminal: var(--font-mono), "Symbols Nerd Font Mono";
 
   /* ---- 布局 ---- */
   --sidebar-w: 228px;

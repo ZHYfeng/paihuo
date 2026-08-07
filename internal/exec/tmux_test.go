@@ -86,6 +86,120 @@ func TestTmuxRunnerPersistsOutputAndExit(t *testing.T) {
 	}
 }
 
+func TestTmuxRunnerPollInteractiveStreamsInputEchoWithoutNewline(t *testing.T) {
+	bin := requireTmuxIntegration(t)
+	sessionsRoot := t.TempDir()
+	r := newTmuxRunnerAt(sessionsRoot, fmt.Sprintf("paihuo-interactive-stream-test-%d", os.Getpid()))
+	r.binary = bin
+	_ = r.command("kill-server")
+	t.Cleanup(func() { _ = r.command("kill-server") })
+
+	const taskID = int64(43)
+	if err := r.Start(taskID, sessionsRoot, "/bin/sh", []string{
+		"-c", `printf 'prompt>'; IFS= read -r line; sleep 1`,
+	}, nil, tmuxStartOptions{TerminalColumns: 80, TerminalRows: 24}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Stop(taskID) })
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		content, _ := os.ReadFile(r.logPath(taskID))
+		if strings.Contains(string(content), "prompt>") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pane 未输出提示符，terminal.log=%q", content)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := r.SendKeystrokes(taskID, "typed"); err != nil {
+		t.Fatalf("SendKeystrokes: %v", err)
+	}
+
+	var offset int64
+	var output strings.Builder
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		obs, err := r.PollInteractive(taskID, offset)
+		if err != nil {
+			t.Fatalf("PollInteractive: %v", err)
+		}
+		for _, chunk := range obs.Lines {
+			output.WriteString(chunk)
+		}
+		offset = obs.Offset
+		if strings.Contains(output.String(), "prompt>typed") {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(output.String(), "prompt>typed") {
+		t.Fatalf("交互输入回显没有换行也应实时返回，got %q offset=%d", output.String(), offset)
+	}
+}
+
+func TestTmuxRunnerInteractiveOutputKeepsSplitUTF8ForNextPoll(t *testing.T) {
+	const taskID = int64(44)
+	r := newTmuxRunnerAt(t.TempDir(), "utf8-tail-test")
+	if err := os.MkdirAll(r.taskDir(taskID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.logPath(taskID), []byte{'A', 0xe4, 0xb8}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	chunks, offset, err := r.readOutput(taskID, 0, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(chunks, ""); got != "A" || offset != 1 {
+		t.Fatalf("不完整 UTF-8 尾部应留到下一轮: got=%q offset=%d", got, offset)
+	}
+	f, err := os.OpenFile(r.logPath(taskID), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte{0xad}); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	chunks, offset, err = r.readOutput(taskID, offset, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(chunks, ""); got != "中" || offset != 4 {
+		t.Fatalf("补全后的 UTF-8 应原样输出: got=%q offset=%d", got, offset)
+	}
+}
+
+func TestTmuxRunnerDoesNotPrefixMatchAnotherTaskWindow(t *testing.T) {
+	bin := requireTmuxIntegration(t)
+	r := newTmuxRunnerAt(t.TempDir(), fmt.Sprintf("paihuo-exact-window-test-%d", os.Getpid()))
+	r.binary = bin
+	_ = r.command("kill-server")
+	t.Cleanup(func() { _ = r.command("kill-server") })
+
+	if err := r.ensureSession(); err != nil {
+		t.Fatalf("ensureSession: %v", err)
+	}
+	if err := r.command("new-window", "-d", "-t", r.session, "-n", r.taskName(133), "--", "sleep", "30"); err != nil {
+		t.Fatalf("create task-133 window: %v", err)
+	}
+
+	if r.hasWindow(1) {
+		t.Fatal("task 1 不存在时，不能把 ph-task-133 的唯一前缀匹配当成 task 1")
+	}
+	if err := r.Stop(1); err != nil {
+		t.Fatalf("Stop(1): %v", err)
+	}
+	if !r.hasWindow(133) {
+		t.Fatal("停止不存在的 task 1 不能删除 task 133 的窗口")
+	}
+}
+
 // Poll 的第一次退出码读取和随后检查 pane 是否存在之间，run.sh 可能恰好写完
 // exit-code 并退出。此处用一个伪 tmux 在 list-panes 时写入退出码，稳定覆盖
 // 这一真实时序，避免把已成功完成的短任务误判为 pane 丢失。

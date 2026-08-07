@@ -522,14 +522,12 @@ type codexAdapter struct{ baseAdapter }
 
 func (a *codexAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	interactive := o.RunMode == store.RunModeInteractive
-	// 本机 Codex 0.146 的 code-mode-host 在工具命令非零退出时会错误终止外层
-	// task pane。关闭它会回退到 CLI 自身稳定的执行路径；批处理使用 exec，
-	// 交互任务则不带子命令启动官方 TUI。
+	// Code Mode 及其 host 的可用性由已安装的 Codex 版本和用户配置决定，适配器
+	// 不覆盖功能开关；批处理使用 exec，交互任务则不带子命令启动官方 TUI。
 	args := []string{}
 	if !interactive {
 		args = append(args, "exec")
 	}
-	args = append(args, "--disable", "code_mode_host")
 	// YOLO 对应本机 Codex CLI 的完整绕过模式：不等待批准、不启用 sandbox，
 	// 并允许在非 Git 目录执行。它必须由角色配置显式开启，普通 Codex 仍保留
 	// 官方默认保护。

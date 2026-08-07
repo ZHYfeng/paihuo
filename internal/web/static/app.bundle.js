@@ -1098,7 +1098,9 @@
   function terminalOptions(interactive = false, running = false, size = null) {
     return {
       ...interactive ? { cols: size?.cols ?? INTERACTIVE_TERM_COLS, rows: size?.rows ?? INTERACTIVE_TERM_ROWS } : {},
-      fontFamily: "var(--font-mono)",
+      // OMP and other TUIs use Nerd Fonts private-use glyphs. Keep the normal
+      // monospace stack for text and use the bundled Symbols font as fallback.
+      fontFamily: "var(--font-terminal)",
       fontSize: 12.5,
       lineHeight: 1.35,
       convertEol: true,
@@ -1169,15 +1171,24 @@
     }
     if (!enabled) target.blur();
   }
+  function terminalRenderableLog(l) {
+    return l?.stream === "term" || l?.stream === "out" || !l?.stream;
+  }
+  function writeTerminalLog(target, l, callback) {
+    if (!target || !terminalRenderableLog(l)) return;
+    const content = String(l.content ?? "");
+    target.write(l.stream === "term" ? content : content + "\r\n", callback);
+  }
   function writeTerminalLogs(target, logs, emptyMessage = "\uFF08\u6682\u65E0\u8F93\u51FA\uFF09") {
     if (!target) return;
-    if (!logs.length) {
+    const renderable = logs.filter(terminalRenderableLog);
+    if (!renderable.length) {
       target.write(`\x1B[90m${emptyMessage}\x1B[0m\r
 `);
       return;
     }
-    logs.forEach((l, index) => {
-      target.write(String(l.content ?? "") + "\r\n", index === logs.length - 1 ? () => target.scrollToBottom() : void 0);
+    renderable.forEach((l, index) => {
+      writeTerminalLog(target, l, index === renderable.length - 1 ? () => target.scrollToBottom() : void 0);
     });
   }
   function scaleTerminalToContainer(term2, host) {
@@ -1186,8 +1197,10 @@
     const rowsEl = el.querySelector(".xterm-rows");
     const natW = rowsEl?.offsetWidth || el.offsetWidth;
     const natH = rowsEl?.offsetHeight || el.offsetHeight;
-    const padW = el.offsetWidth - el.clientWidth;
-    const padH = el.offsetHeight - el.clientHeight;
+    const style = getComputedStyle(el);
+    const px = (value) => Number.parseFloat(value) || 0;
+    const padW = px(style.paddingLeft) + px(style.paddingRight) + el.offsetWidth - el.clientWidth;
+    const padH = px(style.paddingTop) + px(style.paddingBottom) + el.offsetHeight - el.clientHeight;
     const cw = host.clientWidth, ch = host.clientHeight;
     if (!natW || !natH || !cw || !ch) return;
     const visW = natW + padW, visH = natH + padH;
@@ -1245,14 +1258,12 @@
     observeFullscreenTerminalGeometry();
     syncFullscreenTerminalGeometry();
   }
-  function termWrite(content) {
-    if (term) term.write(String(content ?? "") + "\r\n");
-  }
   function termAppendLog(l) {
     if (state.termTask !== l.task_id || !term) return;
+    if (!terminalRenderableLog(l)) return;
     if (termLogs.some((existing) => existing.id === l.id)) return;
     termLogs.push(l);
-    termWrite(l.content);
+    writeTerminalLog(term, l, () => term?.scrollToBottom());
   }
   function renderTerminalWindow() {
     if (!term) return;
@@ -1268,7 +1279,7 @@
       const page = await fetchTaskLogs(id, { before: termOldestSeq, limit: 200 });
       if (state.termTask !== id) return;
       const existing = new Set(termLogs.map((l) => l.id));
-      const older = page.logs.filter((l) => !existing.has(l.id));
+      const older = page.logs.filter((l) => terminalRenderableLog(l) && !existing.has(l.id));
       if (!older.length) {
         termHasMore = false;
         return;
@@ -1315,7 +1326,7 @@
     syncTerminalInput(t);
     fetchTaskLogs(id, { limit: 200 }).then((page) => {
       if (state.termTask !== id) return;
-      const byID = new Map(page.logs.map((l) => [l.id, l]));
+      const byID = new Map(page.logs.filter(terminalRenderableLog).map((l) => [l.id, l]));
       for (const l of termLogs) if (!byID.has(l.id)) byID.set(l.id, l);
       termLogs = [...byID.values()].sort((a, b) => a.seq - b.seq);
       termHasMore = page.has_more;
@@ -1343,24 +1354,32 @@
     document.getElementById("termX")?.classList.remove("interactive-term-body", "interactive-term-replay");
     termInteractive = false;
     termMode = "logs";
+    requestAnimationFrame(syncTaskTerminalGeometry);
   }
   var taskTermFit = null;
   var taskTermResizeObserver = null;
+  function syncTaskTerminalGeometry() {
+    const host = document.getElementById("taskTermX");
+    if (!taskTerm || !host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
+    if (taskTermMode === "replay") {
+      scaleTaskTerminalToContainer();
+      return;
+    }
+    if (!taskTermFit) return;
+    try {
+      taskTermFit.fit();
+    } catch (_) {
+      return;
+    }
+    const modal = document.getElementById("termModal");
+    if (termMode === "live" && state.termTask === taskTermTask && modal && !modal.classList.contains("hidden")) return;
+    reportTerminalGeometry(taskTermTask, taskTerm.cols, taskTerm.rows);
+  }
   function observeTaskTerminalGeometry() {
     const host = document.getElementById("taskTermX");
     if (!host || taskTermResizeObserver) return;
     taskTermResizeObserver = new ResizeObserver(() => {
-      if (!taskTerm) return;
-      if (taskTermMode === "replay") {
-        requestAnimationFrame(scaleTaskTerminalToContainer);
-        return;
-      }
-      if (!taskTermFit) return;
-      try {
-        taskTermFit.fit();
-      } catch (_) {
-      }
-      reportTerminalGeometry(taskTermTask, taskTerm.cols, taskTerm.rows);
+      requestAnimationFrame(syncTaskTerminalGeometry);
     });
     taskTermResizeObserver.observe(host);
   }
@@ -1387,7 +1406,7 @@
     const t = state.tasks.find((x) => x.id === id) || {};
     closeTaskTerminal();
     taskTermTask = id;
-    taskTermLogs = [...logs];
+    taskTermLogs = logs.filter(terminalRenderableLog);
     taskTermMode = running ? "live" : "replay";
     taskTerm = new Terminal(terminalOptions(true, running, running ? null : {
       cols: t.terminal_cols || INTERACTIVE_TERM_COLS,
@@ -1415,9 +1434,10 @@
   }
   function taskTermAppendLog(l) {
     if (!taskTerm || taskTermTask !== l.task_id) return;
+    if (!terminalRenderableLog(l)) return;
     if (taskTermLogs.some((existing) => existing.id === l.id)) return;
     taskTermLogs.push(l);
-    taskTerm.write(String(l.content ?? "") + "\r\n", () => taskTerm?.scrollToBottom());
+    writeTerminalLog(taskTerm, l, () => taskTerm?.scrollToBottom());
   }
   function taskTerminalText() {
     if (!taskTerm) return "";
@@ -3652,7 +3672,7 @@
   function studioState() {
     return state.roleStudio;
   }
-  function currentDraftFromForm() {
+  function currentDraftFromForm(options = {}) {
     const s = studioState();
     if (!s) return null;
     const draft = clone(s.draft);
@@ -3660,7 +3680,7 @@
     draft.description = String(document.getElementById("rsDescription")?.value || "").trim();
     draft.cli = String(document.getElementById("rsCli")?.value || draft.cli || "");
     draft.max_concurrency = Number(document.getElementById("rsMaxConcurrency")?.value || 1);
-    const schema = state.schema[draft.cli];
+    const schema = state.schema[options.formCLI || draft.cli];
     const form = document.getElementById("rsSchema");
     draft.role_config = schema && form ? readConfigFrom(schema, form) : clone(draft.role_config || {});
     if (!Number.isInteger(draft.max_concurrency) || draft.max_concurrency < 1) draft.max_concurrency = 1;
@@ -3821,20 +3841,21 @@
   function changeRoleStudioCli() {
     const s = studioState();
     if (!s) return;
-    const current = currentDraftFromForm();
+    const previousCLI = String(s.draft?.cli || "");
     const nextCLI = String(document.getElementById("rsCli")?.value || "");
+    const current = currentDraftFromForm({ formCLI: previousCLI });
+    if (!current) return;
     const oldCfg = current.role_config || {};
     current.cli = nextCLI;
+    if (!nextCLI || nextCLI === previousCLI) {
+      s.draft = current;
+      renderStudioDraft();
+      return;
+    }
     current.role_config = {
-      model: oldCfg.model || "",
       system_prompt: oldCfg.system_prompt || "",
       instructions: oldCfg.instructions || "",
-      skills: Array.isArray(oldCfg.skills) ? oldCfg.skills : [],
-      thinking: oldCfg.thinking || "",
-      plugins: Array.isArray(oldCfg.plugins) ? oldCfg.plugins : [],
-      extra_args: Array.isArray(oldCfg.extra_args) ? oldCfg.extra_args : [],
-      env: oldCfg.env || {},
-      custom: {}
+      skills: Array.isArray(oldCfg.skills) ? oldCfg.skills : []
     };
     s.draft = current;
     renderStudioDraft();
@@ -4339,6 +4360,10 @@
     }
   }
   function initShortcuts() {
+    const closeActiveModal = (modal) => {
+      if (modal?.id === "termModal") closeTerminal();
+      else if (modal) closeModal(modal.id);
+    };
     document.addEventListener("keydown", (e) => {
       const t = e.target;
       const inField = t && (t.matches("input, textarea, select") || t.isContentEditable);
@@ -4373,7 +4398,7 @@
           return;
         }
         const modal2 = activeModal();
-        if (modal2) closeModal(modal2.id);
+        closeActiveModal(modal2);
         return;
       }
       if (inField) return;
@@ -4393,7 +4418,7 @@
     });
     document.addEventListener("click", (e) => {
       if (e.target && e.target.classList && e.target.classList.contains("modal")) {
-        closeModal(e.target.id);
+        closeActiveModal(e.target);
       }
     });
     document.addEventListener("click", (e) => {

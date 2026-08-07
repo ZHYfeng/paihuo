@@ -218,7 +218,7 @@ func TestExecutorReconcilesCompletedGitTaskWithoutMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := New(st, events.NewHub(), sessionsRoot, "reconcile-merge-test.db")
+	e := NewForTest(st, events.NewHub(), sessionsRoot, "reconcile-merge-test.db", fmt.Sprintf("paihuo-reconcile-test-%d", os.Getpid()))
 	e.reconcileMergeTasks()
 	children, err := st.ListChildren(sourceID)
 	if err != nil || len(children) != 1 {
@@ -286,7 +286,9 @@ func TestExecutorKeepsCompletedSourceWhenMergeChildAlreadyExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := New(st, events.NewHub(), sessionsRoot, "handoff-merge-test.db")
+	// finishRun 会在收尾时清理 task window。测试必须使用独立 socket，不能让
+	// 内存数据库里的 task ID 触碰正在运行的生产 paihuo tmux server。
+	e := NewForTest(st, events.NewHub(), sessionsRoot, "handoff-merge-test.db", fmt.Sprintf("paihuo-handoff-test-%d", os.Getpid()))
 	e.finishRun(*source, 0, nil, false)
 	completed, err := st.GetTask(sourceID)
 	if err != nil || completed.Status != store.StatusSucceeded {
@@ -495,7 +497,7 @@ func TestExecutorRecoversArchivedSuccessfulLostTaskIntoMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := New(st, events.NewHub(), sessionsRoot, "recover-lost-result-test.db")
+	e := NewForTest(st, events.NewHub(), sessionsRoot, "recover-lost-result-test.db", fmt.Sprintf("paihuo-recover-lost-test-%d", os.Getpid()))
 	archive := filepath.Join(e.runner.taskDir(sourceID), "failure-20260806T000000.000000000Z")
 	if err := os.MkdirAll(archive, 0o700); err != nil {
 		t.Fatal(err)

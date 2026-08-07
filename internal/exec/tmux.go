@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // tmuxRunner 把 tmux 的 server、window、pipe-pane、退出码文件和日志偏移
@@ -103,15 +104,16 @@ func newTmuxRunnerAt(sessionsRoot, socket string) *tmuxRunner {
 }
 
 func (r *tmuxRunner) taskName(taskID int64) string {
-	// 带 ph- 前缀：tmux 对窗口名做唯一前缀匹配，外部命令（如
-	// `kill-window -t paihuo:task-1`）会因 task-1 是 task-116 的前缀而误杀
-	// 任务窗口；加前缀后这类输入不再匹配任何任务窗口（只会报错或命中
-	// 无害的 control 回退）。
+	// ph- 命名空间避免外部的 `task-<id>` 操作碰到 PaiHuo 窗口。窗口寻址还
+	// 必须通过 target 的 `=` 强制精确匹配，因为 ph-task-1 仍是 ph-task-133
+	// 的前缀，tmux 默认会在没有完全匹配时接受唯一前缀。
 	return fmt.Sprintf("ph-task-%d", taskID)
 }
 
 func (r *tmuxRunner) target(taskID int64) string {
-	return r.session + ":" + r.taskName(taskID)
+	// tmux 的 target-window 语法中，名称前的 `=` 禁止唯一前缀匹配。没有它，
+	// 对不存在 task 1 的查询/清理可能命中唯一的 ph-task-133 并将其误删。
+	return r.session + ":=" + r.taskName(taskID)
 }
 
 func (r *tmuxRunner) taskDir(taskID int64) string {
@@ -347,7 +349,7 @@ func (r *tmuxRunner) Start(taskID int64, dir, bin string, args, env []string, op
 	// 任务窗口创建后立即切回 control：tmux 对不存在的 target（如外部误用
 	// `kill-window -t paihuo:task-1`）会回退到「会话当前窗口」，不能让任务
 	// 窗口成为回退目标而被误杀。paihuo 自身的命令都带显式 target，不受影响。
-	_ = r.command("select-window", "-t", r.session+":control")
+	_ = r.command("select-window", "-t", r.session+":=control")
 	r.recordLifecycle(taskID, "window_created", "target="+r.target(taskID))
 	if options.TerminalColumns > 0 && options.TerminalRows > 0 {
 		if err := r.command("set-window-option", "-t", r.target(taskID), "window-size", "manual"); err != nil {
@@ -583,9 +585,13 @@ func (r *tmuxRunner) writeScript(taskID int64, dir, bin string, args, taskEnv []
 	return nil
 }
 
-// Poll 返回自 offset 之后已完整写入的终端行、下一个安全偏移及任务结束状态。
-// 未换行的尾部会等到下一次轮询，避免在持久化日志中产生重复或截断行。
+// Poll 返回普通批处理任务自 offset 之后已完整写入的终端行、下一个安全偏移
+// 及任务结束状态。交互 TUI 使用 PollInteractive 保留原始字节流。
 func (r *tmuxRunner) Poll(taskID, offset int64) (tmuxObservation, error) {
+	return r.poll(taskID, offset, false)
+}
+
+func (r *tmuxRunner) poll(taskID, offset int64, interactive bool) (tmuxObservation, error) {
 	code, done, err := r.exitCode(taskID)
 	if err != nil {
 		return tmuxObservation{}, err
@@ -660,7 +666,7 @@ func (r *tmuxRunner) Poll(taskID, offset int64) (tmuxObservation, error) {
 			r.recordLifecycleOnce(taskID, "agent_service_unknown", "pane 已结束；继续观察 agent-output.log 与退出码")
 		}
 	}
-	lines, next, err := r.readLines(taskID, offset, done)
+	lines, next, err := r.readOutput(taskID, offset, done, interactive)
 	if err != nil {
 		return tmuxObservation{}, err
 	}
@@ -679,6 +685,12 @@ func (r *tmuxRunner) Poll(taskID, offset int64) (tmuxObservation, error) {
 		return obs, nil
 	}
 	return obs, nil
+}
+
+// PollInteractive 不等待换行，直接返回 tmux pipe-pane 新增的终端字节块。
+// 输入回显、光标移动和 TUI 同步刷新都可能没有换行，必须在本轮立即消费。
+func (r *tmuxRunner) PollInteractive(taskID, offset int64) (tmuxObservation, error) {
+	return r.poll(taskID, offset, true)
 }
 
 func (r *tmuxRunner) exitCode(taskID int64) (int, bool, error) {
@@ -801,7 +813,7 @@ func (r *tmuxRunner) agentServiceState(taskID int64) agentServiceState {
 	}
 }
 
-func (r *tmuxRunner) readLines(taskID, offset int64, flushTail bool) ([]string, int64, error) {
+func (r *tmuxRunner) readOutput(taskID, offset int64, flushTail, interactive bool) ([]string, int64, error) {
 	// Detached agent 的输出文件独立于 tmux pipe-pane，pane 丢失后仍会持续
 	// 追加。正常情况下 tail 会把同样内容转发到 terminal.log 供人工 attach，
 	// 但持久化日志只读这一份原始流以避免双份重复。
@@ -828,6 +840,42 @@ func (r *tmuxRunner) readLines(taskID, offset int64, flushTail bool) ([]string, 
 	}
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		return nil, offset, err
+	}
+	if interactive {
+		// 每轮最多同步 256 KiB，避免一次恢复积压把整个日志读入内存；下一轮
+		// 会从安全 offset 继续。控制序列可以跨块，xterm 会按连续 write 解析。
+		data, err := io.ReadAll(io.LimitReader(f, 256*1024))
+		if err != nil {
+			return nil, offset, fmt.Errorf("读取交互终端日志失败: %w", err)
+		}
+		if len(data) == 0 {
+			return nil, offset, nil
+		}
+		consume := len(data)
+		content := string(data)
+		if !utf8.Valid(data) {
+			// 文件可能恰好停在一个 UTF-8 字符中间。最多保留 3 个尾字节到
+			// 下一轮，避免分成两个数据库/SSE 字符串后被 JSON 替换为 �。
+			validPrefix := -1
+			for trim := 1; trim < utf8.UTFMax && trim <= len(data); trim++ {
+				if utf8.Valid(data[:len(data)-trim]) {
+					validPrefix = len(data) - trim
+					break
+				}
+			}
+			if validPrefix >= 0 && !flushTail {
+				consume = validPrefix
+				content = string(data[:validPrefix])
+			} else {
+				// 真正的非法字节或任务结束时残留的不完整字符只替换一次并推进
+				// offset，不能让同一个坏尾巴永久阻塞后续终端输出。
+				content = strings.ToValidUTF8(string(data), "\uFFFD")
+			}
+		}
+		if consume == 0 {
+			return nil, offset, nil
+		}
+		return []string{content}, offset + int64(consume), nil
 	}
 
 	reader := bufio.NewReaderSize(f, 64*1024)

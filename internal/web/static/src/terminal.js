@@ -40,7 +40,9 @@ const TERM_THEME = {
 function terminalOptions(interactive = false, running = false, size = null) {
   return {
     ...(interactive ? { cols: size?.cols ?? INTERACTIVE_TERM_COLS, rows: size?.rows ?? INTERACTIVE_TERM_ROWS } : {}),
-    fontFamily: "var(--font-mono)",
+    // OMP and other TUIs use Nerd Fonts private-use glyphs. Keep the normal
+    // monospace stack for text and use the bundled Symbols font as fallback.
+    fontFamily: "var(--font-terminal)",
     fontSize: 12.5,
     lineHeight: 1.35,
     convertEol: true,
@@ -118,16 +120,28 @@ function configureTerminalInput(target, enabled) {
   if (!enabled) target.blur();
 }
 
+function terminalRenderableLog(l) {
+  // term 是新版本保存的原始交互终端字节块；out 兼容旧版本逐行归档。
+  // sys/in 属于任务审计记录，混入 xterm 会改变 TUI 的光标坐标和画布。
+  return l?.stream === "term" || l?.stream === "out" || !l?.stream;
+}
+
+function writeTerminalLog(target, l, callback) {
+  if (!target || !terminalRenderableLog(l)) return;
+  const content = String(l.content ?? "");
+  target.write(l.stream === "term" ? content : content + "\r\n", callback);
+}
+
 function writeTerminalLogs(target, logs, emptyMessage = "（暂无输出）") {
   if (!target) return;
-  if (!logs.length) {
+  const renderable = logs.filter(terminalRenderableLog);
+  if (!renderable.length) {
     target.write(`\x1b[90m${emptyMessage}\x1b[0m\r\n`);
     return;
   }
-  logs.forEach((l, index) => {
-    target.write(String(l.content ?? "") + "\r\n", index === logs.length - 1
-      ? () => target.scrollToBottom()
-      : undefined);
+  renderable.forEach((l, index) => {
+    writeTerminalLog(target, l, index === renderable.length - 1
+      ? () => target.scrollToBottom() : undefined);
   });
 }
 
@@ -142,8 +156,14 @@ function scaleTerminalToContainer(term, host) {
   const rowsEl = el.querySelector(".xterm-rows");
   const natW = rowsEl?.offsetWidth || el.offsetWidth;
   const natH = rowsEl?.offsetHeight || el.offsetHeight;
-  const padW = el.offsetWidth - el.clientWidth;
-  const padH = el.offsetHeight - el.clientHeight;
+  // clientWidth/clientHeight include CSS padding, so offset-client only gives
+  // the border. The replay canvas has explicit xterm padding; omitting it from
+  // the scale makes the glyph grid consume the entire host and pushes the
+  // final column/right padding outside the clipped terminal body.
+  const style = getComputedStyle(el);
+  const px = value => Number.parseFloat(value) || 0;
+  const padW = px(style.paddingLeft) + px(style.paddingRight) + el.offsetWidth - el.clientWidth;
+  const padH = px(style.paddingTop) + px(style.paddingBottom) + el.offsetHeight - el.clientHeight;
   const cw = host.clientWidth, ch = host.clientHeight;
   if (!natW || !natH || !cw || !ch) return;
   const visW = natW + padW, visH = natH + padH;
@@ -213,15 +233,16 @@ export function initTerm() {
   syncFullscreenTerminalGeometry();
 }
 
-export function termWrite(content) {
-  if (term) term.write(String(content ?? "") + "\r\n");
+export function termWrite(content, raw = false) {
+  if (term) term.write(String(content ?? "") + (raw ? "" : "\r\n"));
 }
 
 export function termAppendLog(l) {
   if (state.termTask !== l.task_id || !term) return;
+  if (!terminalRenderableLog(l)) return;
   if (termLogs.some(existing => existing.id === l.id)) return;
   termLogs.push(l);
-  termWrite(l.content);
+  writeTerminalLog(term, l, () => term?.scrollToBottom());
 }
 
 function renderTerminalWindow() {
@@ -241,7 +262,7 @@ async function loadOlderTerminalLogs() {
     const page = await fetchTaskLogs(id, { before: termOldestSeq, limit: 200 });
     if (state.termTask !== id) return;
     const existing = new Set(termLogs.map(l => l.id));
-    const older = page.logs.filter(l => !existing.has(l.id));
+    const older = page.logs.filter(l => terminalRenderableLog(l) && !existing.has(l.id));
     if (!older.length) {
       termHasMore = false;
       return;
@@ -295,7 +316,7 @@ export function openTerminal(id) {
   syncTerminalInput(t);
   fetchTaskLogs(id, { limit: 200 }).then(page => {
     if (state.termTask !== id) return;
-    const byID = new Map(page.logs.map(l => [l.id, l]));
+    const byID = new Map(page.logs.filter(terminalRenderableLog).map(l => [l.id, l]));
     for (const l of termLogs) if (!byID.has(l.id)) byID.set(l.id, l);
     termLogs = [...byID.values()].sort((a, b) => a.seq - b.seq);
     termHasMore = page.has_more;
@@ -320,25 +341,38 @@ export function closeTerminal() {
   document.getElementById("termX")?.classList.remove("interactive-term-body", "interactive-term-replay");
   termInteractive = false;
   termMode = "logs";
+  // 全屏 live 终端会把 tmux pane 调整为全屏画布尺寸。关闭弹层后，详情页
+  // 的容器宽高没有变化，因此它的 ResizeObserver 不会再次触发；若不主动
+  // 归还尺寸，agent 会继续按全屏列数绘制，窄详情终端便会错行/截断。
+  requestAnimationFrame(syncTaskTerminalGeometry);
 }
 
 // 详情页交互终端：运行中按容器 fit 并同步给 tmux（live）；已结束按录制
 // 尺寸重放并缩放适配容器（replay，agent 不会再重绘，fit 只会错位/留白）。
 let taskTermFit = null;
 let taskTermResizeObserver = null;
+function syncTaskTerminalGeometry() {
+  const host = document.getElementById("taskTermX");
+  if (!taskTerm || !host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
+  if (taskTermMode === "replay") {
+    scaleTaskTerminalToContainer();
+    return;
+  }
+  if (!taskTermFit) return;
+  try { taskTermFit.fit(); } catch (_) { return; }
+  // 全屏 live 终端打开时由它独占 tmux 画布尺寸；视口变化也会让背后的
+  // 详情终端 ResizeObserver 触发，不能让较小的 inline 尺寸抢写回来。
+  const modal = document.getElementById("termModal");
+  if (termMode === "live" && state.termTask === taskTermTask && modal && !modal.classList.contains("hidden")) return;
+  reportTerminalGeometry(taskTermTask, taskTerm.cols, taskTerm.rows);
+}
+
 function observeTaskTerminalGeometry() {
   const host = document.getElementById("taskTermX");
   if (!host || taskTermResizeObserver) return;
   taskTermResizeObserver = new ResizeObserver(() => {
-    if (!taskTerm) return;
-    if (taskTermMode === "replay") {
-      // 录制帧不跟随容器尺寸，只重算缩放；首次 observe 回调即完成初始适配。
-      requestAnimationFrame(scaleTaskTerminalToContainer);
-      return;
-    }
-    if (!taskTermFit) return;
-    try { taskTermFit.fit(); } catch (_) {}
-    reportTerminalGeometry(taskTermTask, taskTerm.cols, taskTerm.rows);
+    // 录制帧不跟随容器尺寸，只重算缩放；live 模式则 fit 后同步给 tmux。
+    requestAnimationFrame(syncTaskTerminalGeometry);
   });
   taskTermResizeObserver.observe(host);
 }
@@ -368,7 +402,7 @@ export function openTaskTerminal(id, logs = [], running = false) {
   const t = state.tasks.find(x => x.id === id) || {};
   closeTaskTerminal();
   taskTermTask = id;
-  taskTermLogs = [...logs];
+  taskTermLogs = logs.filter(terminalRenderableLog);
   taskTermMode = running ? "live" : "replay";
   taskTerm = new Terminal(terminalOptions(true, running, running ? null : {
     cols: t.terminal_cols || INTERACTIVE_TERM_COLS,
@@ -398,9 +432,10 @@ export function focusTaskTerminal() {
 
 export function taskTermAppendLog(l) {
   if (!taskTerm || taskTermTask !== l.task_id) return;
+  if (!terminalRenderableLog(l)) return;
   if (taskTermLogs.some(existing => existing.id === l.id)) return;
   taskTermLogs.push(l);
-  taskTerm.write(String(l.content ?? "") + "\r\n", () => taskTerm?.scrollToBottom());
+  writeTerminalLog(taskTerm, l, () => taskTerm?.scrollToBottom());
 }
 
 export function taskTerminalText() {

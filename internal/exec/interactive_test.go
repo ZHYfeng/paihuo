@@ -48,9 +48,10 @@ func TestAdaptersBuildNativeInteractiveCommands(t *testing.T) {
 		{
 			name: "codex", build: (&codexAdapter{baseAdapter{id: "codex", name: "Codex", bin: "codex"}}).Build,
 			role:                 store.RoleConfig{Custom: map[string]string{"execution_mode": "yolo"}},
-			interactiveRequired:  []string{"--disable", "code_mode_host", "--dangerously-bypass-approvals-and-sandbox"},
-			interactiveForbidden: []string{"exec", "--skip-git-repo-check"},
+			interactiveRequired:  []string{"--dangerously-bypass-approvals-and-sandbox"},
+			interactiveForbidden: []string{"exec", "--skip-git-repo-check", "code_mode_host"},
 			batchRequired:        []string{"exec", "--skip-git-repo-check"},
+			batchForbidden:       []string{"code_mode_host"},
 		},
 	}
 
@@ -319,5 +320,90 @@ func TestInteractiveTmuxResizeFollowsBrowser(t *testing.T) {
 	}
 	if want := "132x42:manual"; strings.TrimSpace(string(out)) != want {
 		t.Fatalf("Resize 后尺寸不正确: got %q want %q", strings.TrimSpace(string(out)), want)
+	}
+}
+
+func TestExecutorResizeAcceptsObserved4KBrowserGeometry(t *testing.T) {
+	requireTmuxIntegration(t)
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	agentID, err := st.CreateAgent(store.Agent{Name: "4k-terminal", CLI: "pi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID, err := st.CreateTask(store.Task{
+		Title: "4k interactive", Status: store.StatusRunning,
+		RunMode: store.RunModeInteractive, AgentID: &agentID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionsRoot := t.TempDir()
+	socket := fmt.Sprintf("paihuo-4k-resize-test-%d", os.Getpid())
+	e := NewForTest(st, events.NewHub(), sessionsRoot, "4k-resize-test.db", socket)
+	_ = e.runner.command("kill-server")
+	t.Cleanup(func() { _ = e.runner.command("kill-server") })
+	if err := e.runner.Start(taskID, sessionsRoot, "/bin/sh", []string{"-c", "sleep 5"}, nil, tmuxStartOptions{
+		TerminalColumns: interactiveTerminalColumns,
+		TerminalRows:    interactiveTerminalRows,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e.runner.Stop(taskID) })
+
+	// 3840×2160 浏览器实测 FitAddon 会报告 435×103；不能因为固定上限而
+	// 静默拒绝，否则 xterm 与 tmux 使用不同画布，TUI 就会错行和留白。
+	if err := e.Resize(taskID, 435, 103); err != nil {
+		t.Fatalf("4K 浏览器终端尺寸应被接受: %v", err)
+	}
+	tk, err := st.GetTask(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk.TerminalCols != 435 || tk.TerminalRows != 103 {
+		t.Fatalf("4K 尺寸未持久化: %dx%d", tk.TerminalCols, tk.TerminalRows)
+	}
+}
+
+func TestExecutorSyncInteractiveOutputUsesRawTerminalStream(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	taskID, err := st.CreateTask(store.Task{
+		Title: "raw terminal stream", Status: store.StatusRunning, RunMode: store.RunModeInteractive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk, err := st.GetTask(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewForTest(st, events.NewHub(), t.TempDir(), "raw-terminal-stream.db", "raw-terminal-stream-test")
+	if err := e.syncTmuxOutput(tk, tmuxObservation{
+		Lines: []string{"prompt>", "typed"}, Offset: 12, Alive: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	logs, err := st.ListLogs(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 2 || logs[0].Stream != "term" || logs[0].Content != "prompt>" ||
+		logs[1].Stream != "term" || logs[1].Content != "typed" {
+		t.Fatalf("交互输出必须按原始 term 块持久化，得到 %+v", logs)
+	}
+	updated, err := st.GetTask(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.TmuxLogOffset != 12 {
+		t.Fatalf("原始终端 offset 未推进: %d", updated.TmuxLogOffset)
 	}
 }
