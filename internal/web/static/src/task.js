@@ -681,9 +681,12 @@ export async function setTaskStatus(id, status) {
 }
 
 export async function endInteractiveTask(id) {
-  if (!confirm("向当前终端发送 /exit 并结束交互会话？任务会按正常退出结果结算。")) return;
-  if (await sendTaskInput(id, "", "/exit")) {
-    toast("已发送 /exit，等待当前 CLI 退出");
+  if (!confirm("结束交互会话？将向终端发送该 CLI 的退出命令（pi 为 /quit），agent 收尾后任务按正常退出结果结算。")) return;
+  try {
+    const res = await api(`/api/tasks/${id}/end-session`, { method: "POST" });
+    toast(`已发送 ${res.sent}，等待 agent 退出`);
+  } catch (e) {
+    toast(e.message, true);
   }
 }
 

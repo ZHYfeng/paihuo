@@ -14,6 +14,7 @@ This file records notable user-facing and maintainer-facing changes. The format 
 
 ### Changed
 
+- 「结束会话」按 CLI 发送正确的退出命令：pi 为 `/quit`（`/exit` 只会被当普通对话消息，pi 不会退出），其余 CLI（omp/opencode/claude/codex）为 `/exit`。新增 `POST /api/tasks/{id}/end-session` 由后端按角色 CLI 决定命令，前端不再硬编码。
 - 交互式任务终端不再固定 80×24：浏览器 xterm 按容器自适应（FitAddon），尺寸经新增的 `POST /api/tasks/{id}/resize` 同步给 tmux 窗口，agent 收到 SIGWINCH 后按新画布重绘 TUI（任务启动默认仍为 80×24，打开终端后即跟随浏览器）。
 - 移除已废弃的 `POST /api/workspace/{id}/merge` 手工合并端点（代码合并在合并任务成功结算时自动执行，前端早已不再调用）。
 - 清理静态检查发现的死代码：`ompModelsProbe`、`importSkill` 包装、`nullStr`、`terminalStats` 常量、`Scheduler.stopped` 字段、测试内未用的 `execGit` 等。

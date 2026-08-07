@@ -51,6 +51,9 @@ type Adapter interface {
 	Models() []string
 	// Docs 返回该 CLI 官方文档链接。
 	Docs() string
+	// ExitCommand 返回交互模式下优雅退出该 CLI 的命令（不含 Enter）。
+	// 「结束会话」按钮据此发送，让 agent 自行收尾后按正常退出结果结算。
+	ExitCommand() string
 }
 
 var registry = map[string]Adapter{}
@@ -88,6 +91,9 @@ type baseAdapter struct {
 func (a *baseAdapter) ID() string       { return a.id }
 func (a *baseAdapter) Name() string     { return a.name }
 func (a *baseAdapter) Models() []string { return nil }
+
+// ExitCommand 默认 /exit（opencode/claude/codex 的交互退出命令）。
+func (a *baseAdapter) ExitCommand() string { return "/exit" }
 
 func (a *baseAdapter) Detect() (string, error) {
 	p, err := exec.LookPath(a.bin)
@@ -334,6 +340,9 @@ func (a *openCodeAdapter) Docs() string { return "https://opencode.ai/docs" }
 // 角色映射：model→--model；system_prompt→--append-system-prompt；其余走 ExtraArgs。
 
 type piAdapter struct{ baseAdapter }
+
+// pi 的交互退出命令是 /quit（/exit 不是有效的交互命令）。
+func (a *piAdapter) ExitCommand() string { return "/quit" }
 
 func (a *piAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	interactive := o.RunMode == store.RunModeInteractive

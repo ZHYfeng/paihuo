@@ -362,3 +362,20 @@ func TestSchemaBuiltinMarking(t *testing.T) {
 		t.Fatalf("builtinKeys 与 RoleConfig 不同步：得到 %v", got)
 	}
 }
+
+// 每个 CLI 的交互退出命令映射：pi 用 /quit，其余（omp/opencode/claude/
+// codex）用 /exit。按钮「结束会话」据此发送，命令不对 agent 不会退出。
+func TestAdapterExitCommands(t *testing.T) {
+	want := map[string]string{
+		"pi":       "/quit",
+		"omp":      "/exit",
+		"opencode": "/exit",
+		"claude":   "/exit",
+		"codex":    "/exit",
+	}
+	for _, a := range Adapters() {
+		if got := a.ExitCommand(); got != want[a.ID()] {
+			t.Fatalf("CLI %s 退出命令为 %q，期望 %q", a.ID(), got, want[a.ID()])
+		}
+	}
+}

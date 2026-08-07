@@ -778,6 +778,33 @@ func (e *Executor) Resize(taskID int64, cols, rows int) error {
 	return e.runner.Resize(taskID, cols, rows)
 }
 
+// EndSession 向运行中的交互式任务发送该 CLI 的退出命令（pi 为 /quit，
+// 其余 /exit），让 agent 自行收尾退出；任务按正常退出结果结算，而非
+// 被硬性取消。
+func (e *Executor) EndSession(taskID int64) (string, error) {
+	if err := e.validateInteractiveInputTarget(taskID); err != nil {
+		return "", err
+	}
+	tk, err := e.st.GetTask(taskID)
+	if err != nil {
+		return "", err
+	}
+	agent, err := e.st.GetAgent(*tk.AgentID)
+	if err != nil {
+		return "", fmt.Errorf("读取角色失败: %w", err)
+	}
+	adapter, ok := GetAdapter(agent.CLI)
+	if !ok {
+		return "", fmt.Errorf("未知 CLI: %s", agent.CLI)
+	}
+	cmd := adapter.ExitCommand()
+	if err := e.runner.SendText(taskID, cmd); err != nil {
+		return "", err
+	}
+	e.log(taskID, "in", cmd)
+	return cmd, nil
+}
+
 // SendInput 将一条人工消息送入正在运行的交互式任务。输入必须是单行，
 // 以保证它在 agent TUI 中是一条原子消息；复杂的初始指令仍由任务内容承载。
 func (e *Executor) SendInput(taskID int64, text string) error {

@@ -1381,25 +1381,6 @@
     bar?.classList.toggle("hidden", !enabled);
     configureTerminalInput(term, enabled);
   }
-  async function sendTaskInput(id, inputID, explicitMessage) {
-    const input = inputID ? document.getElementById(inputID) : null;
-    const message = explicitMessage ?? input?.value ?? "";
-    if (!message.trim()) {
-      toast("\u6D88\u606F\u4E0D\u80FD\u4E3A\u7A7A", true);
-      return false;
-    }
-    try {
-      await api(`/api/tasks/${id}/input`, { method: "POST", body: JSON.stringify({ message }) });
-      if (input) {
-        input.value = "";
-        input.focus();
-      }
-      return true;
-    } catch (e) {
-      toast(e.message, true);
-      return false;
-    }
-  }
   function focusFullscreenTerminal() {
     term?.focus();
   }
@@ -2017,9 +1998,12 @@
     }
   }
   async function endInteractiveTask(id) {
-    if (!confirm("\u5411\u5F53\u524D\u7EC8\u7AEF\u53D1\u9001 /exit \u5E76\u7ED3\u675F\u4EA4\u4E92\u4F1A\u8BDD\uFF1F\u4EFB\u52A1\u4F1A\u6309\u6B63\u5E38\u9000\u51FA\u7ED3\u679C\u7ED3\u7B97\u3002")) return;
-    if (await sendTaskInput(id, "", "/exit")) {
-      toast("\u5DF2\u53D1\u9001 /exit\uFF0C\u7B49\u5F85\u5F53\u524D CLI \u9000\u51FA");
+    if (!confirm("\u7ED3\u675F\u4EA4\u4E92\u4F1A\u8BDD\uFF1F\u5C06\u5411\u7EC8\u7AEF\u53D1\u9001\u8BE5 CLI \u7684\u9000\u51FA\u547D\u4EE4\uFF08pi \u4E3A /quit\uFF09\uFF0Cagent \u6536\u5C3E\u540E\u4EFB\u52A1\u6309\u6B63\u5E38\u9000\u51FA\u7ED3\u679C\u7ED3\u7B97\u3002")) return;
+    try {
+      const res = await api(`/api/tasks/${id}/end-session`, { method: "POST" });
+      toast(`\u5DF2\u53D1\u9001 ${res.sent}\uFF0C\u7B49\u5F85 agent \u9000\u51FA`);
+    } catch (e) {
+      toast(e.message, true);
     }
   }
   async function rejectTask(id) {

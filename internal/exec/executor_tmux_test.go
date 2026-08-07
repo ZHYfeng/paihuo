@@ -38,6 +38,7 @@ func (tmuxExecutorTestAdapter) Warnings(RunOptions) []string { return nil }
 func (tmuxExecutorTestAdapter) Schema() []Field              { return nil }
 func (tmuxExecutorTestAdapter) Models() []string             { return nil }
 func (tmuxExecutorTestAdapter) Docs() string                 { return "" }
+func (tmuxExecutorTestAdapter) ExitCommand() string          { return "/exit" }
 
 // 长时间运行的适配器让测试可以稳定观测同一角色的多个并发 task window。
 type tmuxConcurrencyTestAdapter struct{}
@@ -58,11 +59,13 @@ func (tmuxConcurrencyTestAdapter) Warnings(RunOptions) []string { return nil }
 func (tmuxConcurrencyTestAdapter) Schema() []Field              { return nil }
 func (tmuxConcurrencyTestAdapter) Models() []string             { return nil }
 func (tmuxConcurrencyTestAdapter) Docs() string                 { return "" }
+func (tmuxConcurrencyTestAdapter) ExitCommand() string          { return "/exit" }
 
 type tmuxAutoMergeTestAdapter struct{}
 
-func (tmuxAutoMergeTestAdapter) ID() string   { return tmuxAutoMergeTestCLI }
-func (tmuxAutoMergeTestAdapter) Name() string { return "tmux auto merge test" }
+func (tmuxAutoMergeTestAdapter) ID() string          { return tmuxAutoMergeTestCLI }
+func (tmuxAutoMergeTestAdapter) Name() string        { return "tmux auto merge test" }
+func (tmuxAutoMergeTestAdapter) ExitCommand() string { return "/exit" }
 func (tmuxAutoMergeTestAdapter) Detect() (string, error) {
 	return osexec.LookPath("sh")
 }
@@ -80,8 +83,9 @@ func (tmuxAutoMergeTestAdapter) Docs() string                 { return "" }
 
 type tmuxReviewMergeTestAdapter struct{}
 
-func (tmuxReviewMergeTestAdapter) ID() string   { return tmuxReviewMergeTestCLI }
-func (tmuxReviewMergeTestAdapter) Name() string { return "tmux review merge test" }
+func (tmuxReviewMergeTestAdapter) ID() string          { return tmuxReviewMergeTestCLI }
+func (tmuxReviewMergeTestAdapter) Name() string        { return "tmux review merge test" }
+func (tmuxReviewMergeTestAdapter) ExitCommand() string { return "/exit" }
 func (tmuxReviewMergeTestAdapter) Detect() (string, error) {
 	return osexec.LookPath("sh")
 }
@@ -828,8 +832,9 @@ type tmuxCodexTestAdapter struct {
 	recordPath string
 }
 
-func (a *tmuxCodexTestAdapter) ID() string   { return "codex" }
-func (a *tmuxCodexTestAdapter) Name() string { return "tmux codex test" }
+func (a *tmuxCodexTestAdapter) ID() string          { return "codex" }
+func (a *tmuxCodexTestAdapter) Name() string        { return "tmux codex test" }
+func (a *tmuxCodexTestAdapter) ExitCommand() string { return "/exit" }
 func (a *tmuxCodexTestAdapter) Detect() (string, error) {
 	return osexec.LookPath("sh")
 }

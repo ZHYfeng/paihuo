@@ -277,6 +277,24 @@ func normalizeNewTaskDependency(tk *store.Task) error {
 
 // sendTaskInput 把已登录用户的整行消息或 xterm 原始按键送进运行中的 agent
 // 交互式 pane；两种模式互斥，避免同一请求被重复提交。
+// endSession 向交互式任务发送其 CLI 的退出命令（如 pi 的 /quit）。
+func (s *Server) endSession(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if _, err := s.st.GetTask(id); err != nil {
+		writeErr(w, http.StatusNotFound, "任务不存在")
+		return
+	}
+	cmd, err := s.ex.EndSession(id)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"sent": cmd})
+}
+
 // resizeTask 把浏览器交互终端的尺寸同步给运行中的任务窗口（tmux resize-window）。
 func (s *Server) resizeTask(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
