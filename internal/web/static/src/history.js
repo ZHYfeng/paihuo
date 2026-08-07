@@ -25,21 +25,21 @@ export function renderHistory() {
   if (!body) return;
   body.innerHTML = state.history.map(t => `
     <tr data-id="${t.id}" class="${state.historySel.has(t.id) ? "selected" : ""}" onclick="toggleRow(this)">
-      <td class="chk"><input type="checkbox" ${state.historySel.has(t.id) ? "checked" : ""} onclick="event.stopPropagation()" onchange="toggleRow(this.closest('tr'), this.checked)" aria-label="选择任务 #${t.id}"></td>
-      <td class="num">#${t.id}</td>
-      <td class="t-title"><span class="t-link" onclick="event.stopPropagation();openTask(${t.id})">${esc(t.title)}</span>${isMergeTask(t) ? ` <span class="chip merge">合并 #${t.merge_of}</span>` : ""}</td>
-      <td>${esc(t.agent_name || "-")}</td>
-      <td>${esc(t.project_name || "-")}</td>
-      <td>${PERM_LABEL[t.perm] || t.perm}</td>
-      <td><span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span></td>
-      <td>${t.review_rounds || ""}</td>
-      <td class="num">${(t.created_at || "").slice(5, 16).replace("T", " ")}</td>
-      <td class="num">${(t.finished_at || "").slice(5, 16).replace("T", " ")}</td>
-      <td>
+      <td class="chk history-check"><input type="checkbox" ${state.historySel.has(t.id) ? "checked" : ""} onclick="event.stopPropagation()" onchange="toggleRow(this.closest('tr'), this.checked)" aria-label="选择任务 #${t.id}"></td>
+      <td class="num history-id">#${t.id}</td>
+      <td class="t-title history-title"><span class="t-link" onclick="event.stopPropagation();openTask(${t.id})">${esc(t.title)}</span>${isMergeTask(t) ? ` <span class="chip merge">合并 #${t.merge_of}</span>` : ""}</td>
+      <td class="history-agent" data-label="角色">${esc(t.agent_name || "-")}</td>
+      <td class="history-project" data-label="项目">${esc(t.project_name || "-")}</td>
+      <td class="history-perm" data-label="权限">${PERM_LABEL[t.perm] || t.perm}</td>
+      <td class="history-status" data-label="状态"><span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span></td>
+      <td class="history-rounds" data-label="轮次">${t.review_rounds || ""}</td>
+      <td class="num history-created" data-label="创建">${(t.created_at || "").slice(5, 16).replace("T", " ")}</td>
+      <td class="num history-finished" data-label="结束">${(t.finished_at || "").slice(5, 16).replace("T", " ")}</td>
+      <td class="history-actions" data-label="操作">
         <span class="ops">
           ${canRetryTask(t)
-            ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}${retryTaskLabel(t)}</button>` : ""}
-          ${canDeleteTask(t) ? `<button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}删除</button>` : ""}
+            ? `<button type="button" class="btn xs" title="${esc(retryTaskLabel(t))}" aria-label="${esc(retryTaskLabel(t))}" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}<span class="history-action-label">${esc(retryTaskLabel(t))}</span></button>` : ""}
+          ${canDeleteTask(t) ? `<button type="button" class="btn xs danger" title="删除任务" aria-label="删除任务" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}<span class="history-action-label">删除</span></button>` : ""}
         </span>
       </td>
     </tr>`).join("");

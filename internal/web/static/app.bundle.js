@@ -332,20 +332,20 @@
     if (!body) return;
     body.innerHTML = state.history.map((t) => `
     <tr data-id="${t.id}" class="${state.historySel.has(t.id) ? "selected" : ""}" onclick="toggleRow(this)">
-      <td class="chk"><input type="checkbox" ${state.historySel.has(t.id) ? "checked" : ""} onclick="event.stopPropagation()" onchange="toggleRow(this.closest('tr'), this.checked)" aria-label="\u9009\u62E9\u4EFB\u52A1 #${t.id}"></td>
-      <td class="num">#${t.id}</td>
-      <td class="t-title"><span class="t-link" onclick="event.stopPropagation();openTask(${t.id})">${esc(t.title)}</span>${isMergeTask(t) ? ` <span class="chip merge">\u5408\u5E76 #${t.merge_of}</span>` : ""}</td>
-      <td>${esc(t.agent_name || "-")}</td>
-      <td>${esc(t.project_name || "-")}</td>
-      <td>${PERM_LABEL[t.perm] || t.perm}</td>
-      <td><span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span></td>
-      <td>${t.review_rounds || ""}</td>
-      <td class="num">${(t.created_at || "").slice(5, 16).replace("T", " ")}</td>
-      <td class="num">${(t.finished_at || "").slice(5, 16).replace("T", " ")}</td>
-      <td>
+      <td class="chk history-check"><input type="checkbox" ${state.historySel.has(t.id) ? "checked" : ""} onclick="event.stopPropagation()" onchange="toggleRow(this.closest('tr'), this.checked)" aria-label="\u9009\u62E9\u4EFB\u52A1 #${t.id}"></td>
+      <td class="num history-id">#${t.id}</td>
+      <td class="t-title history-title"><span class="t-link" onclick="event.stopPropagation();openTask(${t.id})">${esc(t.title)}</span>${isMergeTask(t) ? ` <span class="chip merge">\u5408\u5E76 #${t.merge_of}</span>` : ""}</td>
+      <td class="history-agent" data-label="\u89D2\u8272">${esc(t.agent_name || "-")}</td>
+      <td class="history-project" data-label="\u9879\u76EE">${esc(t.project_name || "-")}</td>
+      <td class="history-perm" data-label="\u6743\u9650">${PERM_LABEL[t.perm] || t.perm}</td>
+      <td class="history-status" data-label="\u72B6\u6001"><span class="badge ${t.status}" style="--st-color:${ST_COLOR[t.status]}"><span class="st-dot"></span>${STATUS_LABEL[t.status]}</span></td>
+      <td class="history-rounds" data-label="\u8F6E\u6B21">${t.review_rounds || ""}</td>
+      <td class="num history-created" data-label="\u521B\u5EFA">${(t.created_at || "").slice(5, 16).replace("T", " ")}</td>
+      <td class="num history-finished" data-label="\u7ED3\u675F">${(t.finished_at || "").slice(5, 16).replace("T", " ")}</td>
+      <td class="history-actions" data-label="\u64CD\u4F5C">
         <span class="ops">
-          ${canRetryTask(t) ? `<button class="btn xs" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}${retryTaskLabel(t)}</button>` : ""}
-          ${canDeleteTask(t) ? `<button class="btn xs danger" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}\u5220\u9664</button>` : ""}
+          ${canRetryTask(t) ? `<button type="button" class="btn xs" title="${esc(retryTaskLabel(t))}" aria-label="${esc(retryTaskLabel(t))}" onclick="event.stopPropagation();setTaskStatus(${t.id},'queued')">${icon("retry")}<span class="history-action-label">${esc(retryTaskLabel(t))}</span></button>` : ""}
+          ${canDeleteTask(t) ? `<button type="button" class="btn xs danger" title="\u5220\u9664\u4EFB\u52A1" aria-label="\u5220\u9664\u4EFB\u52A1" onclick="event.stopPropagation();deleteTask(${t.id})">${icon("trash")}<span class="history-action-label">\u5220\u9664</span></button>` : ""}
         </span>
       </td>
     </tr>`).join("");
