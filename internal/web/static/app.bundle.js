@@ -1095,12 +1095,16 @@
     brightCyan: "#67e8f9",
     brightWhite: "#f1f5f9"
   };
+  var TERMINAL_FONT_FALLBACK = '"Geist Mono", "JetBrains Mono", "Cascadia Code", ui-monospace, Consolas, monospace, "Symbols Nerd Font Mono"';
+  function terminalFontFamily() {
+    return getComputedStyle(document.documentElement).getPropertyValue("--font-terminal").trim() || TERMINAL_FONT_FALLBACK;
+  }
   function terminalOptions(interactive = false, running = false, size = null) {
     return {
       ...interactive ? { cols: size?.cols ?? INTERACTIVE_TERM_COLS, rows: size?.rows ?? INTERACTIVE_TERM_ROWS } : {},
       // OMP and other TUIs use Nerd Fonts private-use glyphs. Keep the normal
       // monospace stack for text and use the bundled Symbols font as fallback.
-      fontFamily: "var(--font-terminal)",
+      fontFamily: terminalFontFamily(),
       fontSize: 12.5,
       lineHeight: 1.35,
       convertEol: true,

@@ -230,6 +230,7 @@ function terminalBoxSnapshot() {
       const rows = document.querySelector("#taskTermX .xterm-rows");
       return {
         stack: rows ? getComputedStyle(rows).fontFamily : "",
+        letterSpacing: rows ? Number.parseFloat(getComputedStyle(rows).letterSpacing) || 0 : 0,
         glyphPresent: Boolean(rows?.textContent.includes("\uf0e7")),
         nerdFaces: [...document.fonts]
           .filter(face => /nerd/i.test(face.family))
@@ -240,6 +241,9 @@ function terminalBoxSnapshot() {
     if (!fontProbe.glyphPresent) fontErrors.push("Nerd Font fixture glyph did not reach xterm");
     if (!/nerd/i.test(fontProbe.stack) || !fontProbe.nerdFaces.some(face => face.status === "loaded")) {
       fontErrors.push(`xterm has no loaded Nerd Font face: ${JSON.stringify(fontProbe)}`);
+    }
+    if (Math.abs(fontProbe.letterSpacing) > 0.5) {
+      fontErrors.push(`xterm glyph spacing is ${fontProbe.letterSpacing}px; expected at most 0.5px`);
     }
     if (TEST_CASE === "font") {
       console.log(JSON.stringify({ fontProbe }, null, 2));

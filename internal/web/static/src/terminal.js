@@ -37,12 +37,23 @@ const TERM_THEME = {
   brightCyan: "#67e8f9", brightWhite: "#f1f5f9",
 };
 
+const TERMINAL_FONT_FALLBACK = '"Geist Mono", "JetBrains Mono", "Cascadia Code", ui-monospace, Consolas, monospace, "Symbols Nerd Font Mono"';
+
+function terminalFontFamily() {
+  // xterm uses both DOM and Canvas APIs to measure glyphs. DOM styles resolve
+  // CSS custom properties, but CanvasRenderingContext2D.font does not; passing
+  // `var(--font-terminal)` therefore gives the two renderers different cell
+  // widths and xterm compensates with visibly large letter spacing.
+  return getComputedStyle(document.documentElement)
+    .getPropertyValue("--font-terminal").trim() || TERMINAL_FONT_FALLBACK;
+}
+
 function terminalOptions(interactive = false, running = false, size = null) {
   return {
     ...(interactive ? { cols: size?.cols ?? INTERACTIVE_TERM_COLS, rows: size?.rows ?? INTERACTIVE_TERM_ROWS } : {}),
     // OMP and other TUIs use Nerd Fonts private-use glyphs. Keep the normal
     // monospace stack for text and use the bundled Symbols font as fallback.
-    fontFamily: "var(--font-terminal)",
+    fontFamily: terminalFontFamily(),
     fontSize: 12.5,
     lineHeight: 1.35,
     convertEol: true,
