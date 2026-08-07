@@ -14,6 +14,7 @@ This file records notable user-facing and maintainer-facing changes. The format 
 
 ### Changed
 
+- **测试执行器改用独立 tmux socket**（`exec.NewForTest`）：此前 `internal/server` 测试经 `exec.New` 创建的执行器与生产共用同一个 tmux server（`-L paihuo` / session `paihuo`），测试删除任务（`DELETE /api/tasks/{id}`）会真实执行 `kill-window -t paihuo:task-<测试ID>`，经 tmux 窗口名前缀匹配误杀线上存活任务窗口（任务 113/116 的多次失败均源于此——后两次甚至是 OMP agent 自己运行 `go test ./...` 所致）；现在 12 处测试调用点全部切到独立 socket，对生产 tmux 零接触。
 - **任务 tmux 窗口名加 `ph-` 前缀**（`ph-task-<ID>`）：tmux 对窗口名做唯一前缀匹配，外部命令 `kill-window -t paihuo:task-1` 会因 `task-1` 是 `task-116` 等的前缀而误杀任务窗口（任务 116/123 因此两次失败）；加前缀后此类输入不再匹配任务窗口（报错或仅命中 control 回退）。运行目录仍为 `task-<ID>`，与历史任务目录/归档兼容。
 - 任务窗口创建后切回 control 为会话当前窗口：外部 kill-window 目标解析回退时不再以任务窗口为靶。
 - 窗口消失且无退出码时增加 3 秒宽限重读：正常完成的短任务不再因退出码落盘竞态被误判为窗口丢失。
