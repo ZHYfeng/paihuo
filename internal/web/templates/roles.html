@@ -1,5 +1,5 @@
 {{define "content"}}
-<header class="page-header">
+<header class="page-header role-page-header">
   <div class="page-identity">
     <span class="page-kicker">AGENT PROFILES</span>
     <h1>角色</h1>
@@ -56,17 +56,19 @@
 
   <!-- 角色详情 -->
   <div id="agentDetailShell" class="hidden detail-shell">
-    <header class="page-header">
+    <header class="page-header role-detail-header">
       <button class="btn ghost sm" onclick="closeAgentDetail()">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
         返回
       </button>
       <span class="crumb" id="adCrumb"></span>
       <span class="spacer"></span>
-      <span id="adCliDocs" class="count-info"></span>
-      <button class="btn sm" onclick="copyCurrentRole()">复制角色</button>
-      <button class="btn sm primary" onclick="openCurrentRoleEditor()">编辑角色</button>
-      <button class="btn sm danger" onclick="deleteAgent()">删除</button>
+      <div class="role-detail-actions">
+        <span id="adCliDocs" class="count-info"></span>
+        <button class="btn sm" onclick="copyCurrentRole()">复制角色</button>
+        <button class="btn sm primary" onclick="openCurrentRoleEditor()">编辑角色</button>
+        <button class="btn sm danger" onclick="deleteAgent()">删除</button>
+      </div>
     </header>
     <div class="tab-bar" id="agentTabs">
       <button class="active" data-tab="overview" onclick="agentTab('overview')">概况</button>
