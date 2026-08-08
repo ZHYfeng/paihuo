@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,7 +63,9 @@ func Branch(taskID int64) string { return fmt.Sprintf("paihuo/task-%d", taskID) 
 func SessionBranch(sessionID int64) string { return fmt.Sprintf("paihuo/session-%d", sessionID) }
 
 // EnsureSessionWorktree 为会话准备隔离工作区：git 项目创建独立 worktree
-// （paihuo/session-<id>），已存在直接返回；非 git 项目回退项目目录。
+// （paihuo/session-<id>），已存在直接返回；非 git 项目把项目目录复制到
+// sessions/<project>/session-<id>（跳过 .git / node_modules 等重目录），
+// 保证会话永远在专门、干净、隔离的目录里工作，绝不在项目原目录上直接干活。
 // 返回 (执行目录, 会话分支, baseCommit, error)。非隔离场景 branch 为空串。
 func EnsureSessionWorktree(projectDir, sessionsRoot, projectName string, sessionID int64) (dir, branch, baseCommit string, err error) {
 	dir = projectDir
@@ -74,7 +77,11 @@ func EnsureSessionWorktree(projectDir, sessionsRoot, projectName string, session
 		return wt, SessionBranch(sessionID), "", nil // 已存在（恢复）
 	}
 	if !isGitRepo(projectDir) {
-		return projectDir, "", "", nil
+		// 非 git 项目：复制到专属会话目录（干净隔离）。
+		if err := copyDirExcluding(projectDir, wt); err != nil {
+			return "", "", "", fmt.Errorf("复制项目到会话目录失败: %v", err)
+		}
+		return wt, "", "", nil
 	}
 	base, err := git(projectDir, "rev-parse", "HEAD")
 	if err != nil {
@@ -90,13 +97,70 @@ func EnsureSessionWorktree(projectDir, sessionsRoot, projectName string, session
 	return wt, SessionBranch(sessionID), baseCommit, nil
 }
 
+// copySkipDirs 复制会话目录时跳过的子目录（重/无用/危险）。
+var copySkipDirs = map[string]bool{
+	".git": true, "node_modules": true, ".venv": true, "venv": true,
+	"__pycache__": true, ".agent-sessions": true, ".cache": true, "dist": true,
+}
+
+// copyDirExcluding 递归复制 src 到 dst（跳过 copySkipDirs 中的目录；
+// 符号链接按原样重建，避免复制指向项目原目录的链接内容）。
+func copyDirExcluding(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, rerr := filepath.Rel(src, path)
+		if rerr != nil {
+			return rerr
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			if path != src && copySkipDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			return os.MkdirAll(target, 0o755)
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			link, lerr := os.Readlink(path)
+			if lerr != nil {
+				return lerr
+			}
+			_ = os.Remove(target)
+			return os.Symlink(link, target)
+		}
+		return copyFile(path, target)
+	})
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
+}
+
 // DiscardSessionWorktree 移除会话 worktree（git 项目时）。非 git 或已不存在
 // 时静默成功。会话分支保留（历史可查），仅移除工作目录。
 func DiscardSessionWorktree(projectDir, sessionsRoot, projectName string, sessionID int64) error {
-	if !isGitRepo(projectDir) {
-		return nil
-	}
 	wt := SessionWorktreePath(sessionsRoot, projectName, sessionID)
+	if !isGitRepo(projectDir) {
+		// 非 git 项目：移除复制的会话目录。
+		return os.RemoveAll(wt)
+	}
 	if _, err := os.Stat(wt); err != nil {
 		return nil // 已不存在
 	}

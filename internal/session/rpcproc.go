@@ -52,14 +52,18 @@ type rpcResponse struct {
 }
 
 // rpcEvent 是 stdout 事件行的通用形态。
+// assistantMessageEvent 是 message_update 的增量载荷（text_delta 等）：
+// 之前漏掉该字段，增量事件在 JSON 解析边界被丢弃，流式输出只能在
+// message_end 一次性出现。必须透传给前端按 contentIndex 累积。
 type rpcEvent struct {
-	Type    string          `json:"type"`
-	ID      string          `json:"id,omitempty"`
-	Command string          `json:"command,omitempty"`
-	Success *bool           `json:"success,omitempty"`
-	Data    json.RawMessage `json:"data,omitempty"`
-	Message json.RawMessage `json:"message,omitempty"`
-	Error   string          `json:"error,omitempty"`
+	Type                  string          `json:"type"`
+	ID                    string          `json:"id,omitempty"`
+	Command               string          `json:"command,omitempty"`
+	Success               *bool           `json:"success,omitempty"`
+	Data                  json.RawMessage `json:"data,omitempty"`
+	Message               json.RawMessage `json:"message,omitempty"`
+	AssistantMessageEvent json.RawMessage `json:"assistantMessageEvent,omitempty"`
+	Error                 string          `json:"error,omitempty"`
 }
 
 // newRPCProc 启动 pi RPC 进程。

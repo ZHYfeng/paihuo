@@ -1294,8 +1294,13 @@
           window.addEventListener("ph-session-detail-refresh", this._onDetailRefresh);
           this.refreshList();
           const q = new URLSearchParams(location.search);
-          if (q.has("agent") || q.has("project") || q.has("title")) {
-            this.prefill = { agent: q.get("agent") || "", project: q.get("project") || "", title: q.get("title") || "" };
+          if (q.has("agent") || q.has("project") || q.has("title") || q.has("body")) {
+            this.prefill = {
+              agent: q.get("agent") || "",
+              project: q.get("project") || "",
+              title: q.get("title") || "",
+              body: q.get("body") || ""
+            };
             this.showCreate = true;
             history.replaceState(null, "", "/sessions");
           }
@@ -1376,7 +1381,7 @@
         render() {
           return b2`
       <div class="col-list">
-        <ph-session-list .selectedId=${this.selectedId} @select=${(e5) => this.select(e5.detail)} @create=${() => {
+        <ph-session-list .list=${sessionState.list} .selectedId=${this.selectedId} @select=${(e5) => this.select(e5.detail)} @create=${() => {
             this.showCreate = true;
             this.prefill = null;
             this.requestUpdate();
@@ -1393,12 +1398,38 @@
             this.showCreate = false;
             this.requestUpdate();
           }} @created=${(e5) => {
-            this.showCreate = false;
-            this.refreshList();
-            this.requestUpdate();
-            this.select(e5.detail);
+            this._onCreated(e5.detail);
           }}></ph-session-create>` : ""}
     `;
+        }
+        // 创建完成：刷新列表并选中；带初始指令时自动启动并发送第一条消息
+        // （与任务弹窗「会话」模式行为一致）。
+        _onCreated(detail) {
+          const id = detail.id;
+          const firstMsg = (detail.body || "").trim();
+          this.showCreate = false;
+          this.prefill = null;
+          this.refreshList();
+          this.requestUpdate();
+          this.select(id);
+          if (firstMsg) {
+            (async () => {
+              try {
+                await api(`/api/sessions/${id}/start`, { method: "POST" });
+              } catch (e5) {
+                toastErr(`\u542F\u52A8\u4F1A\u8BDD\u5931\u8D25: ${e5.message || e5}`);
+                return;
+              }
+              try {
+                await api(`/api/sessions/${id}/prompt`, {
+                  method: "POST",
+                  body: JSON.stringify({ message: firstMsg })
+                });
+              } catch (e5) {
+                toastErr(`\u53D1\u9001\u521D\u59CB\u6307\u4EE4\u5931\u8D25: ${e5.message || e5}`);
+              }
+            })();
+          }
         }
       };
       __publicField(PhSessionsPage, "styles", i`
@@ -1428,18 +1459,6 @@
           this.list = [];
           this.selectedId = null;
           this.filter = "all";
-          this.loading = false;
-        }
-        connectedCallback() {
-          super.connectedCallback();
-          if (!this.list.length) this._load();
-        }
-        async _load() {
-          try {
-            this.list = await api("/api/sessions");
-            this.requestUpdate();
-          } catch (_2) {
-          }
         }
         _filtered() {
           let l3 = Array.isArray(this.list) ? this.list : [];
@@ -1513,7 +1532,7 @@
     .new:hover { color: var(--pw-text); border-color: var(--pw-border); background: var(--pw-surface-hover); }
     .pw-empty-sm { color: var(--pw-dim); text-align: center; padding: 28px 0; font-size: 12.5px; }
   `);
-      __publicField(PhSessionList, "properties", { list: { state: true }, selectedId: { attribute: false }, filter: { state: true } });
+      __publicField(PhSessionList, "properties", { list: { attribute: false }, selectedId: { attribute: false }, filter: { state: true } });
       customElements.define("ph-session-list", PhSessionList);
       PhSessionCreate = class extends i4 {
         constructor() {
@@ -1523,6 +1542,7 @@
           this.agentId = "";
           this.projectId = "";
           this.title = "";
+          this.body = "";
           this.submitting = false;
         }
         connectedCallback() {
@@ -1536,6 +1556,7 @@
             if (pf.project && this.projects.some((x2) => String(x2.id) === String(pf.project))) this.projectId = String(pf.project);
             else if (this.projects.length) this.projectId = String(this.projects[0].id);
             this.title = pf.title || "";
+            this.body = pf.body || "";
             this.requestUpdate();
           }).catch(() => {
           });
@@ -1555,7 +1576,11 @@
                 title: this.title.trim()
               })
             });
-            this.dispatchEvent(new CustomEvent("created", { detail: ss.id, bubbles: true, composed: true }));
+            this.dispatchEvent(new CustomEvent("created", {
+              detail: { id: ss.id, body: this.body.trim() },
+              bubbles: true,
+              composed: true
+            }));
           } catch (e5) {
             toastErr(`\u521B\u5EFA\u5931\u8D25: ${e5.message || e5}`);
           }
@@ -1567,6 +1592,9 @@
       <div class="box" @click=${(e5) => e5.stopPropagation()}>
         <h3>新建会话</h3>
         <label>标题 <input .value=${this.title} @input=${(e5) => this.title = e5.target.value} placeholder="例如：修复登录失败" @keydown=${(e5) => e5.key === "Enter" && !e5.isComposing && this.submit()}></label>
+        <label>初始指令
+          <textarea .value=${this.body} @input=${(e5) => this.body = e5.target.value} rows="3" placeholder="可选：创建后自动启动并发送第一条指令（与任务弹窗的「任务内容」一致）"></textarea>
+        </label>
         <label>角色
           <select .value=${this.agentId} @change=${(e5) => this.agentId = e5.target.value}>
             ${this.agents.map((a3) => b2`<option value=${a3.id}>${a3.name}（${a3.cli}）</option>`)}
@@ -1578,7 +1606,7 @@
             ${this.projects.map((p3) => b2`<option value=${p3.id}>${p3.name}</option>`)}
           </select>
         </label>
-        ${proj && proj.is_git ? b2`<div class="hint">git 项目：将创建独立 worktree（paihuo/session-N），与任务隔离互不冲突。</div>` : ""}
+        ${proj ? b2`<div class="hint">${proj.is_git ? "git \u9879\u76EE\uFF1A\u521B\u5EFA\u72EC\u7ACB worktree\uFF08sessions/<\u9879\u76EE>/session-N\uFF09" : "\u975E git \u9879\u76EE\uFF1A\u590D\u5236\u5230\u4E13\u5C5E\u4F1A\u8BDD\u76EE\u5F55\uFF08sessions/<\u9879\u76EE>/session-N\uFF09\uFF0C\u4E0D\u76F4\u63A5\u5728\u539F\u76EE\u5F55\u4E0A\u5DE5\u4F5C"}，与任务互不污染。</div>` : ""}
         <div class="row">
           <button @click=${() => this.dispatchEvent(new CustomEvent("close", { bubbles: true, composed: true }))}>取消</button>
           <button class="primary" @click=${this.submit}>${this.submitting ? "\u521B\u5EFA\u4E2D\u2026" : "\u521B\u5EFA\u4F1A\u8BDD"}</button>
@@ -1592,8 +1620,9 @@
     .box { background: var(--pw-surface); border: 1px solid var(--pw-border); border-radius: 12px; padding: 20px; width: 440px; max-width: 92vw; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 12px 48px var(--pw-shadow); color: var(--pw-text); font: 14px system-ui, sans-serif; }
     h3 { margin: 0; font-size: 15px; }
     label { font-size: 12.5px; color: var(--pw-muted); display: flex; flex-direction: column; gap: 5px; }
-    input, select { border: 1px solid var(--pw-border); border-radius: 8px; padding: 8px 10px; font-size: 14px; background: var(--pw-bg); color: var(--pw-text); font-family: inherit; }
-    input:focus, select:focus { outline: none; border-color: var(--pw-accent-border); }
+    input, select, textarea { border: 1px solid var(--pw-border); border-radius: 8px; padding: 8px 10px; font-size: 14px; background: var(--pw-bg); color: var(--pw-text); font-family: inherit; }
+    textarea { resize: vertical; }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--pw-accent-border); }
     .hint { font-size: 12px; color: var(--pw-muted); }
     .row { display: flex; gap: 8px; justify-content: flex-end; }
     button { border-radius: 8px; padding: 7px 14px; border: 1px solid var(--pw-border); cursor: pointer; font-size: 13.5px; background: var(--pw-bg); color: var(--pw-text); }
@@ -1642,12 +1671,13 @@
           const id = this.session.id;
           try {
             if (action === "start") await api(`/api/sessions/${id}/start`, { method: "POST" });
-            else if (action === "suspend") await api(`/api/sessions/${id}/suspend`, { method: "POST" });
-            else if (action === "resume") await api(`/api/sessions/${id}/resume`, { method: "POST" });
+            else if (action === "abort") await api(`/api/sessions/${id}/abort`, { method: "POST" });
             else if (action === "delete") {
-              if (!confirm("\u4E22\u5F03\u8BE5\u4F1A\u8BDD\uFF1F\uFF08worktree \u5C06\u88AB\u6E05\u7406\uFF09")) return;
+              if (!confirm("\u4E22\u5F03\u8BE5\u4F1A\u8BDD\uFF1F\uFF08\u5DE5\u4F5C\u76EE\u5F55\u5C06\u88AB\u6E05\u7406\uFF09")) return;
               await api(`/api/sessions/${id}`, { method: "DELETE" });
               this.dispatchEvent(new CustomEvent("close", { bubbles: true, composed: true }));
+              window.dispatchEvent(new CustomEvent("ph-session-updated"));
+              return;
             } else if (action === "deliver") {
               const title = prompt("\u4EFB\u52A1\u6807\u9898\uFF08\u9ED8\u8BA4\u4F7F\u7528\u4F1A\u8BDD\u6807\u9898\uFF09\uFF1A", this.session.title);
               if (title === null) return;
@@ -1687,11 +1717,9 @@
         ${s5.status === "created" ? b2`<button class="primary" @click=${() => this.act("start")}>启动</button><button class="danger" @click=${() => this.act("delete")}>丢弃</button>` : ""}
         ${s5.status === "active" ? b2`
           ${running ? b2`<button @click=${() => this.act("abort")}>中止</button>` : ""}
-          <button @click=${() => this.act("suspend")}>挂起</button>
           <button class="primary" @click=${() => this.act("deliver")}>交付</button>` : ""}
         ${s5.status === "suspended" ? b2`
-          <button class="primary" @click=${() => this.act("resume")}>恢复</button>
-          <button @click=${() => this.act("deliver")}>交付</button>
+          <button class="primary" @click=${() => this.act("deliver")}>交付</button>
           <button class="danger" @click=${() => this.act("delete")}>丢弃</button>` : ""}
         ${s5.status === "delivered" ? b2`
           ${s5.task_id ? b2`<a class="link" href="#/issue/${s5.task_id}">查看任务 #${s5.task_id} →</a>` : ""}` : ""}
@@ -1746,6 +1774,12 @@
           if (this._atBottom) {
             cancelAnimationFrame(this._scrollRaf);
             this._scrollRaf = requestAnimationFrame(() => this.scrollToBottom());
+          }
+          const chat = this.renderRoot.querySelector(".chat");
+          if (chat) {
+            for (const el of chat.querySelectorAll("ph-msg-user, ph-msg-assistant, ph-msg-bash, ph-msg-custom")) {
+              if (!el.hasUpdated) el.requestUpdate();
+            }
           }
         }
         scrollToBottom() {
@@ -1834,6 +1868,20 @@
       __publicField(PhMsgUser, "properties", { msg: { attribute: false } });
       customElements.define("ph-msg-user", PhMsgUser);
       PhMsgAssistant = class extends i4 {
+        constructor() {
+          super();
+          this._onLive = () => {
+            if (this.streaming || this.toolLive) this.requestUpdate();
+          };
+        }
+        connectedCallback() {
+          super.connectedCallback();
+          window.addEventListener("ph-session-message", this._onLive);
+        }
+        disconnectedCallback() {
+          super.disconnectedCallback();
+          window.removeEventListener("ph-session-message", this._onLive);
+        }
         render() {
           const m2 = this.msg || {};
           const streaming = this.streaming || m2.stopReason === "pending";
@@ -2031,7 +2079,7 @@
           return b2`
       <div class="bar">终端式会话（${s5.cli}）· 输出由 tmux 实时捕获</div>
       <div class="term-wrap"></div>
-      <div class="tip">点击终端直接输入 · 输入 /exit 退出 · 挂起后恢复将重建窗口</div>
+      <div class="tip">点击终端直接输入 · 输入 /exit 退出 · 空闲自动挂起，输入自动恢复</div>
     `;
         }
       };
@@ -2076,9 +2124,9 @@
         }
         render() {
           const s5 = this.session;
-          const disabled = s5.status === "delivered" || s5.status === "deleted" || s5.status === "created";
+          const disabled = s5.status === "delivered" || s5.status === "deleted";
           const shellMode = this.running && s5.status === "active";
-          const hint = s5.status === "delivered" ? "\u5DF2\u4EA4\u4ED8\u4E3A\u4EFB\u52A1\uFF0C\u4F1A\u8BDD\u51BB\u7ED3\uFF08\u53EA\u8BFB\uFF09" : s5.status === "created" ? "\u70B9\u51FB\u300C\u542F\u52A8\u300D\u5F00\u59CB\u4F1A\u8BDD" : s5.status === "suspended" ? "\u4F1A\u8BDD\u5DF2\u6302\u8D77\uFF0C\u70B9\u51FB\u300C\u6062\u590D\u300D\u7EE7\u7EED\u5BF9\u8BDD" : shellMode ? "agent \u6B63\u5728\u5904\u7406\u2026" : "Enter \u53D1\u9001 \xB7 Shift+Enter \u6362\u884C";
+          const hint = s5.status === "delivered" ? "\u5DF2\u4EA4\u4ED8\u4E3A\u4EFB\u52A1\uFF0C\u4F1A\u8BDD\u51BB\u7ED3\uFF08\u53EA\u8BFB\uFF09" : s5.status === "deleted" ? "\u4F1A\u8BDD\u5DF2\u5220\u9664" : s5.status === "created" ? "\u53D1\u9001\u6D88\u606F\u5C06\u81EA\u52A8\u542F\u52A8\u4F1A\u8BDD" : s5.status === "suspended" ? "\u7A7A\u95F2\u5DF2\u81EA\u52A8\u6302\u8D77\uFF0C\u53D1\u9001\u6D88\u606F\u5C06\u81EA\u52A8\u6062\u590D" : shellMode ? "agent \u6B63\u5728\u5904\u7406\u2026" : "Enter \u53D1\u9001 \xB7 Shift+Enter \u6362\u884C";
           return b2`
       <footer class=${shellMode ? "shell-mode" : ""}>
         ${shellMode ? b2`<div class="hint">
@@ -4631,16 +4679,14 @@
     const agent = state.agents.find((a3) => a3.id === agentID);
     const select = document.getElementById("tRunMode");
     const help = document.getElementById("tRunModeHelp");
+    const taskOnly = document.getElementById("tTaskOnlyFields");
     if (!select) return;
-    const interactive = select.querySelector('option[value="interactive"]');
-    if (interactive) interactive.disabled = !agent;
-    if (!agent && select.value === "interactive") select.value = "batch";
-    if (help) {
-      if (select.value === "session") {
-        help.textContent = "\u521B\u5EFA\u5E38\u9A7B\u4F1A\u8BDD\uFF1A\u590D\u6742\u95EE\u9898\u4E0E agent \u591A\u8F6E\u534F\u4F5C\uFF08worktree \u9694\u79BB\uFF09\uFF0C\u5B8C\u6210\u65F6\u70B9\u300C\u4EA4\u4ED8\u300D\u8F6C\u4E3A\u4EFB\u52A1\u8D70\u5BA1\u6279\u5408\u5E76\u6D41\u7A0B\u3002";
-      } else {
-        help.textContent = agent ? `\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u4EA4\u4E92\u5F0F\u4F1A\u4FDD\u7559 ${agent.name} \u7684\u539F\u751F\u7EC8\u7AEF\uFF0C\u76F4\u5230\u4F60\u53D1\u9001 ${agent.cli === "pi" ? "/quit" : "/exit"}\u3002` : "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u9009\u62E9\u89D2\u8272\u540E\u53EF\u542F\u7528\u5176\u4EA4\u4E92\u5F0F\u7EC8\u7AEF\u3002";
-      }
+    if (select.value === "session") {
+      if (help) help.textContent = "\u521B\u5EFA\u5E38\u9A7B\u4F1A\u8BDD\uFF1A\u590D\u6742\u95EE\u9898\u4E0E agent \u591A\u8F6E\u534F\u4F5C\uFF08\u72EC\u7ACB\u5DE5\u4F5C\u76EE\u5F55\uFF09\uFF0C\u5B8C\u6210\u65F6\u70B9\u300C\u4EA4\u4ED8\u300D\u8F6C\u4E3A\u4EFB\u52A1\u8D70\u5BA1\u6279\u5408\u5E76\u6D41\u7A0B\u3002";
+      if (taskOnly) taskOnly.classList.add("hidden");
+    } else {
+      if (taskOnly) taskOnly.classList.remove("hidden");
+      if (help) help.textContent = agent ? `\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF0C\u5B8C\u6210\u540E\u6D3E\u53D1\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1\u3002` : "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u9009\u62E9\u89D2\u8272\u540E\u53EF\u6267\u884C\u3002";
     }
   }
   function syncTaskDependency() {
@@ -4692,6 +4738,8 @@
       if (agentId) params.set("agent", agentId);
       if (projectId2) params.set("project", projectId2);
       if (title) params.set("title", title);
+      const body = document.getElementById("tBody").value;
+      if (body.trim()) params.set("body", body);
       location.href = "/sessions" + (params.toString() ? "?" + params.toString() : "");
       return;
     }

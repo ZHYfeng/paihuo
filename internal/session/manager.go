@@ -36,6 +36,7 @@ type Manager struct {
 	terms map[int64]*termProc // codex/claude 会话终端（tmux 通道，S5）
 	// stopping 置位后禁止再启动新进程（服务关闭）
 	stopping bool
+	stopIdle chan struct{} // 空闲挂起巡检停止信号（Stop 时关闭）
 }
 
 // New 创建会话管理器。ex 用于共享角色并发槽位；instanceID 用于隔离
@@ -50,6 +51,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sessionsRoot, inst
 		agentSessions: filepath.Join(sessionsRoot, ".agent-sessions"),
 		procs:         make(map[int64]*rpcProc),
 		terms:         make(map[int64]*termProc),
+		stopIdle:      make(chan struct{}),
 	}
 }
 
@@ -269,11 +271,17 @@ func (m *Manager) stopChannel(id int64) {
 	}
 }
 
-// TermInput 向终端式会话发送整行输入（S5）。
+// TermInput 向终端式会话发送整行输入（S5）。挂起时自动恢复。
 func (m *Manager) TermInput(id int64, text string) error {
 	term, err := m.activeTerm(id)
 	if err != nil {
-		return err
+		if auto := m.autoStart(context.Background(), id); auto != nil {
+			return fmt.Errorf("%v", auto)
+		}
+		term, err = m.activeTerm(id)
+		if err != nil {
+			return err
+		}
 	}
 	return term.Input(id, text)
 }
@@ -483,10 +491,17 @@ func (m *Manager) Delete(ctx context.Context, id int64) error {
 
 // Prompt 发送用户消息（prompt 命令）。agent 运行中时必须带 streamingBehavior
 // （steer=插入 / followUp=等停止），否则 pi 拒绝。
+// 自动恢复：挂起/未启动的会话直接自动启动（pi-web 行为），无需手动点恢复。
 func (m *Manager) Prompt(ctx context.Context, id int64, message string, images []map[string]any, streamingBehavior string) (bool, error) {
 	proc, err := m.activeProc(id)
 	if err != nil {
-		return false, err
+		if auto := m.autoStart(ctx, id); auto != nil {
+			return false, auto
+		}
+		proc, err = m.activeProc(id)
+		if err != nil {
+			return false, err
+		}
 	}
 	fields := map[string]any{"message": message}
 	if len(images) > 0 {
@@ -500,6 +515,29 @@ func (m *Manager) Prompt(ctx context.Context, id int64, message string, images [
 		return false, err
 	}
 	return resp.Success, nil
+}
+
+// autoStart 在会话为 created/suspended 时自动启动进程（pi-web 行为：
+// 发送消息即恢复）。其他状态返回错误。
+func (m *Manager) autoStart(ctx context.Context, id int64) error {
+	ss, err := m.st.GetSession(id)
+	if err != nil {
+		return err
+	}
+	if ss == nil {
+		return ErrSessionNotFound
+	}
+	if ss.Status == store.SessionStatusActive {
+		return fmt.Errorf("会话进程未运行（状态: %s）", ss.Status)
+	}
+	if ss.Status != store.SessionStatusCreated && ss.Status != store.SessionStatusSuspended {
+		return fmt.Errorf("会话已%s，无法发送消息", STATUS_CN[ss.Status])
+	}
+	if err := m.Start(ctx, id); err != nil {
+		return fmt.Errorf("自动恢复会话失败: %w", err)
+	}
+	log.Printf("↻ 会话 %d 自动恢复（发送消息触发）", id)
+	return nil
 }
 
 // Abort 中止当前回合。
@@ -701,6 +739,7 @@ func (m *Manager) Recover() {
 
 // Stop 关闭所有活跃会话进程（服务退出时调用）。
 func (m *Manager) Stop() {
+	close(m.stopIdle)
 	m.mu.Lock()
 	procs := make([]*rpcProc, 0, len(m.procs))
 	for _, p := range m.procs {
@@ -735,6 +774,58 @@ func (m *Manager) activeProc(id int64) (*rpcProc, error) {
 
 func (m *Manager) publishUpdated(ss store.Session) {
 	m.hub.Publish(events.Event{Type: "session.updated", Payload: ss})
+}
+
+// ---------------------------------------------------------------------------
+// 自动挂起（pi-web 行为）：会话空闲超过 idle 时长后自动杀进程释放槽位，
+// 下次发消息时自动恢复。空闲判定基于 RPC 事件流（任何事件都刷新 lastEvent，
+// 进行中的回合持续产生事件不会被误挂起）。
+
+// STATUS_CN 状态中文名（错误提示用）。
+var STATUS_CN = map[string]string{
+	store.SessionStatusCreated:   "未启动",
+	store.SessionStatusActive:    "活跃",
+	store.SessionStatusSuspended: "挂起",
+	store.SessionStatusDelivered: "已交付",
+	store.SessionStatusDeleted:   "已删除",
+}
+
+// StartIdleMonitor 启动空闲挂起巡检（服务启动时调用一次）。
+func (m *Manager) StartIdleMonitor(idle time.Duration) {
+	go func() {
+		tick := time.NewTicker(30 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-m.stopIdle:
+				return
+			case <-tick.C:
+				m.mu.Lock()
+				now := time.Now()
+				var idleIDs []int64
+				for id, p := range m.procs {
+					p.mu.Lock()
+					idle := now.Sub(p.lastEvent) >= idle
+					p.mu.Unlock()
+					if idle {
+						idleIDs = append(idleIDs, id)
+					}
+				}
+				m.mu.Unlock()
+				for _, id := range idleIDs {
+					ss, err := m.st.GetSession(id)
+					if err != nil || ss == nil || ss.Status != store.SessionStatusActive {
+						continue
+					}
+					if err := m.Suspend(context.Background(), id); err != nil {
+						log.Printf("⚠ 会话 %d 自动挂起失败: %v", id, err)
+						continue
+					}
+					log.Printf("↻ 会话 %d 空闲超过 %v，已自动挂起（发消息自动恢复）", id, idle)
+				}
+			}
+		}
+	}()
 }
 
 // ---------------------------------------------------------------------------

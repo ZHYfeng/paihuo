@@ -1054,25 +1054,22 @@ export function openProjectTask(projectId) {
   openModal("taskModal");
 }
 
-// 交互式是任务级能力，必须先指派角色。前端即时说明限制，服务端会再次
-// 验证，避免手写请求创建没有执行目标的交互任务。
+// 会话模式走会话页（与「＋ 新建会话」同一入口），任务级字段隐藏。
 export function syncTaskRunMode() {
   const agentID = Number(document.getElementById("tAgent")?.value) || 0;
   const agent = state.agents.find(a => a.id === agentID);
   const select = document.getElementById("tRunMode");
   const help = document.getElementById("tRunModeHelp");
+  const taskOnly = document.getElementById("tTaskOnlyFields");
   if (!select) return;
-  const interactive = select.querySelector('option[value="interactive"]');
-  if (interactive) interactive.disabled = !agent;
-  if (!agent && select.value === "interactive") select.value = "batch";
-  if (help) {
-    if (select.value === "session") {
-      help.textContent = "创建常驻会话：复杂问题与 agent 多轮协作（worktree 隔离），完成时点「交付」转为任务走审批合并流程。";
-    } else {
-      help.textContent = agent
-        ? `批处理会自动结算；交互式会保留 ${agent.name} 的原生终端，直到你发送 ${agent.cli === "pi" ? "/quit" : "/exit"}。`
-        : "批处理会自动结算；选择角色后可启用其交互式终端。";
-    }
+  if (select.value === "session") {
+    if (help) help.textContent = "创建常驻会话：复杂问题与 agent 多轮协作（独立工作目录），完成时点「交付」转为任务走审批合并流程。";
+    if (taskOnly) taskOnly.classList.add("hidden");
+  } else {
+    if (taskOnly) taskOnly.classList.remove("hidden");
+    if (help) help.textContent = agent
+      ? `批处理会自动结算，完成后派发代码合并任务。`
+      : "批处理会自动结算；选择角色后可执行。";
   }
 }
 
@@ -1127,7 +1124,7 @@ export function syncTaskConcurrency() {
 export async function submitTask() {
   const title = document.getElementById("tTitle").value.trim();
   if (!title) return toast("标题不能为空", true);
-  // 会话模式：不创建任务，转去会话页新建会话（预填角色/项目/标题）。
+  // 会话模式：不创建任务，转去会话页新建会话（同一入口，预填角色/项目/标题/初始指令）。
   const runMode = document.getElementById("tRunMode").value;
   if (runMode === "session") {
     const agentId = Number(document.getElementById("tAgent").value) || 0;
@@ -1137,6 +1134,8 @@ export async function submitTask() {
     if (agentId) params.set("agent", agentId);
     if (projectId) params.set("project", projectId);
     if (title) params.set("title", title);
+    const body = document.getElementById("tBody").value;
+    if (body.trim()) params.set("body", body);
     location.href = "/sessions" + (params.toString() ? "?" + params.toString() : "");
     return;
   }

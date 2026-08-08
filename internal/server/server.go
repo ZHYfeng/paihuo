@@ -15,6 +15,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -52,9 +53,18 @@ const (
 )
 
 // RecoverSessions 服务重启后把遗留 active 会话置为 suspended（进程已丢失）。
-// 在 Server 组装完成后、监听开始前调用。
+// 在 Server 组装完成后、监听开始前调用。同时启动空闲自动挂起巡检
+// （pi-web 行为：空闲会话自动挂起，发消息自动恢复）。
 func (s *Server) RecoverSessions() {
 	s.sess.Recover()
+	idle := 5 * time.Minute
+	if v := os.Getenv("PAIHUO_SESSION_IDLE"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			idle = d
+		}
+	}
+	log.Printf("会话空闲自动挂起阈值: %v（发消息自动恢复）", idle)
+	s.sess.StartIdleMonitor(idle)
 }
 
 // sessionValue creates an opaque, stateless session token. The expiry and a

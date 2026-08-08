@@ -135,6 +135,7 @@
       <label class="field">角色 <select id="tAgent" onchange="syncTaskRunMode()"></select></label>
       <label class="field">项目 <select id="tProject" onchange="syncTaskDependency()"></select></label>
     </div>
+    <div id="tTaskOnlyFields">
     <label class="field">权限
       <select id="tPerm">
         <option value="full">自动（完成后派发代码合并任务）</option>
@@ -144,8 +145,7 @@
     <label class="field">执行方式
       <select id="tRunMode" onchange="syncTaskRunMode()">
         <option value="batch">批处理（默认，完成后自动结算）</option>
-        <option value="session">会话（推荐：复杂问题，pi 消息流）</option>
-        <option value="interactive">交互式终端（旧式，codex/claude 终端）</option>
+        <option value="session">会话（推荐：复杂问题，与 agent 多轮协作）</option>
       </select>
       <span class="field-help" id="tRunModeHelp">批处理会在完成后自动结算。</span>
     </label>
@@ -175,6 +175,7 @@
       </span>
       <span class="field-help">仅控制运行资源是否重叠；勾选时会默认改为独立任务。若选择明确前置，仍必须等待前置成功交付。</span>
     </label>
+    </div>
   </div>
 </div>
 

@@ -167,8 +167,11 @@ export class PhSessionsPage extends LitElement {
     window.addEventListener("ph-session-detail-refresh", this._onDetailRefresh);
     this.refreshList();
     const q = new URLSearchParams(location.search);
-    if (q.has("agent") || q.has("project") || q.has("title")) {
-      this.prefill = { agent: q.get("agent") || "", project: q.get("project") || "", title: q.get("title") || "" };
+    if (q.has("agent") || q.has("project") || q.has("title") || q.has("body")) {
+      this.prefill = {
+        agent: q.get("agent") || "", project: q.get("project") || "",
+        title: q.get("title") || "", body: q.get("body") || "",
+      };
       this.showCreate = true;
       history.replaceState(null, "", "/sessions");
     }
@@ -254,15 +257,40 @@ export class PhSessionsPage extends LitElement {
   render() {
     return html`
       <div class="col-list">
-        <ph-session-list .selectedId=${this.selectedId} @select=${(e) => this.select(e.detail)} @create=${() => { this.showCreate = true; this.prefill = null; this.requestUpdate(); }}></ph-session-list>
+        <ph-session-list .list=${sessionState.list} .selectedId=${this.selectedId} @select=${(e) => this.select(e.detail)} @create=${() => { this.showCreate = true; this.prefill = null; this.requestUpdate(); }}></ph-session-list>
       </div>
       <div class="col-main">
         ${sessionState.detail
           ? html`<ph-session-view .sessionId=${this.selectedId} @close=${() => { this.selectedId = null; sessionState.detail = null; this.requestUpdate(); }}></ph-session-view>`
           : html`<div class="pw-empty">选择或新建一个会话开始协作</div>`}
       </div>
-      ${this.showCreate ? html`<ph-session-create .prefill=${this.prefill} @close=${() => { this.showCreate = false; this.requestUpdate(); }} @created=${(e) => { this.showCreate = false; this.refreshList(); this.requestUpdate(); this.select(e.detail); }}></ph-session-create>` : ""}
+      ${this.showCreate ? html`<ph-session-create .prefill=${this.prefill} @close=${() => { this.showCreate = false; this.requestUpdate(); }} @created=${(e) => { this._onCreated(e.detail); }}></ph-session-create>` : ""}
     `;
+  }
+
+  // 创建完成：刷新列表并选中；带初始指令时自动启动并发送第一条消息
+  // （与任务弹窗「会话」模式行为一致）。
+  _onCreated(detail) {
+    const id = detail.id;
+    const firstMsg = (detail.body || "").trim();
+    this.showCreate = false;
+    this.prefill = null;
+    this.refreshList();
+    this.requestUpdate();
+    this.select(id);
+    if (firstMsg) {
+      (async () => {
+        try {
+          await api(`/api/sessions/${id}/start`, { method: "POST" });
+        } catch (e) { toastErr(`启动会话失败: ${e.message || e}`); return; }
+        try {
+          await api(`/api/sessions/${id}/prompt`, {
+            method: "POST",
+            body: JSON.stringify({ message: firstMsg }),
+          });
+        } catch (e) { toastErr(`发送初始指令失败: ${e.message || e}`); }
+      })();
+    }
   }
 }
 customElements.define("ph-sessions-page", PhSessionsPage);
@@ -403,20 +431,12 @@ export class PhSessionList extends LitElement {
     .new:hover { color: var(--pw-text); border-color: var(--pw-border); background: var(--pw-surface-hover); }
     .pw-empty-sm { color: var(--pw-dim); text-align: center; padding: 28px 0; font-size: 12.5px; }
   `;
-  static properties = { list: { state: true }, selectedId: { attribute: false }, filter: { state: true } };
+  static properties = { list: { attribute: false }, selectedId: { attribute: false }, filter: { state: true } };
   constructor() {
     super();
     this.list = [];
     this.selectedId = null;
     this.filter = "all";
-    this.loading = false;
-  }
-  connectedCallback() {
-    super.connectedCallback();
-    if (!this.list.length) this._load();
-  }
-  async _load() {
-    try { this.list = await api("/api/sessions"); this.requestUpdate(); } catch (_) {}
   }
   _filtered() {
     let l = Array.isArray(this.list) ? this.list : [];
@@ -472,8 +492,9 @@ export class PhSessionCreate extends LitElement {
     .box { background: var(--pw-surface); border: 1px solid var(--pw-border); border-radius: 12px; padding: 20px; width: 440px; max-width: 92vw; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 12px 48px var(--pw-shadow); color: var(--pw-text); font: 14px system-ui, sans-serif; }
     h3 { margin: 0; font-size: 15px; }
     label { font-size: 12.5px; color: var(--pw-muted); display: flex; flex-direction: column; gap: 5px; }
-    input, select { border: 1px solid var(--pw-border); border-radius: 8px; padding: 8px 10px; font-size: 14px; background: var(--pw-bg); color: var(--pw-text); font-family: inherit; }
-    input:focus, select:focus { outline: none; border-color: var(--pw-accent-border); }
+    input, select, textarea { border: 1px solid var(--pw-border); border-radius: 8px; padding: 8px 10px; font-size: 14px; background: var(--pw-bg); color: var(--pw-text); font-family: inherit; }
+    textarea { resize: vertical; }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--pw-accent-border); }
     .hint { font-size: 12px; color: var(--pw-muted); }
     .row { display: flex; gap: 8px; justify-content: flex-end; }
     button { border-radius: 8px; padding: 7px 14px; border: 1px solid var(--pw-border); cursor: pointer; font-size: 13.5px; background: var(--pw-bg); color: var(--pw-text); }
@@ -489,6 +510,7 @@ export class PhSessionCreate extends LitElement {
     this.agentId = "";
     this.projectId = "";
     this.title = "";
+    this.body = "";
     this.submitting = false;
   }
   connectedCallback() {
@@ -502,6 +524,7 @@ export class PhSessionCreate extends LitElement {
       if (pf.project && this.projects.some(x => String(x.id) === String(pf.project))) this.projectId = String(pf.project);
       else if (this.projects.length) this.projectId = String(this.projects[0].id);
       this.title = pf.title || "";
+      this.body = pf.body || "";
       this.requestUpdate();
     }).catch(() => {});
   }
@@ -517,7 +540,10 @@ export class PhSessionCreate extends LitElement {
           title: this.title.trim(),
         }),
       });
-      this.dispatchEvent(new CustomEvent("created", { detail: ss.id, bubbles: true, composed: true }));
+      this.dispatchEvent(new CustomEvent("created", {
+        detail: { id: ss.id, body: this.body.trim() },
+        bubbles: true, composed: true,
+      }));
     } catch (e) { toastErr(`创建失败: ${e.message || e}`); }
     this.submitting = false;
   }
@@ -527,6 +553,9 @@ export class PhSessionCreate extends LitElement {
       <div class="box" @click=${(e) => e.stopPropagation()}>
         <h3>新建会话</h3>
         <label>标题 <input .value=${this.title} @input=${(e) => this.title = e.target.value} placeholder="例如：修复登录失败" @keydown=${(e) => e.key === "Enter" && !e.isComposing && this.submit()}></label>
+        <label>初始指令
+          <textarea .value=${this.body} @input=${(e) => this.body = e.target.value} rows="3" placeholder="可选：创建后自动启动并发送第一条指令（与任务弹窗的「任务内容」一致）"></textarea>
+        </label>
         <label>角色
           <select .value=${this.agentId} @change=${(e) => this.agentId = e.target.value}>
             ${this.agents.map(a => html`<option value=${a.id}>${a.name}（${a.cli}）</option>`)}
@@ -538,7 +567,9 @@ export class PhSessionCreate extends LitElement {
             ${this.projects.map(p => html`<option value=${p.id}>${p.name}</option>`)}
           </select>
         </label>
-        ${proj && proj.is_git ? html`<div class="hint">git 项目：将创建独立 worktree（paihuo/session-N），与任务隔离互不冲突。</div>` : ""}
+        ${proj ? html`<div class="hint">${proj.is_git
+          ? "git 项目：创建独立 worktree（sessions/<项目>/session-N）"
+          : "非 git 项目：复制到专属会话目录（sessions/<项目>/session-N），不直接在原目录上工作"}，与任务互不污染。</div>` : ""}
         <div class="row">
           <button @click=${() => this.dispatchEvent(new CustomEvent("close", { bubbles: true, composed: true }))}>取消</button>
           <button class="primary" @click=${this.submit}>${this.submitting ? "创建中…" : "创建会话"}</button>
@@ -617,12 +648,15 @@ export class PhSessionHeader extends LitElement {
     const id = this.session.id;
     try {
       if (action === "start") await api(`/api/sessions/${id}/start`, { method: "POST" });
-      else if (action === "suspend") await api(`/api/sessions/${id}/suspend`, { method: "POST" });
-      else if (action === "resume") await api(`/api/sessions/${id}/resume`, { method: "POST" });
+      else if (action === "abort") await api(`/api/sessions/${id}/abort`, { method: "POST" });
       else if (action === "delete") {
-        if (!confirm("丢弃该会话？（worktree 将被清理）")) return;
+        if (!confirm("丢弃该会话？（工作目录将被清理）")) return;
         await api(`/api/sessions/${id}`, { method: "DELETE" });
+        // 会话已删除：关掉详情并刷新列表（不再触发 detail 刷新，
+        // 否则会重新加载出已删除会话的详情，界面停留不关闭）。
         this.dispatchEvent(new CustomEvent("close", { bubbles: true, composed: true }));
+        window.dispatchEvent(new CustomEvent("ph-session-updated"));
+        return;
       } else if (action === "deliver") {
         const title = prompt("任务标题（默认使用会话标题）：", this.session.title);
         if (title === null) return;
@@ -660,11 +694,9 @@ export class PhSessionHeader extends LitElement {
         ${s.status === "created" ? html`<button class="primary" @click=${() => this.act("start")}>启动</button><button class="danger" @click=${() => this.act("delete")}>丢弃</button>` : ""}
         ${s.status === "active" ? html`
           ${running ? html`<button @click=${() => this.act("abort")}>中止</button>` : ""}
-          <button @click=${() => this.act("suspend")}>挂起</button>
           <button class="primary" @click=${() => this.act("deliver")}>交付</button>` : ""}
         ${s.status === "suspended" ? html`
-          <button class="primary" @click=${() => this.act("resume")}>恢复</button>
-          <button @click=${() => this.act("deliver")}>交付</button>
+          <button class="primary" @click=${() => this.act("deliver")}>交付</button>
           <button class="danger" @click=${() => this.act("delete")}>丢弃</button>` : ""}
         ${s.status === "delivered" ? html`
           ${s.task_id ? html`<a class="link" href="#/issue/${s.task_id}">查看任务 #${s.task_id} →</a>` : ""}` : ""}
@@ -711,6 +743,15 @@ export class PhMessageStream extends LitElement {
       // 此时 scrollHeight 还没长全；推迟到下一帧再滚，否则底部会被截断。
       cancelAnimationFrame(this._scrollRaf);
       this._scrollRaf = requestAnimationFrame(() => this.scrollToBottom());
+    }
+    // 防御竞态：模板切换/高频重渲染下，个别 ph-msg-* 子组件的首次更新
+    // 可能未执行（shadow 内容为空）。仅对从未渲染过的子组件强制刷新，
+    // 正常路径零开销（hasUpdated 为 true 直接跳过）。
+    const chat = this.renderRoot.querySelector(".chat");
+    if (chat) {
+      for (const el of chat.querySelectorAll("ph-msg-user, ph-msg-assistant, ph-msg-bash, ph-msg-custom")) {
+        if (!el.hasUpdated) el.requestUpdate();
+      }
     }
   }
   scrollToBottom() {
@@ -829,6 +870,22 @@ class PhMsgAssistant extends LitElement {
     .events-body { padding: 6px 8px; background: var(--pw-bg); }
   `];
   static properties = { msg: { attribute: false }, toolLive: { attribute: false }, toolResults: { attribute: false }, streaming: { attribute: false } };
+  constructor() {
+    super();
+    // 流式消息的 msg 对象被原地累积（content 数组在同一个对象上变长），
+    // 属性引用不变 → lit 不会触发重渲染 → 流式输出只能在 message_end 一次性
+    // 出现。必须监听窗口事件主动刷新；仅在流式/工具执行期间刷新，完成后
+    // message_end 会用新对象替换 msg 触发常规渲染，无需再监听。
+    this._onLive = () => { if (this.streaming || this.toolLive) this.requestUpdate(); };
+  }
+  connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener("ph-session-message", this._onLive);
+  }
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    window.removeEventListener("ph-session-message", this._onLive);
+  }
   render() {
     const m = this.msg || {};
     const streaming = this.streaming || m.stopReason === "pending";
@@ -1012,7 +1069,7 @@ export class PhSessionTerm extends LitElement {
     return html`
       <div class="bar">终端式会话（${s.cli}）· 输出由 tmux 实时捕获</div>
       <div class="term-wrap"></div>
-      <div class="tip">点击终端直接输入 · 输入 /exit 退出 · 挂起后恢复将重建窗口</div>
+      <div class="tip">点击终端直接输入 · 输入 /exit 退出 · 空闲自动挂起，输入自动恢复</div>
     `;
   }
 }
@@ -1079,12 +1136,14 @@ export class PhSessionInput extends LitElement {
   }
   render() {
     const s = this.session;
-    const disabled = s.status === "delivered" || s.status === "deleted" || s.status === "created";
+    // 仅交付/删除冻结输入；created/suspended 发送时自动启动/恢复（pi-web 行为）。
+    const disabled = s.status === "delivered" || s.status === "deleted";
     const shellMode = this.running && s.status === "active";
     const hint =
       s.status === "delivered" ? "已交付为任务，会话冻结（只读）" :
-      s.status === "created" ? "点击「启动」开始会话" :
-      s.status === "suspended" ? "会话已挂起，点击「恢复」继续对话" :
+      s.status === "deleted" ? "会话已删除" :
+      s.status === "created" ? "发送消息将自动启动会话" :
+      s.status === "suspended" ? "空闲已自动挂起，发送消息将自动恢复" :
       shellMode ? "agent 正在处理…" :
       "Enter 发送 · Shift+Enter 换行";
     return html`
