@@ -121,6 +121,30 @@ CREATE TABLE IF NOT EXISTS skills (
   source_path TEXT NOT NULL DEFAULT '',  -- 添加时的来源路径
   created_at  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id  INTEGER REFERENCES projects(id),
+  agent_id    INTEGER NOT NULL REFERENCES agents(id),
+  title       TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'created', -- created|active|suspended|delivered|deleted
+  cli         TEXT NOT NULL DEFAULT '',
+  worktree_branch TEXT NOT NULL DEFAULT '',
+  worktree_path   TEXT NOT NULL DEFAULT '',
+  base_commit     TEXT NOT NULL DEFAULT '',
+  session_dir     TEXT NOT NULL DEFAULT '',
+  task_id     INTEGER REFERENCES tasks(id),
+  last_message_at TEXT NOT NULL DEFAULT '',
+  message_count INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL,
+  started_at  TEXT,
+  suspended_at TEXT,
+  delivered_at TEXT,
+  updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id);
 `
 
 // migrate 结构迁移：老库升级到新 schema（pre-1.0 阶段直接删旧结构）。
@@ -164,6 +188,8 @@ func migrate(db *sql.DB) error {
 		"ALTER TABLE tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE tasks ADD COLUMN terminal_cols INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE tasks ADD COLUMN terminal_rows INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE tasks ADD COLUMN session_id INTEGER REFERENCES sessions(id)",
+		"ALTER TABLE sessions ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)",
 	} {
@@ -516,13 +542,13 @@ func (s *Store) DeleteAgent(id int64) error {
 // taskCols 完整列（详情页用：含完整 body，驳回重做会追加修改意见）。
 const taskCols = `t.id, t.title, t.body, t.status, t.perm, t.run_mode, t.concurrent, t.agent_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows`
+	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows`
 
 // taskColsBrief 列表列（看板/历史/项目页用）：body 截断到 400 字符，
 // 避免大提示词把列表接口载荷撑爆。列序与 taskCols 完全一致（scanTask 共用）。
 const taskColsBrief = `t.id, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.run_mode, t.concurrent, t.agent_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows`
+	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows`
 
 func scanTask(rows scanner) (Task, error) {
 	var tk Task
@@ -530,10 +556,10 @@ func scanTask(rows scanner) (Task, error) {
 	var agentName, projectName string
 	var concurrent, blockOnFailure int64
 	var started, finished sql.NullString
-	var resumeOf, mergeOf sql.NullInt64
+	var resumeOf, mergeOf, sessionID sql.NullInt64
 	err := rows.Scan(&tk.ID, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &tk.RunMode, &concurrent, &agentID, &agentName,
 		&projectID, &projectName, &tk.ProjectDir, &parentID, &dependsOn, &tk.DependencyMode, &blockOnFailure, &scheduleID, &tk.Error, &exitCode,
-		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &tk.SortOrder, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt, &tk.TerminalCols, &tk.TerminalRows)
+		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &sessionID, &tk.SortOrder, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt, &tk.TerminalCols, &tk.TerminalRows)
 	if err != nil {
 		return tk, err
 	}
@@ -557,6 +583,9 @@ func scanTask(rows scanner) (Task, error) {
 	}
 	if mergeOf.Valid {
 		tk.MergeOf = &mergeOf.Int64
+	}
+	if sessionID.Valid {
+		tk.SessionID = &sessionID.Int64
 	}
 	tk.ProjectName = projectName
 	if parentID.Valid {
@@ -746,10 +775,10 @@ func prepareTaskForInsert(t *Task) {
 }
 
 func insertTask(execer sqlExecer, t Task) (int64, error) {
-	res, err := execer.Exec(`INSERT INTO tasks (title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, sort_order, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	res, err := execer.Exec(`INSERT INTO tasks (title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, session_id, worktree_branch, base_commit, sort_order, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.Title, t.Body, t.Status, t.Perm, t.RunMode, boolInt(t.Concurrent), nullInt64(t.AgentID), nullInt64(t.ProjectID), t.ProjectDir,
-		nullInt64(t.ParentID), nullInt64(t.DependsOn), t.DependencyMode, boolInt(t.BlockOnFailure), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), t.SortOrder, t.CreatedAt, t.UpdatedAt)
+		nullInt64(t.ParentID), nullInt64(t.DependsOn), t.DependencyMode, boolInt(t.BlockOnFailure), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), nullInt64(t.SessionID), t.WorktreeBranch, t.BaseCommit, t.SortOrder, t.CreatedAt, t.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -1056,10 +1085,10 @@ func inheritMergeFailurePolicy(tx *sql.Tx, sourceID int64, merge *Task) error {
 
 func insertMergeTask(tx *sql.Tx, merge Task) (int64, error) {
 	res, err := tx.Exec(`INSERT INTO tasks
-		(title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, sort_order, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, session_id, sort_order, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		merge.Title, merge.Body, merge.Status, merge.Perm, merge.RunMode, boolInt(merge.Concurrent), nullInt64(merge.AgentID), nullInt64(merge.ProjectID), merge.ProjectDir,
-		nullInt64(merge.ParentID), nullInt64(merge.DependsOn), merge.DependencyMode, boolInt(merge.BlockOnFailure), nullInt64(merge.ScheduleID), nullInt64(merge.ResumeOf), nullInt64(merge.MergeOf), merge.SortOrder, merge.CreatedAt, merge.UpdatedAt)
+		nullInt64(merge.ParentID), nullInt64(merge.DependsOn), merge.DependencyMode, boolInt(merge.BlockOnFailure), nullInt64(merge.ScheduleID), nullInt64(merge.ResumeOf), nullInt64(merge.MergeOf), nullInt64(merge.SessionID), merge.SortOrder, merge.CreatedAt, merge.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -2639,4 +2668,115 @@ func (s *Store) ListTasksForCleanup() ([]Task, error) {
 		out = append(out, tk)
 	}
 	return out, rows.Err()
+}
+
+// ---------------------------------------------------------------------------
+// 会话（Session）
+
+const sessionCols = `s.id, s.project_id, COALESCE(p.name, ''), s.agent_id, COALESCE(a.name, ''), a.cli,
+	s.title, s.status, s.worktree_branch, s.worktree_path, s.base_commit, s.session_dir, s.task_id, s.last_message_at, s.message_count,
+	s.created_at, s.started_at, s.suspended_at, s.delivered_at, s.updated_at`
+const sessionFrom = " FROM sessions s LEFT JOIN projects p ON p.id=s.project_id LEFT JOIN agents a ON a.id=s.agent_id"
+
+func scanSession(rows scanner) (Session, error) {
+	var ss Session
+	var projectID, taskID sql.NullInt64
+	var started, suspended, delivered sql.NullString
+	err := rows.Scan(&ss.ID, &projectID, &ss.ProjectName, &ss.AgentID, &ss.AgentName, &ss.CLI,
+		&ss.Title, &ss.Status, &ss.WorktreeBranch, &ss.WorktreePath, &ss.BaseCommit, &ss.SessionDir, &taskID, &ss.LastMessageAt, &ss.MessageCount,
+		&ss.CreatedAt, &started, &suspended, &delivered, &ss.UpdatedAt)
+	if err != nil {
+		return ss, err
+	}
+	if projectID.Valid {
+		ss.ProjectID = &projectID.Int64
+	}
+	if taskID.Valid {
+		ss.TaskID = &taskID.Int64
+	}
+	ss.StartedAt = strPtr(started)
+	ss.SuspendedAt = strPtr(suspended)
+	ss.DeliveredAt = strPtr(delivered)
+	return ss, nil
+}
+
+// CreateSession 创建会话记录。projectID 可为 nil（无项目）。agentID 必须存在。
+func (s *Store) CreateSession(ss Session) (int64, error) {
+	if ss.Status == "" {
+		ss.Status = SessionStatusCreated
+	}
+	if ss.CreatedAt == "" {
+		ss.CreatedAt = Now()
+	}
+	if ss.UpdatedAt == "" {
+		ss.UpdatedAt = ss.CreatedAt
+	}
+	res, err := s.db.Exec(`INSERT INTO sessions (project_id, agent_id, title, status, cli, worktree_branch, worktree_path, base_commit, session_dir, task_id, last_message_at, created_at, started_at, suspended_at, delivered_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		nullInt64(ss.ProjectID), ss.AgentID, ss.Title, ss.Status, ss.CLI, ss.WorktreeBranch, ss.WorktreePath, ss.BaseCommit, ss.SessionDir,
+		nullInt64(ss.TaskID), ss.LastMessageAt, ss.CreatedAt, nullStrPtr(ss.StartedAt), nullStrPtr(ss.SuspendedAt), nullStrPtr(ss.DeliveredAt), ss.UpdatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func nullStrPtr(p *string) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// GetSession 返回单个会话；不存在时返回 nil。
+func (s *Store) GetSession(id int64) (*Session, error) {
+	row := s.db.QueryRow("SELECT " + sessionCols + sessionFrom + " WHERE s.id=?", id)
+	ss, err := scanSession(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &ss, nil
+}
+
+// ListSessions 列出会话（默认不含 deleted；filter.Status 空 = 全部非删除）。
+func (s *Store) ListSessions(f SessionFilter) ([]Session, error) {
+	q := "SELECT " + sessionCols + sessionFrom + " WHERE 1=1"
+	var args []any
+	if f.ProjectID != nil {
+		q += " AND s.project_id=?"
+		args = append(args, *f.ProjectID)
+	}
+	if f.AgentID != nil {
+		q += " AND s.agent_id=?"
+		args = append(args, *f.AgentID)
+	}
+	if f.Status != "" {
+		q += " AND s.status=?"
+		args = append(args, f.Status)
+	} else if !f.IncludeDeleted {
+		q += " AND s.status<>'deleted'"
+	}
+	q += " ORDER BY COALESCE(NULLIF(s.last_message_at,''), s.created_at) DESC, s.id DESC"
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]Session, 0) // 空列表返回 [] 而非 null（前端 .length 直接可用）
+	for rows.Next() {
+		ss, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ss)
+	}
+	return out, rows.Err()
+}
+
+// UpdateSession 按字段更新会话（updateOne 的 set 语义：key=列名）。
+func (s *Store) UpdateSession(id int64, set map[string]any) error {
+	return updateOne(s.db, "sessions", id, set)
 }

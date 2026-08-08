@@ -1,5 +1,7 @@
 // 模块 task（由 scripts/gen-globals.py 维护导入/导出）
 import { BOARD_COLS, STATUS_LABEL, ST_COLOR, api, closeModal, esc, fetchTaskLogs, icon, openModal, state, toast } from "./core.js";
+import { md } from "./sessions.js";
+import { mountTaskDiff } from "./task-diff.js";
 import { loadDashboard } from "./dashboard.js";
 import { loadHistory } from "./history.js";
 import { fillSelects, loadAll, refreshOverview } from "./main.js";
@@ -421,20 +423,21 @@ export function renderDetail(t) {
     </section>
     ${t.body ? `<details class="task-section task-prompt"${bodyLength <= 160 ? " open" : ""}>
       <summary><span>任务说明</span><span class="section-meta">${bodyLength} 字</span></summary>
-      <div class="task-prompt-body">${esc(t.body)}</div>
+      ${renderBodyWithTimeline(t.body)}
     </details>` : ""}
     ${dependencyAlert}
     ${t.error ? `<div class="task-alert"><span class="task-alert-title">${mergeTask ? "代码合并失败" : "任务失败"}</span><span>${esc(t.error)}</span></div>` : ""}
     <div id="childrenBox"></div>
-    ${t.status === "awaiting_review" ? `<details class="task-section task-diff" open>
-      <summary><span>代码改动</span><span class="section-meta">等待审批</span></summary>
+    <details class="task-section task-diff"${t.status === "awaiting_review" || t.status === "running" ? " open" : ""}>
+      <summary><span>代码改动</span><span class="section-meta">${t.status === "awaiting_review" ? "等待审批" : "git diff"}</span></summary>
       <div id="diffBox"><div class="empty">加载改动中...</div></div>
-    </details>` : ""}
+    </details>
     <details class="task-section task-log-section${interactive ? " interactive-task-log" : ""}"${isLive ? " open" : ""}>
       <summary><span>${interactive ? "交互终端" : "执行记录"}</span><span class="section-meta" id="logMeta">${logMeta}${logErrors && !interactive ? ` · ${logErrors} 个错误` : ""}</span></summary>
       <div class="section-head">
         <div class="section-sub">${esc(agentName)} · ${runMode}</div>
         <div class="section-tools">
+          ${interactive ? "" : `<button class="btn ghost xs ${state.logFilter === "err" ? "active-filter" : ""}" id="logFilterBtn" onclick="toggleLogFilter()">${state.logFilter === "err" ? "✓ " : ""}只看错误</button>`}
           <button class="btn ghost xs" onclick="copyLogs()">${icon("copy")}${interactive ? "复制画面" : "复制"}</button>
           <button class="btn ghost xs" onclick="openTerminal(${t.id})">${icon("expand")}全屏</button>
         </div>
@@ -470,7 +473,7 @@ export function renderDetail(t) {
       if (box.scrollTop <= 64) loadOlderLogs(box, t.id);
     }, { passive: true });
   }
-  if (t.status === "awaiting_review") loadDiff(t.id);
+  loadDiff(t.id); // R1：diff 常显（终态可回看），组件内部处理空 diff
   loadChildren(t.id);
   loadWorkspace(t.id);
   renderSide(t);
@@ -799,17 +802,49 @@ export async function loadDiff(id) {
     const d = await api(`/api/tasks/${id}/diff`);
     const box = document.getElementById("diffBox");
     if (!box) return;
-    const stat = d.stat.trim();
-    const diff = d.diff.trim();
-    if (!stat && !diff) {
+    if (!d.stat && !d.diff) {
       box.innerHTML = `<div class="detail-desc">无文件改动或非 git 仓库${d.note ? "（" + esc(d.note) + "）" : ""}</div>`;
       return;
     }
-    box.innerHTML = `<div class="detail-desc" style="color:var(--success)">文件改动（git diff）${d.branch ? ` · 分支 <code class="mono">${esc(d.branch)}</code>` : ""}：</div>
-      <div class="term"><div class="term-body" style="max-height:180px">${esc(stat)}</div></div>
-      ${diff ? `<div class="term"><div class="term-body" style="max-height:300px">${esc(diff).split("\n").map(l =>
-        `<div class="line"><span class="c ${l.startsWith("+") && !l.startsWith("+++") ? "out" : l.startsWith("-") && !l.startsWith("---") ? "err" : "sys"}">${esc(l)}</span></div>`).join("")}</div></div>` : ""}`;
+    // R1：可视化 diff 审查器（lit 组件：文件列表/行号/折叠/审批联动）。
+    const node = mountTaskDiff(box, id, state.tasks.find(t => t.id === id)?.status);
+    if (node) node.requestUpdate();
   } catch (_) {}
+}
+
+// R2：解析 body 中的驳回意见标记，返回 { intro, rounds: [{round, time, note}] }
+// 格式：【修改意见 第 N 轮 YYYY-MM-DD HH:MM】内容
+const REVIEW_RE = /【修改意见\s*第\s*(\d+)\s*轮\s*(\d{4}-\d{2}-\d{2}\s*\d{2}:\d{2})?[^】]*】/g;
+export function splitReviewRounds(body) {
+  const rounds = [];
+  let intro = String(body || "");
+  let m;
+  let lastIdx = 0;
+  const parts = [];
+  while ((m = REVIEW_RE.exec(intro)) !== null) {
+    const note = intro.slice(m.index + m[0].length).split(/\n\n|【修改意见/)[0].trim();
+    rounds.push({ round: +m[1], time: (m[2] || "").trim(), note });
+    parts.push(intro.slice(lastIdx, m.index));
+    lastIdx = m.index + m[0].length;
+  }
+  if (parts.length) {
+    // 尾部内容归属最后一条意见
+    intro = parts.join("");
+  }
+  return { intro: intro.trim(), rounds };
+}
+
+// 渲染任务说明 + 修改意见时间线（R2/R5）
+export function renderBodyWithTimeline(body) {
+  if (!body) return "";
+  const { intro, rounds } = splitReviewRounds(body);
+  if (!rounds.length) return `<div class="task-prompt-body">${md(body)}</div>`;
+  const list = rounds.map(r => `
+    <div class="review-round">
+      <div class="review-round-head"><span class="review-round-badge">第 ${r.round} 轮意见</span><span class="review-round-time">${esc(r.time || "")}</span></div>
+      <div class="review-round-body">${md(r.note)}</div>
+    </div>`).join("");
+  return `<div class="task-prompt-body">${intro ? md(intro) : ""}</div><div class="review-timeline"><div class="review-timeline-title">驳回意见时间线（${rounds.length} 轮）</div>${list}</div>`;
 }
 
 /* 终端对话 */
@@ -909,8 +944,37 @@ export function logLineHTML(l) {
   return `<div class="line"><span class="ts">${tsOf(l)}</span><span class="c ${l.stream}">${esc(content)}</span></div>`;
 }
 
+// R3：日志错误过滤（只看错误 / 全部）。
+export function toggleLogFilter() {
+  setLogFilter(state.logFilter === "err" ? "all" : "err");
+  const btn = document.getElementById("logFilterBtn");
+  if (btn) btn.textContent = state.logFilter === "err" ? "✓ 只看错误" : "只看错误";
+  updateLogMeta();
+}
+
+export function setLogFilter(mode) {
+  state.logFilter = mode; // "all" | "err"
+  const box = document.getElementById("logBox");
+  if (box) {
+    box.innerHTML = logsHTML();
+    box.scrollTop = box.scrollHeight;
+  }
+}
+
 export function logsHTML() {
-  return state.logs.map(logLineHTML).filter(Boolean).join("");
+  const onlyErr = state.logFilter === "err";
+  const rows = state.logs.map(logLineHTML).filter(Boolean);
+  if (!onlyErr) return rows.join("");
+  // 错误模式：只显示 err 流 + 其前后 sys 分隔（保留上下文行数有限）
+  const out = [];
+  for (let i = 0; i < rows.length; i++) {
+    const l = state.logs[i];
+    if (l.stream === "err") {
+      if (out.length && !out[out.length - 1].startsWith("err-row")) out.push(`<div class="err-divider"></div>`);
+      out.push(`err-row:${rows[i]}`);
+    }
+  }
+  return out.map(r => r.startsWith("err-row:") ? r.slice(8) : r).join("");
 }
 
 export function appendLog(l) {
@@ -925,7 +989,9 @@ export function appendLog(l) {
         taskTermAppendLog(l);
       } else {
         const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 32;
-        box.insertAdjacentHTML("beforeend", logLineHTML(l));
+        if (state.logFilter !== "err" || l.stream === "err") {
+          box.insertAdjacentHTML("beforeend", logLineHTML(l));
+        }
         if (atBottom) box.scrollTop = box.scrollHeight;
       }
       updateLogMeta();
@@ -1000,9 +1066,13 @@ export function syncTaskRunMode() {
   if (interactive) interactive.disabled = !agent;
   if (!agent && select.value === "interactive") select.value = "batch";
   if (help) {
-    help.textContent = agent
-      ? `批处理会自动结算；交互式会保留 ${agent.name} 的原生终端，直到你发送 ${agent.cli === "pi" ? "/quit" : "/exit"}。`
-      : "批处理会自动结算；选择角色后可启用其交互式终端。";
+    if (select.value === "session") {
+      help.textContent = "创建常驻会话：复杂问题与 agent 多轮协作（worktree 隔离），完成时点「交付」转为任务走审批合并流程。";
+    } else {
+      help.textContent = agent
+        ? `批处理会自动结算；交互式会保留 ${agent.name} 的原生终端，直到你发送 ${agent.cli === "pi" ? "/quit" : "/exit"}。`
+        : "批处理会自动结算；选择角色后可启用其交互式终端。";
+    }
   }
 }
 
@@ -1057,6 +1127,19 @@ export function syncTaskConcurrency() {
 export async function submitTask() {
   const title = document.getElementById("tTitle").value.trim();
   if (!title) return toast("标题不能为空", true);
+  // 会话模式：不创建任务，转去会话页新建会话（预填角色/项目/标题）。
+  const runMode = document.getElementById("tRunMode").value;
+  if (runMode === "session") {
+    const agentId = Number(document.getElementById("tAgent").value) || 0;
+    const projectId = Number(document.getElementById("tProject").value) || 0;
+    closeModal("taskModal");
+    const params = new URLSearchParams();
+    if (agentId) params.set("agent", agentId);
+    if (projectId) params.set("project", projectId);
+    if (title) params.set("title", title);
+    location.href = "/sessions" + (params.toString() ? "?" + params.toString() : "");
+    return;
+  }
   const parentId = Number(document.getElementById("tParentId").value) || null;
   const projectId = Number(document.getElementById("tProject").value) || null;
   let dependencyMode = document.getElementById("tDependencyMode").value || "none";
@@ -1072,7 +1155,7 @@ export async function submitTask() {
         agent_id: Number(document.getElementById("tAgent").value) || null,
         project_id: projectId,
         perm: document.getElementById("tPerm").value,
-        run_mode: document.getElementById("tRunMode").value,
+        run_mode: runMode,
         concurrent: document.getElementById("tConcurrent").checked,
         dependency_mode: dependencyMode,
         depends_on: dependsOn,

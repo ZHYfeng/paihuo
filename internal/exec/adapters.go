@@ -440,6 +440,63 @@ func (a *piAdapter) Schema() []Field {
 
 func (a *piAdapter) Docs() string { return "https://pi.dev/docs" }
 
+// BuildPiRPCSessionArgs 构造 pi --mode rpc 会话进程的启动参数（会话管理器用）。
+// 与 piAdapter.Build 共用角色参数翻译（model/provider/thinking/skills/extra），
+// 差异：不传 -p/位置参数（初始消息由前端 prompt 命令发送），并注入 --mode rpc。
+// skillDirs 为 nil 时回退到角色配置的技能目录（与批处理语义一致）。
+func BuildPiRPCSessionArgs(role store.RoleConfig, skillDirs []string, sessionDir string) ([]string, error) {
+	args := []string{"--mode", "rpc"}
+	if sessionDir != "" {
+		args = append(args, "--session-dir", sessionDir)
+	}
+	if m := role.Model; m != "" {
+		args = append(args, "--model", m)
+	}
+	if s := role.SystemPrompt; s != "" {
+		args = append(args, "--append-system-prompt", s)
+	}
+	if v := role.Custom["provider"]; v != "" {
+		args = append(args, "--provider", v)
+	}
+	if v := role.Custom["tools"]; v != "" {
+		args = append(args, "--tools", v)
+	}
+	if v := role.Custom["exclude_tools"]; v != "" {
+		args = append(args, "--exclude-tools", v)
+	}
+	if v := role.Custom["models_cycle"]; v != "" {
+		args = append(args, "--models", v)
+	}
+	if role.Thinking != "" {
+		args = append(args, "--thinking", role.Thinking)
+	}
+	if len(skillDirs) == 0 {
+		skillDirs = role.Skills
+	}
+	for _, s := range skillDirs {
+		args = append(args, "--skill", s)
+	}
+	args = append(args, role.ExtraArgs...)
+	return args, nil
+}
+
+// BuildInteractiveArgs 构造某 CLI 交互模式的启动命令（S5 会话终端通道用）。
+func BuildInteractiveArgs(adapterID string, o RunOptions) (string, []string, []string, error) {
+	a, ok := GetAdapter(adapterID)
+	if !ok {
+		return "", nil, nil, fmt.Errorf("未知 CLI 适配器: %s", adapterID)
+	}
+	return a.Build(o)
+}
+
+// MergeEnv 把角色环境变量合并进系统环境（会话管理器用）。
+func MergeEnv(extra map[string]string) []string { return mergeEnv(extra) }
+
+// ReserveAgentSlot / ReleaseAgentSlot 是 Executor 角色并发槽位的导出入口，
+// 供会话管理器（internal/session）与批处理任务共用同一并发池。
+func (e *Executor) ReserveAgentSlot(agentID int64, limit int) bool { return e.reserveAgentSlot(agentID, limit) }
+func (e *Executor) ReleaseAgentSlot(agentID int64)              { e.releaseAgentSlot(agentID) }
+
 // ---------------------------------------------------------------------------
 // claude：claude -p "提示词"
 // 角色映射：model→--model；system_prompt→--append-system-prompt；

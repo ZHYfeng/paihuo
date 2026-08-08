@@ -455,6 +455,28 @@ export function filterSkillOptions(control) {
   });
 }
 
+// N2-L1：全选当前筛选（tag + 搜索）下可见的技能；清空全部。
+export function selectVisibleSkills(key) {
+  const box = document.querySelector(`.chip-editor [data-key="${key}"]`)?.closest(".chip-editor");
+  if (!box) return;
+  const hidden = new Set();
+  box.querySelectorAll(".skill-opt").forEach(o => { if (o.hidden) hidden.add(o.dataset.v); });
+  const add = [...box.querySelectorAll(".skill-opt input:checked")].map(i => i.dataset.v);
+  box.querySelectorAll(".skill-opt").forEach(o => {
+    if (!hidden.has(o.dataset.v)) { const cb = o.querySelector("input"); if (cb && !cb.checked) { cb.checked = true; add.push(o.dataset.v); } }
+  });
+  const input = box.querySelector("input[data-type=list]");
+  if (input) input.value = [...new Set(add)].join(",");
+}
+
+export function clearSkillSelection(key) {
+  const box = document.querySelector(`.chip-editor [data-key="${key}"]`)?.closest(".chip-editor");
+  if (!box) return;
+  box.querySelectorAll(".skill-opt input:checked").forEach(cb => cb.checked = false);
+  const input = box.querySelector("input[data-type=list]");
+  if (input) input.value = "";
+}
+
 /* ---- 技能多选：paihuo 技能库（按标签筛选后勾选，值=工作目录实际路径） ---- */
 
 export function skillsControlHTML(f, val) {
@@ -487,6 +509,10 @@ export function skillsControlHTML(f, val) {
       <input data-skill-search placeholder="搜索技能名称或说明" oninput="filterSkillOptions(this)">
     </div>
     <div class="skill-opts">${opts || `<div class="empty">技能库为空：到 Skills 页添加技能（含 SKILL.md 的目录）</div>`}</div>
+    <div class="chip-add">
+      <button type="button" class="btn xs" onclick="selectVisibleSkills('${f.key}')">全选当前筛选</button>
+      <button type="button" class="btn xs" onclick="clearSkillSelection('${f.key}')">清空技能</button>
+    </div>
     <div class="chip-add">
       <input placeholder="自定义技能目录路径，回车添加" onkeydown="if(event.key==='Enter'){event.preventDefault();addChip('${f.key}', this)}">
       <button type="button" class="btn xs" onclick="addChip('${f.key}', this.previousElementSibling)">添加</button>

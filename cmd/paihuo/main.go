@@ -71,6 +71,7 @@ func main() {
 
 	srv := server.New(st, hub, ex, sc, token, filepath.Join(filepath.Dir(db), "skills"))
 	srv.SetSecureCookies(secureCookie)
+	srv.RecoverSessions()
 	// 不设置 WriteTimeout：SSE 是长连接，写超时会中断正常的实时日志流。
 	httpSrv := &http.Server{
 		Addr:              addr,

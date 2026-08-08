@@ -1,5 +1,5 @@
 // 模块 main（由 scripts/gen-globals.py 维护导入/导出）
-import { addChip, agentTab, closeAgentDetail, deleteAgent, filterSkillOptions, hideAgentDetail, openAgentDetail, refreshAgentCatalog, removeChip, renderAgentList, renderAgentOverview, saveAgentConcurrency, setAgentSort, setAgentView, showAgentDetail, syncModelThinking, toggleAgent, toggleSkill } from "./agents.js";
+import { addChip, agentTab, clearSkillSelection, closeAgentDetail, deleteAgent, filterSkillOptions, hideAgentDetail, openAgentDetail, refreshAgentCatalog, removeChip, renderAgentList, renderAgentOverview, saveAgentConcurrency, selectVisibleSkills, setAgentSort, setAgentView, showAgentDetail, syncModelThinking, toggleAgent, toggleSkill } from "./agents.js";
 import { activeModal, api, closeModal, esc, fmtDur, fmtPct, logout, state, toast } from "./core.js";
 import { loadDashboard } from "./dashboard.js";
 import { cleanupHistory, deleteSelected, loadHistory, selectAllNonMergeTasks, toggleAll, toggleRow } from "./history.js";
@@ -9,7 +9,7 @@ import { changeRoleStudioCli, copyCurrentRole, copyRole, openCurrentRoleEditor, 
 import { deleteSchedule, openScheduleModal, renderScheduleList, submitSchedule, syncScheduleFields, toggleSchedule } from "./schedules.js";
 import { loadSettings, runCleanup, saveRetention, saveWtRetention } from "./settings.js";
 import { closeSkillDetail, copySkillContent, deleteSelectedSkills, deleteSkill, deleteSkillFromDetail, deleteTemplate, hideSkillDetail, loadSkillLib, loadTemplates, openExtModal, openSkillDetail, openSkillModal, removeExt, renderSkillLib, saveSkillTags, saveSkillTagsInline, scanSkills, setSkillTab, setSkillView, showSkillDetail, submitExt, submitSkill, toggleAllSkills, toggleSkillGroup, toggleSkillSelection, toggleSkillTagsEditor } from "./skills.js";
-import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskConcurrency, syncTaskDependency, syncTaskRunMode, wsDiscard } from "./task.js";
+import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskConcurrency, syncTaskDependency, syncTaskRunMode, toggleLogFilter, wsDiscard } from "./task.js";
 import { closeTerminal, focusFullscreenTerminal, focusTaskTerminal, openTerminal, syncTerminalInput } from "./terminal.js";
 
 export async function loadAll() {
@@ -193,7 +193,10 @@ export function initShortcuts() {
     else if (modal) closeModal(modal.id);
   };
   document.addEventListener("keydown", e => {
-    const t = e.target;
+    // composedPath()[0] 才是真正的按键目标：事件跨 shadow 边界时会重定向
+    // target（会话页的输入框都在 lit 组件内部，e.target 会变成 shadow host，
+    // 导致 inField 判断失效、输入时误触发全局快捷键）。
+    const t = (e.composedPath && e.composedPath()[0]) || e.target;
     const inField = t && (t.matches("input, textarea, select") || t.isContentEditable);
     // 交互式 xterm 必须独占 Tab、Esc、Ctrl+B 等按键，Pi 的命令补全、取消
     // 和编辑快捷键才不会被全局焦点陷阱或侧栏快捷键截走。
@@ -209,7 +212,8 @@ export function initShortcuts() {
         else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
       }
     }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+    // 输入框内不劫持快捷键：聊天/表单输入时 Ctrl+B 不应折叠侧栏
+    if (!inField && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
       e.preventDefault(); toggleSidebar(); return;
     }
     if (e.key === "Escape") {
@@ -225,9 +229,11 @@ export function initShortcuts() {
     }
     if (inField) return;
     if (e.key === "n" || e.key === "N") {
-      const taskModal = document.getElementById("taskModal");
+      // 仅看板页生效：任务弹窗是全站共享的（base.html），不能只凭它存在与否判断，
+      // 否则在会话/项目等页面误按 N 会弹出新建任务框。
+      if (location.pathname !== "/board") return;
       const inDetail = !document.getElementById("detailShell")?.classList.contains("hidden");
-      if (!taskModal || inDetail) return; // 仅看板页、且未打开任务详情时生效
+      if (inDetail) return;
       openNewTask();
     }
     if (e.key === "/") {
@@ -341,6 +347,18 @@ export function sse() {
   es.addEventListener("log", ev => {
     try { appendLog(JSON.parse(ev.data).payload); } catch (_) {}
   });
+  es.addEventListener("session.updated", ev => {
+    try {
+      const d = JSON.parse(ev.data).payload;
+      window.dispatchEvent(new CustomEvent("ph-session-updated", { detail: d }));
+    } catch (_) {}
+  });
+  es.addEventListener("session.message", ev => {
+    try {
+      const d = JSON.parse(ev.data).payload;
+      window.dispatchEvent(new CustomEvent("ph-session-message", { detail: d }));
+    } catch (_) {}
+  });
   es.addEventListener("provision", ev => {
     try {
       const d = JSON.parse(ev.data).payload;
@@ -432,6 +450,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 
+import "./sessions.js"; // 注册会话页面 lit 组件（副作用）
+import "./task-diff.js"; // 注册 diff 审查器 lit 组件（副作用）
 // ===== 模板 onclick 等引用的全局函数（脚本自动生成，勿手改） =====
 window.addChip = addChip;
 window.agentTab = agentTab;
@@ -440,6 +460,7 @@ window.applyFilters = applyFilters;
 window.applyTemplate = applyTemplate;
 window.changeRoleStudioCli = changeRoleStudioCli;
 window.cleanupHistory = cleanupHistory;
+window.clearSkillSelection = clearSkillSelection;
 window.closeAgentDetail = closeAgentDetail;
 window.closeDetail = closeDetail;
 window.closeInstTerminal = closeInstTerminal;
@@ -512,6 +533,7 @@ window.saveSkillTagsInline = saveSkillTagsInline;
 window.saveWtRetention = saveWtRetention;
 window.scanSkills = scanSkills;
 window.selectAllNonMergeTasks = selectAllNonMergeTasks;
+window.selectVisibleSkills = selectVisibleSkills;
 window.sendRoleStudioChat = sendRoleStudioChat;
 window.sendRoleStudioTest = sendRoleStudioTest;
 window.setAgentSort = setAgentSort;
@@ -534,6 +556,7 @@ window.syncTaskRunMode = syncTaskRunMode;
 window.toggleAgent = toggleAgent;
 window.toggleAll = toggleAll;
 window.toggleAllSkills = toggleAllSkills;
+window.toggleLogFilter = toggleLogFilter;
 window.toggleRow = toggleRow;
 window.toggleSchedule = toggleSchedule;
 window.toggleSidebar = toggleSidebar;

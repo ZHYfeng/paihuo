@@ -40,6 +40,10 @@
         <span>项目</span>
         <span class="s-count" id="sbProjectCount"></span>
       </a>
+      <a class="sidebar-link {{if eq .Active "sessions"}}active{{end}}" href="/sessions" aria-label="会话" title="会话" {{if eq .Active "sessions"}}aria-current="page"{{end}}>
+        <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10Z"/></svg>
+        <span>会话</span>
+      </a>
       <a class="sidebar-link {{if eq .Active "history"}}active{{end}}" href="/history" aria-label="历史" title="历史" {{if eq .Active "history"}}aria-current="page"{{end}}>
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 3"/></svg>
         <span>历史</span>
@@ -140,7 +144,8 @@
     <label class="field">执行方式
       <select id="tRunMode" onchange="syncTaskRunMode()">
         <option value="batch">批处理（默认，完成后自动结算）</option>
-        <option value="interactive">交互式终端</option>
+        <option value="session">会话（推荐：复杂问题，pi 消息流）</option>
+        <option value="interactive">交互式终端（旧式，codex/claude 终端）</option>
       </select>
       <span class="field-help" id="tRunModeHelp">批处理会在完成后自动结算。</span>
     </label>

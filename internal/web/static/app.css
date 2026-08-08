@@ -3390,3 +3390,33 @@ a.project-card:hover { color: inherit; text-decoration: none; }
   }
   .history-grid .history-status .badge { display: inline-flex; }
 }
+
+/* ==========================================================================
+   会话页（S-2/S-3，lit 组件 ph-sessions-*）
+   ========================================================================== */
+.st-queued { background: var(--st-queued); color: var(--bg-app); }
+.st-running { background: var(--st-running); color: var(--bg-app); }
+.st-succeeded { background: var(--st-done); color: var(--bg-app); }
+.st-cancelled { background: var(--st-cancel); color: var(--bg-app); }
+.st-failed { background: var(--st-failed); color: var(--bg-app); }
+
+.ph-event {
+  text-align: center; font-size: 11px; color: var(--fg-faint);
+  padding: 2px 0; border-top: 1px dashed var(--border); margin-top: 6px;
+}
+.ph-empty { color: var(--fg-faint); text-align: center; padding: 80px 0; font-size: 13px; }
+.ph-empty-sm { color: var(--fg-faint); text-align: center; padding: 24px 0; font-size: 12px; }
+.ph-code {
+  background: var(--inset); color: var(--fg-muted); border-radius: 8px; padding: 10px 12px;
+  overflow-x: auto; font-size: 12px; line-height: 1.55;
+}
+.ph-md pre { margin: 6px 0; }
+/* ---- R2/R3：驳回意见时间线 + 日志过滤 ---- */
+.review-timeline { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.review-timeline-title { font-size: 12px; font-weight: 700; color: var(--warning); }
+.review-round { border: 1px solid var(--border); border-left: 3px solid var(--warning); border-radius: 8px; padding: 8px 12px; background: var(--brand-soft); }
+.review-round-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.review-round-badge { font-size: 11px; font-weight: 700; color: var(--warning); }
+.review-round-time { font-size: 11px; color: var(--fg-faint); }
+.review-round-body { font-size: 13px; }
+.active-filter { border-color: var(--danger) !important; color: var(--danger) !important; }

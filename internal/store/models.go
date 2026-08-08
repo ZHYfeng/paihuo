@@ -44,6 +44,55 @@ const (
 	RunModeInteractive = "interactive"
 )
 
+// 会话状态机：
+//
+//	created ──start──> active ──suspend──> suspended ──resume──> active
+//	   │                  │                                       │
+//	   ├──discard─────────┼──deliver──> delivered（冻结，关联 task_id）│
+//	   │                  └───────────────┬────────────────────────┘
+//	   └──────────────deleted─────────────┘（清理 worktree）
+const (
+	SessionStatusCreated   = "created"
+	SessionStatusActive    = "active"
+	SessionStatusSuspended = "suspended"
+	SessionStatusDelivered = "delivered"
+	SessionStatusDeleted   = "deleted"
+)
+
+// Session 是与任务平行的一等公民：复杂问题的常驻交互会话。
+// 无执行-结算语义：挂起只释放进程/槽位，transcript 由 pi 会话文件持久化；
+// 交付时才创建任务（复用会话 worktree，见 Task.SessionID）走审批→合并流程。
+type Session struct {
+	ID             int64   `json:"id"`
+	ProjectID      *int64  `json:"project_id"`
+	ProjectName    string  `json:"project_name,omitempty"`
+	AgentID        int64   `json:"agent_id"`
+	AgentName      string  `json:"agent_name,omitempty"`
+	Title          string  `json:"title"`
+	Status         string  `json:"status"`
+	CLI            string  `json:"cli"` // 冗余自角色，前端展示用：pi | codex | claude | ...
+	WorktreeBranch string  `json:"worktree_branch"`
+	WorktreePath   string  `json:"worktree_path"`
+	BaseCommit     string  `json:"base_commit"` // 创建 worktree 时主分支 HEAD
+	SessionDir     string  `json:"session_dir"` // pi 会话文件目录
+	TaskID         *int64  `json:"task_id"`     // 交付后关联
+	LastMessageAt  string  `json:"last_message_at"`
+	MessageCount   int     `json:"message_count"`
+	CreatedAt      string  `json:"created_at"`
+	StartedAt      *string `json:"started_at"`
+	SuspendedAt    *string `json:"suspended_at"`
+	DeliveredAt    *string `json:"delivered_at"`
+	UpdatedAt      string  `json:"updated_at"`
+}
+
+// SessionFilter 是会话列表过滤条件。
+type SessionFilter struct {
+	ProjectID     *int64
+	Status        string
+	AgentID       *int64
+	IncludeDeleted bool
+}
+
 // RoleConfig 是角色的执行配置，翻译为各 CLI 的原生参数。
 // 通用字段 + Custom（CLI 特有参数，schema 由适配器按官方文档声明，
 // 前端据此渲染不同角色各自的深度定制表单）。
@@ -108,6 +157,7 @@ type Task struct {
 	BaseCommit     string  `json:"base_commit"`             // 创建 worktree 时主分支 HEAD
 	ResumeOf       *int64  `json:"resume_of"`               // 续跑自哪个任务（复用其会话目录）
 	MergeOf        *int64  `json:"merge_of"`                // 合并任务整合自哪个源任务
+	SessionID      *int64  `json:"session_id"`              // 会话交付创建（复用会话 worktree/分支）
 	SortOrder      int64   `json:"sort_order"`              // 项目内执行顺序（合并任务不参与排序）
 	TerminalCols   int     `json:"terminal_cols,omitempty"` // 交互终端最近同步尺寸（列）；0=未同步（默认 80）
 	TerminalRows   int     `json:"terminal_rows,omitempty"` // 交互终端最近同步尺寸（行）；0=未同步（默认 24）

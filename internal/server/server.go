@@ -23,6 +23,7 @@ import (
 
 	"paihuo/internal/events"
 	"paihuo/internal/exec"
+	"paihuo/internal/session"
 	"paihuo/internal/sched"
 	"paihuo/internal/store"
 	"paihuo/internal/web"
@@ -32,6 +33,7 @@ type Server struct {
 	st           *store.Store
 	hub          *events.Hub
 	ex           *exec.Executor
+	sess         *session.Manager
 	sched        *sched.Scheduler
 	token        string
 	skillsDir    string                        // 技能库工作目录（<db目录>/skills，导入或扫描发现的技能复制到这里）
@@ -48,6 +50,12 @@ const (
 	sessionTTL    = 30 * 24 * time.Hour
 	maxJSONBody   = 1 << 20 // 1 MiB
 )
+
+// RecoverSessions 服务重启后把遗留 active 会话置为 suspended（进程已丢失）。
+// 在 Server 组装完成后、监听开始前调用。
+func (s *Server) RecoverSessions() {
+	s.sess.Recover()
+}
 
 // sessionValue creates an opaque, stateless session token. The expiry and a
 // cryptographically random nonce are HMAC-signed with the configured token,
@@ -115,6 +123,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 		st:           st,
 		hub:          hub,
 		ex:           ex,
+		sess:         session.New(st, hub, ex, filepath.Join(filepath.Dir(skillsDir), "sessions"), filepath.Dir(skillsDir)),
 		sched:        sc,
 		token:        token,
 		skillsDir:    skillsDir,
@@ -128,6 +137,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 			"projects":   template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/projects.html")),
 			"autopilots": template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/autopilots.html")),
 			"skills":     template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/skills.html")),
+			"sessions":   template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/sessions.html")),
 			"settings":   template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/settings.html")),
 			"login":      template.Must(template.ParseFS(web.FS, "templates/login.html")),
 		},
@@ -144,6 +154,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("GET /projects", s.pageProjects)
 	m.HandleFunc("GET /autopilots", s.pageAutopilots)
 	m.HandleFunc("GET /skills", s.pageSkills)
+	m.HandleFunc("GET /sessions", s.pageSessions)
 	m.HandleFunc("GET /settings", s.pageSettings)
 	m.HandleFunc("GET /login", s.pageLogin)
 	m.HandleFunc("POST /login", s.login)
@@ -180,6 +191,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 		w.Write(b)
 	}))
 	m.HandleFunc("GET /api/events", s.sse)
+	s.sessionRoutes(m)
 
 	m.HandleFunc("GET /api/tasks", s.listTasks)
 	m.HandleFunc("POST /api/tasks", s.createTask)
@@ -337,6 +349,10 @@ func (s *Server) pageAutopilots(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) pageSkills(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "skills", pageData{Active: "skills"})
+}
+
+func (s *Server) pageSessions(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "sessions", pageData{Active: "sessions"})
 }
 
 func (s *Server) pageSettings(w http.ResponseWriter, r *http.Request) {

@@ -50,8 +50,61 @@ func WorktreePath(sessionsRoot, projectName string, taskID int64) string {
 	return filepath.Join(sessionsRoot, slug(projectName), fmt.Sprintf("task-%d", taskID))
 }
 
+// SessionWorktreePath 返回会话 worktree 的预期路径（sessions/<project>/session-<id>）。
+func SessionWorktreePath(sessionsRoot, projectName string, sessionID int64) string {
+	return filepath.Join(sessionsRoot, slug(projectName), fmt.Sprintf("session-%d", sessionID))
+}
+
 // Branch 返回任务分支名。
 func Branch(taskID int64) string { return fmt.Sprintf("paihuo/task-%d", taskID) }
+
+// SessionBranch 返回会话分支名。
+func SessionBranch(sessionID int64) string { return fmt.Sprintf("paihuo/session-%d", sessionID) }
+
+// EnsureSessionWorktree 为会话准备隔离工作区：git 项目创建独立 worktree
+// （paihuo/session-<id>），已存在直接返回；非 git 项目回退项目目录。
+// 返回 (执行目录, 会话分支, baseCommit, error)。非隔离场景 branch 为空串。
+func EnsureSessionWorktree(projectDir, sessionsRoot, projectName string, sessionID int64) (dir, branch, baseCommit string, err error) {
+	dir = projectDir
+	if projectDir == "" {
+		return "", "", "", fmt.Errorf("项目未绑定目录")
+	}
+	wt := SessionWorktreePath(sessionsRoot, projectName, sessionID)
+	if fi, err := os.Stat(wt); err == nil && fi.IsDir() {
+		return wt, SessionBranch(sessionID), "", nil // 已存在（恢复）
+	}
+	if !isGitRepo(projectDir) {
+		return projectDir, "", "", nil
+	}
+	base, err := git(projectDir, "rev-parse", "HEAD")
+	if err != nil {
+		return "", "", "", fmt.Errorf("读取 Git 基准提交失败: %v", err)
+	}
+	baseCommit = strings.TrimSpace(base)
+	if err := os.MkdirAll(filepath.Dir(wt), 0o755); err != nil {
+		return "", "", "", fmt.Errorf("创建 worktree 目录失败: %v", err)
+	}
+	if _, err := git(projectDir, "worktree", "add", wt, "-b", SessionBranch(sessionID)); err != nil {
+		return "", "", "", fmt.Errorf("创建会话 worktree 失败: %v", err)
+	}
+	return wt, SessionBranch(sessionID), baseCommit, nil
+}
+
+// DiscardSessionWorktree 移除会话 worktree（git 项目时）。非 git 或已不存在
+// 时静默成功。会话分支保留（历史可查），仅移除工作目录。
+func DiscardSessionWorktree(projectDir, sessionsRoot, projectName string, sessionID int64) error {
+	if !isGitRepo(projectDir) {
+		return nil
+	}
+	wt := SessionWorktreePath(sessionsRoot, projectName, sessionID)
+	if _, err := os.Stat(wt); err != nil {
+		return nil // 已不存在
+	}
+	if _, err := git(projectDir, "worktree", "remove", "--force", wt); err != nil {
+		return fmt.Errorf("移除会话 worktree 失败: %v", err)
+	}
+	return nil
+}
 
 // Ensure 为任务准备执行目录：
 //   - 项目是 git 仓库且 worktree 不存在 → 创建独立 worktree（paihuo/task-<id>）
@@ -59,12 +112,37 @@ func Branch(taskID int64) string { return fmt.Sprintf("paihuo/task-%d", taskID) 
 //   - 非 git → 回退项目目录
 //   - git 仓库无法建立隔离工作区 → 返回错误（绝不在主工作区执行）
 //
+// 会话交付的任务（Task.SessionID 非空）复用会话 worktree（paihuo/session-<id>）：
+// 不搬移、不重建，直接挂载使用。
+//
 // 返回 (执行目录, 任务分支, baseCommit, error)。非隔离场景 branch 为空串。
 func Ensure(tk store.Task, sessionsRoot string) (dir, branch, baseCommit string, err error) {
 	project := tk.ProjectDir
 	dir = project
 	if project == "" {
 		return "", "", "", fmt.Errorf("任务未绑定项目目录")
+	}
+	// 会话交付任务：定位到会话 worktree。
+	if tk.SessionID != nil {
+		wt := SessionWorktreePath(sessionsRoot, tk.ProjectName, *tk.SessionID)
+		if fi, err := os.Stat(wt); err == nil && fi.IsDir() {
+			return wt, SessionBranch(*tk.SessionID), tk.BaseCommit, nil // 已存在（会话 worktree 仍在）
+		}
+		// worktree 丢失：按记录分支重新挂载。
+		branch := SessionBranch(*tk.SessionID)
+		if tk.WorktreeBranch != "" && tk.WorktreeBranch != branch {
+			return "", "", "", fmt.Errorf("任务 worktree 分支记录异常: %s", tk.WorktreeBranch)
+		}
+		if !isGitRepo(project) {
+			return project, "", "", nil
+		}
+		if err := os.MkdirAll(filepath.Dir(wt), 0o755); err != nil {
+			return "", "", "", fmt.Errorf("创建 worktree 目录失败: %v", err)
+		}
+		if _, err := git(project, "worktree", "add", wt, branch); err != nil {
+			return "", "", "", fmt.Errorf("恢复会话 worktree 失败: %v", err)
+		}
+		return wt, branch, tk.BaseCommit, nil
 	}
 	wt := WorktreePath(sessionsRoot, tk.ProjectName, tk.ID)
 	if fi, err := os.Stat(wt); err == nil && fi.IsDir() {

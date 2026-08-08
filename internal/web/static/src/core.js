@@ -14,6 +14,7 @@ export const state = {
   logsHasMore: false,
   logsLoading: false,
   logsOldestSeq: 0,
+  logFilter: "all",
   logsTotal: 0,
   termTask: null,
   es: null,        // SSE 连接（隐藏时断开、可见时重连）
