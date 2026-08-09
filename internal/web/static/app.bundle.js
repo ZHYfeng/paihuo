@@ -1489,6 +1489,7 @@
           this.requestUpdate();
         }
         render() {
+          this.classList.toggle("detail-open", !!sessionState.detail);
           return b2`
       <div class="col-list">
         <ph-session-list .list=${sessionState.list} .selectedId=${this.selectedId} @select=${(e6) => this.select(e6.detail)} @create=${() => {
@@ -1557,9 +1558,13 @@
     .col-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--pw-bg); }
     .pw-empty { margin: auto; color: var(--pw-muted); font-size: 14px; }
     @media (max-width: 860px) {
-      :host { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: 0; }
-      .col-list { border-right: 0; border-bottom: 1px solid var(--pw-border); max-height: 38vh; }
-      .col-main { height: 70vh; }
+      :host { grid-template-columns: 1fr; grid-template-rows: 1fr; height: 100%; min-height: 0; }
+      /* 移动端 master-detail：未选中只显示会话列表（全高可滚动），
+         选中后只显示聊天（返回按钮在会话头部）。 */
+      .col-list { border-right: 0; border-bottom: 0; min-height: 0; overflow: hidden; }
+      .col-main { display: none; height: 100%; }
+      :host(.detail-open) .col-list { display: none; }
+      :host(.detail-open) .col-main { display: flex; }
     }
   `);
       __publicField(PhSessionsPage, "properties", {
@@ -1835,6 +1840,7 @@
           const statusText = running && s5.status === "active" ? "\u601D\u8003\u4E2D" : STATUS_LABEL2[s5.status] || s5.status;
           return b2`
       <div class="strip">
+        <button class="back" title="返回会话列表" @click=${() => this.dispatchEvent(new CustomEvent("close", { bubbles: true, composed: true }))}>←</button>
         <div class="title">
           <span class="badge ${statusCls}">${statusText}</span>
           <span class="title-text">${s5.title}</span>
@@ -1874,6 +1880,8 @@
     .meta { color: var(--pw-muted); font-size: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
     .meta .cli { border: 1px solid var(--pw-border); border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: 700; }
     .spacer { flex: 1; }
+    .back { display: none; }
+    @media (max-width: 860px) { .back { display: inline-flex; } }
     button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--pw-border); border-radius: 7px; background: var(--pw-surface); color: var(--pw-text); padding: 5px 10px; cursor: pointer; font-size: 12.5px; }
     button:hover { background: var(--pw-surface-hover); }
     button.primary { border-color: var(--pw-accent-border); background: var(--pw-selection-bg); color: var(--pw-accent); }
