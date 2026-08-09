@@ -2730,7 +2730,7 @@ func nullStrPtr(p *string) any {
 
 // GetSession 返回单个会话；不存在时返回 nil。
 func (s *Store) GetSession(id int64) (*Session, error) {
-	row := s.db.QueryRow("SELECT " + sessionCols + sessionFrom + " WHERE s.id=?", id)
+	row := s.db.QueryRow("SELECT "+sessionCols+sessionFrom+" WHERE s.id=?", id)
 	ss, err := scanSession(row)
 	if err == sql.ErrNoRows {
 		return nil, nil

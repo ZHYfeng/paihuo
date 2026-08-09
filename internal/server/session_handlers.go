@@ -349,10 +349,10 @@ func (s *Server) sessionTranscript(w http.ResponseWriter, r *http.Request) {
 
 // S5：终端式会话（codex/claude）通道。
 type termIn struct {
-	Text  string `json:"text"`
-	Cols  int    `json:"cols"`
-	Rows  int    `json:"rows"`
-	Raw   bool   `json:"raw"` // 原始按键（不追加回车）
+	Text string `json:"text"`
+	Cols int    `json:"cols"`
+	Rows int    `json:"rows"`
+	Raw  bool   `json:"raw"` // 原始按键（不追加回车）
 }
 
 func (s *Server) sessionTermInput(w http.ResponseWriter, r *http.Request) {

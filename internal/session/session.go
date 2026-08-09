@@ -16,8 +16,8 @@ import (
 // 状态迁移白名单。状态机：created → active ⇄ suspended → delivered / deleted。
 var transitions = map[string]map[string]bool{
 	store.SessionStatusCreated: {
-		store.SessionStatusActive:   true,
-		store.SessionStatusDeleted:  true,
+		store.SessionStatusActive:  true,
+		store.SessionStatusDeleted: true,
 	},
 	store.SessionStatusActive: {
 		store.SessionStatusSuspended: true,
@@ -25,7 +25,7 @@ var transitions = map[string]map[string]bool{
 		store.SessionStatusDeleted:   true,
 	},
 	store.SessionStatusSuspended: {
-		store.SessionStatusActive:   true,
+		store.SessionStatusActive:    true,
 		store.SessionStatusDelivered: true,
 		store.SessionStatusDeleted:   true,
 	},

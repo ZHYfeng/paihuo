@@ -60,7 +60,7 @@ func newTestEnv(t *testing.T) (*Manager, *store.Store, *execpkg.Executor, string
 
 func gitCmd(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	out, err :=osexec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	out, err := osexec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}

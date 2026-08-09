@@ -537,8 +537,10 @@ func MergeEnv(extra map[string]string) []string { return mergeEnv(extra) }
 
 // ReserveAgentSlot / ReleaseAgentSlot 是 Executor 角色并发槽位的导出入口，
 // 供会话管理器（internal/session）与批处理任务共用同一并发池。
-func (e *Executor) ReserveAgentSlot(agentID int64, limit int) bool { return e.reserveAgentSlot(agentID, limit) }
-func (e *Executor) ReleaseAgentSlot(agentID int64)              { e.releaseAgentSlot(agentID) }
+func (e *Executor) ReserveAgentSlot(agentID int64, limit int) bool {
+	return e.reserveAgentSlot(agentID, limit)
+}
+func (e *Executor) ReleaseAgentSlot(agentID int64) { e.releaseAgentSlot(agentID) }
 
 // ---------------------------------------------------------------------------
 // claude：claude -p "提示词"

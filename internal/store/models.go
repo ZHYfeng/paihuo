@@ -87,9 +87,9 @@ type Session struct {
 
 // SessionFilter 是会话列表过滤条件。
 type SessionFilter struct {
-	ProjectID     *int64
-	Status        string
-	AgentID       *int64
+	ProjectID      *int64
+	Status         string
+	AgentID        *int64
 	IncludeDeleted bool
 }
 

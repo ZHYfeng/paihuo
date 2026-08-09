@@ -40,7 +40,7 @@ type rpcProc struct {
 	closed    bool // 进程已终止（挂起/崩溃）
 	lastEvent time.Time
 	onEvent   func(rpcEvent) // Manager 注入的事件处理器（Hub 转发 + 落库）
-	onExit    func()        // Manager 注入的退出回调（崩溃 → suspended）
+	onExit    func()         // Manager 注入的退出回调（崩溃 → suspended）
 }
 
 type rpcResponse struct {
@@ -87,6 +87,7 @@ type rpcEvent struct {
 //   - args：BuildPiRPCSessionArgs 构造的启动参数
 //   - sessionDir：pi 会话文件目录
 //   - stderrPath：stderr 日志文件
+//
 // newRPCProc 启动 pi RPC 进程。注意：进程生命周期独立于任何请求 ctx
 // （exec.CommandContext 会在 ctx 取消时向进程发 SIGINT，导致挂起的请求
 // 结束时误杀会话进程）；崩溃/退出检测走 p.exited 通道。

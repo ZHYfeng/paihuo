@@ -25,14 +25,14 @@ import (
 //   - RPC 事件 → SSE 广播 + last_message_at 落库
 //   - 崩溃检测：进程退出且状态 active → 自动置 suspended（transcript 不丢）
 type Manager struct {
-	st           *store.Store
-	hub          *events.Hub
-	ex           *exec.Executor
-	sessionsRoot string
+	st            *store.Store
+	hub           *events.Hub
+	ex            *exec.Executor
+	sessionsRoot  string
 	agentSessions string // <sessionsRoot>/.agent-sessions（与任务会话平级，session- 前缀）
 
 	mu    sync.Mutex
-	procs map[int64]*rpcProc // pi 会话进程（RPC 通道）
+	procs map[int64]*rpcProc  // pi 会话进程（RPC 通道）
 	terms map[int64]*termProc // codex/claude 会话终端（tmux 通道，S5）
 	// stopping 置位后禁止再启动新进程（服务关闭）
 	stopping bool
@@ -693,6 +693,7 @@ func (m *Manager) Transcript(ctx context.Context, id int64, limit int, before st
 	}
 	return entries, total, nil
 }
+
 // increment 返回会话消息数 +1（并发安全：SQLite 单写者）。
 func increment(st *store.Store, id int64) int {
 	ss, err := st.GetSession(id)
@@ -717,8 +718,8 @@ func (m *Manager) handleEvent(id int64, ev rpcEvent) {
 			ts = store.Now()
 		}
 		_ = m.st.UpdateSession(id, map[string]any{
-		"last_message_at": ts, "message_count": increment(m.st, id), "updated_at": store.Now(),
-	})
+			"last_message_at": ts, "message_count": increment(m.st, id), "updated_at": store.Now(),
+		})
 	case "agent_settled":
 		touchSession(m.st, id, store.Now())
 	}
