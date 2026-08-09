@@ -5293,7 +5293,7 @@
     <button class="btn xs" title="\u6253\u5F00\u552F\u4E00\u89D2\u8272\u7F16\u8F91\u5668\uFF0C\u7F16\u8F91\u914D\u7F6E\u5E76\u6D4B\u8BD5\u89D2\u8272" onclick="event.stopPropagation();openRoleStudio(${a3.id})">\u7F16\u8F91</button>
     <button class="btn xs" title="\u590D\u5236\u6B64\u89D2\u8272\u7684\u914D\u7F6E\uFF0C\u521B\u5EFA\u4E00\u4E2A\u65B0\u89D2\u8272" aria-label="\u590D\u5236\u89D2\u8272 ${esc(a3.name)}" onclick="event.stopPropagation();copyRole(${a3.id})">${icon("copy")}\u590D\u5236</button>
     <button class="btn xs" title="${a3.enabled ? "\u505C\u7528" : "\u542F\u7528"}\u89D2\u8272" onclick="event.stopPropagation();toggleAgent(${a3.id})">${a3.enabled ? "\u505C\u7528" : "\u542F\u7528"}</button>
-    <button class="btn xs danger" title="\u5220\u9664\u89D2\u8272" aria-label="\u5220\u9664\u89D2\u8272 ${esc(a3.name)}" onclick="event.stopPropagation();deleteAgent(${a3.id})">${icon("trash")}</button>`;
+    <button class="btn xs danger" title="\u5220\u9664\u89D2\u8272" aria-label="\u5220\u9664\u89D2\u8272 ${esc(a3.name)}" onclick="event.stopPropagation();deleteAgent(${a3.id})">${icon("trash")}<span class="agent-list-mobile-action-label">\u5220\u9664</span></button>`;
   }
   function renderAgentGrid() {
     const grid = document.getElementById("agentGrid");

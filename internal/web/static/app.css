@@ -2983,6 +2983,7 @@ a.project-card:hover { color: inherit; text-decoration: none; }
 .agent-list-actions .ops {
   display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 4px;
 }
+.agent-list-mobile-action-label { display: none; }
 .agent-card .ac-top { align-items: flex-start; }
 .agent-card .ac-id { display: block; overflow: hidden; }
 .agent-card .ac-name { display: block; width: 100%; max-width: 100%; }
@@ -3040,6 +3041,39 @@ a.project-card:hover { color: inherit; text-decoration: none; }
   .agent-list-actions .btn {
     min-width: 44px; min-height: 44px; height: 44px; padding-inline: 10px;
   }
+}
+
+@container agent-list (max-width: 640px) {
+  .agent-list-grid tbody { gap: 10px; padding: 10px 12px 14px; }
+  .agent-list-grid tbody tr {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "identity status"
+      "cli concurrency"
+      "model model"
+      "actions actions";
+    gap: 12px 14px; padding: 14px;
+  }
+  .agent-list-identity { align-self: start; overflow: visible !important; }
+  .agent-list-main { align-items: flex-start; }
+  .agent-list-copy .table-primary-action { -webkit-line-clamp: 2; }
+  .agent-list-description { margin-top: 2px; -webkit-line-clamp: 2; }
+  .agent-list-status { align-self: start; }
+  .agent-list-cli, .agent-list-concurrency { padding-top: 10px !important; border-top: 1px solid var(--border) !important; }
+  .agent-list-model { padding-top: 0 !important; border-top: 0 !important; }
+  .agent-list-actions {
+    width: 100%; padding-top: 12px !important; overflow: visible !important;
+    border-top: 1px solid var(--border) !important;
+  }
+  .agent-list-actions .ops {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    width: 100%; gap: 6px;
+  }
+  .agent-list-actions button.btn.xs {
+    width: 100%; min-width: 0; height: 44px; min-height: 44px;
+    padding-inline: 4px; justify-content: center;
+  }
+  .agent-list-actions .agent-list-mobile-action-label { display: inline; }
 }
 
 @media (max-width: 900px) {

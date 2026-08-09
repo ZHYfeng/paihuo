@@ -89,6 +89,40 @@ function findChrome() {
   await page.goto(URL + "/roles");
   await page.waitForTimeout(700);
   await page.evaluate(() => setAgentView("table"));
+  // 手机端的角色表格会转成分区卡片：身份信息占满首行，操作区独占底部，
+  // 避免四个按钮把角色名称压缩成逐字竖排，同时保持 44px 触控目标。
+  await page.setViewportSize({ width: 320, height: 812 });
+  await page.waitForTimeout(100);
+  const mobileRoleTable = await page.evaluate(() => {
+    const row = document.querySelector(".agent-list-row");
+    if (!row) return { skipped: true };
+    const rect = row.getBoundingClientRect();
+    const identity = row.querySelector(".agent-list-identity")?.getBoundingClientRect();
+    const actions = row.querySelector(".agent-list-actions")?.getBoundingClientRect();
+    const buttons = [...row.querySelectorAll(".agent-list-actions .btn")].map(button => {
+      const buttonRect = button.getBoundingClientRect();
+      return { width: buttonRect.width, height: buttonRect.height };
+    });
+    const deleteLabel = row.querySelector(".agent-list-mobile-action-label");
+    return {
+      skipped: false,
+      noOverflow: rect.left >= 0 && rect.right <= innerWidth && document.documentElement.scrollWidth <= innerWidth,
+      identityRatio: identity ? identity.width / rect.width : 0,
+      actionsRatio: actions ? actions.width / rect.width : 0,
+      buttons,
+      deleteLabelVisible: !!deleteLabel && getComputedStyle(deleteLabel).display !== "none",
+    };
+  });
+  if (mobileRoleTable.skipped) ok("角色表格移动端布局（无角色，跳过）");
+  else {
+    const mobileRoleTableOK = mobileRoleTable.noOverflow &&
+      mobileRoleTable.identityRatio >= .55 && mobileRoleTable.actionsRatio >= .85 &&
+      mobileRoleTable.buttons.length === 4 &&
+      mobileRoleTable.buttons.every(button => button.width >= 44 && button.height >= 44) &&
+      mobileRoleTable.deleteLabelVisible;
+    mobileRoleTableOK ? ok("角色表格移动端布局") : fail(`角色表格移动端布局异常：${JSON.stringify(mobileRoleTable)}`);
+  }
+  await page.setViewportSize({ width: W, height: H });
   // 角色创建/编辑统一走工作台：基本信息、完整配置和测试三栏必须同时存在；
   // 这里只验证工作台渲染和关闭，不触发真实 CLI，避免回归依赖外部模型额度。
   await page.evaluate(() => openRoleStudio());
