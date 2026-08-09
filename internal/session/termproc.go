@@ -3,11 +3,14 @@ package session
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -28,6 +31,65 @@ type termProc struct {
 
 const termInteractiveCols = 80
 const termInteractiveRows = 24
+
+// codexTrustConfig 返回 codex 配置文件路径（~/.codex/config.toml）。
+func codexTrustConfig() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".codex", "config.toml")
+}
+
+// ensureCodexTrust 在 spawn codex 交互 TUI 前把工作目录写入 codex 的信任
+// 列表（~/.codex/config.toml 的 [projects."<dir>"] trust_level = "trusted"）。
+// 会话目录是 paihuo 管理的隔离 worktree（与批处理任务同权），每次新进程
+// 都弹「Press enter to continue」信任确认会让会话看起来卡死；预信任后
+// 直接进入 TUI。codex 无命令行开关（--skip-git-repo-check 仅 exec 子命令），
+// 只能写配置文件。追加新表是安全的（TOML 表可分散定义，仅重复表名报错）。
+// 失败仅记日志，不阻塞启动（用户仍可手动回车确认）。
+func ensureCodexTrust(dir string) {
+	if dir == "" {
+		return
+	}
+	p := codexTrustConfig()
+	if p == "" {
+		return
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return // 无配置：不干预（codex 首次运行会自己创建）
+	}
+	key := "[projects." + strconv.Quote(dir) + "]"
+	if bytes.Contains(data, []byte(key)) {
+		return // 已信任（codex 或此前写入）
+	}
+	// 跨进程互斥：避免并发 spawn 双写同一表导致 codex 解析失败。
+	lock, err := os.OpenFile(p+".lock", os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	// 持锁后复查（另一进程可能刚写入）。
+	if data, err := os.ReadFile(p); err == nil && bytes.Contains(data, []byte(key)) {
+		return
+	}
+	line := "\n" + key + "\ntrust_level = \"trusted\"\n"
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	if _, err := f.WriteString(line); err != nil {
+		log.Printf("⚠ 写入 codex 信任配置失败: %v", err)
+		return
+	}
+	log.Printf("↻ 已把 %s 加入 codex 信任目录", dir)
+}
 
 // newTermProc 创建终端通道（不 spawn）。
 func newTermProc(socket string) *termProc {

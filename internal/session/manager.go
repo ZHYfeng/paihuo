@@ -246,6 +246,9 @@ func (m *Manager) startTerminal(ss *store.Session, agent store.Agent, dir string
 	if err != nil {
 		return err
 	}
+	if agent.CLI == "codex" {
+		ensureCodexTrust(dir)
+	}
 	term := newTermProc(m.termSocket())
 	if err := term.Spawn(ss.ID, bin, args, env, dir, initial); err != nil {
 		return err
