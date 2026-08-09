@@ -6100,9 +6100,9 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
     body.innerHTML = state.templates.map((t5) => `
     <tr>
       <td class="t-name"><b>${esc(t5.name)}</b></td>
-      <td class="t-agent">${esc(t5.agent_name || "-")}</td>
-      <td class="t-body" title="${esc(t5.body || "")}">${esc((t5.body || "").slice(0, 90)) || "\u2014"}</td>
-      <td class="t-created num">${(t5.created_at || "").slice(0, 16).replace("T", " ")}</td>
+      <td class="t-agent" data-label="\u89D2\u8272">${esc(t5.agent_name || "-")}</td>
+      <td class="t-body" data-label="\u5185\u5BB9\u9884\u89C8" title="${esc(t5.body || "")}">${esc((t5.body || "").slice(0, 90)) || "\u2014"}</td>
+      <td class="t-created num" data-label="\u521B\u5EFA\u65F6\u95F4">${(t5.created_at || "").slice(0, 16).replace("T", " ")}</td>
       <td class="t-ops">
         <span class="ops">
           <button class="btn xs" onclick="openTemplateModal(${t5.id})">\u7F16\u8F91</button>

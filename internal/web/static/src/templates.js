@@ -19,9 +19,9 @@ export function renderTemplateList() {
   body.innerHTML = state.templates.map(t => `
     <tr>
       <td class="t-name"><b>${esc(t.name)}</b></td>
-      <td class="t-agent">${esc(t.agent_name || "-")}</td>
-      <td class="t-body" title="${esc(t.body || "")}">${esc((t.body || "").slice(0, 90)) || "—"}</td>
-      <td class="t-created num">${(t.created_at || "").slice(0, 16).replace("T", " ")}</td>
+      <td class="t-agent" data-label="角色">${esc(t.agent_name || "-")}</td>
+      <td class="t-body" data-label="内容预览" title="${esc(t.body || "")}">${esc((t.body || "").slice(0, 90)) || "—"}</td>
+      <td class="t-created num" data-label="创建时间">${(t.created_at || "").slice(0, 16).replace("T", " ")}</td>
       <td class="t-ops">
         <span class="ops">
           <button class="btn xs" onclick="openTemplateModal(${t.id})">编辑</button>

@@ -20,7 +20,7 @@ try {
 const URL = process.env.E2E_URL || "http://127.0.0.1:8099";
 const TOKEN = process.env.E2E_TOKEN || "t";
 const [W, H] = (process.env.E2E_VIEWPORT || "1440x900").split("x").map(Number);
-const PAGES = ["/", "/board", "/roles", "/agents", "/projects", "/skills", "/history", "/settings", "/autopilots"];
+const PAGES = ["/", "/board", "/roles", "/agents", "/projects", "/skills", "/history", "/settings", "/autopilots", "/templates"];
 
 function findChrome() {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
@@ -268,6 +268,49 @@ function findChrome() {
     mobileRoleTableOK ? ok("角色表格移动端布局") : fail(`角色表格移动端布局异常：${JSON.stringify(mobileRoleTable)}`);
   }
   await page.setViewportSize({ width: W, height: H });
+  // 手机端的模板表格转成分区卡片：名称独占首行，角色/创建时间作为带
+  // 标签的元信息并排，内容预览整行展示，操作按钮平铺成 44px 触控目标，
+  // 避免 760px 表格在窄屏上横向滚动。
+  await page.goto(URL + "/templates");
+  await page.waitForTimeout(700);
+  await page.setViewportSize({ width: 320, height: 812 });
+  await page.waitForTimeout(100);
+  const mobileTemplateTable = await page.evaluate(() => {
+    const row = document.querySelector(".template-grid tbody tr");
+    if (!row) return { skipped: true };
+    const rect = row.getBoundingClientRect();
+    const name = row.querySelector(".t-name")?.getBoundingClientRect();
+    const body = row.querySelector(".t-body")?.getBoundingClientRect();
+    const agent = row.querySelector(".t-agent")?.getBoundingClientRect();
+    const created = row.querySelector(".t-created")?.getBoundingClientRect();
+    const buttons = [...row.querySelectorAll(".t-ops .btn")].map(button => {
+      const buttonRect = button.getBoundingClientRect();
+      return { width: buttonRect.width, height: buttonRect.height };
+    });
+    const thead = document.querySelector(".template-grid thead");
+    return {
+      skipped: false,
+      noOverflow: rect.left >= 0 && rect.right <= innerWidth && document.documentElement.scrollWidth <= innerWidth,
+      nameRatio: name ? name.width / rect.width : 0,
+      bodyRatio: body ? body.width / rect.width : 0,
+      agentOnLeft: agent ? agent.left < (created?.left ?? -1) : false,
+      buttons,
+      theadHidden: thead ? getComputedStyle(thead).position === "absolute" : false,
+    };
+  });
+  if (mobileTemplateTable.skipped) ok("模板表格移动端布局（无模板，跳过）");
+  else {
+    const mobileTemplateTableOK = mobileTemplateTable.noOverflow &&
+      mobileTemplateTable.nameRatio >= .85 && mobileTemplateTable.bodyRatio >= .85 &&
+      mobileTemplateTable.agentOnLeft && mobileTemplateTable.theadHidden &&
+      mobileTemplateTable.buttons.length === 3 &&
+      mobileTemplateTable.buttons.every(button => button.width >= 44 && button.height >= 44);
+    mobileTemplateTableOK ? ok("模板表格移动端布局") : fail(`模板表格移动端布局异常：${JSON.stringify(mobileTemplateTable)}`);
+  }
+  await page.setViewportSize({ width: W, height: H });
+  // 后续角色交互依赖 /roles 页面，回到该页再继续。
+  await page.goto(URL + "/roles");
+  await page.waitForTimeout(700);
   // 角色创建/编辑统一走工作台：基本信息、完整配置和测试三栏必须同时存在；
   // 这里只验证工作台渲染和关闭，不触发真实 CLI，避免回归依赖外部模型额度。
   await page.evaluate(() => openRoleStudio());

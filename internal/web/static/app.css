@@ -3676,3 +3676,90 @@ a.project-card:hover { color: inherit; text-decoration: none; }
   .schedule-grid .t-ops .ops { display: flex; gap: 8px; justify-content: flex-end; }
   .schedule-grid .t-ops .ops .btn { min-height: 38px; }
 }
+
+/* V13 · 模板页移动端
+   与定时任务页一致：桌面表格 → 分区卡片；名称独占首行，角色/创建时间
+   作为带标签的元信息并排，内容预览整行换行展示，操作按钮平铺成 44px
+   触控目标，避免 760px 表格在窄屏上横向滚动。 */
+@media (max-width: 720px) {
+  .template-grid {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .template-grid thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .template-grid tbody {
+    display: grid;
+    gap: 10px;
+    padding: 10px 12px 18px;
+  }
+
+  .template-grid tbody tr {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "name name"
+      "agent created"
+      "body body"
+      "ops ops";
+    gap: 8px 12px;
+    padding: 13px 14px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: linear-gradient(145deg, rgba(255,255,255,.026), transparent 60%), var(--surface);
+  }
+
+  .template-grid tbody tr:hover,
+  .template-grid tbody tr:focus-visible { background: var(--raised); }
+
+  .template-grid tbody td {
+    display: block;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    vertical-align: initial;
+    overflow: hidden;
+  }
+
+  .template-grid .t-name {
+    grid-area: name; max-width: none; white-space: normal; font-size: 14px;
+  }
+  .template-grid .t-name b { white-space: normal; }
+  .template-grid .t-agent { grid-area: agent; color: var(--fg-muted); }
+  .template-grid .t-created { grid-area: created; text-align: right; }
+  .template-grid .t-agent::before,
+  .template-grid .t-created::before {
+    content: attr(data-label); display: block; margin-bottom: 2px;
+    color: var(--fg-faint); font: 10px/13px var(--font-mono); letter-spacing: .05em;
+  }
+  .template-grid .t-body {
+    grid-area: body; max-width: none; margin-top: 2px;
+    white-space: normal; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    color: var(--fg-muted); font-size: 12px; line-height: 18px;
+    padding-top: 9px; border-top: 1px solid var(--border);
+  }
+  .template-grid .t-ops { grid-area: ops; padding-top: 10px; border-top: 1px solid var(--border); }
+  .template-grid .t-ops .ops {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; width: 100%;
+  }
+  .template-grid .t-ops .btn {
+    width: 100%; min-width: 0; height: 44px; min-height: 44px;
+    padding-inline: 4px; justify-content: center; font-size: 12px;
+  }
+}
