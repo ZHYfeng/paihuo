@@ -2442,6 +2442,17 @@ a.project-card:hover { color: inherit; text-decoration: none; }
   .mobile-nav-toggle { background: rgba(17,22,19,.94); border-color: var(--border-strong); }
   .header-live { display: none; }
   .toolbar { height: auto; min-height: var(--toolbar-h); padding-left: 14px; padding-right: 14px; }
+  .project-toolbar {
+    min-height: 56px; padding-top: 8px; padding-bottom: 8px;
+    align-items: center; flex-wrap: nowrap;
+  }
+  .project-toolbar #pSearch {
+    flex: 1 1 auto; width: auto !important; min-width: 0; height: 40px;
+  }
+  .project-toolbar > .spacer { display: none; }
+  .project-toolbar #projectCount {
+    flex: 0 0 auto; margin-left: 0; align-self: center; white-space: nowrap;
+  }
   .project-grid, .agent-grid, .prov-grid, .skill-groups, .skill-list-shell { padding-left: 14px; padding-right: 14px; }
   .login-body { padding: 18px; }
   .login-stage { min-height: calc(100vh - 36px); grid-template-columns: .82fr 1.18fr; }

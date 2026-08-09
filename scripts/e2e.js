@@ -499,6 +499,28 @@ function findChrome() {
 
   await page.goto(URL + "/projects");
   await page.waitForTimeout(700);
+  await page.setViewportSize({ width: 320, height: 812 });
+  const mobileProjectSearch = await page.evaluate(() => {
+    const toolbar = document.querySelector(".project-toolbar");
+    const search = document.getElementById("pSearch");
+    const count = document.getElementById("projectCount");
+    if (!toolbar || !search || !count) return null;
+    const toolbarRect = toolbar.getBoundingClientRect();
+    const searchRect = search.getBoundingClientRect();
+    const countRect = count.getBoundingClientRect();
+    return {
+      noOverflow: document.documentElement.scrollWidth <= innerWidth && searchRect.left >= 0 && countRect.right <= innerWidth,
+      searchHeight: searchRect.height,
+      topInset: searchRect.top - toolbarRect.top,
+      bottomInset: toolbarRect.bottom - searchRect.bottom,
+      sameRow: Math.abs((searchRect.top + searchRect.height / 2) - (countRect.top + countRect.height / 2)) <= 1,
+    };
+  });
+  const mobileProjectSearchOK = mobileProjectSearch && mobileProjectSearch.noOverflow &&
+    mobileProjectSearch.searchHeight >= 40 && mobileProjectSearch.searchHeight <= 44 &&
+    mobileProjectSearch.topInset >= 6 && mobileProjectSearch.bottomInset >= 6 && mobileProjectSearch.sameRow;
+  mobileProjectSearchOK ? ok("项目搜索框移动端布局") : fail(`项目搜索框移动端布局异常：${JSON.stringify(mobileProjectSearch)}`);
+  await page.setViewportSize({ width: W, height: H });
   await page.evaluate(() => openProjectModal());
   await page.waitForTimeout(300);
   await page.locator("#projectModal .dir-input-row .btn").click();
