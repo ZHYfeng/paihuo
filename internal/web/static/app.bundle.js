@@ -1040,7 +1040,7 @@
       out.push(inlineMd(rest.slice(0, m2.index)));
       const code = esc2(m2[2].replace(/\n$/, ""));
       const lang = esc2(m2[1]);
-      out.push(`<pre class="ph-code"><code${lang ? ` data-lang="${lang}"` : ""}>${code}</code></pre>`);
+      out.push(`<div class="code-block-wrapper"><pre><code${lang ? ` data-lang="${lang}"` : ""}>${code}</code></pre><button type="button" class="code-copy-button" title="\u590D\u5236\u4EE3\u7801\u5757" aria-label="\u590D\u5236\u4EE3\u7801\u5757"><span aria-hidden="true">\u29C9</span></button></div>`);
       rest = rest.slice(m2.index + m2[0].length);
     }
     return out.join("");
@@ -1165,10 +1165,12 @@
     switch (ev.type) {
       case "agent_start":
         st.agentRunning = true;
+        st.sending = false;
         break;
       case "agent_settled":
       case "agent_end": {
         st.agentRunning = false;
+        st.sending = false;
         if (st.pendingAsk) {
           const askId = st.pendingAsk.id;
           const idx = st.entries.findIndex((it) => it.kind === "ask" && it.ask && String(it.ask.id) === String(askId));
@@ -1187,6 +1189,7 @@
         st.agentRunning = true;
         break;
       case "message_start": {
+        st.sending = false;
         const msg = ev.message || {};
         if (msg.role === "assistant") {
           st.pending = { kind: "assistant", msg, toolResults: /* @__PURE__ */ new Map(), streaming: true };
@@ -1253,6 +1256,7 @@
       case "extension_ui_request": {
         const method = ev.method || "";
         if (method === "select" || method === "confirm" || method === "input" || method === "editor") {
+          st.sending = false;
           st.pendingAsk = {
             id: ev.id,
             method,
@@ -1299,12 +1303,43 @@
         return A;
     }
   }
-  function fmtTime(ts) {
+  function pwTime(ts) {
     if (!ts) return "";
     const d3 = new Date(ts);
     if (isNaN(d3)) return "";
-    const pad = (n6) => String(n6).padStart(2, "0");
-    return `${d3.getFullYear()}-${pad(d3.getMonth() + 1)}-${pad(d3.getDate())} ${pad(d3.getHours())}:${pad(d3.getMinutes())}:${pad(d3.getSeconds())}`;
+    return pwTimeFmt.format(d3);
+  }
+  function pwMeta(msg) {
+    const m2 = msg || {};
+    const parts = [pwTime(m2.timestamp), m2.model, m2.thinkingLevel].filter(Boolean);
+    return parts.join(" \xB7 ");
+  }
+  async function copyText(text, btn) {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      const icon2 = btn.querySelector("span");
+      if (icon2) icon2.textContent = "\u2713";
+      btn.title = "\u5DF2\u590D\u5236";
+      setTimeout(() => {
+        const i22 = btn.querySelector("span");
+        if (i22) i22.textContent = "\u29C9";
+        btn.title = "\u590D\u5236\u6D88\u606F";
+      }, 1200);
+    } catch (_2) {
+    }
+  }
+  function msgTextOf(msg) {
+    const m2 = msg || {};
+    const blocks = Array.isArray(m2.content) ? m2.content : typeof m2.content === "string" ? [{ type: "text", text: m2.content }] : [];
+    return blocks.filter((b3) => b3.type === "text").map((b3) => (b3.text || "").trim()).filter(Boolean).join("\n\n");
+  }
+  function diffLineClass(line) {
+    if (line.startsWith("+") && !line.startsWith("+++")) return "added";
+    if (line.startsWith("-") && !line.startsWith("---")) return "removed";
+    if (line.startsWith("@@")) return "hunk";
+    if (line.startsWith("+++") || line.startsWith("---")) return "file";
+    return "context";
   }
   function relTime(iso) {
     if (!iso) return "";
@@ -1317,7 +1352,7 @@
     if (d3 < 86400 * 7) return `${Math.floor(d3 / 86400)} \u5929\u524D`;
     return new Date(iso).toLocaleDateString();
   }
-  var PW, STATUS_DOT, STATUS_LABEL2, sessionState, PhSessionsPage, PhSessionList, PhSessionCreate, PhSessionView, PhSessionHeader, PhMessageStream, msgStyles, PhMsgUser, PhMsgAssistant, PhMsgBash, PhMsgCustom, PhAskCard, PhToolCard, PhSessionInput;
+  var PW, STATUS_DOT, STATUS_LABEL2, sessionState, PhSessionsPage, PhSessionList, PhSessionCreate, PhSessionView, PhStatusBar, PhSessionHeader, PhMessageStream, msgStyles, pwTimeFmt, PhMsgUser, PhMsgAssistant, PhMsgBash, PhMsgCustom, PhAskCard, PhToolCard, PhSessionInput;
   var init_sessions = __esm({
     "internal/web/static/src/sessions.js"() {
       init_lit();
@@ -1326,33 +1361,39 @@
       init_core();
       PW = i`
   :host {
-  --pw-bg: #0d1117;
-  --pw-surface: #161b22;
-  --pw-surface-hover: #21262d;
-  --pw-border: #30363d;
-  --pw-border-muted: #21262d;
-  --pw-text: #e6edf3;
-  --pw-text-secondary: #c9d1d9;
-  --pw-muted: #8b949e;
-  --pw-dim: #6e7681;
-  --pw-accent: #58a6ff;
-  --pw-accent-border: #2f81f7;
-  --pw-selection-bg: #0d2847;
-  --pw-success: #3fb950;
-  --pw-success-border: #238636;
-  --pw-success-bg: #0f1b12;
-  --pw-success-ring: #3fb95055;
-  --pw-warning: #d29922;
-  --pw-warning-border: #6e5200;
-  --pw-warning-surface: #1f1a10;
-  --pw-danger: #ff7b72;
-  --pw-purple: #d2a8ff;
-  --pw-purple-border: #a371f7;
-  --pw-purple-surface: #21132f;
-  --pw-terminal-bg: #05070a;
+  --pw-bg: #070912;
+  --pw-surface: #101527;
+  --pw-surface-hover: #151b31;
+  --pw-terminal-bg: #050710;
+  --pw-terminal-text: #f7f4ff;
+  --pw-border: #26304f;
+  --pw-border-muted: #26304f;
+  --pw-text: #f7f4ff;
+  --pw-text-secondary: #aaa4bd;
+  --pw-text-bright: #ffffff;
+  --pw-muted: #aaa4bd;
+  --pw-dim: #817a99;
+  --pw-accent: #7c3cff;
+  --pw-accent-border: #5a47b0;
+  --pw-selection-bg: #1d2547;
+  --pw-success: #00f0d8;
+  --pw-success-border: #00f0d8;
+  --pw-success-bg: #071e22;
+  --pw-success-surface: #092d31;
+  --pw-success-ring: #00f0d855;
+  --pw-warning: #ffb000;
+  --pw-warning-border: #ffb000;
+  --pw-warning-surface: #16140d;
+  --pw-danger: #ff4f7b;
+  --pw-purple: #b7a2ff;
+  --pw-purple-border: #7c3cff;
+  --pw-purple-surface: #181026;
   --pw-overlay: #0008;
-  --pw-shadow: #0008;
   --pw-shadow-soft: #0006;
+  --pw-shadow: #0008;
+  --pw-shadow-strong: #000b;
+  --pw-bg-overlay: #070912e6;
+  --pw-success-bg-overlay: #071e22ee;
   }
 `;
       STATUS_DOT = { created: "\u25CB", active: "\u25C9", suspended: "\u25CB", delivered: "\u2713", deleted: "\u2715" };
@@ -1370,6 +1411,8 @@
         entries: [],
         live: null,
         agentRunning: false,
+        sending: false,
+        // 提示发送中 → 尚未收到 message_start（activity-dock 显示）
         pending: null,
         loading: false,
         filter: "all",
@@ -1586,38 +1629,38 @@
         render() {
           const items = this._filtered();
           return b2`
-      <div class="head">
-        <h2>会话</h2><span class="count">${items.length}</span>
-      </div>
-      <div class="toolbar">
-        <select .value=${this.filter} @change=${(e6) => {
+      <section>
+        <h2>会话 <span class="count">${items.length}</span></h2>
+        <div class="toolbar">
+          <select .value=${this.filter} @change=${(e6) => {
             this.filter = e6.target.value;
           }}>
-          <option value="all">全部</option>
-          <option value="active">活跃</option>
-          <option value="suspended">已挂起</option>
-          <option value="delivered">已交付</option>
-        </select>
-      </div>
-      <div class="items">
-        ${items.map((s5) => b2`
-          <div class="item ${s5.id === this.selectedId ? "sel" : ""}" @click=${() => this._emit("select", s5.id)}>
-            <div class="t1">
-              <span class="dot st-${s5.status}">${STATUS_DOT[s5.status] || "\u25CB"}</span>
-              <span class="title" title=${s5.title}>${s5.title}</span>
-            </div>
-            <div class="meta">
-              <span class="cli">${s5.cli || "?"}</span>
-              <span>${s5.agent_name || ""}</span>
-              ${s5.project_name ? b2`<span>·</span><span>${s5.project_name}</span>` : ""}
-              <span>·</span><span>${relTime(s5.last_message_at || s5.created_at)}</span>
-              ${s5.message_count ? b2`<span>·</span><span>${s5.message_count} 条消息</span>` : ""}
-              ${s5.task_id ? b2`<span>·</span><a href="#/issue/${s5.task_id}" @click=${(e6) => e6.stopPropagation()}>任务 #${s5.task_id}</a>` : ""}
-            </div>
-          </div>`)}
-        ${!items.length ? b2`<div class="pw-empty-sm">暂无会话</div>` : ""}
-      </div>
-      <button class="new" @click=${() => this._emit("create")}>＋ 新建会话</button>
+            <option value="all">全部</option>
+            <option value="active">活跃</option>
+            <option value="suspended">已挂起</option>
+            <option value="delivered">已交付</option>
+          </select>
+        </div>
+        <div class="list-body">
+          ${items.map((s5) => b2`
+            <div class="action-row ${s5.id === this.selectedId ? "selected" : ""}" @click=${() => this._emit("select", s5.id)}>
+              <div class="action-main">
+                <div class="action-name" title=${s5.title}>${s5.title}</div>
+                <div class="row-meta">
+                  <span class="dot st-${s5.status}">${STATUS_DOT[s5.status] || "\u25CB"}</span>
+                  <span class="cli">${s5.cli || "?"}</span>
+                  <span>${s5.agent_name || ""}</span>
+                  ${s5.project_name ? b2`<span>·</span><span>${s5.project_name}</span>` : ""}
+                  <span>·</span><span>${relTime(s5.last_message_at || s5.created_at)}</span>
+                  ${s5.message_count ? b2`<span>·</span><span>${s5.message_count} 条</span>` : ""}
+                  ${s5.task_id ? b2`<span>·</span><a href="#/issue/${s5.task_id}" @click=${(e6) => e6.stopPropagation()}>任务 #${s5.task_id}</a>` : ""}
+                </div>
+              </div>
+            </div>`)}
+          ${!items.length ? b2`<div class="pw-empty-sm">暂无会话</div>` : ""}
+        </div>
+        <button class="new" @click=${() => this._emit("create")}>＋ 新建会话</button>
+      </section>
     `;
         }
         _emit(name, detail) {
@@ -1627,26 +1670,30 @@
       __publicField(PhSessionList, "styles", i`
     ${PW}
     :host { display: flex; flex-direction: column; height: 100%; background: var(--pw-bg); }
-    .head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--pw-border); }
-    .head h2 { margin: 0; font-size: 14px; font-weight: 700; color: var(--pw-text); }
-    .head .count { color: var(--pw-dim); font-size: 12px; }
-    .toolbar { display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--pw-border-muted); }
-    select { border: 1px solid var(--pw-border); background: var(--pw-surface); color: var(--pw-text); border-radius: 7px; padding: 4px 8px; font-size: 12.5px; }
-    .items { flex: 1; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
-    .item { border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; cursor: pointer; background: transparent; color: var(--pw-text); }
-    .item:hover { background: var(--pw-surface-hover); }
-    .item.sel { border-color: var(--pw-accent-border); background: var(--pw-selection-bg); }
-    .t1 { display: flex; gap: 8px; align-items: center; }
-    .dot { font-size: 11px; }
+    section { box-sizing: border-box; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding: 10px; }
+    h2 { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 0 0 8px; color: var(--pw-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    h2 .count { color: var(--pw-dim); font-size: 12px; }
+    .toolbar { flex: 0 0 auto; margin-bottom: 4px; }
+    select { border: 1px solid var(--pw-border); background: var(--pw-surface); color: var(--pw-text); border-radius: 8px; padding: 4px 8px; font-size: 12.5px; }
+    select:focus { outline: none; border-color: var(--pw-accent); }
+    .list-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+    .action-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; margin: 6px 0; cursor: pointer; }
+    .action-main { position: relative; box-sizing: border-box; min-width: 0; width: 100%; border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-surface); color: var(--pw-text); padding: 8px 10px; text-align: left; }
+    .action-row:not(.selected):hover .action-main { background: var(--pw-surface-hover); }
+    .action-row.selected .action-main { border-color: var(--pw-accent); background: var(--pw-selection-bg); }
+    .action-name { display: -webkit-box; max-height: 2.5em; overflow: hidden; overflow-wrap: anywhere; line-height: 1.25; font-size: 13.5px; font-weight: 600; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .action-row.selected .action-name { color: var(--pw-text-bright); }
+    .row-meta { display: flex; gap: 6px; align-items: center; margin-top: 4px; color: var(--pw-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dot { font-size: 11px; flex: 0 0 auto; }
     .dot.st-running { color: var(--pw-success); }
     .dot.st-succeeded { color: var(--pw-accent); }
     .dot.st-cancelled { color: var(--pw-dim); }
     .dot.st-failed { color: var(--pw-danger); }
-    .title { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-    .meta { color: var(--pw-muted); font-size: 11.5px; margin-top: 3px; display: flex; gap: 6px; align-items: center; }
-    .cli { border: 1px solid var(--pw-border); border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: 700; color: var(--pw-text-secondary); }
-    .meta a { color: var(--pw-accent); text-decoration: none; }
-    .new { margin: 8px 10px; padding: 6px; border: 1px dashed var(--pw-border); border-radius: 8px; text-align: center; cursor: pointer; color: var(--pw-muted); font-size: 12.5px; background: transparent; }
+    .dot.st-created, .dot.st-suspended { color: var(--pw-dim); }
+    .cli { flex: 0 0 auto; border: 1px solid var(--pw-border); border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: 700; color: var(--pw-text-secondary); }
+    .row-meta a { color: var(--pw-accent); text-decoration: none; }
+    .row-meta a:hover { text-decoration: underline; }
+    .new { display: block; width: 100%; text-align: left; margin: 6px 0; padding: 7px 9px; border: 1px dashed var(--pw-border); border-radius: 8px; background: transparent; color: var(--pw-muted); font-size: 13px; cursor: pointer; }
     .new:hover { color: var(--pw-text); border-color: var(--pw-border); background: var(--pw-surface-hover); }
     .pw-empty-sm { color: var(--pw-dim); text-align: center; padding: 28px 0; font-size: 12.5px; }
   `);
@@ -1744,8 +1791,8 @@
     .row { display: flex; gap: 8px; justify-content: flex-end; }
     button { border-radius: 8px; padding: 7px 14px; border: 1px solid var(--pw-border); cursor: pointer; font-size: 13.5px; background: var(--pw-bg); color: var(--pw-text); }
     button:hover { background: var(--pw-surface-hover); }
-    button.primary { background: var(--pw-accent); border-color: var(--pw-accent-border); color: #fff; font-weight: 600; }
-    button.primary:hover { background: var(--pw-accent-border); }
+    button.primary { background: var(--pw-selection-bg); border-color: var(--pw-accent-border); color: var(--pw-accent); font-weight: 600; }
+    button.primary:hover { background: var(--pw-accent); border-color: var(--pw-accent); color: #fff; }
   `);
       __publicField(PhSessionCreate, "properties", { agents: { state: true }, projects: { state: true }, prefill: { attribute: false } });
       customElements.define("ph-session-create", PhSessionCreate);
@@ -1791,6 +1838,7 @@
           return b2`
       <ph-session-header .session=${ss} .live=${st.live} .running=${st.agentRunning}></ph-session-header>
       <ph-message-stream .sessionId=${this.sessionId} .entries=${st.entries}></ph-message-stream>
+      <ph-status-bar .live=${st.live} .running=${st.agentRunning}></ph-status-bar>
       <ph-session-input .session=${ss} .running=${st.agentRunning} @refresh=${() => this.requestUpdate()}></ph-session-input>
     `;
         }
@@ -1802,6 +1850,34 @@
   `);
       __publicField(PhSessionView, "properties", { sessionId: { attribute: false } });
       customElements.define("ph-session-view", PhSessionView);
+      PhStatusBar = class extends i4 {
+        render() {
+          const st = sessionState;
+          const active = st.sending || this.running;
+          const label = st.sending ? "\u53D1\u9001\u4E2D" : this.running ? "\u5904\u7406\u4E2D" : "\u7A7A\u95F2";
+          const model = this.live && this.live.model ? this.live.model.id || "" : st.detail && st.detail.agent_name || "";
+          return b2`<div class="bar">
+      <span class="activity ${active ? "active" : ""}"><span class="dot"></span>${label}</span>
+      ${model ? b2`<span title="当前模型">${model}</span>` : ""}
+      ${this.live && this.live.thinkingLevel ? b2`<span>思考:${this.live.thinkingLevel}</span>` : ""}
+      <span class="muted">${st.transcriptTotal} 条消息</span>
+    </div>`;
+        }
+      };
+      __publicField(PhStatusBar, "styles", i`
+    ${PW}
+    :host { display: block; color: var(--pw-muted); font: 12px system-ui, sans-serif; }
+    .bar { display: flex; justify-content: flex-end; gap: 12px; align-items: center; min-width: 0; padding: 7px 12px; border-top: 1px solid var(--pw-border); background: var(--pw-bg); white-space: nowrap; overflow: hidden; }
+    .activity { margin-right: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--pw-muted); }
+    .activity.active { color: var(--pw-success); }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .45; flex: 0 0 auto; }
+    .activity.active .dot { animation: pulse 1s ease-in-out infinite; opacity: 1; }
+    .bar > span:not(.activity) { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .muted { color: var(--pw-dim); }
+    @keyframes pulse { 0%, 100% { transform: scale(.75); opacity: .55; } 50% { transform: scale(1.2); opacity: 1; } }
+  `);
+      __publicField(PhStatusBar, "properties", { live: { attribute: false }, running: { attribute: false } });
+      customElements.define("ph-status-bar", PhStatusBar);
       PhSessionHeader = class extends i4 {
         async act(action) {
           const id = this.session.id;
@@ -1868,8 +1944,8 @@
       __publicField(PhSessionHeader, "styles", i`
     ${PW}
     :host { flex: 0 0 auto; border-bottom: 1px solid var(--pw-border); background: var(--pw-bg); }
-    .strip { display: flex; align-items: center; gap: 10px; padding: 8px 12px; flex-wrap: wrap; }
-    .title { font-weight: 700; font-size: 14px; color: var(--pw-text); display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .strip { display: flex; align-items: center; gap: 10px; padding: 12px; flex-wrap: wrap; }
+    .title { font-weight: 600; font-size: 14px; color: var(--pw-text); display: flex; align-items: center; gap: 8px; min-width: 0; }
     .title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .badge { font-size: 11px; border-radius: 999px; padding: 2px 10px; font-weight: 600; border: 1px solid var(--pw-border); color: var(--pw-text-secondary); flex: 0 0 auto; }
     .badge.running { border-color: var(--pw-success-border); background: var(--pw-success-surface); color: var(--pw-success); }
@@ -1881,7 +1957,7 @@
     .spacer { flex: 1; }
     .back { display: none; }
     @media (max-width: 860px) { .back { display: inline-flex; } }
-    button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--pw-border); border-radius: 7px; background: var(--pw-surface); color: var(--pw-text); padding: 5px 10px; cursor: pointer; font-size: 12.5px; }
+    button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-surface); color: var(--pw-text); padding: 5px 10px; cursor: pointer; font-size: 12.5px; }
     button:hover { background: var(--pw-surface-hover); }
     button.primary { border-color: var(--pw-accent-border); background: var(--pw-selection-bg); color: var(--pw-accent); }
     button.danger { color: var(--pw-danger); border-color: var(--pw-danger); }
@@ -1934,7 +2010,7 @@
           }
           const chat = this.renderRoot.querySelector(".chat");
           if (chat) {
-            for (const el of chat.querySelectorAll("ph-msg-user, ph-msg-assistant, ph-msg-bash, ph-msg-custom, ph-ask-card")) {
+            for (const el of chat.querySelectorAll("ph-msg-user, ph-msg-assistant, ph-msg-bash, ph-msg-custom, ph-ask-card, ph-tool-card")) {
               if (!el.hasUpdated) el.requestUpdate();
             }
           }
@@ -1946,87 +2022,212 @@
         onScroll(e6) {
           const chat = e6.currentTarget;
           this._atBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
-          if (chat.scrollTop <= 40 && !this._loadingOlder && this._hasOlder()) {
-            this._loadingOlder = true;
-            const prevHeight = chat.scrollHeight;
-            setTimeout(() => {
-              const page = document.querySelector("ph-sessions-page");
-              page.loadEarlier().then(() => {
-                chat.scrollTop = chat.scrollHeight - prevHeight + 40;
-                this._loadingOlder = false;
-              });
-            }, 50);
-          }
+          if (chat.scrollTop <= 40) this._loadMore();
+        }
+        _loadMore() {
+          if (this._loadingOlder || !this._hasOlder()) return;
+          const chat = this.renderRoot.querySelector(".chat");
+          if (!chat) return;
+          this._loadingOlder = true;
+          const prevHeight = chat.scrollHeight;
+          setTimeout(() => {
+            const page = document.querySelector("ph-sessions-page");
+            page.loadEarlier().then(() => {
+              if (chat.isConnected) chat.scrollTop = chat.scrollHeight - prevHeight + 40;
+              this._loadingOlder = false;
+            });
+          }, 50);
         }
         _hasOlder() {
           const st = sessionState;
           return st.transcriptLoaded < st.transcriptTotal;
         }
+        // pi-web formatted-text 代码块复制按钮（事件委托，全消息流共享）。
+        // 注意：composed 事件在 shadow 边界外观察时 e.target 会被 retarget 成
+        // shadow host，必须走 composedPath() 才能拿到 shadow 内部的按钮。
+        onChatClick(e6) {
+          const btn = e6.composedPath().find((n6) => n6 instanceof Element && n6.classList && n6.classList.contains("code-copy-button"));
+          if (!btn) return;
+          const wrapper = btn.closest(".code-block-wrapper");
+          const pre = wrapper && wrapper.querySelector("pre code");
+          if (pre) copyText(pre.textContent, btn);
+        }
+        _railPosition() {
+          const st = sessionState;
+          const total = Math.max(1, st.transcriptTotal);
+          const pos = st.transcriptLoaded / total * 100;
+          return `${Math.min(100, Math.max(0, pos)).toFixed(2)}%`;
+        }
+        renderHistoryBoundary() {
+          const st = sessionState;
+          if (!st.entries.length) return null;
+          const from = st.transcriptTotal - st.transcriptLoaded + 1;
+          const to = st.transcriptTotal;
+          const range = b2`<small>Showing messages ${Math.max(from, 1)}–${to} of ${to}</small>`;
+          if (this._hasOlder()) {
+            return b2`<div class="history-boundary">
+        <button type="button" class="history-load-button" @click=${() => this._loadMore()}>Load earlier messages</button>
+        <span>Scroll up to load earlier messages</span>
+        ${range}
+      </div>`;
+          }
+          return b2`<div class="history-boundary"><span>Beginning of session</span>${range}</div>`;
+        }
+        renderDock() {
+          const st = sessionState;
+          if (!st.detail) return null;
+          let cls = "", text = "\u7A7A\u95F2";
+          if (st.sending) {
+            cls = "active";
+            text = "\u53D1\u9001\u4E2D\u2026";
+          } else if (st.agentRunning) {
+            cls = "active";
+            text = "Agent \u5904\u7406\u4E2D\u2026";
+          }
+          return b2`<div class=${cls ? "activity-dock active" : "activity-dock"} aria-live="polite">
+      <span class="dot"></span>
+      <span class="activity-text">${text}</span>
+    </div>`;
+        }
         render() {
           if (!this.entries.length) {
-            return b2`<div class="chat"><div class="pw-empty">还没有消息。在下方输入第一条指令，开始与 agent 协作。<br>完成后可点「交付」转为任务，走审批 → 合并流程。</div></div>`;
+            return b2`<div class="chat-wrap">
+        <div class="chat"><div class="pw-empty">还没有消息。在下方输入第一条指令，开始与 agent 协作。<br>完成后可点「交付」转为任务，走审批 → 合并流程。</div></div>
+        ${this.renderDock()}
+      </div>`;
           }
-          const st = sessionState;
-          const from = st.transcriptTotal - st.transcriptLoaded + 1;
-          const bar = st.transcriptTotal > 100 ? b2`<div class="page-bar">
-      <span>Showing ${Math.max(from, 1)}–${st.transcriptTotal} of ${st.transcriptTotal}</span>
-      ${this._hasOlder() ? b2`<button @click=${() => this.scrollTop = 0}>↑ 加载更早</button>` : ""}
-    </div>` : "";
-          return b2`
-      <div class="chat" @scroll=${this.onScroll}>${this.entries.map((it, i6) => renderItem(it, i6))}</div>
-      ${bar}`;
+          return b2`<div class="chat-wrap">
+      <div class="conversation-rail" title=${`\u6D88\u606F\u4F4D\u7F6E\uFF1A\u7EA6 ${Math.round(parseFloat(this._railPosition()))}%\uFF08\u5DF2\u52A0\u8F7D ${sessionState.transcriptLoaded}/${sessionState.transcriptTotal}\uFF09`}>
+        <div class="rail-track" style=${`--rail-position:${this._railPosition()}`}>
+          <div class="rail-progress"></div>
+          <div class="rail-marker"></div>
+        </div>
+      </div>
+      <div class="chat" @scroll=${this.onScroll} @click=${this.onChatClick}>
+        ${this.renderHistoryBoundary()}
+        ${this.entries.map((it, i6) => renderItem(it, i6))}
+      </div>
+      ${this.renderDock()}
+    </div>`;
         }
       };
       __publicField(PhMessageStream, "styles", i`
     ${PW}
     :host { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-    .chat { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; padding: 26px 16px 64px; box-sizing: border-box; }
+    .chat-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+    .chat { --pw-chat-sticky-top: -26px; height: 100%; min-height: 0; overflow: auto; overflow-anchor: none; padding: 26px 16px 64px; box-sizing: border-box; }
     .pw-empty { margin: 60px auto; max-width: 420px; color: var(--pw-muted); text-align: center; font-size: 14px; line-height: 1.8; }
-    .page-bar { flex: 0 0 auto; display: flex; justify-content: center; gap: 8px; align-items: center; padding: 6px; font-size: 11.5px; color: var(--pw-dim); border-top: 1px solid var(--pw-border-muted); }
-    .page-bar button { border: 1px solid var(--pw-border); border-radius: 7px; background: var(--pw-surface); color: var(--pw-text-secondary); padding: 3px 10px; cursor: pointer; font-size: 11.5px; }
-    .page-bar button:hover { background: var(--pw-surface-hover); }
+    /* pi-web conversation-meter：聊天区顶部位置进度条 */
+    .conversation-rail { position: absolute; top: -4px; left: 16px; right: 16px; z-index: 6; display: block; height: 12px; opacity: .58; transition: opacity .15s ease; }
+    .conversation-rail:hover { opacity: .92; }
+    .rail-track { position: relative; height: 4px; margin-top: 4px; border-radius: 999px; background: color-mix(in srgb, var(--pw-border-muted) 34%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--pw-bg) 55%, transparent); }
+    .rail-progress { position: absolute; left: 0; width: var(--rail-position, 100%); top: 0; bottom: 0; border-radius: 999px; background: color-mix(in srgb, var(--pw-accent) 42%, var(--pw-border-muted)); }
+    .rail-marker { position: absolute; left: var(--rail-position, 100%); top: 50%; width: 10px; height: 10px; border: 2px solid var(--pw-bg); border-radius: 50%; background: var(--pw-accent); box-shadow: 0 2px 8px var(--pw-shadow); transform: translate(-50%, -50%); }
+    /* pi-web history-boundary：顶部历史边界（加载更早/会话起点 + 消息区间） */
+    .history-boundary { position: relative; z-index: 5; display: grid; gap: 3px; justify-items: center; margin: 0 0 14px; color: var(--pw-muted); font-size: 12px; text-align: center; }
+    .history-load-button { border: 1px solid var(--pw-border); border-radius: 999px; background: var(--pw-surface); color: var(--pw-text-secondary); padding: 5px 12px; font: 12px system-ui, sans-serif; cursor: pointer; }
+    .history-load-button:hover, .history-load-button:focus { border-color: var(--pw-accent); color: var(--pw-text-bright); }
+    .history-boundary small { color: var(--pw-dim); }
+    /* pi-web activity-dock：右下悬浮运行状态药丸 */
+    .activity-dock { position: absolute; left: 16px; right: 16px; bottom: 12px; z-index: 20; display: flex; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box; border: 1px solid var(--pw-border); border-radius: 999px; background: var(--pw-bg-overlay); color: var(--pw-muted); padding: 8px 12px; font-size: 13px; pointer-events: none; box-shadow: 0 8px 28px var(--pw-shadow); backdrop-filter: blur(6px); }
+    .activity-dock.active { border-color: var(--pw-success-border); color: var(--pw-success); background: var(--pw-success-bg-overlay); }
+    .activity-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .45; flex: 0 0 auto; }
+    .activity-dock.active .dot { animation: pulse 1s ease-in-out infinite; opacity: 1; }
+    @keyframes pulse { 0%, 100% { transform: scale(.75); opacity: .55; } 50% { transform: scale(1.2); opacity: 1; } }
   `);
       __publicField(PhMessageStream, "properties", { entries: { attribute: false }, sessionId: { attribute: false } });
       customElements.define("ph-message-stream", PhMessageStream);
       msgStyles = i`
   ${PW}
   :host { display: block; max-width: 100%; min-width: 0; }
-  .msg { max-width: 100%; min-width: 0; box-sizing: border-box; margin: 0 0 14px; padding: 12px; border: 1px solid var(--pw-border); border-radius: 10px; background: var(--pw-surface); overflow: visible; color: var(--pw-text); font-size: 14px; line-height: 1.6; }
+  .msg { max-width: 100%; min-width: 0; box-sizing: border-box; margin: 0 0 14px; padding: 12px; border: 1px solid var(--pw-border); border-radius: 10px; background: var(--pw-surface); overflow: visible; color: var(--pw-text); font-size: 14px; line-height: 1.45; }
   .msg.user { border-color: var(--pw-accent-border); background: var(--pw-selection-bg); }
-  .msg.streaming { border-color: var(--pw-success-border); box-shadow: 0 0 0 1px var(--pw-success-ring); }
+  .msg.assistant { background: var(--pw-surface); }
+  .msg.streaming { border-color: var(--pw-success-border); }
+  .msg.bash { border-color: var(--pw-success); background: var(--pw-success-bg); }
   .msg-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 22px; margin-bottom: 8px; }
-  .msg-header .who { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; color: var(--pw-text-secondary); }
-  .msg-header .when { color: var(--pw-dim); font-size: 11.5px; }
-  .msg.user .msg-header .who { color: var(--pw-accent); }
-  .msg .ph-md :is(p, ul, ol) { margin: 4px 0; }
-  .msg .ph-md h1, .msg .ph-md h2, .msg .ph-md h3, .msg .ph-md h4 { font-size: 14.5px; margin: 8px 0 4px; }
-  .msg .ph-md blockquote { border-left: 3px solid var(--pw-border); margin: 4px 0; padding-left: 8px; color: var(--pw-muted); }
-  .msg .ph-md code { background: var(--pw-surface-hover); border-radius: 4px; padding: 1px 5px; font-size: 12.5px; }
-  .msg .ph-md a { color: var(--pw-accent); }
-  .ph-code { background: var(--pw-terminal-bg); color: var(--pw-text-secondary); border: 1px solid var(--pw-border-muted); border-radius: 8px; padding: 10px 12px; overflow-x: auto; font-size: 12.5px; line-height: 1.55; }
-  .ph-md pre { margin: 6px 0; }
-  .thinking { border: 1px solid var(--pw-purple-border); background: var(--pw-purple-surface); border-radius: 8px; padding: 6px 10px; margin: 6px 0; font-size: 13px; color: var(--pw-purple); }
-  .thinking summary { cursor: pointer; font-weight: 600; }
-  .usage { font-size: 11.5px; color: var(--pw-dim); margin-top: 4px; }
-  .stop-aborted { color: var(--pw-danger); font-size: 11.5px; }
+  .msg > .msg-header { position: sticky; top: -26px; z-index: 4; margin: -12px -12px 8px; padding: 7px 10px 6px; border-radius: 9px 9px 0 0; border-bottom: 1px solid color-mix(in srgb, var(--pw-border-muted) 35%, transparent); background: var(--pw-surface); box-shadow: 0 8px 18px var(--pw-shadow-soft); }
+  .msg.user > .msg-header { border-bottom-color: color-mix(in srgb, var(--pw-accent-border) 35%, transparent); background: var(--pw-selection-bg); }
+  .msg.assistant > .msg-header .label { color: var(--pw-text-secondary); }
+  .msg.user > .msg-header .label { color: var(--pw-accent); }
+  .msg.bash > .msg-header { border-bottom-color: color-mix(in srgb, var(--pw-success) 35%, transparent); background: var(--pw-success-bg); }
+  .label { display: block; color: var(--pw-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .02em; }
+  .msg-header .label { margin: 0; }
+  .msg-header-trailing { min-width: 0; flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; }
+  .msg-actions { flex: 0 0 auto; display: inline-flex; gap: 6px; opacity: 0; transition: opacity .12s ease; }
+  .msg-action { display: inline-grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--pw-border); border-radius: 6px; background: var(--pw-surface); color: var(--pw-muted); padding: 0; font: 14px system-ui, sans-serif; line-height: 1; cursor: pointer; }
+  .msg-action:hover, .msg-action:focus { color: var(--pw-text); border-color: var(--pw-accent); }
+  .msg:hover > .msg-header .msg-actions, .msg:focus-within > .msg-header .msg-actions { opacity: 1; }
+  .msg-meta { min-width: 0; opacity: .28; border: 0; background: transparent; color: var(--pw-dim); padding: 0; font: 11px system-ui, sans-serif; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity .12s ease; cursor: pointer; user-select: text; -webkit-user-select: text; }
+  .msg:hover > .msg-header .msg-meta, .msg:focus-within > .msg-header .msg-meta, .msg-meta:focus, .msg-meta.expanded { opacity: 1; }
+  .msg-meta.expanded { flex: 1 1 auto; max-width: 100%; white-space: normal; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; }
+  .stop-aborted { color: var(--pw-danger); }
+  /* formatted-text 排版（pi-web formattedTextStyles） */
+  .ph-md { white-space: normal; overflow-wrap: anywhere; line-height: 1.45; text-align: start; unicode-bidi: plaintext; }
+  .ph-md p, .ph-md ul, .ph-md ol, .ph-md pre, .ph-md blockquote, .ph-md .code-block-wrapper { margin: 0 0 10px; }
+  .ph-md :is(p, ul, ol, pre, blockquote, .code-block-wrapper):last-child { margin-bottom: 0; }
+  .ph-md ul, .ph-md ol { padding-left: 22px; }
+  .ph-md li + li { margin-top: 3px; }
+  .ph-md code { border: 1px solid var(--pw-border); border-radius: 4px; background: var(--pw-bg); padding: 1px 4px; font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; direction: ltr; text-align: left; unicode-bidi: isolate; }
+  .ph-md .code-block-wrapper { position: relative; }
+  .ph-md .code-block-wrapper pre { margin: 0; padding-right: 40px; }
+  .ph-md pre { border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-bg); padding: 10px; overflow-x: auto; overflow-y: hidden; direction: ltr; text-align: left; unicode-bidi: isolate; font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.5; }
+  .ph-md pre code { border: 0; padding: 0; background: transparent; }
+  .code-copy-button { position: absolute; top: 6px; right: 6px; z-index: 1; display: inline-grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--pw-border); border-radius: 6px; background: var(--pw-surface); color: var(--pw-muted); padding: 0; font: 14px system-ui, sans-serif; line-height: 1; cursor: pointer; }
+  .code-copy-button:hover, .code-copy-button:focus { color: var(--pw-text); border-color: var(--pw-accent); }
+  .ph-md blockquote { border-left: 3px solid var(--pw-border); padding-left: 10px; color: var(--pw-muted); margin-top: 4px; }
+  .ph-md a { color: var(--pw-accent); }
+  .ph-md h1, .ph-md h2, .ph-md h3, .ph-md h4 { margin: 14px 0 8px; line-height: 1.2; font-weight: 600; }
+  .ph-md h1:first-child, .ph-md h2:first-child, .ph-md h3:first-child, .ph-md h4:first-child { margin-top: 0; }
+  .ph-md h1 { font-size: 20px; }
+  .ph-md h2 { font-size: 17px; }
+  .ph-md h3 { font-size: 15px; }
+  .ph-md h4 { font-size: 14px; }
+  .ph-md strong { font-weight: 700; }
+  /* 消息 part（pi-web .part） */
+  .part { max-width: 100%; min-width: 0; box-sizing: border-box; overflow: visible; }
+  .part + .part { margin-top: 10px; }
+  .part > summary { cursor: pointer; color: var(--pw-muted); }
+  .thinking { border-top: 1px solid var(--pw-border); padding-top: 8px; margin: 10px 0 0; }
+  .thinking > summary { font-size: 12px; text-transform: uppercase; letter-spacing: .02em; color: var(--pw-muted); }
+  .shell-output { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--pw-text); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.45; direction: ltr; text-align: left; unicode-bidi: isolate; }
+  .tool-line { color: var(--pw-warning); }
+  .tool-line .summary { color: var(--pw-muted); margin-left: 6px; }
+  .chat-image { display: block; max-width: 100%; max-height: 320px; margin: 8px 0 0; border: 1px solid var(--pw-border-muted); border-radius: 8px; object-fit: contain; cursor: zoom-in; }
   .pw-event { text-align: center; font-size: 11.5px; color: var(--pw-dim); padding: 10px 0; }
+  .usage { font-size: 11.5px; color: var(--pw-dim); margin-top: 4px; }
 `;
+      pwTimeFmt = new Intl.DateTimeFormat(void 0, { dateStyle: "medium", timeStyle: "medium" });
       PhMsgUser = class extends i4 {
+        constructor() {
+          super();
+          this.metaOpen = false;
+        }
         render() {
           const m2 = this.msg || {};
           const blocks = Array.isArray(m2.content) ? m2.content : [{ type: "text", text: m2.content }];
           return b2`<div class="msg user">
-      <div class="msg-header"><span class="who">你</span><span class="when">${fmtTime(m2.timestamp)}</span></div>
-      <div class="ph-md">${blocks.map((b3) => b3.type === "image" ? b2`<img src=${`data:${b3.mimeType || "image/png"};base64,${b3.data}`} style="max-width:200px;border-radius:8px">` : b2`<div>${o5(md(b3.text || ""))}</div>`)}</div>
+      <div class="msg-header">
+        <b class="label">user</b>
+        <div class="msg-header-trailing">
+          <div class="msg-actions" aria-label="消息操作">
+            <button type="button" class="msg-action" title="复制消息" aria-label="复制消息" @click=${(e6) => copyText(msgTextOf(m2), e6.currentTarget)}><span aria-hidden="true">⧉</span></button>
+          </div>
+          <span class=${this.metaOpen ? "msg-meta expanded" : "msg-meta"} role="button" tabindex="0" title=${pwMeta(m2)} aria-label=${pwMeta(m2)} @click=${() => this.metaOpen = !this.metaOpen}>${pwMeta(m2)}</span>
+        </div>
+      </div>
+      <div class="ph-md">${blocks.map((b3) => b3.type === "image" ? b2`<img class="chat-image" src=${`data:${b3.mimeType || "image/png"};base64,${b3.data}`} alt="attached image">` : b2`<div>${o5(md(b3.text || ""))}</div>`)}</div>
     </div>`;
         }
       };
       __publicField(PhMsgUser, "styles", msgStyles);
-      __publicField(PhMsgUser, "properties", { msg: { attribute: false } });
+      __publicField(PhMsgUser, "properties", { msg: { attribute: false }, metaOpen: { state: true } });
       customElements.define("ph-msg-user", PhMsgUser);
       PhMsgAssistant = class extends i4 {
         constructor() {
           super();
+          this.metaOpen = false;
           this._onLive = () => {
             if (this.streaming || this.toolLive) this.requestUpdate();
           };
@@ -2043,60 +2244,55 @@
           const m2 = this.msg || {};
           const streaming = this.streaming || m2.stopReason === "pending";
           const blocks = Array.isArray(m2.content) ? m2.content : [];
-          const texts = [], tools = [];
+          const parts = [];
           for (const b3 of blocks) {
-            if (b3.type === "text") texts.push(o5(md(b3.text || "")));
-            else if (b3.type === "thinking") texts.push(b2`<details class="thinking"><summary>💭 思考（${(b3.thinking || "").length} 字）</summary><div class="ph-md">${o5(md(b3.thinking))}</div></details>`);
-            else if (b3.type === "toolCall") tools.push(b3);
+            if (b3.type === "text") parts.push(b2`<div class="part">${o5(md(b3.text || ""))}</div>`);
+            else if (b3.type === "thinking") parts.push(b2`<details class="part thinking"><summary>thinking</summary><div class="ph-md">${o5(md(b3.thinking || ""))}</div></details>`);
+            else if (b3.type === "toolCall") parts.push(b2`<ph-tool-card class="part" .call=${b3} .result=${this.toolResults && this.toolResults.get(b3.id) || null}></ph-tool-card>`);
+            else if (b3.type === "toolExecution") parts.push(b2`<ph-tool-card class="part" .call=${b3} .result=${this.toolResults && this.toolResults.get(b3.id) || null}></ph-tool-card>`);
           }
-          const model = m2.model || "";
-          const toolResults = this.toolResults;
-          const events = tools.length ? b2`<details class="events" ${streaming ? "open" : ""}>
-          <summary><span>▸ events</span><span class="count">${tools.length} tool</span></summary>
-          <div class="events-body">${tools.map((t5) => b2`<ph-tool-card .call=${t5} .result=${toolResults && toolResults.get(t5.id) || null}></ph-tool-card>`)}</div>
-        </details>` : "";
+          const meta = pwMeta(m2) + (m2.stopReason === "aborted" ? " \xB7 \u5DF2\u4E2D\u6B62" : "");
           return b2`<div class="msg assistant ${streaming ? "streaming" : ""}">
       <div class="msg-header">
-        <span class="who">${model ? model.split("/").pop() : "Agent"}${streaming ? b2`<span style="color:var(--pw-success);font-weight:400">…</span>` : ""}</span>
-        <span class="when">${fmtTime(m2.timestamp)}${m2.stopReason === "aborted" ? b2`<span class="stop-aborted"> · 已中止</span>` : ""}</span>
+        <b class="label">assistant</b>
+        <div class="msg-header-trailing">
+          <div class="msg-actions" aria-label="消息操作">
+            <button type="button" class="msg-action" title="复制消息" aria-label="复制消息" @click=${(e6) => copyText(msgTextOf(m2), e6.currentTarget)}><span aria-hidden="true">⧉</span></button>
+          </div>
+          <span class=${this.metaOpen ? "msg-meta expanded" : "msg-meta"} role="button" tabindex="0" title=${meta} aria-label=${meta} @click=${() => this.metaOpen = !this.metaOpen}>${meta}</span>
+        </div>
       </div>
-      <div class="ph-md">${texts}</div>
-      ${events}
+      ${parts}
       ${m2.usage ? b2`<div class="usage">tokens: ${m2.usage.totalTokens || 0}${m2.usage.cost ? ` \xB7 $${m2.usage.cost.total || 0}` : ""}</div>` : ""}
     </div>`;
         }
       };
       __publicField(PhMsgAssistant, "styles", [msgStyles, i`
-    .events { border: 1px solid var(--pw-border); border-radius: 8px; margin: 8px 0 4px; overflow: hidden; }
-    .events summary { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; font-size: 12px; color: var(--pw-muted); background: var(--pw-bg); user-select: none; }
-    .events summary:hover { background: var(--pw-surface-hover); color: var(--pw-text-secondary); }
-    .events[open] summary { border-bottom: 1px solid var(--pw-border); }
-    .events .count { font-weight: 700; }
-    .events-body { padding: 6px 8px; background: var(--pw-bg); }
+    .tool-card { margin: 10px 0 0; }
+    .tool-card:first-child { margin-top: 0; }
   `]);
-      __publicField(PhMsgAssistant, "properties", { msg: { attribute: false }, toolLive: { attribute: false }, toolResults: { attribute: false }, streaming: { attribute: false } });
+      __publicField(PhMsgAssistant, "properties", { msg: { attribute: false }, toolLive: { attribute: false }, toolResults: { attribute: false }, streaming: { attribute: false }, metaOpen: { state: true } });
       customElements.define("ph-msg-assistant", PhMsgAssistant);
       PhMsgBash = class extends i4 {
         render() {
           const m2 = this.msg || {};
           const err = m2.isError || m2.exitCode !== void 0 && m2.exitCode !== null && m2.exitCode !== 0;
-          return b2`<div class="bash">
-      <div class="cmd"><span class="prompt">$ </span>${m2.command || ""}</div>
-      ${m2.output ? b2`<div class="out">${m2.output}</div>` : ""}
-      <div class="code"><span class="${err ? "err" : "ok"}">${err ? "\u2717 \u5931\u8D25" : "\u2713 \u6210\u529F"}</span>${m2.exitCode !== void 0 && m2.exitCode !== null ? ` \xB7 exit ${m2.exitCode}` : ""}${m2.truncated ? " \xB7 \u5DF2\u622A\u65AD" : ""}</div>
+          const lines = [];
+          if (m2.command) lines.push(`$ ${m2.command}`);
+          if (m2.output) lines.push(m2.output);
+          lines.push(`${err ? "\u2717 \u5931\u8D25" : "\u2713 \u6210\u529F"}${m2.exitCode !== void 0 && m2.exitCode !== null ? ` \xB7 exit ${m2.exitCode}` : ""}${m2.truncated ? " \xB7 \u5DF2\u622A\u65AD" : ""}`);
+          return b2`<div class="msg bash">
+      <div class="msg-header">
+        <b class="label">bash</b>
+        <div class="msg-header-trailing">
+          <span class="msg-meta" title=${pwMeta(m2)}>${pwMeta(m2)}</span>
+        </div>
+      </div>
+      <pre class="part shell-output">${lines.join("\n")}</pre>
     </div>`;
         }
       };
-      __publicField(PhMsgBash, "styles", i`
-    ${PW}
-    :host { display: block; margin: 0 0 14px; }
-    .bash { border: 1px solid var(--pw-border); border-radius: 10px; background: var(--pw-terminal-bg); color: var(--pw-text-secondary); font-family: ui-monospace, monospace; font-size: 12.5px; overflow: hidden; }
-    .cmd { padding: 9px 12px; color: var(--pw-text); border-bottom: 1px solid var(--pw-border-muted); }
-    .cmd .prompt { color: var(--pw-success); }
-    .out { padding: 9px 12px; white-space: pre-wrap; max-height: 320px; overflow-y: auto; color: var(--pw-text-secondary); }
-    .code { padding: 0 12px 9px; font-size: 11.5px; display: flex; gap: 8px; align-items: center; }
-    .ok { color: var(--pw-success); } .err { color: var(--pw-danger); }
-  `);
+      __publicField(PhMsgBash, "styles", msgStyles);
       __publicField(PhMsgBash, "properties", { msg: { attribute: false } });
       customElements.define("ph-msg-bash", PhMsgBash);
       PhMsgCustom = class extends i4 {
@@ -2115,12 +2311,12 @@
       __publicField(PhMsgCustom, "styles", i`
     ${PW}
     :host { display: block; margin: 0 0 14px; }
-    .box { border: 1px solid var(--pw-purple-border); border-radius: 10px; padding: 8px 12px; font-size: 13px; background: var(--pw-purple-surface); color: var(--pw-text); }
-    .t { font-weight: 700; color: var(--pw-purple); font-size: 11px; margin-bottom: 4px; }
+    .box { border: 1px solid var(--pw-purple-border); border-radius: 10px; padding: 12px; font-size: 14px; line-height: 1.45; background: var(--pw-purple-surface); color: var(--pw-text); }
+    .t { font-size: 12px; text-transform: uppercase; letter-spacing: .02em; color: var(--pw-purple); margin-bottom: 6px; }
     .qa { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
     .q { border-left: 2px solid var(--pw-purple-border); padding-left: 8px; }
     .q-text { font-weight: 600; }
-    .a { color: var(--pw-text-secondary); font-size: 12.5px; margin-top: 2px; }
+    .a { color: var(--pw-text-secondary); font-size: 13px; margin-top: 2px; }
     .a::before { content: "→ "; color: var(--pw-purple); }
   `);
       __publicField(PhMsgCustom, "properties", { msg: { attribute: false } });
@@ -2232,38 +2428,63 @@
           const r6 = this.result;
           const name = toolName(t5);
           const arg = toolArg(name, t5.arguments);
-          const isErr = r6 && r6.isError;
-          const status = isErr ? "error" : "success";
-          const icon2 = isErr ? "\u2717" : "\u2713";
-          const body = r6 ? Array.isArray(r6.content) ? r6.content.map((c5) => c5.text || "").join("\n") : String(r6.content || "") : "";
+          const isErr = !!(r6 && r6.isError);
+          const status = r6 ? isErr ? "error" : "success" : "pending";
+          const icon2 = status === "success" ? "\u2713" : status === "error" ? "\u2716" : status === "running" ? "\u25CF" : "\u25CB";
+          const statusLabel = status === "success" ? "done" : status === "error" ? "failed" : status === "running" ? "running" : "pending";
+          const targetClass = name === "bash" || name === "grep" || name === "glob" || name === "execute_bash" ? "summary" : "path";
+          const body = r6 ? Array.isArray(r6.content) ? r6.content.map((c5) => c5 && c5.text || "").join("\n") : String(r6.content || "") : "";
+          const diff = r6 && r6.details && typeof r6.details.diff === "string" ? r6.details.diff : "";
           return b2`
       <div class="tool-card ${status}">
-        <div class="tool-header" @click=${() => this.open = !this.open}>
+        <div class="tool-header">
           <div class="tool-title">
-            <span class="status-icon">${this.open ? "\u25BE" : "\u25B8"}</span>
+            <span class="status-icon">${icon2}</span>
             <strong>${name}</strong>
-            ${arg ? b2`<span class="target">${arg}</span>` : ""}
+            ${arg ? b2`<span class="${targetClass}" title=${arg}>${arg}</span>` : ""}
           </div>
-          <div class="tool-meta"><span class="${isErr ? "err" : "ok"}">${icon2}</span>${body ? this.open ? "\u6536\u8D77" : "\u5C55\u5F00" : ""}</div>
+          <div class="tool-meta"><span class="status-label">${statusLabel}</span></div>
         </div>
-        ${this.open && body !== "" ? b2`<div class="body">${body}</div>` : ""}
+        ${diff ? b2`<pre class="diff">${diff.split("\n").map((l3) => b2`<span class=${diffLineClass(l3)}>${l3}</span>`)}</pre>` : ""}
+        ${!diff && body !== "" ? b2`
+          <details class="text-body" ?open=${isErr}>
+            <summary>Details</summary>
+            <div class="detail-result">
+              <span class="detail-label">Result</span>
+              <pre>${body}</pre>
+            </div>
+          </details>` : ""}
       </div>`;
         }
       };
       __publicField(PhToolCard, "styles", i`
     ${PW}
-    :host { display: block; width: 100%; max-width: 100%; min-width: 0; color: var(--pw-text); margin: 8px 0; }
+    :host { display: block; width: 100%; max-width: 100%; min-width: 0; color: var(--pw-text); }
     .tool-card { display: grid; gap: 8px; width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; overflow: hidden; border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-bg); padding: 9px; color: var(--pw-text); }
+    .tool-card.pending { border-color: var(--pw-border); background: var(--pw-bg); }
+    .tool-card.running { border-color: var(--pw-warning-border); background: var(--pw-warning-surface); }
     .tool-card.success { border-color: var(--pw-success-border); background: var(--pw-success-bg); }
     .tool-card.error { border-color: var(--pw-danger); background: color-mix(in srgb, var(--pw-danger) 10%, var(--pw-bg)); }
-    .tool-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; min-width: 0; cursor: pointer; }
+    .tool-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; min-width: 0; }
     .tool-title { flex: 1 1 auto; display: inline-flex; align-items: baseline; gap: 7px; min-width: 0; }
     .status-icon { flex: 0 0 auto; color: var(--pw-muted); }
-    .tool-title strong { flex: 0 0 auto; color: var(--pw-text); font-size: 13px; }
-    .target { display: block; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pw-muted); font-size: 12.5px; font-family: ui-monospace, monospace; }
-    .tool-meta { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; color: var(--pw-dim); font-size: 11.5px; }
-    .tool-meta .ok { color: var(--pw-success); } .tool-meta .err { color: var(--pw-danger); }
-    .body { border-top: 1px solid var(--pw-border-muted); padding-top: 8px; max-height: 320px; overflow-y: auto; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 12px; color: var(--pw-text-secondary); }
+    .tool-title strong { flex: 0 0 auto; color: var(--pw-text); font-size: 13px; font-weight: 600; }
+    .path { display: block; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; white-space: pre; color: var(--pw-accent); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; direction: ltr; text-align: left; }
+    .summary { display: block; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pw-muted); font-size: 12.5px; }
+    .tool-meta { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 8px; color: var(--pw-muted); font-size: 12px; }
+    .status-label { text-transform: uppercase; letter-spacing: .04em; color: var(--pw-muted); }
+    .text-body { border-top: 1px solid var(--pw-border-muted); padding-top: 6px; }
+    .text-body > summary { cursor: pointer; color: var(--pw-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .detail-result { display: grid; gap: 4px; margin-top: 8px; min-width: 0; }
+    .detail-label { color: var(--pw-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .detail-result pre { box-sizing: border-box; max-width: 100%; overflow-x: auto; overflow-y: hidden; border: 1px solid var(--pw-border-muted); border-radius: 7px; background: var(--pw-bg); padding: 8px; margin: 0; white-space: pre; overflow-wrap: normal; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--pw-text); }
+    .diff { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; margin: 8px 0 0; overflow-x: auto; border: 1px solid var(--pw-border-muted); border-radius: 7px; background: var(--pw-bg); padding: 8px 0; color: var(--pw-muted); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.45; }
+    .diff span { display: block; min-height: 1.45em; padding: 0 8px; white-space: pre; }
+    .diff .context { color: var(--pw-muted); }
+    .diff .hunk { color: var(--pw-accent); }
+    .diff .file { color: var(--pw-dim); }
+    .diff .added { background: color-mix(in srgb, var(--pw-success) 12%, transparent); color: var(--pw-success); }
+    .diff .removed { background: color-mix(in srgb, var(--pw-danger) 12%, transparent); color: var(--pw-danger); }
   `);
       __publicField(PhToolCard, "properties", { call: { attribute: false }, result: { attribute: false }, open: { state: true } });
       customElements.define("ph-tool-card", PhToolCard);
@@ -2279,6 +2500,8 @@
           const id = this.session.id;
           const body = { message: msg };
           if (this.running) body.streaming_behavior = this.mode === "followUp" ? "followUp" : "steer";
+          sessionState.sending = true;
+          window.dispatchEvent(new CustomEvent("ph-session-message", { detail: { session_id: id, event: { type: "queue_update" } } }));
           api(`/api/sessions/${id}/prompt`, { method: "POST", body: JSON.stringify(body) }).then(() => {
             this.value = "";
             this.requestUpdate();
@@ -2292,7 +2515,11 @@
               }
             }));
             this.dispatchEvent(new CustomEvent("refresh", { bubbles: true, composed: true }));
-          }).catch((e6) => toastErr(e6.message || String(e6)));
+          }).catch((e6) => {
+            sessionState.sending = false;
+            window.dispatchEvent(new CustomEvent("ph-session-message", { detail: { session_id: id, event: { type: "queue_update" } } }));
+            toastErr(e6.message || String(e6));
+          });
         }
         _abort() {
           api(`/api/sessions/${this.session.id}/abort`, { method: "POST" }).then(() => window.dispatchEvent(new CustomEvent("ph-session-updated"))).catch((e6) => toastErr(e6.message || String(e6)));
@@ -2305,16 +2532,7 @@
           const hint = askPending ? "agent \u6B63\u5728\u7B49\u4F60\u56DE\u7B54\u95EE\u9898\uFF08\u89C1\u4E0A\u65B9\u63D0\u95EE\u5361\u7247\uFF09" : s5.status === "delivered" ? "\u5DF2\u4EA4\u4ED8\u4E3A\u4EFB\u52A1\uFF0C\u4F1A\u8BDD\u51BB\u7ED3\uFF08\u53EA\u8BFB\uFF09" : s5.status === "deleted" ? "\u4F1A\u8BDD\u5DF2\u5220\u9664" : s5.status === "created" ? "\u53D1\u9001\u6D88\u606F\u5C06\u81EA\u52A8\u542F\u52A8\u4F1A\u8BDD" : s5.status === "suspended" ? "\u7A7A\u95F2\u5DF2\u81EA\u52A8\u6302\u8D77\uFF0C\u53D1\u9001\u6D88\u606F\u5C06\u81EA\u52A8\u6062\u590D" : shellMode ? "agent \u6B63\u5728\u5904\u7406\u2026" : "Enter \u53D1\u9001 \xB7 Shift+Enter \u6362\u884C";
           return b2`
       <footer class=${shellMode && !askPending ? "shell-mode" : ""}>
-        ${shellMode && !askPending ? b2`<div class="hint">
-          <span class="mode">
-            <span class=${this.mode === "steer" ? "on" : ""} @click=${() => this.mode = "steer"}>插入</span>
-            <span class=${this.mode === "followUp" ? "on" : ""} @click=${() => this.mode = "followUp"}>排队</span>
-          </span>
-          <span class="mode-hint">运行中 · 消息将排队</span>
-          <span class="spacer"></span>
-          <button class="danger" @click=${this._abort}>■ 中止</button>
-        </div>` : b2`<div class="hint">${hint}${shellMode ? b2`<span class="spacer"></span><button class="danger" @click=${this._abort}>■ 中止</button>` : ""}</div>`}
-        <div class="row">
+        <div class="editor-wrap">
           <textarea .value=${this.value} ?disabled=${disabled} @input=${(e6) => this.value = e6.target.value}
             @keydown=${(e6) => {
             if (e6.key === "Enter" && !e6.shiftKey && !e6.isComposing) {
@@ -2323,7 +2541,19 @@
             }
           }}
             placeholder=${disabled ? hint : "\u8F93\u5165\u6307\u4EE4\uFF0C\u4E0E agent \u534F\u4F5C\u2026"}></textarea>
-          <button class="primary" ?disabled=${disabled || !this.value.trim()} @click=${this._send} title="发送 (Enter)">↑ 发送</button>
+          ${shellMode && !askPending ? b2`<span class="mode-hint">运行中 · 消息将排队</span>` : ""}
+        </div>
+        <div class="actions">
+          ${shellMode && !askPending ? b2`
+            <span class="mode">
+              <span class=${this.mode === "steer" ? "on" : ""} @click=${() => this.mode = "steer"}>插入</span>
+              <span class=${this.mode === "followUp" ? "on" : ""} @click=${() => this.mode = "followUp"}>排队</span>
+            </span>
+            <button class="danger" @click=${this._abort}>■ 中止</button>` : ""}
+          <span class="hint">${hint}</span>
+          <button class="send-button" ?disabled=${disabled || !this.value.trim()} @click=${this._send} title="发送 (Enter)" aria-label="发送">
+            <svg class="send-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 19V5"></path><path d="m5 12 7-7 7 7"></path></svg>
+          </button>
         </div>
       </footer>`;
         }
@@ -2333,22 +2563,25 @@
     :host { flex: 0 0 auto; color: var(--pw-text); font: 14px system-ui, sans-serif; }
     footer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px; border-top: 1px solid var(--pw-border); }
     footer.shell-mode { border-top-color: var(--pw-success); background: var(--pw-success-bg); }
+    .editor-wrap { position: relative; min-width: 0; }
     textarea { box-sizing: border-box; width: 100%; min-height: 54px; max-height: 220px; resize: none; overflow-y: auto; border-radius: 8px; border: 1px solid var(--pw-border); background: var(--pw-bg); color: var(--pw-text); font: 15px/1.4 system-ui, sans-serif; padding: 8px 10px; }
-    textarea:focus { outline: none; border-color: var(--pw-accent-border); }
+    textarea:focus { outline: none; border-color: var(--pw-accent); }
     .shell-mode textarea { border-color: var(--pw-success); box-shadow: 0 0 0 1px var(--pw-success-ring); }
     textarea:disabled { opacity: .5; cursor: not-allowed; }
-    .hint { font-size: 12px; color: var(--pw-dim); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .mode { display: flex; border: 1px solid var(--pw-border); border-radius: 7px; overflow: hidden; }
-    .mode span { padding: 3px 9px; font-size: 11.5px; cursor: pointer; color: var(--pw-muted); }
+    .mode-hint { position: absolute; right: 12px; bottom: 10px; max-width: calc(100% - 24px); border: 1px solid var(--pw-success-border); border-radius: 999px; background: var(--pw-success-surface); color: var(--pw-success); padding: 2px 8px; font-size: 12px; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: nowrap; white-space: nowrap; }
+    .hint { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--pw-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 8px; }
+    .mode { display: flex; border: 1px solid var(--pw-border); border-radius: 7px; overflow: hidden; flex: 0 0 auto; }
+    .mode span { padding: 3px 9px; font-size: 11.5px; cursor: pointer; color: var(--pw-muted); user-select: none; }
     .mode span.on { background: var(--pw-selection-bg); color: var(--pw-accent); }
-    .mode-hint { border: 1px solid var(--pw-success-border); border-radius: 999px; background: var(--pw-success-surface); color: var(--pw-success); padding: 2px 9px; font-size: 12px; }
-    .row { display: flex; gap: 8px; align-items: flex-end; }
-    button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-surface); color: var(--pw-text); padding: 7px 12px; cursor: pointer; font-size: 13px; }
+    button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-surface); color: var(--pw-text); padding: 6px 10px; cursor: pointer; font-size: 13px; }
     button:hover { background: var(--pw-surface-hover); }
-    button.primary { border-color: var(--pw-accent-border); background: var(--pw-selection-bg); color: var(--pw-accent); font-weight: 600; }
-    button.primary:hover { background: var(--pw-accent-border); color: #fff; }
-    button.danger { color: var(--pw-danger); }
+    button.danger { color: var(--pw-danger); border-color: var(--pw-danger); }
     button:disabled { opacity: .5; cursor: not-allowed; }
+    .send-button { flex: 0 0 auto; display: inline-grid; place-items: center; width: 36px; height: 36px; padding: 0; }
+    .send-button:not(:disabled) { color: var(--pw-accent); border-color: var(--pw-accent-border); }
+    .send-button:not(:disabled):hover { background: var(--pw-selection-bg); }
+    .send-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
   `);
       __publicField(PhSessionInput, "properties", { session: { attribute: false }, running: { attribute: false }, value: { state: true }, mode: { state: true } });
       customElements.define("ph-session-input", PhSessionInput);
@@ -6196,7 +6429,7 @@
   function refreshProvision() {
     loadProvision();
   }
-  function copyText(t5) {
+  function copyText2(t5) {
     navigator.clipboard.writeText(t5).then(() => toast("\u5DF2\u590D\u5236")).catch(() => toast("\u590D\u5236\u5931\u8D25", true));
   }
   async function createDefaultRole(cli) {
@@ -7290,7 +7523,7 @@
       window.copyLogs = copyLogs;
       window.copyRole = copyRole;
       window.copySkillContent = copySkillContent;
-      window.copyText = copyText;
+      window.copyText = copyText2;
       window.createDefaultRole = createDefaultRole;
       window.deleteAgent = deleteAgent;
       window.deleteProject = deleteProject;
