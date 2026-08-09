@@ -34,6 +34,75 @@ func mustTask(t *testing.T, s *Store, title string, agentID *int64, status strin
 	return id
 }
 
+// 新库会预置一个通用模板，用于让会话中的 agent 把上下文整理成当前项目任务。
+func TestOpenSeedsCreateTasksTemplate(t *testing.T) {
+	s := openTest(t)
+
+	templates, err := s.ListTemplates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(templates) != 1 {
+		t.Fatalf("默认模板数量 = %d, want 1: %+v", len(templates), templates)
+	}
+	got := templates[0]
+	if got.Name != createTasksTemplateName || got.Body != createTasksTemplateBody || got.AgentID != nil {
+		t.Fatalf("默认模板 = %+v, want name=%q body=%q 且不绑定角色", got, createTasksTemplateName, createTasksTemplateBody)
+	}
+}
+
+// 默认数据只迁移一次：重启不会重复插入，用户主动删除后也不会被恢复。
+func TestDefaultTemplateSeedRunsOnce(t *testing.T) {
+	path := t.TempDir() + "/seed.db"
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	templates, err := s.ListTemplates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(templates) != 1 {
+		t.Fatalf("首次打开默认模板 = %+v, want 1 条", templates)
+	}
+	defaultID := templates[0].ID
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	templates, err = s.ListTemplates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(templates) != 1 || templates[0].ID != defaultID {
+		t.Fatalf("重启后默认模板 = %+v, want 原来的 #%d", templates, defaultID)
+	}
+	if err := s.DeleteTemplate(defaultID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	templates, err = s.ListTemplates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(templates) != 0 {
+		t.Fatalf("删除后重启不应恢复默认模板: %+v", templates)
+	}
+}
+
 // 任务模板：创建 → 读取 → 更新 → 删除 全链路，agent 关联随更新迁移。
 func TestTemplateCRUDRoundTrip(t *testing.T) {
 	s := openTest(t)

@@ -42,8 +42,15 @@ func TestDeleteAgentWithReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tpls) != 1 || tpls[0].AgentID != nil {
-		t.Fatalf("templates = %+v, want one with NULL agent_id", tpls)
+	var referenced *Template
+	for i := range tpls {
+		if tpls[i].Name == "tpl1" {
+			referenced = &tpls[i]
+			break
+		}
+	}
+	if referenced == nil || referenced.AgentID != nil {
+		t.Fatalf("templates = %+v, want tpl1 with NULL agent_id", tpls)
 	}
 	if _, err := s.GetAgent(aid); err == nil {
 		t.Fatal("agent still exists after delete")

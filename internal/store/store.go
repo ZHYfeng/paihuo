@@ -112,6 +112,11 @@ CREATE TABLE IF NOT EXISTS templates (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS data_migrations (
+  key        TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS skills (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL,
@@ -379,7 +384,48 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("迁移数据库失败: %w", err)
 	}
+	if err := seedDefaultTemplates(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("初始化默认模板失败: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+const (
+	createTasksTemplateSeed = "default-template-create-tasks-v1"
+	createTasksTemplateName = "根据对话创建任务"
+	createTasksTemplateBody = "请根据当前对话的内容，在 paihuo 系统中的当前项目中创建合适的任务。"
+)
+
+// seedDefaultTemplates 为新库和已有库各添加一次内置模板。迁移标记与模板
+// 在同一个事务中写入；用户之后编辑或删除模板时，重启不会恢复默认值。
+func seedDefaultTemplates(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(`INSERT OR IGNORE INTO data_migrations (key, applied_at) VALUES (?, ?)`, createTasksTemplateSeed, Now())
+	if err != nil {
+		return err
+	}
+	inserted, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if inserted == 0 {
+		return tx.Commit()
+	}
+
+	// 已有用户可能手工创建了相同模板；升级时保留原记录，不制造重复项。
+	if _, err := tx.Exec(`INSERT INTO templates (name, body, agent_id, created_at)
+		SELECT ?, ?, NULL, ?
+		WHERE NOT EXISTS (SELECT 1 FROM templates WHERE name=? AND body=?)`,
+		createTasksTemplateName, createTasksTemplateBody, Now(), createTasksTemplateName, createTasksTemplateBody); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) Close() error { return s.db.Close() }
