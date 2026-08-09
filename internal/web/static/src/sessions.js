@@ -1298,6 +1298,23 @@ function sliceByWidth(s, maxW) {
   return out;
 }
 
+// 光标归位目标：capture-pane 不携带光标位置，TUI 输入框通常在底部
+// 提示符行（codex 用 ›，claude 用 ❯），把光标放到最后一个提示符行的
+// 内容末尾最接近真实输入位置；找不到提示符行则回退到最后一个非空行
+// 末尾（避免把光标丢进帧尾的空行，输入框在底部时用户会看不到光标）。
+function cursorTarget(lines) {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const t = lines[i].trimStart();
+    if (t.startsWith("\u203A") || t.startsWith("\u276F")) {
+      return { row: i + 1, col: strWidth(lines[i]) + 1 };
+    }
+  }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].trim()) return { row: i + 1, col: strWidth(lines[i]) + 1 };
+  }
+  return { row: 1, col: 1 };
+}
+
 // ---------------------------------------------------------------- 组件：终端式会话面板（S5）
 export class PhSessionTerm extends LitElement {
   static styles = css`
@@ -1386,18 +1403,18 @@ export class PhSessionTerm extends LitElement {
               // 帧变矮时清掉画布多出的残留行。
               if (cl.length < rows) patch += `\x1b[${cl.length + 1};1H\x1b[J`;
               if (patch) {
-                // 光标归位到帧最后一行内容末尾（TUI 输入框通常在底部；
-                // capture-pane 不携带光标位置，这是最接近真实位置的落点）。
-                const lastRow = Math.max(cl.length, 1);
-                const lastCol = Math.min(strWidth(cl[cl.length - 1] || "") + 1, cols);
-                this._term.write(patch + `\x1b[${lastRow};${lastCol}H`);
+                // 光标归位到输入提示行末尾（TUI 输入框通常在底部；
+                // capture-pane 不携带光标位置，提示符行末尾最接近）。
+                const target = cursorTarget(cl);
+                this._term.write(patch + `\x1b[${target.row};${target.col}H`);
               }
             } else {
               // 清屏/随尺寸重排：清屏（含回滚区）后按画布写入整帧——
               // 帧行数 > 画布行数时直接整帧写入会触底滚动，把帧顶内容
               // 滚出视口且永不修复（行级 diff 只改变化行）。
               // 换行必须 CRLF（xterm 的 LF 不归列，见上）。
-              this._term.write("\x1b[2J\x1b[3J\x1b[H" + cl.join("\r\n"));
+              const target = cursorTarget(cl);
+              this._term.write("\x1b[2J\x1b[3J\x1b[H" + cl.join("\r\n") + `\x1b[${target.row};${target.col}H`);
             }
             this._lastFrame = cur;
           }

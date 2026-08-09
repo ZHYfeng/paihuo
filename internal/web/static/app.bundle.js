@@ -1330,6 +1330,18 @@
     }
     return out;
   }
+  function cursorTarget(lines) {
+    for (let i6 = lines.length - 1; i6 >= 0; i6--) {
+      const t5 = lines[i6].trimStart();
+      if (t5.startsWith("\u203A") || t5.startsWith("\u276F")) {
+        return { row: i6 + 1, col: strWidth(lines[i6]) + 1 };
+      }
+    }
+    for (let i6 = lines.length - 1; i6 >= 0; i6--) {
+      if (lines[i6].trim()) return { row: i6 + 1, col: strWidth(lines[i6]) + 1 };
+    }
+    return { row: 1, col: 1 };
+  }
   function relTime(iso) {
     if (!iso) return "";
     const t5 = new Date(iso).getTime();
@@ -2379,12 +2391,12 @@
                     }
                     if (cl.length < rows) patch += `\x1B[${cl.length + 1};1H\x1B[J`;
                     if (patch) {
-                      const lastRow = Math.max(cl.length, 1);
-                      const lastCol = Math.min(strWidth(cl[cl.length - 1] || "") + 1, cols);
-                      this._term.write(patch + `\x1B[${lastRow};${lastCol}H`);
+                      const target = cursorTarget(cl);
+                      this._term.write(patch + `\x1B[${target.row};${target.col}H`);
                     }
                   } else {
-                    this._term.write("\x1B[2J\x1B[3J\x1B[H" + cl.join("\r\n"));
+                    const target = cursorTarget(cl);
+                    this._term.write("\x1B[2J\x1B[3J\x1B[H" + cl.join("\r\n") + `\x1B[${target.row};${target.col}H`);
                   }
                   this._lastFrame = cur;
                 }
