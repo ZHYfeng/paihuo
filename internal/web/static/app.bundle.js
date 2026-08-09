@@ -1555,6 +1555,7 @@
     }
     .col-list { border-right: 1px solid var(--pw-border); min-height: 0; background: var(--pw-bg); }
     .col-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--pw-bg); }
+    .pw-empty { margin: auto; color: var(--pw-muted); font-size: 14px; }
     @media (max-width: 860px) {
       :host { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; }
       .col-list { border-right: 0; border-bottom: 1px solid var(--pw-border); max-height: 38vh; }
