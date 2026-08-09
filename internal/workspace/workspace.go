@@ -52,7 +52,12 @@ func WorktreePath(sessionsRoot, projectName string, taskID int64) string {
 }
 
 // SessionWorktreePath 返回会话 worktree 的预期路径（sessions/<project>/session-<id>）。
+// 无项目（projectName 为空）时返回 sessionsRoot/session-<id>：一级独立目录，
+// 不与任何项目目录冲突（项目目录均为 sessionsRoot/<slug>/ 两级结构）。
 func SessionWorktreePath(sessionsRoot, projectName string, sessionID int64) string {
+	if projectName == "" {
+		return filepath.Join(sessionsRoot, fmt.Sprintf("session-%d", sessionID))
+	}
 	return filepath.Join(sessionsRoot, slug(projectName), fmt.Sprintf("session-%d", sessionID))
 }
 
@@ -70,7 +75,12 @@ func SessionBranch(sessionID int64) string { return fmt.Sprintf("paihuo/session-
 func EnsureSessionWorktree(projectDir, sessionsRoot, projectName string, sessionID int64) (dir, branch, baseCommit string, err error) {
 	dir = projectDir
 	if projectDir == "" {
-		return "", "", "", fmt.Errorf("项目未绑定目录")
+		// 无项目会话：独立空目录（sessions/session-<id>）。
+		wt := SessionWorktreePath(sessionsRoot, projectName, sessionID)
+		if err := os.MkdirAll(wt, 0o755); err != nil {
+			return "", "", "", fmt.Errorf("创建会话目录失败: %v", err)
+		}
+		return wt, "", "", nil
 	}
 	wt := SessionWorktreePath(sessionsRoot, projectName, sessionID)
 	if fi, err := os.Stat(wt); err == nil && fi.IsDir() {

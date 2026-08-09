@@ -6,6 +6,12 @@ This file records notable user-facing and maintainer-facing changes. The format 
 
 ### Added
 
+- **新建会话不再默认绑定项目**：此前「项目」下拉默认选中第一个项目，不手动选择也会实际归属该项目；现在默认「（无项目）」，不选择即不关联任何项目——会话在独立目录（`sessions/session-N`）运行，头部/列表不再显示项目名。无项目会话无法交付为任务（任务必须在项目目录执行，后端显式拒绝并提示）。
+- **会话统一自动启动，去掉「启动」按钮**：打开会话视图时 `created` 状态自动启动、终端式（codex/claude）`suspended` 状态自动恢复（pi/omp 挂起会话仍由发送消息触发恢复，不提前拉起）；新建会话带初始指令时等待自动启动完成后自动发送，不再重复调用 start。
+- **会话支持 omp（Oh My Pi）agent**：omp 与 pi 同族 RPC 协议（`--mode rpc`，实测 `ready` 握手、`get_state`/`prompt`/`abort`/`switch_session` 命令与事件流兼容），会话走与 pi 相同的消息流视图（思考/文本/工具卡片/提问卡片），支持挂起恢复（`switch_session` 接续会话文件）与角色参数映射（`--model`/`--append-system-prompt`/`--thinking`/`--skills` 或角色级 overlay `--config`/`--tools`/`--max-time`/`--profile`/`--provider`/plugins）。差异点已适配：omp 回合结束用 `agent_end`+`turn_end`（pi 用 `agent_settled`），前端按同一语义清空挂起状态。
+- **终端式会话（codex/claude）实时输出修复**：三处根因——① xterm 初始化时机错误（Lit 的 `connectedCallback` 先于首次 render，`.term-wrap` 还不存在，`_init` 静默退出，终端永远空白）；② tmux `capture-pane` 按字节 offset 截增量，TUI 原地重绘/清屏/随尺寸重排时必然错位累积垃圾，改为全量帧 + 前端行级 diff（纯追加增量写入、等行数重绘只重写变化行、清屏/重排整帧 ANSI 重写，不再整屏 `reset` 导致 DOM renderer 渲染丢失）；③ xterm 的 Enter 键在 onData 里是 `\r` 字面量，`send-keys -l` 会把它当普通字符输入而不是回车键，TUI（如 codex 的目录信任确认）会卡在等待回车——现在 `\r` 拆出转 `Enter` 键，且字符与回车之间留 120ms 事件循环时间（过早的回车会被 TUI 丢弃）。
+- **会话消息 markdown 渲染修复**：`md()` 生成的 HTML 此前以字符串插值进 Lit 模板，被当作纯文本转义，带列表/行内代码/加粗的消息（如 pi 的问候语 `<ul><li>`、`<code>`）全部以字面量显示。改用 `unsafeHTML` 渲染 markdown 输出，并加固链接：剥除引号/空白、仅放行 http/https/mailto/锚点/相对路径，其余协议（如 `javascript:`）落为 `#`。
+- **会话页修复 pi agent 交互式提问的显示与应答**：此前 `ask_user` 等扩展的提问（RPC `extension_ui_request`，select/confirm/input/editor）字段在后端 JSON 解析边界被丢弃、前端也不渲染，提问完全不可见、无法作答（`prompt` 只会被 pi 当作新回合，对话卡死单向）。现在提问以问答卡片实时渲染（选项按钮/确认/输入），应答走新增的 `POST /api/sessions/{id}/ask`（`extension_ui_response`）；回合结束时未应答的提问自动标记「已跳过」，输入框不会永久冻结。历史回看同样补全：transcript 里的 `custom_message`（`pi-web.ask.answers` 提问-回答记录，按题目/选项渲染）与 `custom`（如 `web-search-results`）条目不再被丢弃。
 - **已结束交互任务的终端画面按录制尺寸重放并缩放适配容器**：运行中打开过终端的任务会在数据库记录最后同步的 tmux 窗口尺寸（`terminal_cols`/`terminal_rows`，Start 与每次 resize 持久化）；任务结束后详情页/全屏终端按该尺寸重放最后画面，并用 transform 缩放居中完整显示，不再按浏览器容器 fit 重排——录制帧无法 reflow，fit 只会造成长行错误换行、TUI 状态栏错位与大屏大片留白。未记录尺寸的任务回退 80×24。运行中的任务仍保持 fit + resize 同步 tmux（agent 收到 SIGWINCH 按新画布重绘）。
 - 修复 xterm 在终端被快速重建（任务 SSE 触发详情页重渲染）时的未捕获异常：`Terminal.open()` 内部 `setTimeout(syncScrollArea)` 在旧终端 dispose 后触发会读取已清空的 renderer 抛 TypeError，现在旧终端延迟到下一个宏任务再 dispose。
 - 交互终端尺寸标签不再硬编码 80×24：运行中显示「实时画面 · 跟随浏览器尺寸」，已结束显示「已归档画面 · <录制尺寸>」。

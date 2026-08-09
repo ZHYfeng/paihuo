@@ -55,6 +55,10 @@ type rpcResponse struct {
 // assistantMessageEvent 是 message_update 的增量载荷（text_delta 等）：
 // 之前漏掉该字段，增量事件在 JSON 解析边界被丢弃，流式输出只能在
 // message_end 一次性出现。必须透传给前端按 contentIndex 累积。
+// extension_ui_request 的交互字段（method/title/options/…）都在事件顶层，
+// 之前同样在 JSON 解析边界被丢弃，前端只能拿到空壳；必须透传，
+// 否则 pi agent 的交互式提问（ask_user → select/confirm/input/editor）
+// 在会话视图里无法显示也无法应答。
 type rpcEvent struct {
 	Type                  string          `json:"type"`
 	ID                    string          `json:"id,omitempty"`
@@ -64,6 +68,18 @@ type rpcEvent struct {
 	Message               json.RawMessage `json:"message,omitempty"`
 	AssistantMessageEvent json.RawMessage `json:"assistantMessageEvent,omitempty"`
 	Error                 string          `json:"error,omitempty"`
+	// extension_ui_request 顶层字段（confirm 的正文走上面的 message）。
+	Method          string   `json:"method,omitempty"`
+	Title           string   `json:"title,omitempty"`
+	Options         []string `json:"options,omitempty"`
+	Placeholder     string   `json:"placeholder,omitempty"`
+	NotifyType      string   `json:"notifyType,omitempty"`
+	StatusKey       string   `json:"statusKey,omitempty"`
+	StatusText      string   `json:"statusText,omitempty"`
+	WidgetKey       string   `json:"widgetKey,omitempty"`
+	WidgetLines     []string `json:"widgetLines,omitempty"`
+	WidgetPlacement string   `json:"widgetPlacement,omitempty"`
+	Text            string   `json:"text,omitempty"`
 }
 
 // newRPCProc 启动 pi RPC 进程。
@@ -262,6 +278,28 @@ func (p *rpcProc) terminate() {
 		_ = p.cmd.Process.Kill()
 	}
 	<-p.exited
+}
+
+// sendLine 向 stdin 写入一行 JSONL 但不等待 response。
+// 用于 pi 在输入层拦截、不会回 response 的命令（extension_ui_response：
+// handleInputLine 直接 resolve 挂起的提问，不产生 stdout 响应）。
+func (p *rpcProc) sendLine(cmd map[string]any) error {
+	p.mu.Lock()
+	select {
+	case <-p.exited:
+		p.mu.Unlock()
+		return fmt.Errorf("会话进程已退出: %v", p.exitErr)
+	default:
+	}
+	p.mu.Unlock()
+	payload, err := json.Marshal(cmd)
+	if err != nil {
+		return err
+	}
+	p.writeMu.Lock()
+	_, err = p.stdin.Write(append(payload, '\n'))
+	p.writeMu.Unlock()
+	return err
 }
 
 // runCommand 发送任意 RPC 命令并返回 response。

@@ -38,6 +38,13 @@ type commandIn struct {
 	Fields  map[string]any `json:"fields"`
 }
 
+type askIn struct {
+	ID        string `json:"id"`
+	Value     string `json:"value"`
+	Confirmed *bool  `json:"confirmed"`
+	Cancelled bool   `json:"cancelled"`
+}
+
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	f := store.SessionFilter{}
 	if v := r.URL.Query().Get("status"); v != "" {
@@ -230,6 +237,35 @@ func (s *Server) sessionAbort(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
+// sessionAsk 应答 pi agent 的交互式提问（extension_ui_request →
+// extension_ui_response）。select/input/editor 传 value；confirm 传
+// confirmed；取消传 cancelled。
+func (s *Server) sessionAsk(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"error": "会话 id 非法"})
+		return
+	}
+	var in askIn
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, 400, map[string]any{"error": "请求体非法: " + err.Error()})
+		return
+	}
+	if in.ID == "" {
+		writeJSON(w, 400, map[string]any{"error": "ask id 不能为空"})
+		return
+	}
+	if !in.Cancelled && in.Confirmed == nil && trimSpace(in.Value) == "" {
+		writeJSON(w, 400, map[string]any{"error": "应答内容不能为空"})
+		return
+	}
+	if err := s.sess.AnswerAsk(id, in.ID, in.Value, in.Confirmed, in.Cancelled); err != nil {
+		writeJSON(w, 409, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
 func (s *Server) sessionCommand(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
 	if err != nil {
@@ -384,6 +420,7 @@ func (s *Server) sessionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sessions/{id}/deliver", s.deliverSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.deleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/prompt", s.sessionPrompt)
+	mux.HandleFunc("POST /api/sessions/{id}/ask", s.sessionAsk)
 	mux.HandleFunc("POST /api/sessions/{id}/abort", s.sessionAbort)
 	mux.HandleFunc("POST /api/sessions/{id}/command", s.sessionCommand)
 	mux.HandleFunc("GET /api/sessions/{id}/messages", s.sessionMessages)

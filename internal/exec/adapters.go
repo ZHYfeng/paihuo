@@ -480,6 +480,49 @@ func BuildPiRPCSessionArgs(role store.RoleConfig, skillDirs []string, sessionDir
 	return args, nil
 }
 
+// BuildOmpRPCSessionArgs 构造 omp --mode rpc 会话进程的启动参数（会话管理器用）。
+// 与 ompAdapter.Build 共用角色参数翻译，差异：不传 -p/位置参数（初始消息由
+// 前端 prompt 命令发送），并注入 --mode rpc。skillMount 非 nil 且带角色级
+// overlay 时用 --config overlay（含全局 customDirectories 合并）；否则退化为
+// --skills 名称过滤（与批处理语义一致）。
+func BuildOmpRPCSessionArgs(role store.RoleConfig, skillMount *RoleSkillMount, sessionDir string) ([]string, error) {
+	args := []string{"--mode", "rpc"}
+	if sessionDir != "" {
+		args = append(args, "--session-dir", sessionDir)
+	}
+	if m := role.Model; m != "" {
+		args = append(args, "--model", m)
+	}
+	if s := role.SystemPrompt; s != "" {
+		args = append(args, "--append-system-prompt", s)
+	}
+	if skillMount != nil && skillMount.OmpOverlay != "" {
+		args = append(args, "--config", skillMount.OmpOverlay)
+	} else if len(role.Skills) > 0 {
+		args = append(args, "--skills", strings.Join(skillBasenames(role.Skills), ","))
+	}
+	if thinking := strings.TrimSpace(role.Thinking); thinking != "" {
+		args = append(args, "--thinking", thinking)
+	}
+	if v := role.Custom["tools"]; v != "" {
+		args = append(args, "--tools", v)
+	}
+	if v := role.Custom["max_time"]; v != "" {
+		args = append(args, "--max-time", v)
+	}
+	if v := role.Custom["profile"]; v != "" {
+		args = append(args, "--profile", v)
+	}
+	if v := role.Custom["provider"]; v != "" {
+		args = append(args, "--provider", v)
+	}
+	for _, p := range role.Plugins {
+		args = append(args, "--config", p)
+	}
+	args = append(args, role.ExtraArgs...)
+	return args, nil
+}
+
 // BuildInteractiveArgs 构造某 CLI 交互模式的启动命令（S5 会话终端通道用）。
 func BuildInteractiveArgs(adapterID string, o RunOptions) (string, []string, []string, error) {
 	a, ok := GetAdapter(adapterID)

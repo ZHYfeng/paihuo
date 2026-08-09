@@ -61,12 +61,9 @@ func transitionErr(from, to string) error {
 }
 
 // ValidCreate 校验创建参数；agentID 必须指向存在且可用的角色。
-func (m *Manager) validateCreate(agent store.Agent, projectDir string) error {
+func (m *Manager) validateCreate(agent store.Agent) error {
 	if !agent.Enabled {
 		return fmt.Errorf("角色「%s」已停用，无法创建会话", agent.Name)
-	}
-	if projectDir == "" {
-		return errors.New("项目未绑定目录，无法创建会话")
 	}
 	return nil
 }

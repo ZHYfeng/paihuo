@@ -68,8 +68,9 @@ func (m *Manager) stderrPathOf(id int64) string {
 // ---------------------------------------------------------------------------
 // CRUD
 
-// Create 创建会话：git 项目建隔离 worktree（paihuo/session-<id>），
-// 非 git 项目直接使用项目目录。
+// Create 创建会话：git 项目建隔离 worktree（sessions/<project>/session-<id>），
+// 非 git 项目复制到专属会话目录，无项目时使用独立空目录
+// （sessions/session-<id>，不关联任何项目）。
 func (m *Manager) Create(projectID *int64, agentID int64, title string) (*store.Session, error) {
 	agent, err := m.st.GetAgent(agentID)
 	if err != nil {
@@ -88,7 +89,7 @@ func (m *Manager) Create(projectID *int64, agentID int64, title string) (*store.
 			return nil, fmt.Errorf("项目不存在: %d", *projectID)
 		}
 	}
-	if err := m.validateCreate(*agent, projectDirOf(project)); err != nil {
+	if err := m.validateCreate(*agent); err != nil {
 		return nil, err
 	}
 	// 先建记录拿 id，再建 worktree（路径含 session id）。
@@ -179,7 +180,8 @@ func (m *Manager) Start(ctx context.Context, id int64) error {
 	if dir == "" {
 		dir = m.projectDir(ss) // 非 git / 无 worktree 回退
 	}
-	if agent.CLI == "pi" {
+	if agent.CLI == "pi" || agent.CLI == "omp" {
+		// pi/omp 有 RPC 模式（JSONL 事件流 + 命令通道）→ 消息流视图。
 		if err := m.startRPC(ss, *agent, dir); err != nil {
 			m.ex.ReleaseAgentSlot(agent.ID)
 			return err
@@ -202,7 +204,7 @@ func (m *Manager) Start(ctx context.Context, id int64) error {
 	return nil
 }
 
-// startRPC 启动 pi RPC 会话进程（恢复时 switch_session 接续）。
+// startRPC 启动 pi/omp RPC 会话进程（恢复时 switch_session 接续）。
 func (m *Manager) startRPC(ss *store.Session, agent store.Agent, dir string) error {
 	proc, err := m.spawn(ss, agent, dir)
 	if err != nil {
@@ -323,25 +325,34 @@ func (m *Manager) activeTerm(id int64) (*termProc, error) {
 	return term, nil
 }
 
-// spawn 启动 pi RPC 进程并注入事件/退出回调。
+// spawn 启动 pi/omp RPC 进程并注入事件/退出回调。
 func (m *Manager) spawn(ss *store.Session, agent store.Agent, cwd string) (*rpcProc, error) {
-	adapter, ok := exec.GetAdapter("pi")
+	adapter, ok := exec.GetAdapter(agent.CLI)
 	if !ok {
-		return nil, errors.New("pi 适配器缺失")
+		return nil, fmt.Errorf("CLI 适配器缺失: %s", agent.CLI)
 	}
 	bin, err := adapter.Detect()
 	if err != nil {
 		return nil, err
 	}
 	// 角色技能挂载（与批处理任务同机制）。
-	var skillPaths []string
-	if mount, err := exec.EnsureRoleSkills(agent.ID, agent.Name, agent.RoleConfig.Skills,
+	var mount *exec.RoleSkillMount
+	if mnt, err := exec.EnsureRoleSkills(agent.ID, agent.Name, agent.RoleConfig.Skills,
 		filepath.Join(m.sessionsRoot, ".role-agents", fmt.Sprintf("%d", agent.ID))); err == nil {
-		skillPaths = mount.SkillPaths
+		mount = mnt
 	} else {
 		log.Printf("⚠ 会话 %d 技能挂载失败: %v", ss.ID, err)
 	}
-	args, err := exec.BuildPiRPCSessionArgs(agent.RoleConfig, skillPaths, ss.SessionDir)
+	var args []string
+	if agent.CLI == "omp" {
+		args, err = exec.BuildOmpRPCSessionArgs(agent.RoleConfig, mount, ss.SessionDir)
+	} else {
+		var skillPaths []string
+		if mount != nil {
+			skillPaths = mount.SkillPaths
+		}
+		args, err = exec.BuildPiRPCSessionArgs(agent.RoleConfig, skillPaths, ss.SessionDir)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -416,6 +427,9 @@ func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, pe
 	}
 	if perm != store.PermFull && perm != store.PermReview {
 		return nil, fmt.Errorf("非法的权限模式: %s", perm)
+	}
+	if ss.ProjectID == nil {
+		return nil, fmt.Errorf("会话未关联项目，无法交付为任务（任务必须在项目目录中执行）")
 	}
 
 	// 终止执行通道（若活跃）并释放槽位。
@@ -548,6 +562,30 @@ func (m *Manager) Abort(ctx context.Context, id int64) error {
 	}
 	_, err = proc.runCommand(ctx, "abort", nil, cmdTimeout)
 	return err
+}
+
+// AnswerAsk 应答 agent 的交互式提问（extension_ui_request → extension_ui_response）。
+// pi 在 RPC 模式下提问（ask_user 等扩展）后阻塞等待应答：select/input/editor
+// 用 value，confirm 用 confirmed，取消用 cancelled。pi 对该命令不回 response
+// （stdin 层拦截直接 resolve 挂起中的提问），因此 fire-and-forget 写入。
+func (m *Manager) AnswerAsk(id int64, askID, value string, confirmed *bool, cancelled bool) error {
+	proc, err := m.activeProc(id)
+	if err != nil {
+		return err
+	}
+	if askID == "" {
+		return errors.New("ask id 不能为空")
+	}
+	fields := map[string]any{"type": "extension_ui_response", "id": askID}
+	switch {
+	case cancelled:
+		fields["cancelled"] = true
+	case confirmed != nil:
+		fields["confirmed"] = *confirmed
+	default:
+		fields["value"] = value
+	}
+	return proc.sendLine(fields)
 }
 
 // Command 通用命令转发（get_state / get_messages / set_model / set_thinking_level /

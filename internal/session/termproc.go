@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // termProc 是 codex/claude 等非 pi 会话的终端式通道：直接在 paihuo 的
@@ -22,7 +23,6 @@ import (
 type termProc struct {
 	mu     sync.Mutex
 	window string // session-<id>
-	offset int64  // 已读取输出字节数（窗口重开时重置）
 	socket string
 }
 
@@ -73,7 +73,6 @@ func (p *termProc) Spawn(id int64, bin string, args []string, env []string, cwd 
 	// new-window 无 -x/-y（new-session 才有）；窗口尺寸用 resize-window 设定。
 	_, _ = p.tmux("resize-window", "-t", "paihuo:"+win,
 		"-x", strconv.Itoa(termInteractiveCols), "-y", strconv.Itoa(termInteractiveRows))
-	p.offset = 0
 	return nil
 }
 
@@ -91,12 +90,30 @@ func (p *termProc) Input(id int64, text string) error {
 }
 
 // InputRaw 发送原始按键（xterm 粘贴/组合键），不追加回车。
+// xterm 的 Enter 键在 onData 里是 \r 字面量：send-keys -l 会把它当普通字符
+// 输入而不是回车键，TUI（如 codex 的目录信任确认）会卡在等待回车。因此把
+// \r 拆出来转成 Enter 键，其余字符原样发送。
 func (p *termProc) InputRaw(id int64, text string) error {
 	if p.window == "" {
 		return fmt.Errorf("会话终端未启动")
 	}
-	_, err := p.tmux("send-keys", "-t", "paihuo:"+p.window, "-l", text)
-	return err
+	segments := strings.Split(text, "\r")
+	for i, seg := range segments {
+		if seg != "" {
+			if _, err := p.tmux("send-keys", "-t", "paihuo:"+p.window, "-l", seg); err != nil {
+				return fmt.Errorf("发送输入失败: %w", err)
+			}
+		}
+		if i < len(segments)-1 {
+			// TUI（如 codex）处理完字符流前会丢弃过早到达的回车键：
+			// 字符与 Enter 分开两次 tmux 调用仍可能被吞，给足事件循环时间。
+			time.Sleep(120 * time.Millisecond)
+			if _, err := p.tmux("send-keys", "-t", "paihuo:"+p.window, "Enter"); err != nil {
+				return fmt.Errorf("发送回车失败: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 // Resize 同步浏览器终端尺寸到 tmux 窗口。
@@ -111,25 +128,20 @@ func (p *termProc) Resize(id int64, cols, rows int) error {
 	return err
 }
 
-// Output 增量读取终端画面（capture-pane 全量 + offset 截断）。
-// 返回 (增量文本, 是否还活着)。
+// Output 读取终端画面全量（capture-pane）。
+// 返回 (全量文本, 是否还活着)。不做增量 diff：TUI 会原地重绘/清屏/随尺寸
+// 重排，按字节 offset 截增量必然错位累积垃圾；由前端按帧比较（前缀增量，
+// 否则整帧重置）保证显示一致。
 func (p *termProc) Output(id int64) (string, bool, error) {
 	if p.window == "" {
 		return "", false, fmt.Errorf("会话终端未启动")
 	}
 	out, err := p.tmux("capture-pane", "-t", "paihuo:"+p.window, "-p", "-J")
-	alive := err == nil
 	if err != nil {
 		// 窗口丢失（进程退出/kill）
 		return "", false, nil
 	}
-	cur := int64(len(out))
-	if cur <= p.offset {
-		return "", alive, nil
-	}
-	delta := out[p.offset:]
-	p.offset = cur
-	return delta, alive, nil
+	return out, true, nil
 }
 
 // Kill 终止窗口（挂起/交付/删除）。

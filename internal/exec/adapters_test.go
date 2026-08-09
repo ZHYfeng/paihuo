@@ -115,6 +115,56 @@ func TestOmpSchemaAndPerm(t *testing.T) {
 	}
 }
 
+// omp RPC 会话参数：--mode rpc 注入、角色参数映射、overlay config 优先于 --skills。
+func TestBuildOmpRPCSessionArgs(t *testing.T) {
+	role := store.RoleConfig{
+		Model:        "claude/claude-sonnet-4",
+		SystemPrompt: "sys",
+		Thinking:     "high",
+		Skills:       []string{"/sk/a", "/sk/b"},
+		Plugins:      []string{"/p.toml"},
+		ExtraArgs:    []string{"--no-lsp"},
+		Custom: map[string]string{
+			"tools":    "read,edit,bash",
+			"max_time": "30m",
+			"profile":  "work",
+			"provider": "claude",
+		},
+	}
+	args, err := BuildOmpRPCSessionArgs(role, &RoleSkillMount{OmpOverlay: "/ov/overlay.toml"}, "/s/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		"--mode rpc", "--session-dir /s/x", "--model claude/claude-sonnet-4",
+		"--append-system-prompt sys", "--thinking high", "--config /ov/overlay.toml",
+		"--config /p.toml", "--tools read,edit,bash", "--max-time 30m",
+		"--profile work", "--provider claude", "--no-lsp",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("缺少参数 %q（完整: %s）", want, joined)
+		}
+	}
+	if strings.Contains(joined, "--skills") {
+		t.Fatalf("有 overlay 时不应再传 --skills: %s", joined)
+	}
+	if strings.Contains(joined, "-p ") || strings.Contains(joined, " --no-pty") {
+		t.Fatalf("RPC 会话不应带 -p/位置参数或 --no-pty: %s", joined)
+	}
+	// 无 overlay：退化为 --skills basename 过滤。
+	args2, err := BuildOmpRPCSessionArgs(role, nil, "/s/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined2 := strings.Join(args2, " ")
+	for _, want := range []string{"--skills a,b", "--mode rpc"} {
+		if !strings.Contains(joined2, want) {
+			t.Fatalf("缺少参数 %q（完整: %s）", want, joined2)
+		}
+	}
+}
+
 // pi（pi.dev 官方文档 0.83+）：thinking→--thinking、skills→--skill 逐目录、
 // provider/tools/exclude_tools/models_cycle→官方参数。
 func TestPiAdapterBuild(t *testing.T) {
