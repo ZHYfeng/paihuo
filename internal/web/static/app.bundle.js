@@ -6,8 +6,8 @@
     if (err) throw err[0];
     try {
       return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-    } catch (e5) {
-      throw err = [e5], e5;
+    } catch (e6) {
+      throw err = [e6], e6;
     }
   };
   var __export = (target, all) => {
@@ -262,16 +262,16 @@
       s = /* @__PURE__ */ Symbol();
       o = /* @__PURE__ */ new WeakMap();
       n = class {
-        constructor(t5, e5, o7) {
-          if (this._$cssResult$ = true, o7 !== s) throw Error("CSSResult is not constructable. Use `unsafeCSS` or `css` instead.");
-          this.cssText = t5, this.t = e5;
+        constructor(t5, e6, o8) {
+          if (this._$cssResult$ = true, o8 !== s) throw Error("CSSResult is not constructable. Use `unsafeCSS` or `css` instead.");
+          this.cssText = t5, this.t = e6;
         }
         get styleSheet() {
           let t5 = this.o;
           const s5 = this.t;
           if (e && void 0 === t5) {
-            const e5 = void 0 !== s5 && 1 === s5.length;
-            e5 && (t5 = o.get(s5)), void 0 === t5 && ((this.o = t5 = new CSSStyleSheet()).replaceSync(this.cssText), e5 && o.set(s5, t5));
+            const e6 = void 0 !== s5 && 1 === s5.length;
+            e6 && (t5 = o.get(s5)), void 0 === t5 && ((this.o = t5 = new CSSStyleSheet()).replaceSync(this.cssText), e6 && o.set(s5, t5));
           }
           return t5;
         }
@@ -280,25 +280,25 @@
         }
       };
       r = (t5) => new n("string" == typeof t5 ? t5 : t5 + "", void 0, s);
-      i = (t5, ...e5) => {
-        const o7 = 1 === t5.length ? t5[0] : e5.reduce((e6, s5, o8) => e6 + ((t6) => {
+      i = (t5, ...e6) => {
+        const o8 = 1 === t5.length ? t5[0] : e6.reduce((e7, s5, o9) => e7 + ((t6) => {
           if (true === t6._$cssResult$) return t6.cssText;
           if ("number" == typeof t6) return t6;
           throw Error("Value passed to 'css' function must be a 'css' function result: " + t6 + ". Use 'unsafeCSS' to pass non-literal values, but take care to ensure page security.");
-        })(s5) + t5[o8 + 1], t5[0]);
-        return new n(o7, t5, s);
+        })(s5) + t5[o9 + 1], t5[0]);
+        return new n(o8, t5, s);
       };
-      S = (s5, o7) => {
-        if (e) s5.adoptedStyleSheets = o7.map((t5) => t5 instanceof CSSStyleSheet ? t5 : t5.styleSheet);
-        else for (const e5 of o7) {
-          const o8 = document.createElement("style"), n6 = t.litNonce;
-          void 0 !== n6 && o8.setAttribute("nonce", n6), o8.textContent = e5.cssText, s5.appendChild(o8);
+      S = (s5, o8) => {
+        if (e) s5.adoptedStyleSheets = o8.map((t5) => t5 instanceof CSSStyleSheet ? t5 : t5.styleSheet);
+        else for (const e6 of o8) {
+          const o9 = document.createElement("style"), n6 = t.litNonce;
+          void 0 !== n6 && o9.setAttribute("nonce", n6), o9.textContent = e6.cssText, s5.appendChild(o9);
         }
       };
       c = e ? (t5) => t5 : (t5) => t5 instanceof CSSStyleSheet ? ((t6) => {
-        let e5 = "";
-        for (const s5 of t6.cssRules) e5 += s5.cssText;
-        return r(e5);
+        let e6 = "";
+        for (const s5 of t6.cssRules) e6 += s5.cssText;
+        return r(e6);
       })(t5) : t5;
     }
   });
@@ -361,13 +361,13 @@
           }
         }
         static getPropertyDescriptor(t5, s5, i6) {
-          const { get: e5, set: r6 } = h(this.prototype, t5) ?? { get() {
+          const { get: e6, set: r6 } = h(this.prototype, t5) ?? { get() {
             return this[s5];
           }, set(t6) {
             this[s5] = t6;
           } };
-          return { get: e5, set(s6) {
-            const h4 = e5?.call(this);
+          return { get: e6, set(s6) {
+            const h4 = e6?.call(this);
             r6?.call(this, s6), this.requestUpdate(t5, h4, i6);
           }, configurable: true, enumerable: true };
         }
@@ -400,8 +400,8 @@
         static finalizeStyles(s5) {
           const i6 = [];
           if (Array.isArray(s5)) {
-            const e5 = new Set(s5.flat(1 / 0).reverse());
-            for (const s6 of e5) i6.unshift(c(s6));
+            const e6 = new Set(s5.flat(1 / 0).reverse());
+            for (const s6 of e6) i6.unshift(c(s6));
           } else void 0 !== s5 && i6.push(c(s5));
           return i6;
         }
@@ -442,31 +442,31 @@
           this._$AK(t5, i6);
         }
         _$ET(t5, s5) {
-          const i6 = this.constructor.elementProperties.get(t5), e5 = this.constructor._$Eu(t5, i6);
-          if (void 0 !== e5 && true === i6.reflect) {
+          const i6 = this.constructor.elementProperties.get(t5), e6 = this.constructor._$Eu(t5, i6);
+          if (void 0 !== e6 && true === i6.reflect) {
             const h4 = (void 0 !== i6.converter?.toAttribute ? i6.converter : u).toAttribute(s5, i6.type);
-            this._$Em = t5, null == h4 ? this.removeAttribute(e5) : this.setAttribute(e5, h4), this._$Em = null;
+            this._$Em = t5, null == h4 ? this.removeAttribute(e6) : this.setAttribute(e6, h4), this._$Em = null;
           }
         }
         _$AK(t5, s5) {
-          const i6 = this.constructor, e5 = i6._$Eh.get(t5);
-          if (void 0 !== e5 && this._$Em !== e5) {
-            const t6 = i6.getPropertyOptions(e5), h4 = "function" == typeof t6.converter ? { fromAttribute: t6.converter } : void 0 !== t6.converter?.fromAttribute ? t6.converter : u;
-            this._$Em = e5;
+          const i6 = this.constructor, e6 = i6._$Eh.get(t5);
+          if (void 0 !== e6 && this._$Em !== e6) {
+            const t6 = i6.getPropertyOptions(e6), h4 = "function" == typeof t6.converter ? { fromAttribute: t6.converter } : void 0 !== t6.converter?.fromAttribute ? t6.converter : u;
+            this._$Em = e6;
             const r6 = h4.fromAttribute(s5, t6.type);
-            this[e5] = r6 ?? this._$Ej?.get(e5) ?? r6, this._$Em = null;
+            this[e6] = r6 ?? this._$Ej?.get(e6) ?? r6, this._$Em = null;
           }
         }
-        requestUpdate(t5, s5, i6, e5 = false, h4) {
+        requestUpdate(t5, s5, i6, e6 = false, h4) {
           if (void 0 !== t5) {
             const r6 = this.constructor;
-            if (false === e5 && (h4 = this[t5]), i6 ?? (i6 = r6.getPropertyOptions(t5)), !((i6.hasChanged ?? f)(h4, s5) || i6.useDefault && i6.reflect && h4 === this._$Ej?.get(t5) && !this.hasAttribute(r6._$Eu(t5, i6)))) return;
+            if (false === e6 && (h4 = this[t5]), i6 ?? (i6 = r6.getPropertyOptions(t5)), !((i6.hasChanged ?? f)(h4, s5) || i6.useDefault && i6.reflect && h4 === this._$Ej?.get(t5) && !this.hasAttribute(r6._$Eu(t5, i6)))) return;
             this.C(t5, s5, i6);
           }
           false === this.isUpdatePending && (this._$ES = this._$EP());
         }
-        C(t5, s5, { useDefault: i6, reflect: e5, wrapped: h4 }, r6) {
-          i6 && !(this._$Ej ?? (this._$Ej = /* @__PURE__ */ new Map())).has(t5) && (this._$Ej.set(t5, r6 ?? s5 ?? this[t5]), true !== h4 || void 0 !== r6) || (this._$AL.has(t5) || (this.hasUpdated || i6 || (s5 = void 0), this._$AL.set(t5, s5)), true === e5 && this._$Em !== t5 && (this._$Eq ?? (this._$Eq = /* @__PURE__ */ new Set())).add(t5));
+        C(t5, s5, { useDefault: i6, reflect: e6, wrapped: h4 }, r6) {
+          i6 && !(this._$Ej ?? (this._$Ej = /* @__PURE__ */ new Map())).has(t5) && (this._$Ej.set(t5, r6 ?? s5 ?? this[t5]), true !== h4 || void 0 !== r6) || (this._$AL.has(t5) || (this.hasUpdated || i6 || (s5 = void 0), this._$AL.set(t5, s5)), true === e6 && this._$Em !== t5 && (this._$Eq ?? (this._$Eq = /* @__PURE__ */ new Set())).add(t5));
         }
         async _$EP() {
           this.isUpdatePending = true;
@@ -490,8 +490,8 @@
             }
             const t6 = this.constructor.elementProperties;
             if (t6.size > 0) for (const [s6, i6] of t6) {
-              const { wrapped: t7 } = i6, e5 = this[s6];
-              true !== t7 || this._$AL.has(s6) || void 0 === e5 || this.C(s6, void 0, i6, e5);
+              const { wrapped: t7 } = i6, e6 = this[s6];
+              true !== t7 || this._$AL.has(s6) || void 0 === e6 || this.C(s6, void 0, i6, e6);
             }
           }
           let t5 = false;
@@ -537,11 +537,11 @@
     if (!u2(t5) || !t5.hasOwnProperty("raw")) throw Error("invalid template strings array");
     return void 0 !== e3 ? e3.createHTML(i6) : i6;
   }
-  function M(t5, i6, s5 = t5, e5) {
+  function M(t5, i6, s5 = t5, e6) {
     if (i6 === E) return i6;
-    let h4 = void 0 !== e5 ? s5._$Co?.[e5] : s5._$Cl;
-    const o7 = a2(i6) ? void 0 : i6._$litDirective$;
-    return h4?.constructor !== o7 && (h4?._$AO?.(false), void 0 === o7 ? h4 = void 0 : (h4 = new o7(t5), h4._$AT(t5, s5, e5)), void 0 !== e5 ? (s5._$Co ?? (s5._$Co = []))[e5] = h4 : s5._$Cl = h4), void 0 !== h4 && (i6 = M(t5, h4._$AS(t5, i6.values), h4, e5)), i6;
+    let h4 = void 0 !== e6 ? s5._$Co?.[e6] : s5._$Cl;
+    const o8 = a2(i6) ? void 0 : i6._$litDirective$;
+    return h4?.constructor !== o8 && (h4?._$AO?.(false), void 0 === o8 ? h4 = void 0 : (h4 = new o8(t5), h4._$AT(t5, s5, e6)), void 0 !== e6 ? (s5._$Co ?? (s5._$Co = []))[e6] = h4 : s5._$Cl = h4), void 0 !== h4 && (i6 = M(t5, h4._$AS(t5, i6.values), h4, e6)), i6;
   }
   var t2, i3, s2, e3, h2, o3, n3, r3, l2, c3, a2, u2, d2, f2, v, _, m, p2, g, $, y2, x, b2, w, T, E, A, C, P, N, S2, R, k, H, I, L, z, Z, j, B, D;
   var init_lit_html = __esm({
@@ -577,32 +577,32 @@
       C = /* @__PURE__ */ new WeakMap();
       P = l2.createTreeWalker(l2, 129);
       N = (t5, i6) => {
-        const s5 = t5.length - 1, e5 = [];
+        const s5 = t5.length - 1, e6 = [];
         let n6, l3 = 2 === i6 ? "<svg>" : 3 === i6 ? "<math>" : "", c5 = v;
         for (let i7 = 0; i7 < s5; i7++) {
           const s6 = t5[i7];
           let a3, u3, d3 = -1, f4 = 0;
           for (; f4 < s6.length && (c5.lastIndex = f4, u3 = c5.exec(s6), null !== u3); ) f4 = c5.lastIndex, c5 === v ? "!--" === u3[1] ? c5 = _ : void 0 !== u3[1] ? c5 = m : void 0 !== u3[2] ? (y2.test(u3[2]) && (n6 = RegExp("</" + u3[2], "g")), c5 = p2) : void 0 !== u3[3] && (c5 = p2) : c5 === p2 ? ">" === u3[0] ? (c5 = n6 ?? v, d3 = -1) : void 0 === u3[1] ? d3 = -2 : (d3 = c5.lastIndex - u3[2].length, a3 = u3[1], c5 = void 0 === u3[3] ? p2 : '"' === u3[3] ? $ : g) : c5 === $ || c5 === g ? c5 = p2 : c5 === _ || c5 === m ? c5 = v : (c5 = p2, n6 = void 0);
           const x2 = c5 === p2 && t5[i7 + 1].startsWith("/>") ? " " : "";
-          l3 += c5 === v ? s6 + r3 : d3 >= 0 ? (e5.push(a3), s6.slice(0, d3) + h2 + s6.slice(d3) + o3 + x2) : s6 + o3 + (-2 === d3 ? i7 : x2);
+          l3 += c5 === v ? s6 + r3 : d3 >= 0 ? (e6.push(a3), s6.slice(0, d3) + h2 + s6.slice(d3) + o3 + x2) : s6 + o3 + (-2 === d3 ? i7 : x2);
         }
-        return [V(t5, l3 + (t5[s5] || "<?>") + (2 === i6 ? "</svg>" : 3 === i6 ? "</math>" : "")), e5];
+        return [V(t5, l3 + (t5[s5] || "<?>") + (2 === i6 ? "</svg>" : 3 === i6 ? "</math>" : "")), e6];
       };
       S2 = class _S {
-        constructor({ strings: t5, _$litType$: i6 }, e5) {
+        constructor({ strings: t5, _$litType$: i6 }, e6) {
           let r6;
           this.parts = [];
           let l3 = 0, a3 = 0;
           const u3 = t5.length - 1, d3 = this.parts, [f4, v2] = N(t5, i6);
-          if (this.el = _S.createElement(f4, e5), P.currentNode = this.el.content, 2 === i6 || 3 === i6) {
+          if (this.el = _S.createElement(f4, e6), P.currentNode = this.el.content, 2 === i6 || 3 === i6) {
             const t6 = this.el.content.firstChild;
             t6.replaceWith(...t6.childNodes);
           }
           for (; null !== (r6 = P.nextNode()) && d3.length < u3; ) {
             if (1 === r6.nodeType) {
               if (r6.hasAttributes()) for (const t6 of r6.getAttributeNames()) if (t6.endsWith(h2)) {
-                const i7 = v2[a3++], s5 = r6.getAttribute(t6).split(o3), e6 = /([.?@])?(.*)/.exec(i7);
-                d3.push({ type: 1, index: l3, name: e6[2], strings: s5, ctor: "." === e6[1] ? I : "?" === e6[1] ? L : "@" === e6[1] ? z : H }), r6.removeAttribute(t6);
+                const i7 = v2[a3++], s5 = r6.getAttribute(t6).split(o3), e7 = /([.?@])?(.*)/.exec(i7);
+                d3.push({ type: 1, index: l3, name: e7[2], strings: s5, ctor: "." === e7[1] ? I : "?" === e7[1] ? L : "@" === e7[1] ? z : H }), r6.removeAttribute(t6);
               } else t6.startsWith(o3) && (d3.push({ type: 6, index: l3 }), r6.removeAttribute(t6));
               if (y2.test(r6.tagName)) {
                 const t6 = r6.textContent.split(o3), i7 = t6.length - 1;
@@ -636,17 +636,17 @@
           return this._$AM._$AU;
         }
         u(t5) {
-          const { el: { content: i6 }, parts: s5 } = this._$AD, e5 = (t5?.creationScope ?? l2).importNode(i6, true);
-          P.currentNode = e5;
-          let h4 = P.nextNode(), o7 = 0, n6 = 0, r6 = s5[0];
+          const { el: { content: i6 }, parts: s5 } = this._$AD, e6 = (t5?.creationScope ?? l2).importNode(i6, true);
+          P.currentNode = e6;
+          let h4 = P.nextNode(), o8 = 0, n6 = 0, r6 = s5[0];
           for (; void 0 !== r6; ) {
-            if (o7 === r6.index) {
+            if (o8 === r6.index) {
               let i7;
               2 === r6.type ? i7 = new k(h4, h4.nextSibling, this, t5) : 1 === r6.type ? i7 = new r6.ctor(h4, r6.name, r6.strings, this, t5) : 6 === r6.type && (i7 = new Z(h4, this, t5)), this._$AV.push(i7), r6 = s5[++n6];
             }
-            o7 !== r6?.index && (h4 = P.nextNode(), o7++);
+            o8 !== r6?.index && (h4 = P.nextNode(), o8++);
           }
-          return P.currentNode = l2, e5;
+          return P.currentNode = l2, e6;
         }
         p(t5) {
           let i6 = 0;
@@ -657,8 +657,8 @@
         get _$AU() {
           return this._$AM?._$AU ?? this._$Cv;
         }
-        constructor(t5, i6, s5, e5) {
-          this.type = 2, this._$AH = A, this._$AN = void 0, this._$AA = t5, this._$AB = i6, this._$AM = s5, this.options = e5, this._$Cv = e5?.isConnected ?? true;
+        constructor(t5, i6, s5, e6) {
+          this.type = 2, this._$AH = A, this._$AN = void 0, this._$AA = t5, this._$AB = i6, this._$AM = s5, this.options = e6, this._$Cv = e6?.isConnected ?? true;
         }
         get parentNode() {
           let t5 = this._$AA.parentNode;
@@ -684,10 +684,10 @@
           this._$AH !== A && a2(this._$AH) ? this._$AA.nextSibling.data = t5 : this.T(l2.createTextNode(t5)), this._$AH = t5;
         }
         $(t5) {
-          const { values: i6, _$litType$: s5 } = t5, e5 = "number" == typeof s5 ? this._$AC(t5) : (void 0 === s5.el && (s5.el = S2.createElement(V(s5.h, s5.h[0]), this.options)), s5);
-          if (this._$AH?._$AD === e5) this._$AH.p(i6);
+          const { values: i6, _$litType$: s5 } = t5, e6 = "number" == typeof s5 ? this._$AC(t5) : (void 0 === s5.el && (s5.el = S2.createElement(V(s5.h, s5.h[0]), this.options)), s5);
+          if (this._$AH?._$AD === e6) this._$AH.p(i6);
           else {
-            const t6 = new R(e5, this), s6 = t6.u(this.options);
+            const t6 = new R(e6, this), s6 = t6.u(this.options);
             t6.p(i6), this.T(s6), this._$AH = t6;
           }
         }
@@ -698,9 +698,9 @@
         k(t5) {
           u2(this._$AH) || (this._$AH = [], this._$AR());
           const i6 = this._$AH;
-          let s5, e5 = 0;
-          for (const h4 of t5) e5 === i6.length ? i6.push(s5 = new _k(this.O(c3()), this.O(c3()), this, this.options)) : s5 = i6[e5], s5._$AI(h4), e5++;
-          e5 < i6.length && (this._$AR(s5 && s5._$AB.nextSibling, e5), i6.length = e5);
+          let s5, e6 = 0;
+          for (const h4 of t5) e6 === i6.length ? i6.push(s5 = new _k(this.O(c3()), this.O(c3()), this, this.options)) : s5 = i6[e6], s5._$AI(h4), e6++;
+          e6 < i6.length && (this._$AR(s5 && s5._$AB.nextSibling, e6), i6.length = e6);
         }
         _$AR(t5 = this._$AA.nextSibling, s5) {
           for (this._$AP?.(false, true, s5); t5 !== this._$AB; ) {
@@ -719,19 +719,19 @@
         get _$AU() {
           return this._$AM._$AU;
         }
-        constructor(t5, i6, s5, e5, h4) {
-          this.type = 1, this._$AH = A, this._$AN = void 0, this.element = t5, this.name = i6, this._$AM = e5, this.options = h4, s5.length > 2 || "" !== s5[0] || "" !== s5[1] ? (this._$AH = Array(s5.length - 1).fill(new String()), this.strings = s5) : this._$AH = A;
+        constructor(t5, i6, s5, e6, h4) {
+          this.type = 1, this._$AH = A, this._$AN = void 0, this.element = t5, this.name = i6, this._$AM = e6, this.options = h4, s5.length > 2 || "" !== s5[0] || "" !== s5[1] ? (this._$AH = Array(s5.length - 1).fill(new String()), this.strings = s5) : this._$AH = A;
         }
-        _$AI(t5, i6 = this, s5, e5) {
+        _$AI(t5, i6 = this, s5, e6) {
           const h4 = this.strings;
-          let o7 = false;
-          if (void 0 === h4) t5 = M(this, t5, i6, 0), o7 = !a2(t5) || t5 !== this._$AH && t5 !== E, o7 && (this._$AH = t5);
+          let o8 = false;
+          if (void 0 === h4) t5 = M(this, t5, i6, 0), o8 = !a2(t5) || t5 !== this._$AH && t5 !== E, o8 && (this._$AH = t5);
           else {
-            const e6 = t5;
+            const e7 = t5;
             let n6, r6;
-            for (t5 = h4[0], n6 = 0; n6 < h4.length - 1; n6++) r6 = M(this, e6[s5 + n6], i6, n6), r6 === E && (r6 = this._$AH[n6]), o7 || (o7 = !a2(r6) || r6 !== this._$AH[n6]), r6 === A ? t5 = A : t5 !== A && (t5 += (r6 ?? "") + h4[n6 + 1]), this._$AH[n6] = r6;
+            for (t5 = h4[0], n6 = 0; n6 < h4.length - 1; n6++) r6 = M(this, e7[s5 + n6], i6, n6), r6 === E && (r6 = this._$AH[n6]), o8 || (o8 = !a2(r6) || r6 !== this._$AH[n6]), r6 === A ? t5 = A : t5 !== A && (t5 += (r6 ?? "") + h4[n6 + 1]), this._$AH[n6] = r6;
           }
-          o7 && !e5 && this.j(t5);
+          o8 && !e6 && this.j(t5);
         }
         j(t5) {
           t5 === A ? this.element.removeAttribute(this.name) : this.element.setAttribute(this.name, t5 ?? "");
@@ -754,13 +754,13 @@
         }
       };
       z = class extends H {
-        constructor(t5, i6, s5, e5, h4) {
-          super(t5, i6, s5, e5, h4), this.type = 5;
+        constructor(t5, i6, s5, e6, h4) {
+          super(t5, i6, s5, e6, h4), this.type = 5;
         }
         _$AI(t5, i6 = this) {
           if ((t5 = M(this, t5, i6, 0) ?? A) === E) return;
-          const s5 = this._$AH, e5 = t5 === A && s5 !== A || t5.capture !== s5.capture || t5.once !== s5.once || t5.passive !== s5.passive, h4 = t5 !== A && (s5 === A || e5);
-          e5 && this.element.removeEventListener(this.name, this, s5), h4 && this.element.addEventListener(this.name, this, t5), this._$AH = t5;
+          const s5 = this._$AH, e6 = t5 === A && s5 !== A || t5.capture !== s5.capture || t5.once !== s5.once || t5.passive !== s5.passive, h4 = t5 !== A && (s5 === A || e6);
+          e6 && this.element.removeEventListener(this.name, this, s5), h4 && this.element.addEventListener(this.name, this, t5), this._$AH = t5;
         }
         handleEvent(t5) {
           "function" == typeof this._$AH ? this._$AH.call(this.options?.host ?? this.element, t5) : this._$AH.handleEvent(t5);
@@ -781,11 +781,11 @@
       B = t2.litHtmlPolyfillSupport;
       B?.(S2, k), (t2.litHtmlVersions ?? (t2.litHtmlVersions = [])).push("3.3.3");
       D = (t5, i6, s5) => {
-        const e5 = s5?.renderBefore ?? i6;
-        let h4 = e5._$litPart$;
+        const e6 = s5?.renderBefore ?? i6;
+        let h4 = e6._$litPart$;
         if (void 0 === h4) {
           const t6 = s5?.renderBefore ?? null;
-          e5._$litPart$ = h4 = new k(i6.insertBefore(c3(), t6), t6, void 0, s5 ?? {});
+          e6._$litPart$ = h4 = new k(i6.insertBefore(c3(), t6), t6, void 0, s5 ?? {});
         }
         return h4._$AI(t5), h4;
       };
@@ -847,90 +847,122 @@
     }
   });
 
-  // node_modules/lit-html/directive-helpers.js
-  var t3, r4;
-  var init_directive_helpers = __esm({
-    "node_modules/lit-html/directive-helpers.js"() {
-      init_lit_html();
-      ({ I: t3 } = j);
-      r4 = (o7) => void 0 === o7.strings;
-    }
-  });
-
   // node_modules/lit-html/directive.js
-  var t4, e4, i5;
+  var t3, e4, i5;
   var init_directive = __esm({
     "node_modules/lit-html/directive.js"() {
-      t4 = { ATTRIBUTE: 1, CHILD: 2, PROPERTY: 3, BOOLEAN_ATTRIBUTE: 4, EVENT: 5, ELEMENT: 6 };
-      e4 = (t5) => (...e5) => ({ _$litDirective$: t5, values: e5 });
+      t3 = { ATTRIBUTE: 1, CHILD: 2, PROPERTY: 3, BOOLEAN_ATTRIBUTE: 4, EVENT: 5, ELEMENT: 6 };
+      e4 = (t5) => (...e6) => ({ _$litDirective$: t5, values: e6 });
       i5 = class {
         constructor(t5) {
         }
         get _$AU() {
           return this._$AM._$AU;
         }
-        _$AT(t5, e5, i6) {
-          this._$Ct = t5, this._$AM = e5, this._$Ci = i6;
+        _$AT(t5, e6, i6) {
+          this._$Ct = t5, this._$AM = e6, this._$Ci = i6;
         }
-        _$AS(t5, e5) {
-          return this.update(t5, e5);
+        _$AS(t5, e6) {
+          return this.update(t5, e6);
         }
-        update(t5, e5) {
-          return this.render(...e5);
+        update(t5, e6) {
+          return this.render(...e6);
         }
       };
     }
   });
 
+  // node_modules/lit-html/directives/unsafe-html.js
+  var e5, o5;
+  var init_unsafe_html = __esm({
+    "node_modules/lit-html/directives/unsafe-html.js"() {
+      init_lit_html();
+      init_directive();
+      e5 = class extends i5 {
+        constructor(i6) {
+          if (super(i6), this.it = A, i6.type !== t3.CHILD) throw Error(this.constructor.directiveName + "() can only be used in child bindings");
+        }
+        render(r6) {
+          if (r6 === A || null == r6) return this._t = void 0, this.it = r6;
+          if (r6 === E) return r6;
+          if ("string" != typeof r6) throw Error(this.constructor.directiveName + "() called with a non-string value");
+          if (r6 === this.it) return this._t;
+          this.it = r6;
+          const s5 = [r6];
+          return s5.raw = s5, this._t = { _$litType$: this.constructor.resultType, strings: s5, values: [] };
+        }
+      };
+      e5.directiveName = "unsafeHTML", e5.resultType = 1;
+      o5 = e4(e5);
+    }
+  });
+
+  // node_modules/lit/directives/unsafe-html.js
+  var init_unsafe_html2 = __esm({
+    "node_modules/lit/directives/unsafe-html.js"() {
+      init_unsafe_html();
+    }
+  });
+
+  // node_modules/lit-html/directive-helpers.js
+  var t4, r4;
+  var init_directive_helpers = __esm({
+    "node_modules/lit-html/directive-helpers.js"() {
+      init_lit_html();
+      ({ I: t4 } = j);
+      r4 = (o8) => void 0 === o8.strings;
+    }
+  });
+
   // node_modules/lit-html/async-directive.js
   function h3(i6) {
-    void 0 !== this._$AN ? (o5(this), this._$AM = i6, r5(this)) : this._$AM = i6;
+    void 0 !== this._$AN ? (o6(this), this._$AM = i6, r5(this)) : this._$AM = i6;
   }
-  function n4(i6, t5 = false, e5 = 0) {
+  function n4(i6, t5 = false, e6 = 0) {
     const r6 = this._$AH, h4 = this._$AN;
-    if (void 0 !== h4 && 0 !== h4.size) if (t5) if (Array.isArray(r6)) for (let i7 = e5; i7 < r6.length; i7++) s4(r6[i7], false), o5(r6[i7]);
-    else null != r6 && (s4(r6, false), o5(r6));
+    if (void 0 !== h4 && 0 !== h4.size) if (t5) if (Array.isArray(r6)) for (let i7 = e6; i7 < r6.length; i7++) s4(r6[i7], false), o6(r6[i7]);
+    else null != r6 && (s4(r6, false), o6(r6));
     else s4(this, i6);
   }
-  var s4, o5, r5, c4, f3;
+  var s4, o6, r5, c4, f3;
   var init_async_directive = __esm({
     "node_modules/lit-html/async-directive.js"() {
       init_directive_helpers();
       init_directive();
       init_directive();
       s4 = (i6, t5) => {
-        const e5 = i6._$AN;
-        if (void 0 === e5) return false;
-        for (const i7 of e5) i7._$AO?.(t5, false), s4(i7, t5);
+        const e6 = i6._$AN;
+        if (void 0 === e6) return false;
+        for (const i7 of e6) i7._$AO?.(t5, false), s4(i7, t5);
         return true;
       };
-      o5 = (i6) => {
-        let t5, e5;
+      o6 = (i6) => {
+        let t5, e6;
         do {
           if (void 0 === (t5 = i6._$AM)) break;
-          e5 = t5._$AN, e5.delete(i6), i6 = t5;
-        } while (0 === e5?.size);
+          e6 = t5._$AN, e6.delete(i6), i6 = t5;
+        } while (0 === e6?.size);
       };
       r5 = (i6) => {
         for (let t5; t5 = i6._$AM; i6 = t5) {
-          let e5 = t5._$AN;
-          if (void 0 === e5) t5._$AN = e5 = /* @__PURE__ */ new Set();
-          else if (e5.has(i6)) break;
-          e5.add(i6), c4(t5);
+          let e6 = t5._$AN;
+          if (void 0 === e6) t5._$AN = e6 = /* @__PURE__ */ new Set();
+          else if (e6.has(i6)) break;
+          e6.add(i6), c4(t5);
         }
       };
       c4 = (i6) => {
-        i6.type == t4.CHILD && (i6._$AP ?? (i6._$AP = n4), i6._$AQ ?? (i6._$AQ = h3));
+        i6.type == t3.CHILD && (i6._$AP ?? (i6._$AP = n4), i6._$AQ ?? (i6._$AQ = h3));
       };
       f3 = class extends i5 {
         constructor() {
           super(...arguments), this._$AN = void 0;
         }
-        _$AT(i6, t5, e5) {
-          super._$AT(i6, t5, e5), r5(this), this.isConnected = i6._$AU;
+        _$AT(i6, t5, e6) {
+          super._$AT(i6, t5, e6), r5(this), this.isConnected = i6._$AU;
         }
         _$AO(i6, t5 = true) {
-          i6 !== this.isConnected && (this.isConnected = i6, i6 ? this.reconnected?.() : this.disconnected?.()), t5 && (s4(this, i6), o5(this));
+          i6 !== this.isConnected && (this.isConnected = i6, i6 ? this.reconnected?.() : this.disconnected?.()), t5 && (s4(this, i6), o6(this));
         }
         setValue(t5) {
           if (r4(this._$Ct)) this._$Ct._$AI(t5, this);
@@ -948,30 +980,30 @@
   });
 
   // node_modules/lit-html/directives/ref.js
-  var o6, n5;
+  var o7, n5;
   var init_ref = __esm({
     "node_modules/lit-html/directives/ref.js"() {
       init_lit_html();
       init_async_directive();
       init_directive();
-      o6 = /* @__PURE__ */ new WeakMap();
+      o7 = /* @__PURE__ */ new WeakMap();
       n5 = e4(class extends f3 {
         render(i6) {
           return A;
         }
         update(i6, [s5]) {
-          const e5 = s5 !== this.G;
-          return e5 && this.rt(void 0), (e5 || this.lt !== this.ct) && (this.G = s5, this.ht = i6.options?.host, this.rt(this.ct = i6.element)), A;
+          const e6 = s5 !== this.G;
+          return e6 && this.rt(void 0), (e6 || this.lt !== this.ct) && (this.G = s5, this.ht = i6.options?.host, this.rt(this.ct = i6.element)), A;
         }
         rt(t5) {
           if (void 0 !== this.G) if (this.isConnected || (t5 = void 0), "function" == typeof this.G) {
             const i6 = this.ht ?? globalThis;
-            let s5 = o6.get(i6);
-            void 0 === s5 && (s5 = /* @__PURE__ */ new WeakMap(), o6.set(i6, s5)), void 0 !== s5.get(this.G) && this.G.call(this.ht, void 0), s5.set(this.G, t5), void 0 !== t5 && this.G.call(this.ht, t5);
+            let s5 = o7.get(i6);
+            void 0 === s5 && (s5 = /* @__PURE__ */ new WeakMap(), o7.set(i6, s5)), void 0 !== s5.get(this.G) && this.G.call(this.ht, void 0), s5.set(this.G, t5), void 0 !== t5 && this.G.call(this.ht, t5);
           } else this.G.value = t5;
         }
         get lt() {
-          return "function" == typeof this.G ? o6.get(this.ht ?? globalThis)?.get(this.G) : this.G?.value;
+          return "function" == typeof this.G ? o7.get(this.ht ?? globalThis)?.get(this.G) : this.G?.value;
         }
         disconnected() {
           this.lt === this.ct && this.rt(void 0);
@@ -1026,7 +1058,11 @@
     });
     s5 = s5.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     s5 = s5.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
-    s5 = s5.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    s5 = s5.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_2, t5, u3) => {
+      let url = String(u3).replace(/["'<>`\s]/g, "");
+      if (!/^(https?:|mailto:|#|\/|\.\/|\.\.\/)/i.test(url)) url = "#";
+      return `<a href="${url}" target="_blank" rel="noopener">${t5}</a>`;
+    });
     s5 = s5.replace(/\u0000(\d+)\u0000/g, (_2, i6) => `<code>${codes[+i6]}</code>`);
     return s5;
   }
@@ -1042,15 +1078,15 @@
   function buildRenderItems(entries) {
     const items = [];
     const byToolId = /* @__PURE__ */ new Map();
-    for (const e5 of entries) {
-      if (!e5 || typeof e5 !== "object") continue;
+    for (const e6 of entries) {
+      if (!e6 || typeof e6 !== "object") continue;
       const attach = (it) => {
-        it._id = e5.id || "";
+        it._id = e6.id || "";
         return it;
       };
-      switch (e5.type) {
+      switch (e6.type) {
         case "message": {
-          const msg = e5.message || {};
+          const msg = e6.message || {};
           const role = msg.role;
           if (role === "toolResult") {
             byToolId.set(msg.toolCallId, msg);
@@ -1068,22 +1104,61 @@
           break;
         }
         case "model_change":
-          items.push(attach({ kind: "ev-model", provider: e5.provider, modelId: e5.modelId }));
+          items.push(attach({ kind: "ev-model", provider: e6.provider, modelId: e6.modelId }));
           break;
         case "thinking_level_change":
-          items.push(attach({ kind: "ev-thinking", level: e5.thinkingLevel }));
+          items.push(attach({ kind: "ev-thinking", level: e6.thinkingLevel }));
           break;
         case "compaction":
-          items.push(attach({ kind: "ev-compaction", summary: e5.summary, tokensBefore: e5.tokensBefore }));
+          items.push(attach({ kind: "ev-compaction", summary: e6.summary, tokensBefore: e6.tokensBefore }));
           break;
         case "branch_summary":
-          items.push(attach({ kind: "ev-branch", summary: e5.summary }));
+          items.push(attach({ kind: "ev-branch", summary: e6.summary }));
           break;
+        case "custom_message": {
+          if (e6.display === false) break;
+          items.push(attach({ kind: "custom", msg: { customType: e6.customType, content: e6.content, details: e6.details } }));
+          break;
+        }
+        case "custom": {
+          items.push(attach({ kind: "custom", msg: { customType: e6.customType, content: customDataText(e6.data) } }));
+          break;
+        }
         default:
           break;
       }
     }
     return items;
+  }
+  function customDataText(data) {
+    if (!data || typeof data !== "object") return "";
+    const out = [];
+    if (Array.isArray(data.queries)) {
+      for (const q of data.queries) {
+        if (!q) continue;
+        if (q.query) out.push(`> ${q.query}`);
+        if (q.answer) out.push(q.answer);
+      }
+    }
+    if (Array.isArray(data.urls)) {
+      for (const u3 of data.urls) {
+        if (!u3) continue;
+        let line = `- ${u3.url || ""}`;
+        if (u3.error) line += `\uFF08${u3.error}\uFF09`;
+        out.push(line);
+        if (u3.title) out.push(`  ${u3.title}`);
+      }
+    }
+    return out.join("\n\n");
+  }
+  function askAnsweredText(q) {
+    const vals = Array.isArray(q.values) ? q.values : [];
+    if (!vals.length) return "\uFF08\u672A\u56DE\u7B54\uFF09";
+    const opts = Array.isArray(q.question && q.question.options) ? q.question.options : [];
+    return vals.map((v2) => {
+      const o8 = opts.find((o9) => o9 && o9.value === v2);
+      return o8 && o8.label ? o8.label : v2;
+    }).join("\u3001");
   }
   function applyLiveEvent(ev) {
     const st = sessionState;
@@ -1092,8 +1167,22 @@
         st.agentRunning = true;
         break;
       case "agent_settled":
+      case "agent_end": {
         st.agentRunning = false;
+        if (st.pendingAsk) {
+          const askId = st.pendingAsk.id;
+          const idx = st.entries.findIndex((it) => it.kind === "ask" && it.ask && String(it.ask.id) === String(askId));
+          if (idx >= 0) {
+            st.entries[idx] = {
+              kind: "custom",
+              msg: { customType: "ask-skipped", content: "\u63D0\u95EE\u5DF2\u8DF3\u8FC7\uFF08\u8D85\u65F6\u6216\u4E2D\u6B62\uFF09" },
+              _id: "ask-" + askId
+            };
+          }
+          st.pendingAsk = null;
+        }
         break;
+      }
       case "turn_start":
         st.agentRunning = true;
         break;
@@ -1161,6 +1250,24 @@
         st.entries.push({ kind: "user", msg: ev.message || {} });
         break;
       }
+      case "extension_ui_request": {
+        const method = ev.method || "";
+        if (method === "select" || method === "confirm" || method === "input" || method === "editor") {
+          st.pendingAsk = {
+            id: ev.id,
+            method,
+            title: ev.title || "",
+            options: Array.isArray(ev.options) ? ev.options : [],
+            message: typeof ev.message === "string" ? ev.message : "",
+            placeholder: ev.placeholder || ""
+          };
+          st.entries.push({ kind: "ask", ask: st.pendingAsk, _id: "ask-" + ev.id });
+        } else if (method === "notify" && ev.message) {
+          Promise.resolve().then(() => (init_core(), core_exports)).then((m2) => m2.toast(String(ev.message), false)).catch(() => {
+          });
+        }
+        break;
+      }
       default:
         break;
     }
@@ -1178,6 +1285,8 @@
         return b2`<ph-msg-bash .msg=${it.msg}></ph-msg-bash>`;
       case "custom":
         return b2`<ph-msg-custom .msg=${it.msg}></ph-msg-custom>`;
+      case "ask":
+        return b2`<ph-ask-card .ask=${it.ask}></ph-ask-card>`;
       case "ev-model":
         return b2`<div class="pw-event">🔄 模型切换 → ${it.provider}/${it.modelId}</div>`;
       case "ev-thinking":
@@ -1208,10 +1317,11 @@
     if (d3 < 86400 * 7) return `${Math.floor(d3 / 86400)} \u5929\u524D`;
     return new Date(iso).toLocaleDateString();
   }
-  var PW, STATUS_DOT, STATUS_LABEL2, sessionState, PhSessionsPage, PhSessionList, PhSessionCreate, PhSessionView, PhSessionHeader, PhMessageStream, msgStyles, PhMsgUser, PhMsgAssistant, PhMsgBash, PhMsgCustom, PhToolCard, PhSessionTerm, PhSessionInput;
+  var PW, STATUS_DOT, STATUS_LABEL2, sessionState, PhSessionsPage, PhSessionList, PhSessionCreate, PhSessionView, PhSessionHeader, PhMessageStream, msgStyles, PhMsgUser, PhMsgAssistant, PhMsgBash, PhMsgCustom, PhAskCard, PhToolCard, PhSessionTerm, PhSessionInput;
   var init_sessions = __esm({
     "internal/web/static/src/sessions.js"() {
       init_lit();
+      init_unsafe_html2();
       init_ref2();
       init_core();
       PW = i`
@@ -1274,17 +1384,17 @@
           this.selectedId = null;
           this.showCreate = false;
           this.prefill = null;
-          this._onMessage = (e5) => this._handleLive(e5.detail);
-          this._onUpdated = (e5) => {
-            const d3 = e5.detail;
+          this._onMessage = (e6) => this._handleLive(e6.detail);
+          this._onUpdated = (e6) => {
+            const d3 = e6.detail;
             if (d3 && d3.id && sessionState.detail && d3.id === sessionState.detail.id) {
               sessionState.detail = d3;
               this.requestUpdate();
             }
             this.refreshList();
           };
-          this._onDetailRefresh = (e5) => {
-            if (e5.detail) this._loadDetail(e5.detail);
+          this._onDetailRefresh = (e6) => {
+            if (e6.detail) this._loadDetail(e6.detail);
           };
         }
         connectedCallback() {
@@ -1339,8 +1449,8 @@
             sessionState.transcriptLoaded = sessionState.entries.length;
             this.requestUpdate();
             if (ss.status === "active") this._loadState(id);
-          } catch (e5) {
-            toastErr(`\u52A0\u8F7D\u4F1A\u8BDD\u5931\u8D25: ${e5.message || e5}`);
+          } catch (e6) {
+            toastErr(`\u52A0\u8F7D\u4F1A\u8BDD\u5931\u8D25: ${e6.message || e6}`);
           }
         }
         // 分页：加载更早的消息（pi-web：Scroll up to load earlier messages）。
@@ -1352,8 +1462,8 @@
           try {
             const tr = await api(`/api/sessions/${id}/transcript?limit=100&before=${encodeURIComponent(before || "")}`);
             const older = buildRenderItems(tr && tr.entries ? tr.entries : []);
-            const known = new Set(sessionState.entries.map((e5) => e5._id));
-            const merged = [...older.filter((e5) => !known.has(e5._id)), ...sessionState.entries];
+            const known = new Set(sessionState.entries.map((e6) => e6._id));
+            const merged = [...older.filter((e6) => !known.has(e6._id)), ...sessionState.entries];
             sessionState.entries = merged;
             sessionState.transcriptTotal = tr ? tr.total : merged.length;
             this.requestUpdate();
@@ -1381,7 +1491,7 @@
         render() {
           return b2`
       <div class="col-list">
-        <ph-session-list .list=${sessionState.list} .selectedId=${this.selectedId} @select=${(e5) => this.select(e5.detail)} @create=${() => {
+        <ph-session-list .list=${sessionState.list} .selectedId=${this.selectedId} @select=${(e6) => this.select(e6.detail)} @create=${() => {
             this.showCreate = true;
             this.prefill = null;
             this.requestUpdate();
@@ -1397,13 +1507,13 @@
       ${this.showCreate ? b2`<ph-session-create .prefill=${this.prefill} @close=${() => {
             this.showCreate = false;
             this.requestUpdate();
-          }} @created=${(e5) => {
-            this._onCreated(e5.detail);
+          }} @created=${(e6) => {
+            this._onCreated(e6.detail);
           }}></ph-session-create>` : ""}
     `;
         }
-        // 创建完成：刷新列表并选中；带初始指令时自动启动并发送第一条消息
-        // （与任务弹窗「会话」模式行为一致）。
+        // 创建完成：刷新列表并选中；带初始指令时等待视图自动启动完成后
+        // 发送第一条消息（启动统一由会话视图负责，避免重复 start）。
         _onCreated(detail) {
           const id = detail.id;
           const firstMsg = (detail.body || "").trim();
@@ -1412,24 +1522,26 @@
           this.refreshList();
           this.requestUpdate();
           this.select(id);
-          if (firstMsg) {
-            (async () => {
+          if (!firstMsg) return;
+          (async () => {
+            const deadline = Date.now() + 3e4;
+            while (Date.now() < deadline) {
               try {
-                await api(`/api/sessions/${id}/start`, { method: "POST" });
-              } catch (e5) {
-                toastErr(`\u542F\u52A8\u4F1A\u8BDD\u5931\u8D25: ${e5.message || e5}`);
-                return;
+                const ss = await api(`/api/sessions/${id}`);
+                if (ss.status === "active") break;
+              } catch (_2) {
               }
-              try {
-                await api(`/api/sessions/${id}/prompt`, {
-                  method: "POST",
-                  body: JSON.stringify({ message: firstMsg })
-                });
-              } catch (e5) {
-                toastErr(`\u53D1\u9001\u521D\u59CB\u6307\u4EE4\u5931\u8D25: ${e5.message || e5}`);
-              }
-            })();
-          }
+              await new Promise((r6) => setTimeout(r6, 400));
+            }
+            try {
+              await api(`/api/sessions/${id}/prompt`, {
+                method: "POST",
+                body: JSON.stringify({ message: firstMsg })
+              });
+            } catch (e6) {
+              toastErr(`\u53D1\u9001\u521D\u59CB\u6307\u4EE4\u5931\u8D25: ${e6.message || e6}`);
+            }
+          })();
         }
       };
       __publicField(PhSessionsPage, "styles", i`
@@ -1472,8 +1584,8 @@
         <h2>会话</h2><span class="count">${items.length}</span>
       </div>
       <div class="toolbar">
-        <select .value=${this.filter} @change=${(e5) => {
-            this.filter = e5.target.value;
+        <select .value=${this.filter} @change=${(e6) => {
+            this.filter = e6.target.value;
           }}>
           <option value="all">全部</option>
           <option value="active">活跃</option>
@@ -1494,7 +1606,7 @@
               ${s5.project_name ? b2`<span>·</span><span>${s5.project_name}</span>` : ""}
               <span>·</span><span>${relTime(s5.last_message_at || s5.created_at)}</span>
               ${s5.message_count ? b2`<span>·</span><span>${s5.message_count} 条消息</span>` : ""}
-              ${s5.task_id ? b2`<span>·</span><a href="#/issue/${s5.task_id}" @click=${(e5) => e5.stopPropagation()}>任务 #${s5.task_id}</a>` : ""}
+              ${s5.task_id ? b2`<span>·</span><a href="#/issue/${s5.task_id}" @click=${(e6) => e6.stopPropagation()}>任务 #${s5.task_id}</a>` : ""}
             </div>
           </div>`)}
         ${!items.length ? b2`<div class="pw-empty-sm">暂无会话</div>` : ""}
@@ -1554,7 +1666,6 @@
             if (pf.agent && this.agents.some((x2) => String(x2.id) === String(pf.agent))) this.agentId = String(pf.agent);
             else if (this.agents.length) this.agentId = String(this.agents[0].id);
             if (pf.project && this.projects.some((x2) => String(x2.id) === String(pf.project))) this.projectId = String(pf.project);
-            else if (this.projects.length) this.projectId = String(this.projects[0].id);
             this.title = pf.title || "";
             this.body = pf.body || "";
             this.requestUpdate();
@@ -1581,32 +1692,32 @@
               bubbles: true,
               composed: true
             }));
-          } catch (e5) {
-            toastErr(`\u521B\u5EFA\u5931\u8D25: ${e5.message || e5}`);
+          } catch (e6) {
+            toastErr(`\u521B\u5EFA\u5931\u8D25: ${e6.message || e6}`);
           }
           this.submitting = false;
         }
         render() {
           const proj = this.projects.find((p3) => String(p3.id) === this.projectId);
           return b2`
-      <div class="box" @click=${(e5) => e5.stopPropagation()}>
+      <div class="box" @click=${(e6) => e6.stopPropagation()}>
         <h3>新建会话</h3>
-        <label>标题 <input .value=${this.title} @input=${(e5) => this.title = e5.target.value} placeholder="例如：修复登录失败" @keydown=${(e5) => e5.key === "Enter" && !e5.isComposing && this.submit()}></label>
+        <label>标题 <input .value=${this.title} @input=${(e6) => this.title = e6.target.value} placeholder="例如：修复登录失败" @keydown=${(e6) => e6.key === "Enter" && !e6.isComposing && this.submit()}></label>
         <label>初始指令
-          <textarea .value=${this.body} @input=${(e5) => this.body = e5.target.value} rows="3" placeholder="可选：创建后自动启动并发送第一条指令（与任务弹窗的「任务内容」一致）"></textarea>
+          <textarea .value=${this.body} @input=${(e6) => this.body = e6.target.value} rows="3" placeholder="可选：创建后自动启动并发送第一条指令（与任务弹窗的「任务内容」一致）"></textarea>
         </label>
         <label>角色
-          <select .value=${this.agentId} @change=${(e5) => this.agentId = e5.target.value}>
+          <select .value=${this.agentId} @change=${(e6) => this.agentId = e6.target.value}>
             ${this.agents.map((a3) => b2`<option value=${a3.id}>${a3.name}（${a3.cli}）</option>`)}
           </select>
         </label>
         <label>项目
-          <select .value=${this.projectId} @change=${(e5) => this.projectId = e5.target.value}>
+          <select .value=${this.projectId} @change=${(e6) => this.projectId = e6.target.value}>
             <option value="">（无项目）</option>
             ${this.projects.map((p3) => b2`<option value=${p3.id}>${p3.name}</option>`)}
           </select>
         </label>
-        ${proj ? b2`<div class="hint">${proj.is_git ? "git \u9879\u76EE\uFF1A\u521B\u5EFA\u72EC\u7ACB worktree\uFF08sessions/<\u9879\u76EE>/session-N\uFF09" : "\u975E git \u9879\u76EE\uFF1A\u590D\u5236\u5230\u4E13\u5C5E\u4F1A\u8BDD\u76EE\u5F55\uFF08sessions/<\u9879\u76EE>/session-N\uFF09\uFF0C\u4E0D\u76F4\u63A5\u5728\u539F\u76EE\u5F55\u4E0A\u5DE5\u4F5C"}，与任务互不污染。</div>` : ""}
+        ${proj ? b2`<div class="hint">${proj.is_git ? "git \u9879\u76EE\uFF1A\u521B\u5EFA\u72EC\u7ACB worktree\uFF08sessions/<\u9879\u76EE>/session-N\uFF09" : "\u975E git \u9879\u76EE\uFF1A\u590D\u5236\u5230\u4E13\u5C5E\u4F1A\u8BDD\u76EE\u5F55\uFF08sessions/<\u9879\u76EE>/session-N\uFF09\uFF0C\u4E0D\u76F4\u63A5\u5728\u539F\u76EE\u5F55\u4E0A\u5DE5\u4F5C"}，与任务互不污染。</div>` : b2`<div class="hint">无项目：会话在独立目录（sessions/session-N）运行，不关联任何项目。</div>`}
         <div class="row">
           <button @click=${() => this.dispatchEvent(new CustomEvent("close", { bubbles: true, composed: true }))}>取消</button>
           <button class="primary" @click=${this.submit}>${this.submitting ? "\u521B\u5EFA\u4E2D\u2026" : "\u521B\u5EFA\u4F1A\u8BDD"}</button>
@@ -1636,6 +1747,7 @@
         constructor() {
           super();
           this._onLive = () => this.requestUpdate();
+          this._bootedFor = null;
         }
         connectedCallback() {
           super.connectedCallback();
@@ -1647,14 +1759,34 @@
           window.removeEventListener("ph-session-message", this._onLive);
           window.removeEventListener("ph-session-updated", this._onLive);
         }
+        // 统一自动启动：created 会话打开即启动；终端式（codex/claude）挂起会话
+        // 打开即恢复。pi/omp 挂起会话靠发送消息自动恢复（Prompt 触发），不提前拉起。
+        updated() {
+          const ss = sessionState.detail;
+          if (!ss || this._bootedFor === ss.id) return;
+          const needStart = ss.status === "created" || ss.status === "suspended" && ss.cli !== "pi" && ss.cli !== "omp";
+          if (!needStart) return;
+          this._bootedFor = ss.id;
+          this._autoStart(ss.id);
+        }
+        async _autoStart(id) {
+          try {
+            await api(`/api/sessions/${id}/start`, { method: "POST" });
+            window.dispatchEvent(new CustomEvent("ph-session-updated"));
+            window.dispatchEvent(new CustomEvent("ph-session-detail-refresh", { detail: id }));
+            setTimeout(() => window.dispatchEvent(new CustomEvent("ph-session-updated")), 400);
+          } catch (e6) {
+            toastErr(`\u81EA\u52A8\u542F\u52A8\u5931\u8D25: ${e6.message || e6}`);
+          }
+        }
         render() {
           const st = sessionState;
           const ss = st.detail;
           if (!ss) return b2`<div class="pw-empty">加载中…</div>`;
-          const isPi = (ss.cli || "") === "pi";
+          const msgFlow = ss.cli === "pi" || ss.cli === "omp";
           return b2`
       <ph-session-header .session=${ss} .live=${st.live} .running=${st.agentRunning}></ph-session-header>
-      ${isPi ? b2`<ph-message-stream .sessionId=${this.sessionId} .entries=${st.entries}></ph-message-stream>
+      ${msgFlow ? b2`<ph-message-stream .sessionId=${this.sessionId} .entries=${st.entries}></ph-message-stream>
              <ph-session-input .session=${ss} .running=${st.agentRunning} @refresh=${() => this.requestUpdate()}></ph-session-input>` : b2`<ph-session-term .session=${ss}></ph-session-term>`}
     `;
         }
@@ -1691,8 +1823,8 @@
             this.requestUpdate();
             window.dispatchEvent(new CustomEvent("ph-session-detail-refresh", { detail: id }));
             setTimeout(() => window.dispatchEvent(new CustomEvent("ph-session-updated")), 400);
-          } catch (e5) {
-            toastErr(e5.message || String(e5));
+          } catch (e6) {
+            toastErr(e6.message || String(e6));
           }
         }
         render() {
@@ -1714,7 +1846,7 @@
           ${this.live && this.live.thinkingLevel ? b2`<span>·</span><span>思考:${this.live.thinkingLevel}</span>` : ""}
         </div>
         <span class="spacer"></span>
-        ${s5.status === "created" ? b2`<button class="primary" @click=${() => this.act("start")}>启动</button><button class="danger" @click=${() => this.act("delete")}>丢弃</button>` : ""}
+        ${s5.status === "created" ? b2`<button class="danger" @click=${() => this.act("delete")}>丢弃</button>` : ""}
         ${s5.status === "active" ? b2`
           ${running ? b2`<button @click=${() => this.act("abort")}>中止</button>` : ""}
           <button class="primary" @click=${() => this.act("deliver")}>交付</button>` : ""}
@@ -1758,14 +1890,30 @@
           this._atBottom = true;
           this._loadingOlder = false;
           this._onLive = () => this.requestUpdate();
+          this._onAskAnswered = (e6) => {
+            const d3 = e6.detail || {};
+            const st = sessionState;
+            const idx = st.entries.findIndex((it) => it._id === "ask-" + d3.askId);
+            if (idx >= 0) {
+              st.entries[idx] = {
+                kind: "user",
+                msg: { role: "user", content: [{ type: "text", text: d3.text || "" }], timestamp: Date.now() },
+                _id: "ask-" + d3.askId
+              };
+            }
+            if (st.pendingAsk && String(st.pendingAsk.id) === String(d3.askId)) st.pendingAsk = null;
+            this.requestUpdate();
+          };
         }
         connectedCallback() {
           super.connectedCallback();
           window.addEventListener("ph-session-message", this._onLive);
+          window.addEventListener("ph-session-ask-answered", this._onAskAnswered);
         }
         disconnectedCallback() {
           super.disconnectedCallback();
           window.removeEventListener("ph-session-message", this._onLive);
+          window.removeEventListener("ph-session-ask-answered", this._onAskAnswered);
         }
         willUpdate(ch) {
           if (ch.has("sessionId")) this._atBottom = true;
@@ -1777,7 +1925,7 @@
           }
           const chat = this.renderRoot.querySelector(".chat");
           if (chat) {
-            for (const el of chat.querySelectorAll("ph-msg-user, ph-msg-assistant, ph-msg-bash, ph-msg-custom")) {
+            for (const el of chat.querySelectorAll("ph-msg-user, ph-msg-assistant, ph-msg-bash, ph-msg-custom, ph-ask-card")) {
               if (!el.hasUpdated) el.requestUpdate();
             }
           }
@@ -1786,8 +1934,8 @@
           const chat = this.renderRoot.querySelector(".chat");
           if (chat) chat.scrollTop = chat.scrollHeight;
         }
-        onScroll(e5) {
-          const chat = e5.currentTarget;
+        onScroll(e6) {
+          const chat = e6.currentTarget;
           this._atBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
           if (chat.scrollTop <= 40 && !this._loadingOlder && this._hasOlder()) {
             this._loadingOlder = true;
@@ -1860,7 +2008,7 @@
           const blocks = Array.isArray(m2.content) ? m2.content : [{ type: "text", text: m2.content }];
           return b2`<div class="msg user">
       <div class="msg-header"><span class="who">你</span><span class="when">${fmtTime(m2.timestamp)}</span></div>
-      <div class="ph-md">${blocks.map((b3) => b3.type === "image" ? b2`<img src=${`data:${b3.mimeType || "image/png"};base64,${b3.data}`} style="max-width:200px;border-radius:8px">` : b2`<div>${md(b3.text || "")}</div>`)}</div>
+      <div class="ph-md">${blocks.map((b3) => b3.type === "image" ? b2`<img src=${`data:${b3.mimeType || "image/png"};base64,${b3.data}`} style="max-width:200px;border-radius:8px">` : b2`<div>${o5(md(b3.text || ""))}</div>`)}</div>
     </div>`;
         }
       };
@@ -1888,8 +2036,8 @@
           const blocks = Array.isArray(m2.content) ? m2.content : [];
           const texts = [], tools = [];
           for (const b3 of blocks) {
-            if (b3.type === "text") texts.push(md(b3.text || ""));
-            else if (b3.type === "thinking") texts.push(b2`<details class="thinking"><summary>💭 思考（${(b3.thinking || "").length} 字）</summary><div class="ph-md">${md(b3.thinking)}</div></details>`);
+            if (b3.type === "text") texts.push(o5(md(b3.text || "")));
+            else if (b3.type === "thinking") texts.push(b2`<details class="thinking"><summary>💭 思考（${(b3.thinking || "").length} 字）</summary><div class="ph-md">${o5(md(b3.thinking))}</div></details>`);
             else if (b3.type === "toolCall") tools.push(b3);
           }
           const model = m2.model || "";
@@ -1945,7 +2093,14 @@
       PhMsgCustom = class extends i4 {
         render() {
           const m2 = this.msg || {};
-          return b2`<div class="box"><div class="t">${m2.customType || "custom"}</div><div class="ph-md">${md(typeof m2.content === "string" ? m2.content : "")}</div></div>`;
+          const d3 = m2.details;
+          const qa = d3 && Array.isArray(d3.questions) ? d3.questions : null;
+          return b2`<div class="box"><div class="t">${m2.customType || "custom"}</div>
+      ${qa && qa.length ? b2`<div class="qa">${qa.map((q) => b2`<div class="q">
+        <div class="q-text">${o5(md(q.question && q.question.question || ""))}</div>
+        <div class="a">${askAnsweredText(q)}</div>
+      </div>`)}</div>` : b2`<div class="ph-md">${o5(md(typeof m2.content === "string" ? m2.content : ""))}</div>`}
+    </div>`;
         }
       };
       __publicField(PhMsgCustom, "styles", i`
@@ -1953,9 +2108,111 @@
     :host { display: block; margin: 0 0 14px; }
     .box { border: 1px solid var(--pw-purple-border); border-radius: 10px; padding: 8px 12px; font-size: 13px; background: var(--pw-purple-surface); color: var(--pw-text); }
     .t { font-weight: 700; color: var(--pw-purple); font-size: 11px; margin-bottom: 4px; }
+    .qa { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+    .q { border-left: 2px solid var(--pw-purple-border); padding-left: 8px; }
+    .q-text { font-weight: 600; }
+    .a { color: var(--pw-text-secondary); font-size: 12.5px; margin-top: 2px; }
+    .a::before { content: "→ "; color: var(--pw-purple); }
   `);
       __publicField(PhMsgCustom, "properties", { msg: { attribute: false } });
       customElements.define("ph-msg-custom", PhMsgCustom);
+      PhAskCard = class extends i4 {
+        constructor() {
+          super();
+          this.ask = null;
+          this.value = "";
+          this.busy = false;
+          this.err = "";
+        }
+        _displayText(value, confirmed, cancelled) {
+          const a3 = this.ask || {};
+          if (cancelled) return "\u5DF2\u53D6\u6D88\u63D0\u95EE";
+          if (confirmed != null) return confirmed ? "\u5DF2\u786E\u8BA4" : "\u5DF2\u62D2\u7EDD";
+          const v2 = value != null ? String(value) : "";
+          if (a3.method === "select") {
+            const opt = Array.isArray(a3.options) ? a3.options.find((o8) => o8 === v2) : null;
+            return `[\u9009\u62E9] ${opt != null ? opt : v2}`;
+          }
+          return v2;
+        }
+        async _submit(value, confirmed, cancelled) {
+          if (this.busy) return;
+          const a3 = this.ask;
+          if (!a3 || !a3.id) return;
+          if (value != null && String(value).trim() === "") return;
+          this.busy = true;
+          this.err = "";
+          try {
+            const body = { id: a3.id };
+            if (cancelled) body.cancelled = true;
+            else if (confirmed != null) body.confirmed = confirmed;
+            else body.value = String(value);
+            await api(`/api/sessions/${sessionState.detail ? sessionState.detail.id : ""}/ask`, {
+              method: "POST",
+              body: JSON.stringify(body)
+            });
+            window.dispatchEvent(new CustomEvent("ph-session-ask-answered", {
+              detail: { askId: a3.id, text: this._displayText(value, confirmed, cancelled) }
+            }));
+          } catch (e6) {
+            this.err = e6.message || String(e6);
+          }
+          this.busy = false;
+        }
+        render() {
+          const a3 = this.ask || {};
+          const method = a3.method || "select";
+          const title = a3.title || (method === "confirm" ? "\u8BF7\u786E\u8BA4" : "\u8BF7\u9009\u62E9");
+          return b2`<div class="ask">
+      <div class="t">agent 提问</div>
+      <div class="title">${title}</div>
+      ${method === "confirm" && a3.message ? b2`<div class="msg">${a3.message}</div>` : ""}
+      ${method === "select" && Array.isArray(a3.options) && a3.options.length ? b2`<div class="opts">
+        ${a3.options.map((o8) => b2`<button class="opt" ?disabled=${this.busy} @click=${() => this._submit(o8, null, false)}>${o8}</button>`)}
+      </div>` : ""}
+      ${method === "input" || method === "editor" ? b2`
+        ${method === "editor" ? b2`<textarea rows="4" .value=${this.value} ?disabled=${this.busy} placeholder=${a3.placeholder || "\u8F93\u5165\u5185\u5BB9\u2026"} @input=${(e6) => this.value = e6.target.value}></textarea>` : b2`<input .value=${this.value} ?disabled=${this.busy} placeholder=${a3.placeholder || "\u8F93\u5165\u5185\u5BB9\u2026"} @input=${(e6) => this.value = e6.target.value} @keydown=${(e6) => {
+            if (e6.key === "Enter" && !e6.isComposing) {
+              e6.preventDefault();
+              this._submit(this.value, null, false);
+            }
+          }}>`}
+        <div class="acts">
+          <button class="primary" ?disabled=${this.busy || !this.value.trim()} @click=${() => this._submit(this.value, null, false)}>发送</button>
+          <button ?disabled=${this.busy} @click=${() => this._submit(null, null, true)}>取消</button>
+        </div>` : ""}
+      ${method === "confirm" ? b2`<div class="acts">
+        <button class="primary" ?disabled=${this.busy} @click=${() => this._submit(null, true, false)}>确认</button>
+        <button ?disabled=${this.busy} @click=${() => this._submit(null, false, false)}>拒绝</button>
+        <button ?disabled=${this.busy} @click=${() => this._submit(null, null, true)}>取消</button>
+      </div>` : ""}
+      ${this.err ? b2`<div class="err">${this.err}</div>` : ""}
+    </div>`;
+        }
+      };
+      __publicField(PhAskCard, "styles", i`
+    ${PW}
+    :host { display: block; margin: 0 0 14px; }
+    .ask { border: 1px solid var(--pw-accent-border); border-radius: 10px; background: var(--pw-selection-bg); padding: 12px; color: var(--pw-text); }
+    .t { font-size: 11px; font-weight: 700; color: var(--pw-accent); margin-bottom: 5px; }
+    .title { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+    .msg { font-size: 13.5px; color: var(--pw-text-secondary); margin-bottom: 10px; white-space: pre-wrap; }
+    .opts { display: flex; flex-direction: column; gap: 6px; }
+    .opt { text-align: left; border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-surface); color: var(--pw-text); padding: 8px 12px; cursor: pointer; font-size: 13.5px; }
+    .opt:hover { border-color: var(--pw-accent-border); background: var(--pw-surface-hover); }
+    .opt:disabled { opacity: .55; cursor: not-allowed; }
+    input, textarea { box-sizing: border-box; width: 100%; border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-bg); color: var(--pw-text); padding: 8px 10px; font: 14px/1.4 system-ui, sans-serif; resize: vertical; }
+    input:focus, textarea:focus { outline: none; border-color: var(--pw-accent-border); }
+    .acts { display: flex; gap: 8px; margin-top: 10px; }
+    button { border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-surface); color: var(--pw-text); padding: 6px 12px; cursor: pointer; font-size: 13px; }
+    button:hover { background: var(--pw-surface-hover); }
+    button.primary { border-color: var(--pw-accent-border); background: var(--pw-selection-bg); color: var(--pw-accent); font-weight: 600; }
+    button.primary:hover { background: var(--pw-accent-border); color: #fff; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .err { color: var(--pw-danger); font-size: 12.5px; margin-top: 8px; }
+  `);
+      __publicField(PhAskCard, "properties", { ask: { attribute: false }, value: { state: true }, busy: { state: true }, err: { state: true } });
+      customElements.define("ph-ask-card", PhAskCard);
       PhToolCard = class extends i4 {
         constructor() {
           super();
@@ -2008,16 +2265,22 @@
           this._fit = null;
           this._timer = null;
           this._dead = false;
+          this._lastFrame = "";
         }
         connectedCallback() {
           super.connectedCallback();
+        }
+        // Lit 的 connectedCallback 先于首次 render：此时 shadowRoot 里还没有
+        // .term-wrap，connectedCallback 里取节点必然为空 → xterm 永远不初始化。
+        // 首次渲染完成后再挂载终端。
+        firstUpdated() {
           this._init();
         }
         disconnectedCallback() {
           super.disconnectedCallback();
-          if (this._timer) clearInterval(this._timer);
+          clearInterval(this._timer);
           this._timer = null;
-          if (this._resizeTimer) clearInterval(this._resizeTimer);
+          clearInterval(this._resizeTimer);
           if (this._term) {
             try {
               this._term.dispose();
@@ -2065,10 +2328,31 @@
           this._timer = setInterval(async () => {
             try {
               const r6 = await api(`/api/sessions/${id}/terminal/output`);
-              if (r6.output) this._term.write(r6.output);
+              if (r6.output != null && this._term) {
+                const cur = r6.output;
+                const prev = this._lastFrame || "";
+                if (cur !== prev) {
+                  if (prev && cur.startsWith(prev)) {
+                    this._term.write(cur.slice(prev.length));
+                  } else {
+                    const pl = prev.split("\n");
+                    const cl = cur.split("\n");
+                    if (pl.length === cl.length) {
+                      let patch = "";
+                      for (let i6 = 0; i6 < cl.length; i6++) {
+                        if (cl[i6] !== pl[i6]) patch += `\x1B[${i6 + 1};1H${cl[i6]}\x1B[K`;
+                      }
+                      if (patch) this._term.write(patch + "\x1B[H");
+                    } else {
+                      this._term.write("\x1B[2J\x1B[H" + cur);
+                    }
+                  }
+                  this._lastFrame = cur;
+                }
+              }
               if (r6.alive === false) {
                 this._dead = true;
-                if (this._timer) clearInterval(this._timer);
+                clearInterval(this._timer);
               }
             } catch (_2) {
             }
@@ -2117,19 +2401,20 @@
               }
             }));
             this.dispatchEvent(new CustomEvent("refresh", { bubbles: true, composed: true }));
-          }).catch((e5) => toastErr(e5.message || String(e5)));
+          }).catch((e6) => toastErr(e6.message || String(e6)));
         }
         _abort() {
-          api(`/api/sessions/${this.session.id}/abort`, { method: "POST" }).then(() => window.dispatchEvent(new CustomEvent("ph-session-updated"))).catch((e5) => toastErr(e5.message || String(e5)));
+          api(`/api/sessions/${this.session.id}/abort`, { method: "POST" }).then(() => window.dispatchEvent(new CustomEvent("ph-session-updated"))).catch((e6) => toastErr(e6.message || String(e6)));
         }
         render() {
           const s5 = this.session;
-          const disabled = s5.status === "delivered" || s5.status === "deleted";
+          const askPending = !!sessionState.pendingAsk;
+          const disabled = s5.status === "delivered" || s5.status === "deleted" || askPending;
           const shellMode = this.running && s5.status === "active";
-          const hint = s5.status === "delivered" ? "\u5DF2\u4EA4\u4ED8\u4E3A\u4EFB\u52A1\uFF0C\u4F1A\u8BDD\u51BB\u7ED3\uFF08\u53EA\u8BFB\uFF09" : s5.status === "deleted" ? "\u4F1A\u8BDD\u5DF2\u5220\u9664" : s5.status === "created" ? "\u53D1\u9001\u6D88\u606F\u5C06\u81EA\u52A8\u542F\u52A8\u4F1A\u8BDD" : s5.status === "suspended" ? "\u7A7A\u95F2\u5DF2\u81EA\u52A8\u6302\u8D77\uFF0C\u53D1\u9001\u6D88\u606F\u5C06\u81EA\u52A8\u6062\u590D" : shellMode ? "agent \u6B63\u5728\u5904\u7406\u2026" : "Enter \u53D1\u9001 \xB7 Shift+Enter \u6362\u884C";
+          const hint = askPending ? "agent \u6B63\u5728\u7B49\u4F60\u56DE\u7B54\u95EE\u9898\uFF08\u89C1\u4E0A\u65B9\u63D0\u95EE\u5361\u7247\uFF09" : s5.status === "delivered" ? "\u5DF2\u4EA4\u4ED8\u4E3A\u4EFB\u52A1\uFF0C\u4F1A\u8BDD\u51BB\u7ED3\uFF08\u53EA\u8BFB\uFF09" : s5.status === "deleted" ? "\u4F1A\u8BDD\u5DF2\u5220\u9664" : s5.status === "created" ? "\u53D1\u9001\u6D88\u606F\u5C06\u81EA\u52A8\u542F\u52A8\u4F1A\u8BDD" : s5.status === "suspended" ? "\u7A7A\u95F2\u5DF2\u81EA\u52A8\u6302\u8D77\uFF0C\u53D1\u9001\u6D88\u606F\u5C06\u81EA\u52A8\u6062\u590D" : shellMode ? "agent \u6B63\u5728\u5904\u7406\u2026" : "Enter \u53D1\u9001 \xB7 Shift+Enter \u6362\u884C";
           return b2`
-      <footer class=${shellMode ? "shell-mode" : ""}>
-        ${shellMode ? b2`<div class="hint">
+      <footer class=${shellMode && !askPending ? "shell-mode" : ""}>
+        ${shellMode && !askPending ? b2`<div class="hint">
           <span class="mode">
             <span class=${this.mode === "steer" ? "on" : ""} @click=${() => this.mode = "steer"}>插入</span>
             <span class=${this.mode === "followUp" ? "on" : ""} @click=${() => this.mode = "followUp"}>排队</span>
@@ -2137,12 +2422,12 @@
           <span class="mode-hint">运行中 · 消息将排队</span>
           <span class="spacer"></span>
           <button class="danger" @click=${this._abort}>■ 中止</button>
-        </div>` : b2`<div class="hint">${hint}</div>`}
+        </div>` : b2`<div class="hint">${hint}${shellMode ? b2`<span class="spacer"></span><button class="danger" @click=${this._abort}>■ 中止</button>` : ""}</div>`}
         <div class="row">
-          <textarea .value=${this.value} ?disabled=${disabled} @input=${(e5) => this.value = e5.target.value}
-            @keydown=${(e5) => {
-            if (e5.key === "Enter" && !e5.shiftKey && !e5.isComposing) {
-              e5.preventDefault();
+          <textarea .value=${this.value} ?disabled=${disabled} @input=${(e6) => this.value = e6.target.value}
+            @keydown=${(e6) => {
+            if (e6.key === "Enter" && !e6.shiftKey && !e6.isComposing) {
+              e6.preventDefault();
               this._send();
             }
           }}
@@ -2297,8 +2582,8 @@
               body: JSON.stringify({ status: "succeeded" })
             });
             window.dispatchEvent(new CustomEvent("task-refresh"));
-          } catch (e5) {
-            Promise.resolve().then(() => (init_core(), core_exports)).then((m2) => m2.toast(e5.message || String(e5), true));
+          } catch (e6) {
+            Promise.resolve().then(() => (init_core(), core_exports)).then((m2) => m2.toast(e6.message || String(e6), true));
           }
           this.busy = false;
         }
@@ -2315,8 +2600,8 @@
             });
             this.reviewNote = "";
             window.dispatchEvent(new CustomEvent("task-refresh"));
-          } catch (e5) {
-            Promise.resolve().then(() => (init_core(), core_exports)).then((m2) => m2.toast(e5.message || String(e5), true));
+          } catch (e6) {
+            Promise.resolve().then(() => (init_core(), core_exports)).then((m2) => m2.toast(e6.message || String(e6), true));
           }
           this.busy = false;
         }
@@ -2348,7 +2633,7 @@
       <div class="bar" style="border-color:var(--warning);background:rgba(234,191,101,.08)">
         <span class="stat">⏳ 待审批 — 请审查下方 diff 后决定</span>
         <span class="spacer"></span>
-        <textarea .value=${this.reviewNote} @input=${(e5) => this.reviewNote = e5.target.value} placeholder="驳回时填写修改意见…"></textarea>
+        <textarea .value=${this.reviewNote} @input=${(e6) => this.reviewNote = e6.target.value} placeholder="驳回时填写修改意见…"></textarea>
         <button class="no" ?disabled=${this.busy} @click=${this.reject}>驳回</button>
         <button class="ok" ?disabled=${this.busy} @click=${this.approve}>批准合并</button>
       </div>`;
@@ -2648,8 +2933,8 @@
       toast(`\u5DF2\u5220\u9664 ${ids.length} \u6761`);
       await loadAll();
       loadHistory();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function cleanupHistory() {
@@ -2662,8 +2947,8 @@
       toast(`\u5DF2\u5220\u9664 ${r6.deleted} \u6761\u5386\u53F2`);
       await loadAll();
       loadHistory();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   var init_history = __esm({
@@ -2713,8 +2998,8 @@
       const d3 = await api("/api/extensions");
       raw.textContent = d3.raw || "\uFF08\u7A7A\uFF09";
       if (d3.error && d3.raw) raw.textContent = d3.raw + "\n\n[\u6267\u884C\u63D0\u793A] " + d3.error;
-    } catch (e5) {
-      raw.textContent = "\u52A0\u8F7D\u5931\u8D25: " + e5.message;
+    } catch (e6) {
+      raw.textContent = "\u52A0\u8F7D\u5931\u8D25: " + e6.message;
     }
   }
   function openExtModal() {
@@ -2729,8 +3014,8 @@
       closeModal("extModal");
       toast("\u5DF2\u5B89\u88C5");
       loadExtensions();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function removeExt() {
@@ -2740,8 +3025,8 @@
       await api(`/api/extensions/${encodeURIComponent(name)}`, { method: "DELETE" });
       toast("\u5DF2\u79FB\u9664");
       loadExtensions();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function loadSkillLib() {
@@ -3021,8 +3306,8 @@
       await loadSkillLib();
       renderSkillLib();
       toast(`\u5DF2\u5220\u9664 ${result.count ?? ids.length} \u4E2A\u6280\u80FD`);
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   function toggleSkillTagsEditor(id) {
@@ -3064,12 +3349,12 @@
       await persistSkillTags(id, tags);
       renderSkillLib();
       toast(tags.length ? "\u6807\u7B7E\u5DF2\u4FDD\u5B58" : "\u5DF2\u6E05\u9664\u6807\u7B7E");
-    } catch (e5) {
+    } catch (e6) {
       if (button?.isConnected) {
         button.disabled = false;
         button.textContent = "\u4FDD\u5B58";
       }
-      toast(e5.message, true);
+      toast(e6.message, true);
     }
   }
   function formatSkillBytes(size) {
@@ -3178,12 +3463,12 @@
       if (state.skillDetail?.id !== id) return;
       state.skillDetail = detail;
       renderSkillDocument(detail);
-    } catch (e5) {
+    } catch (e6) {
       if (state.skillDetail?.id !== id) return;
       const doc = document.getElementById("sdDoc");
       const meta = document.getElementById("sdDocMeta");
       if (doc) {
-        doc.textContent = `\u8BFB\u53D6\u5931\u8D25\uFF1A${e5.message}`;
+        doc.textContent = `\u8BFB\u53D6\u5931\u8D25\uFF1A${e6.message}`;
         doc.classList.add("is-error");
       }
       if (meta) meta.textContent = "\u65E0\u6CD5\u8BFB\u53D6 SKILL.md";
@@ -3211,8 +3496,8 @@
       const display = document.getElementById("sdTagsDisplay");
       if (display) display.innerHTML = skillTagsHTML(state.skillDetail);
       toast(tags.length ? "\u6807\u7B7E\u5DF2\u4FDD\u5B58" : "\u5DF2\u6E05\u9664\u6807\u7B7E");
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   function deleteSkillFromDetail() {
@@ -3235,8 +3520,8 @@
       toast(`\u5DF2\u5BFC\u5165 skill: ${sk.name}`);
       await loadSkillLib();
       renderSkillLib();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function scanSkills() {
@@ -3255,8 +3540,8 @@
       toast(summary, failed > 0);
       await loadSkillLib();
       renderSkillLib();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function deleteSkill(id) {
@@ -3272,8 +3557,8 @@
         hideSkillDetail();
         if (/^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
       }
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function loadTemplates() {
@@ -3305,8 +3590,8 @@
     try {
       await api(`/api/templates/${id}`, { method: "DELETE" });
       await loadTemplates();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   var init_skills = __esm({
@@ -3363,9 +3648,9 @@
             method: "POST",
             body: JSON.stringify({ keys })
           });
-        } catch (e5) {
+        } catch (e6) {
           queue.pending = "";
-          if (interactiveTaskRunning(taskID)) toast(`\u7EC8\u7AEF\u8F93\u5165\u53D1\u9001\u5931\u8D25\uFF1A${e5.message}`, true);
+          if (interactiveTaskRunning(taskID)) toast(`\u7EC8\u7AEF\u8F93\u5165\u53D1\u9001\u5931\u8D25\uFF1A${e6.message}`, true);
           break;
         }
       }
@@ -4203,8 +4488,8 @@
       await api(`/api/workspace/${id}/discard`, { method: "POST" });
       toast("\u5DF2\u4E22\u5F03");
       loadWorkspace(id);
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function gitInitProject(path, id) {
@@ -4213,8 +4498,8 @@
       await api("/api/workspace/git-init", { method: "POST", body: JSON.stringify({ path }) });
       toast("\u5DF2\u521D\u59CB\u5316");
       loadWorkspace(id);
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   function renderSide(t5) {
@@ -4324,8 +4609,8 @@
         refreshProjectDetail();
       }
       toast("\u5DF2\u66F4\u65B0");
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function setTaskStatus(id, status) {
@@ -4346,8 +4631,8 @@
       } else if (p3 === "/projects" && state.projectView) {
         refreshProjectDetail();
       }
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function endInteractiveTask(id) {
@@ -4355,8 +4640,8 @@
     try {
       const res = await api(`/api/tasks/${id}/end-session`, { method: "POST" });
       toast(`\u5DF2\u53D1\u9001 ${res.sent}\uFF0C\u7B49\u5F85 agent \u9000\u51FA`);
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function rejectTask(id) {
@@ -4370,8 +4655,8 @@
       toast("\u5DF2\u9A73\u56DE\uFF0C\u4EFB\u52A1\u91CD\u65B0\u6267\u884C");
       await loadAll();
       showDetail(id);
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function deleteTask(id) {
@@ -4391,8 +4676,8 @@
         renderBoard();
         renderList();
       }
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   function canRetryTask(t5) {
@@ -4455,8 +4740,8 @@
       await loadAll();
       openTask(t5.id);
       if (state.selected === t5.id) showDetail(t5.id);
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function loadDiff(id) {
@@ -4773,8 +5058,8 @@
       renderList();
       refreshOverview();
       if (location.pathname === "/projects" && state.projectView) refreshProjectDetail();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   function applyTemplate() {
@@ -4797,8 +5082,8 @@
       await api("/api/templates", { method: "POST", body: JSON.stringify({ name, body: t5.body, agent_id: t5.agent_id }) });
       toast("\u5DF2\u4FDD\u5B58\u4E3A\u6A21\u677F");
       loadTemplates();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   var detailBackground, detailReturnHash, REVIEW_RE, ANSI_OSC_RE, ANSI_CSI_RE, ANSI_CHAR_RE, ANSI_RE;
@@ -4917,8 +5202,8 @@
       await loadAll();
       await refreshProjectDetail();
       toast("\u4EFB\u52A1\u987A\u5E8F\u5DF2\u66F4\u65B0");
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
       await refreshProjectDetail();
     } finally {
       state.projectReorderBusy = false;
@@ -4934,8 +5219,8 @@
       if (index < 0 || target < 0 || target >= ids.length) return;
       [ids[index], ids[target]] = [ids[target], ids[index]];
       await persistProjectTaskOrder(projectID, ids);
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   function startProjectTaskDrag(event, projectID, taskID) {
@@ -5117,8 +5402,8 @@
       await loadAll();
       renderProjectList();
       if (state.projectView) refreshProjectDetail();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function patchProject(id, set) {
@@ -5128,8 +5413,8 @@
       if (state.projectView === id) refreshProjectDetail();
       renderProjectList();
       toast("\u5DF2\u66F4\u65B0");
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function deleteProject(id) {
@@ -5144,8 +5429,8 @@
         closeProjectDetail();
       }
       renderProjectList();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   function dailyChartHTML(daily, days) {
@@ -5213,8 +5498,8 @@
         list.appendChild(row);
       });
       if (!d3.dirs.length) list.innerHTML = `<div class="empty">\u7A7A\u76EE\u5F55</div>`;
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   function openDirPicker(inputId) {
@@ -5239,8 +5524,8 @@
       document.getElementById("dirNewName").value = "";
       toast("\u5DF2\u521B\u5EFA");
       dirLoad(dirState.path);
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function loadProjDatalist() {
@@ -5451,8 +5736,8 @@
     try {
       await loadSchema(true);
       toast("\u5DF2\u4ECE Linux \u4E3B\u673A\u5237\u65B0\u6A21\u578B\u4E0E\u80FD\u529B\u76EE\u5F55");
-    } catch (e5) {
-      toast("\u5237\u65B0\u4E3B\u673A\u80FD\u529B\u5931\u8D25\uFF1A" + e5.message, true);
+    } catch (e6) {
+      toast("\u5237\u65B0\u4E3B\u673A\u80FD\u529B\u5931\u8D25\uFF1A" + e6.message, true);
     } finally {
       if (btn) {
         btn.disabled = false;
@@ -5467,8 +5752,8 @@
       await api(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: !a3.enabled }) });
       await loadAll();
       renderAgentList();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   function openAgentDetail(id) {
@@ -5695,16 +5980,16 @@
     const box = document.querySelector(`.chip-editor [data-key="${key}"]`)?.closest(".chip-editor");
     if (!box) return;
     const hidden = /* @__PURE__ */ new Set();
-    box.querySelectorAll(".skill-opt").forEach((o7) => {
-      if (o7.hidden) hidden.add(o7.dataset.v);
+    box.querySelectorAll(".skill-opt").forEach((o8) => {
+      if (o8.hidden) hidden.add(o8.dataset.v);
     });
     const add = [...box.querySelectorAll(".skill-opt input:checked")].map((i6) => i6.dataset.v);
-    box.querySelectorAll(".skill-opt").forEach((o7) => {
-      if (!hidden.has(o7.dataset.v)) {
-        const cb = o7.querySelector("input");
+    box.querySelectorAll(".skill-opt").forEach((o8) => {
+      if (!hidden.has(o8.dataset.v)) {
+        const cb = o8.querySelector("input");
         if (cb && !cb.checked) {
           cb.checked = true;
-          add.push(o7.dataset.v);
+          add.push(o8.dataset.v);
         }
       }
     });
@@ -5773,9 +6058,9 @@
     const values = Array.isArray(options) ? options.map(String) : [];
     const legacy = current !== "" && !values.includes(current);
     if (legacy) values.push(current);
-    return values.map((o7) => {
-      const label = o7 === "" ? "\u9ED8\u8BA4" : legacy && o7 === current ? `${o7}\uFF08\u5F53\u524D\u4FDD\u5B58\u503C\uFF09` : o7;
-      return `<option value="${esc(o7)}" ${current === o7 ? "selected" : ""}>${esc(label)}</option>`;
+    return values.map((o8) => {
+      const label = o8 === "" ? "\u9ED8\u8BA4" : legacy && o8 === current ? `${o8}\uFF08\u5F53\u524D\u4FDD\u5B58\u503C\uFF09` : o8;
+      return `<option value="${esc(o8)}" ${current === o8 ? "selected" : ""}>${esc(label)}</option>`;
     }).join("");
   }
   function syncModelThinking(input) {
@@ -5894,8 +6179,8 @@
       toast(`\u5E76\u53D1\u5DF2\u66F4\u65B0\u4E3A ${n6}`);
       await loadAll();
       showAgentDetail(a3.id);
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function deleteAgent(id) {
@@ -5908,8 +6193,8 @@
       renderAgentList();
       if (state.agentEditing && state.agentEditing.id === id) closeAgentDetail();
       toast("\u5DF2\u5220\u9664");
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   function parseEnv(text) {
@@ -5994,8 +6279,8 @@
     try {
       const r6 = await api("/api/provision/install", { method: "POST", body: JSON.stringify({ cli }) });
       setTimeout(loadProvision, 3e3);
-    } catch (e5) {
-      box.innerHTML = `<div class="empty">${esc(e5.message)}</div>`;
+    } catch (e6) {
+      box.innerHTML = `<div class="empty">${esc(e6.message)}</div>`;
       provState.instCli = null;
     }
   }
@@ -6022,8 +6307,8 @@
     try {
       await api("/api/agents", { method: "POST", body: JSON.stringify({ name, cli, enabled: true }) });
       toast("\u5DF2\u521B\u5EFA\u89D2\u8272\uFF0C\u53EF\u5728\u89D2\u8272\u9875\u7EE7\u7EED\u5B9A\u5236");
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   var provState;
@@ -6308,8 +6593,8 @@
         renderStudioDraft();
       }
       s5.creatorMessages.push({ role: "assistant", content: result?.message || "\u521B\u5EFA\u52A9\u624B\u6CA1\u6709\u8FD4\u56DE\u8BF4\u660E\u3002" });
-    } catch (e5) {
-      s5.creatorMessages.push({ role: "assistant", content: `\u8C03\u7528\u521B\u5EFA\u52A9\u624B\u5931\u8D25\uFF1A${e5.message}` });
+    } catch (e6) {
+      s5.creatorMessages.push({ role: "assistant", content: `\u8C03\u7528\u521B\u5EFA\u52A9\u624B\u5931\u8D25\uFF1A${e6.message}` });
     } finally {
       s5.busy = false;
       setStudioBusy("rsCreatorState", false, "\u5F85\u547D");
@@ -6335,8 +6620,8 @@
         body: JSON.stringify({ draft: s5.draft, message, test_messages: s5.testMessages.slice(0, -1) })
       });
       s5.testMessages.push({ role: "assistant", content: result?.output || "\u88AB\u521B\u5EFA Agent \u6CA1\u6709\u8FD4\u56DE\u5185\u5BB9\u3002" });
-    } catch (e5) {
-      s5.testMessages.push({ role: "assistant", content: `\u6D4B\u8BD5\u6267\u884C\u5931\u8D25\uFF1A${e5.message}` });
+    } catch (e6) {
+      s5.testMessages.push({ role: "assistant", content: `\u6D4B\u8BD5\u6267\u884C\u5931\u8D25\uFF1A${e6.message}` });
     } finally {
       s5.testBusy = false;
       setStudioBusy("rsTestState", false, "\u6D4B\u8BD5\u6A21\u5F0F");
@@ -6388,8 +6673,8 @@
         renderAgentList();
       }
       toast(s5.mode === "copy" ? `\u89D2\u8272\u526F\u672C\u5DF2\u521B\u5EFA\uFF1A${result?.name || draft.name}` : s5.agentID ? "\u89D2\u8272\u8349\u7A3F\u5DF2\u4FDD\u5B58" : `\u89D2\u8272\u5DF2\u521B\u5EFA\uFF1A${result?.name || draft.name}`);
-    } catch (e5) {
-      toast(`\u4FDD\u5B58\u89D2\u8272\u5931\u8D25\uFF1A${e5.message}`, true);
+    } catch (e6) {
+      toast(`\u4FDD\u5B58\u89D2\u8272\u5931\u8D25\uFF1A${e6.message}`, true);
     } finally {
       if (save) {
         save.disabled = false;
@@ -6505,8 +6790,8 @@
       await api(`/api/schedules/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: !sc.enabled }) });
       await loadAll();
       renderScheduleList();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   function openScheduleModal(id) {
@@ -6553,8 +6838,8 @@
       closeModal("scheduleModal");
       await loadAll();
       renderScheduleList();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function deleteSchedule(id) {
@@ -6563,8 +6848,8 @@
       await api(`/api/schedules/${id}`, { method: "DELETE" });
       await loadAll();
       renderScheduleList();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   var WEEKDAYS, DEFAULT_TIME, scheduleOriginalCron, scheduleUnsupported, scheduleDirty;
@@ -6596,8 +6881,8 @@
       const days = document.getElementById("wtRetentionDays").value.trim();
       await api("/api/settings", { method: "PUT", body: JSON.stringify({ worktree_retention_days: days }) });
       toast("\u5DF2\u4FDD\u5B58\uFF0C\u6BCF\u5C0F\u65F6\u81EA\u52A8\u6E05\u7406\u4E00\u6B21");
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function saveRetention() {
@@ -6605,8 +6890,8 @@
       const days = document.getElementById("retentionDays").value.trim();
       await api("/api/settings", { method: "PUT", body: JSON.stringify({ retention_days: days }) });
       toast("\u5DF2\u4FDD\u5B58\uFF0C\u6BCF\u5C0F\u65F6\u6267\u884C\u4E00\u6B21\u81EA\u52A8\u6E05\u7406");
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   async function runCleanup() {
@@ -6618,8 +6903,8 @@
       const r6 = await api("/api/tasks/cleanup", { method: "POST", body: JSON.stringify({ agent_id: agentId, before }) });
       toast(`\u5DF2\u5220\u9664 ${r6.deleted} \u6761\u5386\u53F2`);
       await loadAll();
-    } catch (e5) {
-      toast(e5.message, true);
+    } catch (e6) {
+      toast(e6.message, true);
     }
   }
   var init_settings = __esm({
@@ -6655,8 +6940,8 @@
         sel.value = state.schema[previous] ? previous : list.length ? list[0].id : "";
       }
       return true;
-    } catch (e5) {
-      if (forceRefresh) throw e5;
+    } catch (e6) {
+      if (forceRefresh) throw e6;
       return false;
     }
   }
@@ -6694,21 +6979,21 @@
   function renderStatsStrip() {
     const el = document.getElementById("dashStats");
     if (!el) return;
-    const o7 = state.overview;
-    if (!o7) {
+    const o8 = state.overview;
+    if (!o8) {
       el.innerHTML = "";
       return;
     }
-    const counts = o7.status_counts || [];
+    const counts = o8.status_counts || [];
     const review = counts.find((s5) => s5.status === "awaiting_review");
-    const today = o7.daily && o7.daily.length ? o7.daily[o7.daily.length - 1] : null;
+    const today = o8.daily && o8.daily.length ? o8.daily[o8.daily.length - 1] : null;
     const boardChips = [
-      ["\u8FDB\u884C\u4E2D", o7.in_flight || 0, "var(--st-running)"],
+      ["\u8FDB\u884C\u4E2D", o8.in_flight || 0, "var(--st-running)"],
       ["\u5F85\u5BA1\u6279", review ? review.count : 0, "var(--st-review)"],
       ["\u4ECA\u65E5\u5B8C\u6210", today ? today.count : 0, "var(--st-done)"],
-      ["\u5B8C\u6210\u7387", fmtPct(o7.success_rate), "var(--st-done)"],
-      ["\u5E73\u5747\u8017\u65F6", fmtDur(o7.avg_duration), "var(--fg-muted)"],
-      ["\u6D3B\u8DC3\u9879\u76EE", o7.projects || 0, "var(--fg-muted)"]
+      ["\u5B8C\u6210\u7387", fmtPct(o8.success_rate), "var(--st-done)"],
+      ["\u5E73\u5747\u8017\u65F6", fmtDur(o8.avg_duration), "var(--fg-muted)"],
+      ["\u6D3B\u8DC3\u9879\u76EE", o8.projects || 0, "var(--fg-muted)"]
     ];
     const chips = el.classList.contains("dashboard-stats") ? [boardChips[1], boardChips[0], boardChips[2], boardChips[3]] : boardChips;
     el.innerHTML = chips.map((c5) => `<div class="stat-chip" style="--metric-color:${c5[2]}" aria-label="${c5[0]} ${c5[1]}">
@@ -6797,33 +7082,33 @@
       if (modal?.id === "termModal") closeTerminal();
       else if (modal) closeModal(modal.id);
     };
-    document.addEventListener("keydown", (e5) => {
-      const t5 = e5.composedPath && e5.composedPath()[0] || e5.target;
+    document.addEventListener("keydown", (e6) => {
+      const t5 = e6.composedPath && e6.composedPath()[0] || e6.target;
       const inField = t5 && (t5.matches("input, textarea, select") || t5.isContentEditable);
       if (t5?.closest?.(".xterm")) return;
       const modal = activeModal();
-      if (e5.key === "Tab" && modal) {
+      if (e6.key === "Tab" && modal) {
         const focusable = [...modal.querySelectorAll("button:not([disabled]), [href], input:not([disabled]):not([type='hidden']), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")].filter((el) => !el.closest(".hidden") && el.getClientRects().length);
         if (focusable.length) {
           const first = focusable[0], last = focusable[focusable.length - 1];
           if (!modal.contains(document.activeElement)) {
-            e5.preventDefault();
-            (e5.shiftKey ? last : first).focus();
-          } else if (e5.shiftKey && document.activeElement === first) {
-            e5.preventDefault();
+            e6.preventDefault();
+            (e6.shiftKey ? last : first).focus();
+          } else if (e6.shiftKey && document.activeElement === first) {
+            e6.preventDefault();
             last.focus();
-          } else if (!e5.shiftKey && document.activeElement === last) {
-            e5.preventDefault();
+          } else if (!e6.shiftKey && document.activeElement === last) {
+            e6.preventDefault();
             first.focus();
           }
         }
       }
-      if (!inField && (e5.ctrlKey || e5.metaKey) && e5.key.toLowerCase() === "b") {
-        e5.preventDefault();
+      if (!inField && (e6.ctrlKey || e6.metaKey) && e6.key.toLowerCase() === "b") {
+        e6.preventDefault();
         toggleSidebar();
         return;
       }
-      if (e5.key === "Escape") {
+      if (e6.key === "Escape") {
         const sb = document.getElementById("sidebar");
         if (isMobileNav() && sb?.classList.contains("mobile-open")) {
           sb.classList.remove("mobile-open");
@@ -6835,36 +7120,36 @@
         return;
       }
       if (inField) return;
-      if (e5.key === "n" || e5.key === "N") {
+      if (e6.key === "n" || e6.key === "N") {
         if (location.pathname !== "/board") return;
         const inDetail = !document.getElementById("detailShell")?.classList.contains("hidden");
         if (inDetail) return;
         openNewTask();
       }
-      if (e5.key === "/") {
+      if (e6.key === "/") {
         const s5 = document.querySelector("#pSearch, #aSearch");
         if (s5) {
-          e5.preventDefault();
+          e6.preventDefault();
           s5.focus();
         }
       }
     });
-    document.addEventListener("click", (e5) => {
-      if (e5.target && e5.target.classList && e5.target.classList.contains("modal")) {
-        closeActiveModal(e5.target);
+    document.addEventListener("click", (e6) => {
+      if (e6.target && e6.target.classList && e6.target.classList.contains("modal")) {
+        closeActiveModal(e6.target);
       }
     });
-    document.addEventListener("click", (e5) => {
-      const row = e5.target.closest?.(".dir-row");
+    document.addEventListener("click", (e6) => {
+      const row = e6.target.closest?.(".dir-row");
       if (row) {
         dirLoad(row.dataset.path);
         return;
       }
-      const seg = e5.target.closest?.(".crumb-seg");
+      const seg = e6.target.closest?.(".crumb-seg");
       if (seg && !seg.classList.contains("cur")) dirLoad(seg.dataset.p);
     });
-    document.querySelector(".sidebar-nav")?.addEventListener("click", (e5) => {
-      if (isMobileNav() && e5.target.closest("a")) {
+    document.querySelector(".sidebar-nav")?.addEventListener("click", (e6) => {
+      if (isMobileNav() && e6.target.closest("a")) {
         const sb = document.getElementById("sidebar");
         if (sb) {
           sb.classList.remove("mobile-open");
@@ -7038,8 +7323,8 @@
         const schemaP = loadSchema();
         try {
           await loadAll();
-        } catch (e5) {
-          toast("\u52A0\u8F7D\u5931\u8D25: " + e5.message, true);
+        } catch (e6) {
+          toast("\u52A0\u8F7D\u5931\u8D25: " + e6.message, true);
         }
         const path = location.pathname;
         if (path === "/") {
@@ -7217,6 +7502,7 @@
 lit-html/lit-html.js:
 lit-element/lit-element.js:
 lit-html/directive.js:
+lit-html/directives/unsafe-html.js:
 lit-html/async-directive.js:
   (**
    * @license
