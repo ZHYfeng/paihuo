@@ -20,7 +20,7 @@
 - **created**：记录 + worktree 已建（git 项目），agent 未启动
 - **active**：agent 进程运行中（`streaming`/`working` 是 UI 层细分，不占状态位）
 - **suspended**：进程退出（用户挂起 / 崩溃），worktree + transcript 保留，**不占并发槽**
-- **delivered**：已交付冻结，只读，关联 `task_id`
+- **delivered**：**交付即终态**——冻结只读，关联 `task_id`；不可恢复、不可再次交付。任务被删除时会话联动清理（delivered → deleted），不再解冻（解冻会让会话被修改后反复交付、反复创建合并任务）
 - **deleted**：已丢弃（清理 worktree）
 
 ## 2. 状态迁移表
@@ -31,8 +31,8 @@
 | start | 打开会话 | spawn agent 进程；**占角色并发槽**（与批处理任务共用池，防资源耗尽） |
 | suspend | 点挂起 / 进程退出 / 崩溃 | 杀进程、释放并发槽；transcript 由 pi 会话文件持久化 |
 | resume | 点恢复 | spawn 进程 + `switch_session <session.jsonl>` 接续原会话 |
-| deliver | 点交付 | 创建任务并**复用会话 worktree**（不搬移不重建）；会话冻结 |
-| discard | 删除会话 | 清理 worktree + 会话数据 |
+| deliver | 点交付 | 创建任务并**复用会话 worktree**（不搬移不重建）；git 项目快照会话分支落定成果；会话冻结为终态 |
+| discard | 删除会话 | 清理 worktree + 会话数据；delivered 会话也可丢弃（归档出口，不影响任务）；交付任务被删除时会话自动 discard |
 
 ## 3. 数据模型（新表 sessions）
 

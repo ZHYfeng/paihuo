@@ -674,25 +674,11 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// 交付任务：解除会话引用并解冻（sessions.task_id 外键会阻止硬删；
-	// 任务没了，delivered 会话失去冻结对象，回 suspended 后可丢弃/重新交付）。
-	if affected, err := s.st.DetachTaskFromSessions(id); err != nil {
+	// 交付任务：解除会话引用（sessions.task_id 外键会阻止硬删）。
+	affected, err := s.st.DetachTaskFromSessions(id)
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
-	} else {
-		for _, sid := range affected {
-			if err := s.st.UpdateSession(sid, map[string]any{
-				"status": store.SessionStatusSuspended, "updated_at": store.Now(),
-			}); err != nil {
-				writeErr(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			ss, err := s.st.GetSession(sid)
-			if err != nil || ss == nil {
-				continue
-			}
-			s.hub.Publish(events.Event{Type: "session.updated", Payload: *ss})
-		}
 	}
 	if err := s.st.DeleteTask(id); err != nil {
 		var depErr *store.TaskDependencyError
@@ -702,6 +688,18 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 		}
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// 交付即终态：被删任务关联的 delivered 会话不再解冻（否则可恢复修改后
+	// 反复交付、反复创建合并任务），直接联动清理（终止进程、清理 worktree、
+	// 记录 → deleted）。
+	for _, sid := range affected {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		err := s.sess.Delete(ctx, sid)
+		cancel()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -31,8 +31,10 @@ var transitions = map[string]map[string]bool{
 		store.SessionStatusDeleted:   true,
 	},
 	store.SessionStatusDelivered: {
-		// 交付任务被删除后解冻回挂起（任务没了，会话可丢弃/重新交付）。
-		store.SessionStatusSuspended: true,
+		// 交付即终态：会话冻结为只读归档，不可恢复、不可再次交付。
+		// 交付任务被删除时会话联动清理（delivered → deleted）——此前
+		// 解冻回 suspended 会让会话被恢复修改后反复交付、反复创建合并任务。
+		store.SessionStatusDeleted: true,
 	},
 	store.SessionStatusDeleted: {},
 }

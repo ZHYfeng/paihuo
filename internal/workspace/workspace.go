@@ -252,6 +252,16 @@ func Ensure(tk store.Task, sessionsRoot string) (dir, branch, baseCommit string,
 	return wt, Branch(tk.ID), baseCommit, nil
 }
 
+// taskWorktreeDirOf 返回任务工作目录的路径：会话交付任务定位到会话 worktree
+// （paihuo/session-<id>），普通任务定位到任务 worktree（paihuo/task-<id>）。
+// 仅解析路径，不创建/挂载；与 Ensure 的定位规则保持一致。
+func taskWorktreeDirOf(tk store.Task, sessionsRoot string) string {
+	if tk.SessionID != nil {
+		return SessionWorktreePath(sessionsRoot, tk.ProjectName, *tk.SessionID)
+	}
+	return WorktreePath(sessionsRoot, tk.ProjectName, tk.ID)
+}
+
 // Status 返回任务工作空间状态。
 func Status(tk store.Task, sessionsRoot string) Info {
 	info := Info{Path: tk.ProjectDir, Note: ""}
@@ -260,7 +270,7 @@ func Status(tk store.Task, sessionsRoot string) Info {
 		return info
 	}
 	info.IsGit = true
-	wt := WorktreePath(sessionsRoot, tk.ProjectName, tk.ID)
+	wt := taskWorktreeDirOf(tk, sessionsRoot)
 	if fi, err := os.Stat(wt); err != nil || !fi.IsDir() {
 		info.Path = tk.ProjectDir
 		info.Branch = tk.WorktreeBranch
@@ -271,6 +281,9 @@ func Status(tk store.Task, sessionsRoot string) Info {
 	info.Path = wt
 	info.IsWorktree = true
 	info.Branch = Branch(tk.ID)
+	if tk.SessionID != nil {
+		info.Branch = SessionBranch(*tk.SessionID)
+	}
 	info.BaseCommit = tk.BaseCommit
 	if h, err := git(wt, "rev-parse", "--short", "HEAD"); err == nil {
 		info.Head = strings.TrimSpace(h)
@@ -295,8 +308,15 @@ func Snapshot(tk store.Task, sessionsRoot string) (string, error) {
 }
 
 func snapshotLocked(tk store.Task, sessionsRoot string) (string, error) {
-	wt := WorktreePath(sessionsRoot, tk.ProjectName, tk.ID)
+	wt := taskWorktreeDirOf(tk, sessionsRoot)
 	if fi, err := os.Stat(wt); err != nil || !fi.IsDir() {
+		// 会话 worktree 已被清理（交付归档被丢弃）但会话分支仍在：交付时已把
+		// 最终成果快照到分支，直接返回分支 HEAD，合并流程照常进行。
+		if tk.SessionID != nil {
+			if head, err := git(tk.ProjectDir, "rev-parse", "--short", SessionBranch(*tk.SessionID)); err == nil {
+				return strings.TrimSpace(head), nil
+			}
+		}
 		return "", fmt.Errorf("worktree 不存在，无法保存任务改动")
 	}
 	status, err := git(wt, "status", "--porcelain")

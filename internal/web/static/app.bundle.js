@@ -1860,7 +1860,8 @@
           <button class="primary" @click=${() => this.act("deliver")}>交付</button>
           <button class="danger" @click=${() => this.act("delete")}>丢弃</button>` : ""}
         ${s5.status === "delivered" ? b2`
-          ${s5.task_id ? b2`<a class="link" href="#/issue/${s5.task_id}">查看任务 #${s5.task_id} →</a>` : ""}` : ""}
+          ${s5.task_id ? b2`<a class="link" href="#/issue/${s5.task_id}">查看任务 #${s5.task_id} →</a>` : ""}
+          <button class="danger" @click=${() => this.act("delete")}>丢弃</button>` : ""}
       </div>`;
         }
       };

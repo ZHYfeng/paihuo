@@ -91,8 +91,8 @@ func TestStateMachine(t *testing.T) {
 		{store.SessionStatusSuspended, store.SessionStatusDelivered, true},
 		{store.SessionStatusSuspended, store.SessionStatusDeleted, true},
 		{store.SessionStatusDelivered, store.SessionStatusActive, false},
-		{store.SessionStatusDelivered, store.SessionStatusDeleted, false},
-		{store.SessionStatusDelivered, store.SessionStatusSuspended, true}, // 交付任务删除后解冻
+		{store.SessionStatusDelivered, store.SessionStatusSuspended, false}, // 交付即终态：不再解冻（防反复交付）
+		{store.SessionStatusDelivered, store.SessionStatusDeleted, true},    // 任务删除联动清理 / 手动丢弃归档
 		{store.SessionStatusDeleted, store.SessionStatusActive, false},
 	}
 	for _, c := range cases {
@@ -204,6 +204,20 @@ func TestDeliverReusesWorktree(t *testing.T) {
 	if tk.WorktreeBranch != ss.WorktreeBranch {
 		t.Errorf("task 分支=%s, 会话分支=%s", tk.WorktreeBranch, ss.WorktreeBranch)
 	}
+	// 交付 = 收编：任务直接完成（跳过执行），并自动创建代码合并任务。
+	if tk.Status != store.StatusSucceeded {
+		t.Errorf("交付任务应直接完成，status=%s", tk.Status)
+	}
+	if tk.Body == "" || !strings.Contains(tk.Body, "会话 #") {
+		t.Errorf("交付任务 body 应预填会话摘要: %q", tk.Body)
+	}
+	kids, err := st.ListChildren(tk.ID)
+	if err != nil {
+		t.Fatalf("children: %v", err)
+	}
+	if len(kids) != 1 || kids[0].MergeOf == nil || *kids[0].MergeOf != tk.ID {
+		t.Fatalf("交付任务应自动创建一个合并子任务: %+v", kids)
+	}
 	// Ensure 应直接命中会话 worktree（不重建）。
 	dir, branch, _, err := workspace.Ensure(*tk, m.sessionsRoot)
 	if err != nil {
@@ -222,6 +236,86 @@ func TestDeliverReusesWorktree(t *testing.T) {
 	}
 	if got.TaskID == nil || *got.TaskID != tk.ID {
 		t.Errorf("session.task_id=%v", got.TaskID)
+	}
+}
+
+// TestDeliverReviewSkipsExecution 交付 review → 任务直接 awaiting_review（跳过
+// 执行），无合并子任务；会话冻结。created 会话直接置 suspended 绕过启动（无 pi）。
+func TestDeliverReviewSkipsExecution(t *testing.T) {
+	m, st, _, _ := newTestEnv(t)
+	proj, _ := st.ListProjects()
+	agents, _ := st.ListAgents()
+	ss, err := m.Create(&proj[0].ID, agents[0].ID, "会话review")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := st.UpdateSession(ss.ID, map[string]any{"status": store.SessionStatusSuspended}); err != nil {
+		t.Fatalf("suspend via store: %v", err)
+	}
+	tk, err := m.Deliver(context.Background(), ss.ID, "交付审查", "", store.PermReview)
+	if err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
+	if tk.Status != store.StatusAwaitingReview {
+		t.Fatalf("review 交付应直接待审批，status=%s", tk.Status)
+	}
+	if tk.ReviewRounds != 1 {
+		t.Fatalf("review_rounds=%d want 1", tk.ReviewRounds)
+	}
+	if tk.FinishedAt == nil || tk.ExitCode == nil || *tk.ExitCode != 0 {
+		t.Fatalf("交付任务应带完成时间与 exit 0: %+v", tk)
+	}
+	// 无合并子任务（审批通过后才创建）。
+	kids, err := st.ListChildren(tk.ID)
+	if err != nil {
+		t.Fatalf("children: %v", err)
+	}
+	if len(kids) != 0 {
+		t.Fatalf("review 交付不应有合并子任务: %+v", kids)
+	}
+	// 会话冻结。
+	got, _ := m.Get(ss.ID)
+	if got.Status != store.SessionStatusDelivered || got.TaskID == nil || *got.TaskID != tk.ID {
+		t.Fatalf("会话未冻结: %+v", got)
+	}
+}
+
+// TestDeliverFullNonGitCompletesWithoutMerge 交付 full + 非 git 项目 → 任务直接
+// succeeded（无 worktree 合并环节），不创建合并子任务。
+func TestDeliverFullNonGitCompletesWithoutMerge(t *testing.T) {
+	m, st, _, root := newTestEnv(t)
+	plainDir := filepath.Join(root, "plain")
+	if err := os.MkdirAll(plainDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pid, err := st.CreateProject(store.Project{Name: "plain", ProjectDir: plainDir})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	agents, _ := st.ListAgents()
+	ss, err := m.Create(&pid, agents[0].ID, "会话plain")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if ss.WorktreeBranch != "" {
+		t.Fatalf("非 git 会话不应有分支: %q", ss.WorktreeBranch)
+	}
+	if err := st.UpdateSession(ss.ID, map[string]any{"status": store.SessionStatusSuspended}); err != nil {
+		t.Fatalf("suspend via store: %v", err)
+	}
+	tk, err := m.Deliver(context.Background(), ss.ID, "交付普通", "", store.PermFull)
+	if err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
+	if tk.Status != store.StatusSucceeded {
+		t.Fatalf("非 git 交付应直接完成，status=%s", tk.Status)
+	}
+	kids, err := st.ListChildren(tk.ID)
+	if err != nil {
+		t.Fatalf("children: %v", err)
+	}
+	if len(kids) != 0 {
+		t.Fatalf("非 git 交付不应有合并子任务: %+v", kids)
 	}
 }
 
@@ -298,13 +392,16 @@ func TestLifecycleWithRealPi(t *testing.T) {
 	if string(msgs2) != string(msgs) {
 		t.Logf("resume 后消息与挂起前一致（长度 %d vs %d）", len(msgs2), len(msgs))
 	}
-	// 交付。
+	// 交付（收编：跳过执行，直接完成 + 自动合并任务）。
 	tk, err := m.Deliver(ctx, ss.ID, "冒烟交付", "", store.PermFull)
 	if err != nil {
 		t.Fatalf("deliver: %v", err)
 	}
 	if tk.SessionID == nil || *tk.SessionID != ss.ID {
 		t.Fatalf("task.session_id=%v", tk.SessionID)
+	}
+	if tk.Status != store.StatusSucceeded {
+		t.Fatalf("交付任务应直接完成，status=%s", tk.Status)
 	}
 	// transcript 可读（挂起后从文件解析）。
 	entries, total, err := m.Transcript(ctx, ss.ID, 0, "")

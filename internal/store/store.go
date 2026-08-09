@@ -775,10 +775,11 @@ func prepareTaskForInsert(t *Task) {
 }
 
 func insertTask(execer sqlExecer, t Task) (int64, error) {
-	res, err := execer.Exec(`INSERT INTO tasks (title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, session_id, worktree_branch, base_commit, sort_order, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	res, err := execer.Exec(`INSERT INTO tasks (title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, session_id, worktree_branch, base_commit, review_rounds, finished_at, exit_code, sort_order, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.Title, t.Body, t.Status, t.Perm, t.RunMode, boolInt(t.Concurrent), nullInt64(t.AgentID), nullInt64(t.ProjectID), t.ProjectDir,
-		nullInt64(t.ParentID), nullInt64(t.DependsOn), t.DependencyMode, boolInt(t.BlockOnFailure), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), nullInt64(t.SessionID), t.WorktreeBranch, t.BaseCommit, t.SortOrder, t.CreatedAt, t.UpdatedAt)
+		nullInt64(t.ParentID), nullInt64(t.DependsOn), t.DependencyMode, boolInt(t.BlockOnFailure), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), nullInt64(t.SessionID), t.WorktreeBranch, t.BaseCommit,
+		t.ReviewRounds, nullStrPtr(t.FinishedAt), nullIntPtr(t.ExitCode), t.SortOrder, t.CreatedAt, t.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -943,6 +944,42 @@ func (s *Store) CompleteTaskAndCreateMerge(sourceID int64, merge Task) (int64, e
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return 0, errors.New("任务已完成、已取消，或已创建代码合并任务")
+	}
+	if err := inheritMergeFailurePolicy(tx, sourceID, &merge); err != nil {
+		return 0, err
+	}
+	mergeID, err := insertMergeTask(tx, merge)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return mergeID, nil
+}
+
+// DeliverTaskAndCreateMerge 原子地把会话交付任务标记为完成并创建唯一的代码
+// 合并子任务。与 CompleteTaskAndCreateMerge 不同，交付任务从未进入
+// claimed/running（会话工作已完成，跳过 agent 执行），状态从 queued 直接到
+// succeeded；session_id 非空保证只有交付桥接入口能走此路径。条件更新确保
+// 重复交付或并发请求不会派发重复合并任务。
+func (s *Store) DeliverTaskAndCreateMerge(sourceID int64, merge Task) (int64, error) {
+	prepareMergeTask(sourceID, &merge)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	now := Now()
+	res, err := tx.Exec(`UPDATE tasks
+		SET status='succeeded', finished_at=?, exit_code=0, error='', updated_at=?
+		WHERE id=? AND status='queued' AND perm='full' AND merge_of IS NULL AND session_id IS NOT NULL`, now, now, sourceID)
+	if err != nil {
+		return 0, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return 0, errors.New("任务已交付、已取消，或已创建代码合并任务")
 	}
 	if err := inheritMergeFailurePolicy(tx, sourceID, &merge); err != nil {
 		return 0, err
@@ -2309,6 +2346,18 @@ func (s *Store) statusCountsOf(where string, args ...any) ([]StatusCount, int, e
 	return out, total, rows.Err()
 }
 
+// inflightCount 从状态分布求和进行中任务数（queued/claimed/running/awaiting_review）。
+func inflightCount(counts []StatusCount) int {
+	n := 0
+	for _, c := range counts {
+		switch c.Status {
+		case StatusQueued, StatusClaimed, StatusRunning, StatusAwaitingReview:
+			n += c.Count
+		}
+	}
+	return n
+}
+
 // dailySucceeded 最近 n 天每日完成数（succeeded，按 UTC 日期分组）。
 func (s *Store) dailySucceeded(where string, days int, args ...any) ([]DailyCount, error) {
 	since := time.Now().UTC().AddDate(0, 0, -(days - 1)).Format("2006-01-02")
@@ -2373,10 +2422,8 @@ func (s *Store) AgentStatsOf(agentID int64) (*AgentStats, error) {
 		return nil, err
 	}
 	st.StatusCounts = counts
+	st.InFlight = inflightCount(counts)
 	for _, c := range counts {
-		if c.Status == StatusQueued || c.Status == StatusClaimed || c.Status == StatusRunning || c.Status == StatusAwaitingReview {
-			st.InFlight += c.Count
-		}
 		if c.Status == StatusCancelled {
 			st.Cancelled = c.Count
 		}
@@ -2456,12 +2503,12 @@ func (s *Store) ProjectStatsOf(projectID int64) (*ProjectStats, error) {
 	_ = rate
 	_ = avgDur
 
-	counts, inflight, err := s.statusCountsOf("t.project_id=?", projectID)
+	counts, _, err := s.statusCountsOf("t.project_id=?", projectID)
 	if err != nil {
 		return nil, err
 	}
 	ps.StatusCounts = counts
-	ps.InFlight = inflight
+	ps.InFlight = inflightCount(counts)
 
 	rows, err := s.db.Query(`SELECT t.agent_id, t.project_id, COALESCE(a.name,''), COALESCE(p.name,''), COUNT(*),
 		COALESCE(SUM(CASE WHEN t.status='succeeded' THEN 1 ELSE 0 END),0),
@@ -2526,12 +2573,12 @@ func (s *Store) OverviewStatsOf() (*OverviewStats, error) {
 	ov.Total, ov.Succeeded, ov.Failed, ov.Reviews = total, done, fail, reviews
 	ov.SuccessRate, ov.AvgDuration = rate, avgDur
 
-	counts, inflight, err := s.statusCountsOf("1=1")
+	counts, _, err := s.statusCountsOf("1=1")
 	if err != nil {
 		return nil, err
 	}
 	ov.StatusCounts = counts
-	ov.InFlight = inflight
+	ov.InFlight = inflightCount(counts)
 
 	var n int
 	if err := s.db.QueryRow("SELECT COUNT(*) FROM projects").Scan(&n); err != nil {
@@ -2753,6 +2800,13 @@ func (s *Store) CreateSession(ss Session) (int64, error) {
 }
 
 func nullStrPtr(p *string) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func nullIntPtr(p *int) any {
 	if p == nil {
 		return nil
 	}

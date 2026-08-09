@@ -418,6 +418,71 @@ func TestRecoverLostTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 	}
 }
 
+// 会话交付任务的收编路径：queued → succeeded + 唯一合并子任务（原子）。
+func TestDeliverTaskAndCreateMerge(t *testing.T) {
+	s := openTest(t)
+	agentID := mustAgent(t, s, "deliver", true)
+	projectID, err := s.CreateProject(Project{Name: "proj", ProjectDir: t.TempDir(), Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, err := s.CreateSession(Session{Title: "s", AgentID: agentID, Status: SessionStatusDelivered})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceID, err := s.CreateTask(Task{
+		Title: "delivered", Status: StatusQueued, Perm: PermFull, RunMode: RunModeBatch,
+		AgentID: &agentID, ProjectID: &projectID, ProjectDir: t.TempDir(),
+		SessionID: &sid, WorktreeBranch: "paihuo/session-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := s.GetTask(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mergeID, err := s.DeliverTaskAndCreateMerge(sourceID, NewMergeTask(*source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivered, err := s.GetTask(sourceID)
+	if err != nil || delivered.Status != StatusSucceeded || delivered.ExitCode == nil || *delivered.ExitCode != 0 || delivered.Error != "" {
+		t.Fatalf("交付后源任务状态异常: %+v err=%v", delivered, err)
+	}
+	merge, err := s.GetTask(mergeID)
+	if err != nil || merge.MergeOf == nil || *merge.MergeOf != sourceID {
+		t.Fatalf("交付创建的合并任务异常: %+v err=%v", merge, err)
+	}
+	// 重复交付不产生第二个合并任务。
+	if _, err := s.DeliverTaskAndCreateMerge(sourceID, NewMergeTask(*source)); err == nil {
+		t.Fatal("重复交付不应创建第二个合并任务")
+	}
+}
+
+// 非会话任务不能走交付收编路径（session_id 守卫）。
+func TestDeliverTaskAndCreateMergeRejectsNonSessionTask(t *testing.T) {
+	s := openTest(t)
+	agentID := mustAgent(t, s, "deliver2", true)
+	sourceID, err := s.CreateTask(Task{
+		Title: "plain", Status: StatusQueued, Perm: PermFull,
+		AgentID: &agentID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := s.GetTask(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DeliverTaskAndCreateMerge(sourceID, NewMergeTask(*source)); err == nil {
+		t.Fatal("非会话任务不应走交付收编路径")
+	}
+	if got, _ := s.GetTask(sourceID); got.Status != StatusQueued {
+		t.Fatalf("拒绝后任务状态不应变化: %s", got.Status)
+	}
+}
+
 // 并发开关：默认不并发（串行），显式勾选则完整往返保存。
 func TestTaskConcurrentDefaultsFalseAndRoundTrips(t *testing.T) {
 	s := openTest(t)

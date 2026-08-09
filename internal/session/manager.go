@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -302,8 +303,13 @@ func (m *Manager) Suspend(ctx context.Context, id int64) error {
 	return nil
 }
 
-// Deliver 交付会话为任务：复用会话 worktree，走现有任务生命周期
-// （审批 → 合并 → 结算）。active 时先终止进程。
+// Deliver 交付会话为任务：复用会话 worktree，**跳过 agent 执行**，直接把
+// 会话已完成的工作收编进现有任务生命周期（审批 → 合并 → 结算）：
+//   - perm=review → 任务直接 awaiting_review（人工审批通过后派代码合并任务）
+//   - perm=full    → git 项目直接快照会话分支并自动创建代码合并任务；
+//     非 git 项目直接 succeeded（无合并环节）
+//
+// active 时先终止进程并释放槽位。任务 body 在调用方未提供时预填会话摘要。
 func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, perm string) (*store.Task, error) {
 	ss, err := m.st.GetSession(id)
 	if err != nil {
@@ -336,6 +342,10 @@ func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, pe
 	m.stopChannel(id)
 	m.ex.ReleaseAgentSlot(agent.ID)
 
+	if taskBody == "" {
+		taskBody = deliverBody(ss, agent, m.projectName(ss))
+	}
+
 	tk := store.Task{
 		Title:          taskTitle,
 		Body:           taskBody,
@@ -349,11 +359,54 @@ func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, pe
 		WorktreeBranch: ss.WorktreeBranch,
 		BaseCommit:     ss.BaseCommit,
 	}
+	// 收编状态：不进入 queued 执行队列。
+	now := store.Now()
+	switch {
+	case perm == store.PermReview:
+		// 直接待审批（交付即第一轮成果）。
+		tk.Status = store.StatusAwaitingReview
+		tk.ReviewRounds = 1
+		tk.FinishedAt = &now
+		zero := 0
+		tk.ExitCode = &zero
+	case perm == store.PermFull && ss.WorktreeBranch == "":
+		// 非 git 项目无 worktree 合并环节，直接完成。
+		tk.Status = store.StatusSucceeded
+		tk.FinishedAt = &now
+	}
 	taskID, err := m.st.CreateTask(tk)
 	if err != nil {
 		return nil, fmt.Errorf("创建任务失败: %w", err)
 	}
-	now := store.Now()
+
+	// git 项目：快照会话 worktree 到会话分支。交付即终态（会话冻结、分支
+	// 不再变化），分支上落定最终成果，后续合并（含审批后的 review 合并）
+	// 不依赖会话 worktree 仍然存在。
+	if ss.WorktreeBranch != "" {
+		created, err := m.st.GetTask(taskID)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := workspace.Snapshot(*created, m.sessionsRoot); err != nil {
+			_ = m.st.UpdateTask(taskID, map[string]any{
+				"status": store.StatusFailed, "finished_at": store.Now(), "error": "准备交付合并失败: " + err.Error(),
+			})
+			return nil, fmt.Errorf("快照会话工作区失败: %w", err)
+		}
+		// full：原子地完成源任务并创建代码合并任务（把会话分支整合进主分支，
+		// 冲突交给 agent 解决）。
+		if perm == store.PermFull {
+			mergeID, err := m.st.DeliverTaskAndCreateMerge(taskID, store.NewMergeTask(*created))
+			if err != nil {
+				_ = m.st.UpdateTask(taskID, map[string]any{
+					"status": store.StatusFailed, "finished_at": store.Now(), "error": err.Error(),
+				})
+				return nil, fmt.Errorf("创建代码合并任务失败: %w", err)
+			}
+			m.hub.Publish(events.Event{Type: "task.created", Payload: map[string]any{"task_id": mergeID}})
+		}
+	}
+
 	if err := m.st.UpdateSession(id, map[string]any{
 		"status": store.SessionStatusDelivered, "task_id": taskID,
 		"delivered_at": now, "updated_at": now,
@@ -368,6 +421,25 @@ func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, pe
 		return nil, err
 	}
 	return created, nil
+}
+
+// deliverBody 生成交付任务的默认正文：会话摘要（调用方未提供说明时使用）。
+func deliverBody(ss *store.Session, agent *store.Agent, projectName string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "会话 #%d「%s」的交付成果，已转为任务进入审批/合并流程。\n\n", ss.ID, ss.Title)
+	fmt.Fprintf(&b, "- 角色：%s（%s）\n", agent.Name, agent.CLI)
+	if projectName != "" {
+		fmt.Fprintf(&b, "- 项目：%s\n", projectName)
+	}
+	if ss.CreatedAt != "" {
+		fmt.Fprintf(&b, "- 会话创建：%s\n", ss.CreatedAt)
+	}
+	if ss.LastMessageAt != "" {
+		fmt.Fprintf(&b, "- 最后消息：%s\n", ss.LastMessageAt)
+	}
+	fmt.Fprintf(&b, "- 消息数：%d\n", ss.MessageCount)
+	fmt.Fprintf(&b, "\n完整对话时间线见会话 #%d（本任务详情页可回链查看）。", ss.ID)
+	return b.String()
 }
 
 // Delete 丢弃会话：终止进程、清理 worktree、状态 → deleted。

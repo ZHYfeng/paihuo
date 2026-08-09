@@ -153,7 +153,7 @@ func TestSessionAPI(t *testing.T) {
 		t.Fatalf("resume: %d %v", code, out)
 	}
 
-	// 交付 → 任务 created 且复用会话 worktree
+	// 交付 → 任务直接收编（跳过 agent 执行）：full + git → 已完成 + 自动创建合并任务
 	code, out = do("POST", "/api/sessions/"+itoa(sid)+"/deliver", `{"perm":"full"}`)
 	if code != 200 {
 		t.Fatalf("deliver: %d %v", code, out)
@@ -164,6 +164,26 @@ func TestSessionAPI(t *testing.T) {
 	}
 	if out["worktree_branch"] != "paihuo/session-1" {
 		t.Fatalf("task 分支=%v", out["worktree_branch"])
+	}
+	if out["status"] != store.StatusSucceeded {
+		t.Fatalf("交付任务应直接完成（跳过执行），status=%v", out["status"])
+	}
+	if body, ok := out["body"].(string); !ok || !strings.Contains(body, "会话 #"+itoa(sid)) {
+		t.Fatalf("交付任务 body 应预填会话摘要: %v", out["body"])
+	}
+	// 代码合并任务已自动创建（整合会话分支）
+	req = httptest.NewRequest("GET", "/api/tasks/"+itoa(tkID)+"/children", strings.NewReader(""))
+	w2 = httptest.NewRecorder()
+	mux.ServeHTTP(w2, req)
+	if w2.Code != 200 {
+		t.Fatalf("children: %d", w2.Code)
+	}
+	var kids []struct {
+		ID      int64  `json:"id"`
+		MergeOf *int64 `json:"merge_of"`
+	}
+	if err := json.Unmarshal(w2.Body.Bytes(), &kids); err != nil || len(kids) != 1 || kids[0].MergeOf == nil || *kids[0].MergeOf != tkID {
+		t.Fatalf("交付任务应有一个合并子任务: err=%v kids=%+v body=%s", err, kids, w2.Body.String())
 	}
 
 	// 会话冻结；重复交付拒绝
@@ -178,10 +198,14 @@ func TestSessionAPI(t *testing.T) {
 		t.Fatalf("list: %d", code)
 	}
 
-	// 删除：已交付会话不可删除
-	code, out = do("DELETE", "/api/sessions/"+itoa(sid), "")
-	if code != 409 {
-		t.Fatalf("已交付删除应 409: %d %v", code, out)
+	// 交付即终态：删除交付任务 → 会话联动清理（不再解冻可反复交付）
+	code, out = do("DELETE", "/api/tasks/"+itoa(tkID), "")
+	if code != 204 {
+		t.Fatalf("删除交付任务应 204: %d %v", code, out)
+	}
+	code, out = do("GET", "/api/sessions/"+itoa(sid), "")
+	if code != 200 || out["status"] != store.SessionStatusDeleted {
+		t.Fatalf("任务删除后会话应联动清理，status=%v", out["status"])
 	}
 
 	// 第二会话：created 直接删除
@@ -198,5 +222,4 @@ func TestSessionAPI(t *testing.T) {
 	if code != 200 || out["status"] != store.SessionStatusDeleted {
 		t.Fatalf("删除后 status=%v", out["status"])
 	}
-	_ = tkID
 }

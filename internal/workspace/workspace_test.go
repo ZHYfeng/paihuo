@@ -86,6 +86,48 @@ func TestEnsureMergeDiscard(t *testing.T) {
 	}
 }
 
+// TestSessionDeliveredTaskSnapshotAndStatus 会话交付任务：Status/Snapshot 必须
+// 定位到会话 worktree（paihuo/session-<id>），而非不存在的 task-<id> 目录。
+func TestSessionDeliveredTaskSnapshotAndStatus(t *testing.T) {
+	proj := gitInitTest(t)
+	sess := t.TempDir()
+	sid := int64(3)
+	dir, branch, base, err := EnsureSessionWorktree(proj, sess, "proj", sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch != "paihuo/session-3" || base == "" {
+		t.Fatalf("session worktree: branch=%q base=%q", branch, base)
+	}
+	// 会话产出改动（未提交）。
+	if err := os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("done\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tk := store.Task{
+		ID: 99, SessionID: &sid, ProjectDir: proj, ProjectName: "proj",
+		Title: "delivered", WorktreeBranch: branch, BaseCommit: base,
+	}
+	st := Status(tk, sess)
+	if !st.IsWorktree || !st.Dirty {
+		t.Fatalf("status 应指向会话 worktree 且带未提交改动: %+v", st)
+	}
+	if st.Branch != "paihuo/session-3" {
+		t.Fatalf("status.branch=%q want 会话分支", st.Branch)
+	}
+	// Snapshot 提交到会话分支，供合并任务稳定读取。
+	if _, err := Snapshot(tk, sess); err != nil {
+		t.Fatalf("snapshot 会话 worktree 失败: %v", err)
+	}
+	head, err := git(dir, "rev-parse", "--short", "HEAD")
+	if err != nil || head == base {
+		t.Fatalf("会话分支应出现新提交: head=%q base=%q err=%v", head, base, err)
+	}
+	// 幂等：无新改动时再次快照不报错。
+	if _, err := Snapshot(tk, sess); err != nil {
+		t.Fatalf("重复快照失败: %v", err)
+	}
+}
+
 func TestNonGitFallback(t *testing.T) {
 	proj := t.TempDir() // 非 git 目录
 	sess := t.TempDir()
