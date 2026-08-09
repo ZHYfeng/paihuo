@@ -34,6 +34,26 @@ func requireUserSystemdRun(t *testing.T) string {
 	return bin
 }
 
+// stopTmuxServerAndClean 停止专用 tmux server 并删除其运行目录，供测试
+// cleanup 使用。kill-server 同步返回后，server 的子进程（pipe-pane 收尾
+// flush 等）仍可能短暂向 task 运行目录写文件；t.TempDir 的自动 RemoveAll
+// 不重试，偶发撞上「目录非空」会把通过的门禁测试打成失败。这里重试删除
+// 直到成功或超时，把该竞态吸收掉。
+func stopTmuxServerAndClean(t *testing.T, r *tmuxRunner, root string) {
+	t.Helper()
+	_ = r.command("kill-server")
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if err := os.RemoveAll(root); err == nil {
+			return
+		} else if time.Now().After(deadline) {
+			t.Fatalf("清理 tmux 运行目录 %s 失败: %v", root, err)
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func TestTmuxRunnerPersistsOutputAndExit(t *testing.T) {
 	bin := requireTmuxIntegration(t)
 	sessionsRoot := t.TempDir()
@@ -41,7 +61,7 @@ func TestTmuxRunnerPersistsOutputAndExit(t *testing.T) {
 	r.binary = bin
 	// 测试 socket 仅由当前 Go 测试进程命名；清理不会触碰生产 paihuo socket。
 	_ = r.command("kill-server")
-	t.Cleanup(func() { _ = r.command("kill-server") })
+	t.Cleanup(func() { stopTmuxServerAndClean(t, r, sessionsRoot) })
 
 	const taskID = int64(42)
 	if err := r.Start(taskID, t.TempDir(), "/bin/sh", []string{
@@ -92,7 +112,7 @@ func TestTmuxRunnerPollInteractiveStreamsInputEchoWithoutNewline(t *testing.T) {
 	r := newTmuxRunnerAt(sessionsRoot, fmt.Sprintf("paihuo-interactive-stream-test-%d", os.Getpid()))
 	r.binary = bin
 	_ = r.command("kill-server")
-	t.Cleanup(func() { _ = r.command("kill-server") })
+	t.Cleanup(func() { stopTmuxServerAndClean(t, r, sessionsRoot) })
 
 	const taskID = int64(43)
 	if err := r.Start(taskID, sessionsRoot, "/bin/sh", []string{
@@ -177,10 +197,11 @@ func TestTmuxRunnerInteractiveOutputKeepsSplitUTF8ForNextPoll(t *testing.T) {
 
 func TestTmuxRunnerDoesNotPrefixMatchAnotherTaskWindow(t *testing.T) {
 	bin := requireTmuxIntegration(t)
-	r := newTmuxRunnerAt(t.TempDir(), fmt.Sprintf("paihuo-exact-window-test-%d", os.Getpid()))
+	root := t.TempDir()
+	r := newTmuxRunnerAt(root, fmt.Sprintf("paihuo-exact-window-test-%d", os.Getpid()))
 	r.binary = bin
 	_ = r.command("kill-server")
-	t.Cleanup(func() { _ = r.command("kill-server") })
+	t.Cleanup(func() { stopTmuxServerAndClean(t, r, root) })
 
 	if err := r.ensureSession(); err != nil {
 		t.Fatalf("ensureSession: %v", err)
@@ -241,10 +262,11 @@ func TestTmuxRunnerIgnoresUserConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := newTmuxRunnerAt(t.TempDir(), fmt.Sprintf("paihuo-config-test-%d", os.Getpid()))
+	root := t.TempDir()
+	r := newTmuxRunnerAt(root, fmt.Sprintf("paihuo-config-test-%d", os.Getpid()))
 	r.binary = bin
 	_ = r.command("kill-server")
-	t.Cleanup(func() { _ = r.command("kill-server") })
+	t.Cleanup(func() { stopTmuxServerAndClean(t, r, root) })
 	if err := r.ensureSession(); err != nil {
 		t.Fatalf("ensureSession: %v", err)
 	}
@@ -266,10 +288,11 @@ func TestTmuxRunnerTaskTmuxWrapperIgnoresUserConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := newTmuxRunnerAt(t.TempDir(), fmt.Sprintf("paihuo-wrapper-parent-test-%d", os.Getpid()))
+	root := t.TempDir()
+	r := newTmuxRunnerAt(root, fmt.Sprintf("paihuo-wrapper-parent-test-%d", os.Getpid()))
 	r.binary = bin
 	_ = r.command("kill-server")
-	t.Cleanup(func() { _ = r.command("kill-server") })
+	t.Cleanup(func() { stopTmuxServerAndClean(t, r, root) })
 	nestedSocket := fmt.Sprintf("paihuo-wrapper-child-test-%d", os.Getpid())
 	t.Cleanup(func() {
 		_ = osexec.Command(bin, "-f", tmuxConfigFile, "-L", nestedSocket, "kill-server").Run()
@@ -315,10 +338,11 @@ func TestTmuxRunnerIsolatesBatchAgentProcessGroup(t *testing.T) {
 	if _, err := osexec.LookPath("setsid"); err != nil {
 		t.Skip("setsid 未安装")
 	}
-	r := newTmuxRunnerAt(t.TempDir(), fmt.Sprintf("paihuo-setsid-test-%d", os.Getpid()))
+	root := t.TempDir()
+	r := newTmuxRunnerAt(root, fmt.Sprintf("paihuo-setsid-test-%d", os.Getpid()))
 	r.binary = bin
 	_ = r.command("kill-server")
-	t.Cleanup(func() { _ = r.command("kill-server") })
+	t.Cleanup(func() { stopTmuxServerAndClean(t, r, root) })
 
 	// 模拟 agent 错误地杀掉自身所属进程组。未隔离时这会带走 run.sh，导致
 	// task window 消失却没有 exit-code；隔离后 setsid 只返回 137 给 run.sh。

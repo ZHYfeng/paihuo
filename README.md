@@ -169,6 +169,8 @@ make test-race            # 并发回归
 make build VERSION=dev    # 产物：bin/paihuo
 ```
 
+提交门禁（必跑）：每次 `git commit` 前运行 `make check`，每次 `git push` 前运行 `make check && make test-race`；门禁失败不得提交或推送，修复后重新跑通再继续。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 浏览器端到端回归需要先下载 Chromium，并针对一个已启动的实例运行：
 
 ```bash

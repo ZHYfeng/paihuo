@@ -132,7 +132,7 @@ func TestExecutorSendsLiteralInputToInteractiveTask(t *testing.T) {
 	e := New(st, events.NewHub(), sessionsRoot, "input-test.db")
 	e.runner = newTmuxRunnerAt(sessionsRoot, socket)
 	_ = e.runner.command("kill-server")
-	t.Cleanup(func() { _ = e.runner.command("kill-server") })
+	t.Cleanup(func() { stopTmuxServerAndClean(t, e.runner, sessionsRoot) })
 	if err := e.runner.ensureSession(); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestExecutorSendsRawKeystrokesToInteractiveTask(t *testing.T) {
 	e := New(st, events.NewHub(), sessionsRoot, "raw-input-test.db")
 	e.runner = newTmuxRunnerAt(sessionsRoot, socket)
 	_ = e.runner.command("kill-server")
-	t.Cleanup(func() { _ = e.runner.command("kill-server") })
+	t.Cleanup(func() { stopTmuxServerAndClean(t, e.runner, sessionsRoot) })
 	if err := e.runner.ensureSession(); err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestExecutorResizeAcceptsObserved4KBrowserGeometry(t *testing.T) {
 	socket := fmt.Sprintf("paihuo-4k-resize-test-%d", os.Getpid())
 	e := NewForTest(st, events.NewHub(), sessionsRoot, "4k-resize-test.db", socket)
 	_ = e.runner.command("kill-server")
-	t.Cleanup(func() { _ = e.runner.command("kill-server") })
+	t.Cleanup(func() { stopTmuxServerAndClean(t, e.runner, sessionsRoot) })
 	if err := e.runner.Start(taskID, sessionsRoot, "/bin/sh", []string{"-c", "sleep 5"}, nil, tmuxStartOptions{
 		TerminalColumns: interactiveTerminalColumns,
 		TerminalRows:    interactiveTerminalRows,
