@@ -130,6 +130,9 @@ func TestCreateWorktree(t *testing.T) {
 
 // TestDeliverReusesWorktree 交付 → 任务复用会话 worktree（Ensure 直接命中）。
 func TestDeliverReusesWorktree(t *testing.T) {
+	if !havePi() {
+		t.Skip("本机未安装 pi，跳过交付冒烟测试")
+	}
 	m, st, _, _ := newTestEnv(t)
 	proj, _ := st.ListProjects()
 	agents, _ := st.ListAgents()
