@@ -200,6 +200,11 @@ func Ensure(tk store.Task, sessionsRoot string) (dir, branch, baseCommit string,
 	if tk.SessionID != nil {
 		wt := SessionWorktreePath(sessionsRoot, tk.ProjectName, *tk.SessionID)
 		if fi, err := os.Stat(wt); err == nil && fi.IsDir() {
+			// 非 git 会话：目录只是项目复制，无分支——返回空分支，避免
+			// finishRun 误入代码合并分支（见 #169 失败根因）。
+			if !isGitRepo(project) {
+				return wt, "", "", nil
+			}
 			return wt, SessionBranch(*tk.SessionID), tk.BaseCommit, nil // 已存在（会话 worktree 仍在）
 		}
 		// worktree 丢失：按记录分支重新挂载。

@@ -141,6 +141,35 @@ func TestNonGitFallback(t *testing.T) {
 	}
 }
 
+// 非 git 会话的交付任务重跑（review 驳回重做）：会话复制目录存在时 Ensure
+// 必须返回空分支——否则 finishRun 误入代码合并分支、Snapshot 对非 git 目录
+// 跑 git 失败（#169 失败根因）。
+func TestEnsureNonGitSessionTaskHasNoBranch(t *testing.T) {
+	proj := t.TempDir()
+	os.WriteFile(filepath.Join(proj, "a.txt"), []byte("hi\n"), 0o644)
+	sess := t.TempDir()
+	sid := int64(25)
+	dir, branch, _, err := EnsureSessionWorktree(proj, sess, "nongit", sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch != "" {
+		t.Fatalf("非 git 会话不应有分支: %q", branch)
+	}
+	// 会话 worktree（复制目录）已存在 → Ensure 命中「已存在」分支。
+	tk := store.Task{ID: 169, SessionID: &sid, ProjectDir: proj, ProjectName: "nongit", Title: "测试"}
+	gotDir, gotBranch, _, err := Ensure(tk, sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotDir != dir {
+		t.Fatalf("dir=%q want 会话复制目录 %q", gotDir, dir)
+	}
+	if gotBranch != "" {
+		t.Fatalf("非 git 会话任务应返回空分支，得到 %q", gotBranch)
+	}
+}
+
 func TestEnsureRejectsGitProjectWithoutInitialCommit(t *testing.T) {
 	proj := t.TempDir()
 	if _, err := git(proj, "init", "-q", "-b", "main"); err != nil {
