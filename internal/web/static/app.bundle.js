@@ -8476,7 +8476,10 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
     if (!box) return;
     box.querySelectorAll(".skill-opt input:checked").forEach((cb) => cb.checked = false);
     const input = box.querySelector("input[data-type=list]");
-    if (input) input.value = "";
+    if (input) {
+      input.value = "";
+      syncChips(box, key);
+    }
   }
   function skillsControlHTML(f5, val) {
     const items = val ? String(val).split(",").map((s5) => s5.trim()).filter(Boolean) : [];
@@ -8513,6 +8516,26 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
     </div>
     <div class="chip-add">
       <input placeholder="\u81EA\u5B9A\u4E49\u6280\u80FD\u76EE\u5F55\u8DEF\u5F84\uFF0C\u56DE\u8F66\u6DFB\u52A0" onkeydown="if(event.key==='Enter'){event.preventDefault();addChip('${f5.key}', this)}">
+      <button type="button" class="btn xs" onclick="addChip('${f5.key}', this.previousElementSibling)">\u6DFB\u52A0</button>
+    </div>
+  </div>`;
+  }
+  function extensionsControlHTML(f5, val) {
+    const items = val ? String(val).split(",").map((s5) => s5.trim()).filter(Boolean) : [];
+    const suggestions = Array.isArray(f5.suggestions) ? f5.suggestions.map(String) : [];
+    const opts = suggestions.map((source) => {
+      const on2 = items.includes(source);
+      return `<label class="skill-opt" data-search="${esc(source.toLocaleLowerCase())}"><input type="checkbox" data-v="${esc(source)}" ${on2 ? "checked" : ""} onchange="toggleSkill('${f5.key}', this)"><span class="skill-opt-copy" title="${esc(source)}"><span class="skill-opt-name">${esc(source)}</span><small>Pi \u7528\u6237\u8BBE\u7F6E</small></span></label>`;
+    }).join("");
+    return `<div class="chip-editor">
+    <input type="hidden" data-key="${f5.key}" data-type="list" value="${esc(items.join(","))}">
+    <div class="chips">${items.map((source) => chipHTML(f5.key, source)).join("")}</div>
+    <div class="skill-opts">${opts || `<div class="empty">\u5C1A\u672A\u5B89\u88C5 Pi \u6269\u5C55\uFF1A\u5148\u5230 Skills \u2192 Pi Extensions \u6DFB\u52A0</div>`}</div>
+    <div class="chip-add">
+      <button type="button" class="btn xs" onclick="clearSkillSelection('${f5.key}')">\u6E05\u7A7A\u6269\u5C55</button>
+    </div>
+    <div class="chip-add">
+      <input placeholder="${esc(f5.placeholder || "\u6269\u5C55\u5305\u6765\u6E90\u6216\u8DEF\u5F84\uFF0C\u56DE\u8F66\u6DFB\u52A0")}" onkeydown="if(event.key==='Enter'){event.preventDefault();addChip('${f5.key}', this)}">
       <button type="button" class="btn xs" onclick="addChip('${f5.key}', this.previousElementSibling)">\u6DFB\u52A0</button>
     </div>
   </div>`;
@@ -8588,6 +8611,8 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
       ctl = `<textarea ${attrs} rows="6" placeholder="${esc(f5.placeholder || "")}">${esc(val)}</textarea>`;
     } else if (f5.type === "list" && f5.source === "skills") {
       ctl = skillsControlHTML(f5, val);
+    } else if (f5.type === "list" && f5.source === "extensions") {
+      ctl = extensionsControlHTML(f5, val);
     } else if (f5.type === "list") {
       ctl = chipsControlHTML(f5, val);
     } else if (f5.suggestions && f5.suggestions.length) {
@@ -9566,8 +9591,14 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
     const badge = document.getElementById("rsDraftBadge");
     if (badge) badge.textContent = JSON.stringify(s5.baseDraft) === JSON.stringify(d3) ? "\u672A\u4FEE\u6539" : "\u6709\u672A\u4FDD\u5B58\u4FEE\u6539";
     const skillCount = Array.isArray(d3.role_config?.skills) ? d3.role_config.skills.length : 0;
+    const extensionDefault = schema?.fields?.find((field) => field.key === "extensions")?.default || "";
+    const extensionCount = String(d3.role_config?.custom?.extensions ?? extensionDefault).split(",").map((value) => value.trim()).filter(Boolean).length;
     const note = document.getElementById("rsSkillNote");
-    if (note) note.textContent = skillCount ? `\u8FD0\u884C\u65F6\u4F1A\u542F\u7528 ${skillCount} \u4E2A\u89D2\u8272 Skills` : "\u5C1A\u672A\u9009\u62E9\u89D2\u8272 Skills";
+    if (note) {
+      const parts = [skillCount ? `${skillCount} \u4E2A\u89D2\u8272 Skills` : "\u672A\u9009\u62E9\u89D2\u8272 Skills"];
+      if (d3.cli === "pi") parts.push(extensionCount ? `${extensionCount} \u4E2A Pi \u6269\u5C55\u5305` : "\u672A\u9009\u62E9 Pi \u6269\u5C55\u5305");
+      note.textContent = `\u8FD0\u884C\u65F6\uFF1A${parts.join(" \xB7 ")}`;
+    }
     const meta = document.getElementById("rsTestMeta");
     if (meta) meta.innerHTML = `<span class="avatar sm av-${esc(d3.cli)}">${esc((d3.name || "?").slice(0, 1))}</span><span><b>${esc(d3.name || "\u672A\u547D\u540D\u89D2\u8272")}</b><small>${esc(d3.cli || "\u672A\u9009\u62E9 CLI")} \xB7 \u4F7F\u7528\u5F53\u524D\u8349\u7A3F\u6D4B\u8BD5</small></span>`;
     renderStudioDiff();

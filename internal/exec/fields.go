@@ -4,6 +4,7 @@
 package exec
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -24,7 +25,7 @@ type Field struct {
 	// ThinkingOptionsByModel 是主机发现的“模型 ID → 可用思考档位”。只有 CLI
 	// 明确报告该能力时才填充，避免把某个 CLI 的全局 flag 枚举伪装成模型能力。
 	ThinkingOptionsByModel map[string][]string `json:"thinking_options_by_model,omitempty"`
-	Source                 string              `json:"source,omitempty"`  // skills | files | dirs：服务端扫描后填入 Suggestions
+	Source                 string              `json:"source,omitempty"`  // skills | extensions | files | dirs：服务端扫描后填入 Suggestions
 	Pattern                string              `json:"pattern,omitempty"` // Source=files 时的 glob（支持 ~ 展开）
 	Default                string              `json:"default,omitempty"`
 	Placeholder            string              `json:"placeholder,omitempty"`
@@ -75,18 +76,111 @@ func listFiles(pattern string) []string {
 	return ms
 }
 
-// Enrich 为带 Source 的字段填充动态 Suggestions（配置文件等），并标记
-// builtin 归属（RoleConfig 顶层 vs Custom）。技能候选由前端从 /api/skills
-// （注册到 paihuo 工作目录的技能库）拉取。
+// Enrich 为带 Source 的字段填充动态 Suggestions（配置文件、Pi 扩展包等），
+// 并标记 builtin 归属（RoleConfig 顶层 vs Custom）。技能候选由前端从
+// /api/skills（注册到 paihuo 工作目录的技能库）拉取。
 func Enrich(fs []Field) []Field {
 	for i := range fs {
 		f := &fs[i]
 		f.Builtin = builtinKeys[f.Key]
 		if f.Source == "files" {
 			f.Suggestions = listFiles(f.Pattern)
+		} else if f.Source == "extensions" {
+			f.Suggestions = piExtensionSources()
+			// 旧 Pi 角色没有 custom.extensions，运行时仍会自动发现全部
+			// 全局扩展。表单默认全选当前安装项，避免仅打开并保存角色就
+			// 把既有行为意外改成“禁用全部”。
+			f.Default = strings.Join(f.Suggestions, ",")
 		}
 	}
 	return fs
+}
+
+// piExtensionSources 读取 pi 官方用户设置中的包来源与直接扩展路径，供角色
+// 创建器按包勾选。使用设置文件而不是解析 `pi list` 的人类可读输出，既避免
+// 每次打开角色页都启动一个 CLI，也能保留 npm:/git:/本地路径原值，直接传给
+// 官方可重复的 --extension 参数。
+func piExtensionSources() []string {
+	agentDir := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR"))
+	if agentDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return nil
+		}
+		agentDir = filepath.Join(home, ".pi", "agent")
+	}
+	b, err := os.ReadFile(filepath.Join(agentDir, "settings.json"))
+	if err != nil {
+		return nil
+	}
+	var settings struct {
+		Packages   []json.RawMessage `json:"packages"`
+		Extensions []string          `json:"extensions"`
+	}
+	if err := json.Unmarshal(b, &settings); err != nil {
+		return nil
+	}
+	seen := make(map[string]bool, len(settings.Packages)+len(settings.Extensions))
+	out := make([]string, 0, len(settings.Packages)+len(settings.Extensions))
+	add := func(source string) {
+		source = strings.TrimSpace(source)
+		if source == "" || seen[source] {
+			return
+		}
+		seen[source] = true
+		out = append(out, source)
+	}
+	for _, raw := range settings.Packages {
+		var source string
+		if err := json.Unmarshal(raw, &source); err == nil {
+			add(resolvePiSettingsSource(agentDir, source, false))
+			continue
+		}
+		var filtered struct {
+			Source string `json:"source"`
+		}
+		if err := json.Unmarshal(raw, &filtered); err == nil {
+			add(resolvePiSettingsSource(agentDir, filtered.Source, false))
+		}
+	}
+	for _, source := range settings.Extensions {
+		source = strings.TrimSpace(source)
+		if strings.HasPrefix(source, "!") || strings.HasPrefix(source, "-") {
+			continue
+		}
+		source = strings.TrimPrefix(source, "+")
+		resolved := resolvePiSettingsSource(agentDir, source, true)
+		if strings.ContainsAny(resolved, "*?[") {
+			if matches, err := filepath.Glob(resolved); err == nil && len(matches) > 0 {
+				for _, match := range matches {
+					add(match)
+				}
+				continue
+			}
+		}
+		add(resolved)
+	}
+	return out
+}
+
+// resolvePiSettingsSource 把 Pi 用户设置中相对 agentDir 的本地路径转为绝对
+// 路径；npm:/git:/URL 与 npm 裸包名保持原样，交由 --extension 官方解析器处理。
+func resolvePiSettingsSource(agentDir, source string, forcePath bool) string {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return ""
+	}
+	if strings.HasPrefix(source, "~/") {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			return filepath.Join(home, source[2:])
+		}
+	}
+	local := forcePath || filepath.IsAbs(source) || source == "." || source == ".." ||
+		strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../")
+	if local && !filepath.IsAbs(source) {
+		return filepath.Clean(filepath.Join(agentDir, source))
+	}
+	return source
 }
 
 // Schema 返回该 CLI 支持的配置字段定义；Docs 返回官方文档链接。

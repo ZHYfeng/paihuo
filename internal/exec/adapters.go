@@ -392,6 +392,7 @@ func (a *piAdapter) Build(o RunOptions) (string, []string, []string, error) {
 	for _, s := range skillDirs {
 		args = append(args, "--skill", s)
 	}
+	args = appendPiExtensionArgs(args, o.Role)
 	args = append(args, o.Role.ExtraArgs...)
 	if interactive {
 		// Pi 的交互模式把初始消息作为位置参数；随后会留在 TTY 等待下一轮输入。
@@ -420,7 +421,9 @@ func (a *piAdapter) Schema() []Field {
 	if f := byKey(fs, "skills"); f != nil {
 		f.Help = "执行器把所选技能挂载为角色级技能目录（symlink 视图），并用官方 --skill 逐目录加载（可多个）"
 	}
-	// pi 无 plugins 字段：扩展用 pi install 全局管理（见 Skills 页扩展 tab）
+	// pi 不复用通用 plugins 字段（其语义是 OMP/Claude 的配置路径）；Pi
+	// 扩展单独存入 custom.extensions，并使用 --no-extensions + --extension
+	// 精确加载。字段缺失的旧角色仍沿用 Pi 全局自动发现。
 	out := fs[:0]
 	for _, f := range fs {
 		if f.Key != "plugins" {
@@ -429,6 +432,9 @@ func (a *piAdapter) Schema() []Field {
 	}
 	fs = out
 	fs = append(fs,
+		Field{Key: "extensions", Label: "Pi 扩展包", Type: "list", Group: "技能", Source: "extensions",
+			Placeholder: "npm:package / git:repo / 本地扩展路径",
+			Help:        "从 Skills → Pi Extensions 已安装项中勾选；保存后用官方 --no-extensions + --extension 仅加载所选扩展，清空即禁用全部扩展"},
 		Field{Key: "provider", Label: "提供商", Type: "text", Group: "模型与指令",
 			Placeholder: "留空用默认（pi 默认 google，支持 anthropic/openai/gemini 等）",
 			Help:        "官方 --provider：强制指定提供商；登录见 pi 内 /login（凭据存 ~/.pi/agent/auth.json）"},
@@ -446,6 +452,27 @@ func (a *piAdapter) Schema() []Field {
 }
 
 func (a *piAdapter) Docs() string { return "https://pi.dev/docs" }
+
+// appendPiExtensionArgs 把角色级扩展选择映射到 Pi 官方资源参数。Custom 中
+// 不存在 extensions 表示升级前的旧角色，继续使用 Pi 的全局自动发现；字段
+// 存在（即使值为空）表示用户已通过角色表单明确配置，必须关闭自动发现。
+func appendPiExtensionArgs(args []string, role store.RoleConfig) []string {
+	raw, configured := role.Custom["extensions"]
+	if !configured {
+		return args
+	}
+	args = append(args, "--no-extensions")
+	seen := map[string]bool{}
+	for _, source := range strings.Split(raw, ",") {
+		source = strings.TrimSpace(source)
+		if source == "" || seen[source] {
+			continue
+		}
+		seen[source] = true
+		args = append(args, "--extension", source)
+	}
+	return args
+}
 
 // BuildPiRPCSessionArgs 构造 pi --mode rpc 会话进程的启动参数（会话管理器用）。
 // 与 piAdapter.Build 共用角色参数翻译（model/provider/thinking/skills/extra），
@@ -483,6 +510,7 @@ func BuildPiRPCSessionArgs(role store.RoleConfig, skillDirs []string, sessionDir
 	for _, s := range skillDirs {
 		args = append(args, "--skill", s)
 	}
+	args = appendPiExtensionArgs(args, role)
 	args = append(args, role.ExtraArgs...)
 	return args, nil
 }

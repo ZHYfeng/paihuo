@@ -474,7 +474,10 @@ export function clearSkillSelection(key) {
   if (!box) return;
   box.querySelectorAll(".skill-opt input:checked").forEach(cb => cb.checked = false);
   const input = box.querySelector("input[data-type=list]");
-  if (input) input.value = "";
+  if (input) {
+    input.value = "";
+    syncChips(box, key);
+  }
 }
 
 /* ---- 技能多选：paihuo 技能库（按标签筛选后勾选，值=工作目录实际路径） ---- */
@@ -515,6 +518,29 @@ export function skillsControlHTML(f, val) {
     </div>
     <div class="chip-add">
       <input placeholder="自定义技能目录路径，回车添加" onkeydown="if(event.key==='Enter'){event.preventDefault();addChip('${f.key}', this)}">
+      <button type="button" class="btn xs" onclick="addChip('${f.key}', this.previousElementSibling)">添加</button>
+    </div>
+  </div>`;
+}
+
+/* ---- Pi 扩展包多选：候选来自 ~/.pi/agent/settings.json ---- */
+
+export function extensionsControlHTML(f, val) {
+  const items = val ? String(val).split(",").map(s => s.trim()).filter(Boolean) : [];
+  const suggestions = Array.isArray(f.suggestions) ? f.suggestions.map(String) : [];
+  const opts = suggestions.map(source => {
+    const on = items.includes(source);
+    return `<label class="skill-opt" data-search="${esc(source.toLocaleLowerCase())}"><input type="checkbox" data-v="${esc(source)}" ${on ? "checked" : ""} onchange="toggleSkill('${f.key}', this)"><span class="skill-opt-copy" title="${esc(source)}"><span class="skill-opt-name">${esc(source)}</span><small>Pi 用户设置</small></span></label>`;
+  }).join("");
+  return `<div class="chip-editor">
+    <input type="hidden" data-key="${f.key}" data-type="list" value="${esc(items.join(","))}">
+    <div class="chips">${items.map(source => chipHTML(f.key, source)).join("")}</div>
+    <div class="skill-opts">${opts || `<div class="empty">尚未安装 Pi 扩展：先到 Skills → Pi Extensions 添加</div>`}</div>
+    <div class="chip-add">
+      <button type="button" class="btn xs" onclick="clearSkillSelection('${f.key}')">清空扩展</button>
+    </div>
+    <div class="chip-add">
+      <input placeholder="${esc(f.placeholder || "扩展包来源或路径，回车添加")}" onkeydown="if(event.key==='Enter'){event.preventDefault();addChip('${f.key}', this)}">
       <button type="button" class="btn xs" onclick="addChip('${f.key}', this.previousElementSibling)">添加</button>
     </div>
   </div>`;
@@ -596,6 +622,8 @@ export function fieldControlHTML(f, rc, selectedModel = "") {
     ctl = `<textarea ${attrs} rows="6" placeholder="${esc(f.placeholder || "")}">${esc(val)}</textarea>`;
   } else if (f.type === "list" && f.source === "skills") {
     ctl = skillsControlHTML(f, val);
+  } else if (f.type === "list" && f.source === "extensions") {
+    ctl = extensionsControlHTML(f, val);
   } else if (f.type === "list") {
     ctl = chipsControlHTML(f, val);
   } else if (f.suggestions && f.suggestions.length) {

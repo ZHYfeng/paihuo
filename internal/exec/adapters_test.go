@@ -183,6 +183,7 @@ func TestPiAdapterBuild(t *testing.T) {
 				"tools":         "read,write,bash",
 				"exclude_tools": "browser",
 				"models_cycle":  "anthropic/*,*sonnet*",
+				"extensions":    "npm:pi-web-access, git:github.com/acme/pi-ext, npm:pi-web-access",
 			},
 		},
 		SkillDirs: []string{"/task/.agents/skills/skill-a", "/task/.agents/skills/skill-b"},
@@ -197,15 +198,19 @@ func TestPiAdapterBuild(t *testing.T) {
 		"--append-system-prompt sys", "--provider anthropic", "--tools read,write,bash",
 		"--exclude-tools browser", "--models anthropic/*,*sonnet*",
 		"--thinking high", "--skill /task/.agents/skills/skill-a", "--skill /task/.agents/skills/skill-b", "--offline",
+		"--no-extensions", "--extension npm:pi-web-access", "--extension git:github.com/acme/pi-ext",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("缺少参数 %q（完整: %s）", want, joined)
 		}
 	}
+	if got := strings.Count(joined, "--extension npm:pi-web-access"); got != 1 {
+		t.Fatalf("重复扩展来源应去重，出现 %d 次: %s", got, joined)
+	}
 }
 
-// pi schema：模型目录没有逐模型思考档位时保留完整通用选项；skills 保留、
-// plugins 移除，并保留新增 4 字段。
+// pi schema：模型目录没有逐模型思考档位时保留完整通用选项；skills 和
+// 角色级 extensions 保留、plugins 移除，并保留 Pi 官方参数字段。
 func TestPiSchema(t *testing.T) {
 	a := &piAdapter{baseAdapter{id: "pi", name: "Pi Agent", bin: "pi"}}
 	fs := a.Schema()
@@ -213,13 +218,16 @@ func TestPiSchema(t *testing.T) {
 	for i := range fs {
 		keys[fs[i].Key] = &fs[i]
 	}
-	for _, want := range []string{"model", "system_prompt", "instructions", "thinking", "skills", "provider", "tools", "exclude_tools", "models_cycle", "extra_args", "env"} {
+	for _, want := range []string{"model", "system_prompt", "instructions", "thinking", "skills", "extensions", "provider", "tools", "exclude_tools", "models_cycle", "extra_args", "env"} {
 		if keys[want] == nil {
 			t.Fatalf("schema 缺少 %s", want)
 		}
 	}
 	if keys["plugins"] != nil {
 		t.Fatal("pi schema 不应有 plugins")
+	}
+	if extensions := keys["extensions"]; extensions.Source != "extensions" || extensions.Builtin {
+		t.Fatalf("Pi extensions 应从安装源读取并存入 custom: %+v", extensions)
 	}
 	wantThinking := []string{"", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 	if got := keys["thinking"].Options; strings.Join(got, ",") != strings.Join(wantThinking, ",") {
@@ -234,6 +242,39 @@ func TestPiSchema(t *testing.T) {
 	}
 	if ws := a.Warnings(RunOptions{Role: store.RoleConfig{Plugins: []string{"/p"}}}); len(ws) != 1 {
 		t.Fatalf("plugins 应有一条警告，得到 %v", ws)
+	}
+}
+
+func TestPiExtensionSelectionCompatibilityAndRPC(t *testing.T) {
+	a := &piAdapter{baseAdapter{id: "pi", name: "Pi Agent", bin: "pi"}}
+	_, legacyArgs, _, err := a.Build(RunOptions{Prompt: "p", Role: store.RoleConfig{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(legacyArgs, " "), "--no-extensions") {
+		t.Fatalf("未配置扩展字段的旧角色应继续使用全局自动发现: %v", legacyArgs)
+	}
+
+	disabled := store.RoleConfig{Custom: map[string]string{"extensions": ""}}
+	_, disabledArgs, _, err := a.Build(RunOptions{Prompt: "p", Role: disabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinedDisabled := strings.Join(disabledArgs, " ")
+	if !strings.Contains(joinedDisabled, "--no-extensions") || strings.Contains(joinedDisabled, "--extension ") {
+		t.Fatalf("显式清空扩展应禁用自动发现且不加载扩展: %s", joinedDisabled)
+	}
+
+	role := store.RoleConfig{Custom: map[string]string{"extensions": "npm:pi-subagents,/opt/pi/local.ts"}}
+	rpcArgs, err := BuildPiRPCSessionArgs(role, nil, "/sessions/pi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinedRPC := strings.Join(rpcArgs, " ")
+	for _, want := range []string{"--mode rpc", "--session-dir /sessions/pi", "--no-extensions", "--extension npm:pi-subagents", "--extension /opt/pi/local.ts"} {
+		if !strings.Contains(joinedRPC, want) {
+			t.Fatalf("Pi RPC 缺少参数 %q: %s", want, joinedRPC)
+		}
 	}
 }
 

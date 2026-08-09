@@ -57,6 +57,17 @@ const schema = [
       ...portableFields,
     ],
   },
+  {
+    id: "pi", name: "Pi Agent", docs: "", fields: [
+      { key: "model", label: "模型", type: "text", builtin: true, suggestions: ["openai/gpt-5.4"], group: "模型" },
+      ...portableFields,
+      {
+        key: "extensions", label: "Pi 扩展包", type: "list", source: "extensions", builtin: false,
+        suggestions: ["npm:pi-web-access", "npm:pi-subagents"],
+        default: "npm:pi-web-access,npm:pi-subagents", group: "能力",
+      },
+    ],
+  },
 ];
 const sourceAgent = {
   id: 1,
@@ -133,7 +144,29 @@ function json(route, value, status = 200) {
     if (probe.instructions !== sourceAgent.role_config.instructions) errors.push("portable instructions were lost");
     if (probe.skills !== sourceAgent.role_config.skills.join(",")) errors.push("portable skills were lost");
 
-    console.log(JSON.stringify({ copiedModel, probe }, null, 2));
+    // Pi 角色应把当前安装项默认展示为可勾选扩展；清空后隐藏字段必须同步，
+    // saveRoleStudio/readConfigFrom 才会持久化显式“禁用全部”的空值。
+    await page.selectOption("#rsCli", "pi");
+    const extensionBefore = await page.evaluate(() => {
+      const input = document.querySelector('#rsSchema [data-key="extensions"]');
+      const box = input?.closest(".chip-editor");
+      return {
+        value: input?.value || "",
+        options: [...(box?.querySelectorAll('.skill-opt input[type="checkbox"]') || [])].map(cb => ({
+          value: cb.dataset.v,
+          checked: cb.checked,
+        })),
+      };
+    });
+    await page.click('#rsSchema [data-key="extensions"] ~ .chips + .skill-opts + .chip-add button');
+    const extensionAfter = await page.locator('#rsSchema [data-key="extensions"]').inputValue();
+    if (extensionBefore.value !== "npm:pi-web-access,npm:pi-subagents" ||
+        extensionBefore.options.length !== 2 || extensionBefore.options.some(option => !option.checked)) {
+      errors.push(`Pi extension defaults were not rendered: ${JSON.stringify(extensionBefore)}`);
+    }
+    if (extensionAfter !== "") errors.push(`clearing Pi extensions left value ${JSON.stringify(extensionAfter)}`);
+
+    console.log(JSON.stringify({ copiedModel, probe, extensionBefore, extensionAfter }, null, 2));
     if (errors.length) {
       console.error(errors.map(error => `FAIL: ${error}`).join("\n"));
       process.exitCode = 1;

@@ -81,7 +81,9 @@ function currentDraftFromForm(options = {}) {
 function draftSummary(draft) {
   const cfg = draft?.role_config || {};
   const skills = Array.isArray(cfg.skills) ? cfg.skills.length : 0;
-  return `${draft?.name || "未命名角色"} · ${draft?.cli || "未选择 CLI"} · ${skills} 个 Skills`;
+  const extensionDefault = state.schema[draft?.cli]?.fields?.find(field => field.key === "extensions")?.default || "";
+  const extensions = String(cfg.custom?.extensions ?? extensionDefault).split(",").map(s => s.trim()).filter(Boolean).length;
+  return `${draft?.name || "未命名角色"} · ${draft?.cli || "未选择 CLI"} · ${skills} 个 Skills${draft?.cli === "pi" ? ` · ${extensions} 个扩展包` : ""}`;
 }
 
 function roleStudioMessageHTML(message) {
@@ -193,8 +195,14 @@ function renderStudioDraft() {
   const badge = document.getElementById("rsDraftBadge");
   if (badge) badge.textContent = JSON.stringify(s.baseDraft) === JSON.stringify(d) ? "未修改" : "有未保存修改";
   const skillCount = Array.isArray(d.role_config?.skills) ? d.role_config.skills.length : 0;
+  const extensionDefault = schema?.fields?.find(field => field.key === "extensions")?.default || "";
+  const extensionCount = String(d.role_config?.custom?.extensions ?? extensionDefault).split(",").map(value => value.trim()).filter(Boolean).length;
   const note = document.getElementById("rsSkillNote");
-  if (note) note.textContent = skillCount ? `运行时会启用 ${skillCount} 个角色 Skills` : "尚未选择角色 Skills";
+  if (note) {
+    const parts = [skillCount ? `${skillCount} 个角色 Skills` : "未选择角色 Skills"];
+    if (d.cli === "pi") parts.push(extensionCount ? `${extensionCount} 个 Pi 扩展包` : "未选择 Pi 扩展包");
+    note.textContent = `运行时：${parts.join(" · ")}`;
+  }
   const meta = document.getElementById("rsTestMeta");
   if (meta) meta.innerHTML = `<span class="avatar sm av-${esc(d.cli)}">${esc((d.name || "?").slice(0, 1))}</span><span><b>${esc(d.name || "未命名角色")}</b><small>${esc(d.cli || "未选择 CLI")} · 使用当前草稿测试</small></span>`;
   renderStudioDiff();
