@@ -119,6 +119,9 @@ function toolName(block) {
 }
 
 // ---------------------------------------------------------------- 会话 store
+// transcript 分页大小（首屏尾部一页 + 向上滚动逐页加载）。
+const TRANSCRIPT_PAGE = 100;
+
 export const sessionState = {
   list: [],
   selectedId: null,
@@ -133,6 +136,7 @@ export const sessionState = {
   projectFilter: "",
   transcriptTotal: 0,
   transcriptLoaded: 0,
+  transcriptExhausted: false, // 已翻到会话开头（再往前没有可渲染条目）
   _firstEntryId: "",
 };
 
@@ -221,6 +225,7 @@ export class PhSessionsPage extends LitElement {
     sessionState.entries = [];
     sessionState.pending = null;
     sessionState.live = null;
+    sessionState.transcriptExhausted = false;
     this.requestUpdate();
     await this._loadDetail(id);
   }
@@ -229,7 +234,7 @@ export class PhSessionsPage extends LitElement {
     try {
       const ss = await api(`/api/sessions/${id}`);
       sessionState.detail = ss;
-      const tr = await api(`/api/sessions/${id}/transcript?limit=100`);
+      const tr = await api(`/api/sessions/${id}/transcript?limit=${TRANSCRIPT_PAGE}`);
       sessionState.entries = buildRenderItems(tr && tr.entries ? tr.entries : []);
       sessionState.transcriptTotal = tr ? tr.total : sessionState.entries.length;
       sessionState.transcriptLoaded = sessionState.entries.length;
@@ -240,22 +245,33 @@ export class PhSessionsPage extends LitElement {
     }
   }
 
-  // 分页：向上滚动加载更早的消息。
+  // 分页：加载更早的消息（pi-web：Scroll up to load earlier messages）。
+  // 游标 = 当前最早条目的 entry id（pi 会话 entry 有唯一 id）。
   async loadEarlier() {
     const id = sessionState.detail?.id;
-    if (!id || !sessionState.entries.length) return;
-    // 游标 = 当前最早条目的 entry id（pi 会话 entry 有唯一 id）
+    if (!id || !sessionState.entries.length) return 0;
     const before = sessionState.entries[0]?._id || "";
     if (!before) return 0;
     try {
-      const tr = await api(`/api/sessions/${id}/transcript?limit=100&before=${encodeURIComponent(before || "")}`);
-      const older = buildRenderItems(tr && tr.entries ? tr.entries : []);
+      const tr = await api(`/api/sessions/${id}/transcript?limit=${TRANSCRIPT_PAGE}&before=${encodeURIComponent(before)}`);
+      const raw = (tr && tr.entries) ? tr.entries : [];
+      const older = buildRenderItems(raw);
+      const prevLen = sessionState.entries.length;
       const known = new Set(sessionState.entries.map(e => e._id));
       const merged = [...older.filter(e => !known.has(e._id)), ...sessionState.entries];
+      // 翻到底：返回页不足一页（已到文件开头），或本页没有新增任何条目
+      // （剩余全是不可渲染条目）→ 标记加载完，避免滚到顶部反复请求空页。
+      if (raw.length < TRANSCRIPT_PAGE || merged.length === prevLen) {
+        sessionState.transcriptExhausted = true;
+      }
+      if (merged.length === prevLen) return 0;
       sessionState.entries = merged;
       sessionState.transcriptTotal = tr ? tr.total : merged.length;
-      this.requestUpdate();
-      return merged.length - sessionState.entries.length; // 新增条数（滚动位置修正用）
+      sessionState.transcriptLoaded = merged.length;
+      // entries 引用已变化，但 ph-session-view/stream 的属性绑定只在自身
+      // 重渲染时重新求值：派发事件让消息流/状态栏同步刷新（进度条等）。
+      window.dispatchEvent(new CustomEvent("ph-session-transcript"));
+      return merged.length - prevLen; // 新增条数（滚动位置修正用）
     } catch (_) { return 0; }
   }
 
@@ -397,6 +413,15 @@ function askAnsweredText(q) {
   }).join("、");
 }
 
+// 实时事件新增条目时同步已加载/总数计数：否则顶部进度条与状态栏
+// 的「N 条消息」停留在初载快照，要刷新页面才同步（服务端 total 是
+// 文件行数，实时追加的条目最终也会落盘，计数保持一致）。
+function trackAppended() {
+  const st = sessionState;
+  st.transcriptLoaded += 1;
+  st.transcriptTotal += 1;
+}
+
 // RPC 事件 → 增量更新
 // 注意（pi RPC 协议事实）：
 //   - user 消息没有事件流（message_start/end 只针对 assistant）→ 发送成功后
@@ -437,6 +462,7 @@ function applyLiveEvent(ev) {
       if (msg.role === "assistant") {
         st.pending = { kind: "assistant", msg, toolResults: new Map(), streaming: true };
         st.entries.push(st.pending);
+        trackAppended();
       }
       break;
     }
@@ -489,6 +515,7 @@ function applyLiveEvent(ev) {
     case "user_echo": {
       // 用户自己的消息：发送成功后前端回显（pi RPC 流不为 user 消息发事件）。
       st.entries.push({ kind: "user", msg: ev.message || {} });
+      trackAppended();
       break;
     }
     case "extension_ui_request": {
@@ -506,6 +533,7 @@ function applyLiveEvent(ev) {
           placeholder: ev.placeholder || "",
         };
         st.entries.push({ kind: "ask", ask: st.pendingAsk, _id: "ask-" + ev.id });
+        trackAppended();
       } else if (method === "notify" && ev.message) {
         import("./core.js").then(m => m.toast(String(ev.message), false)).catch(() => {});
       }
@@ -776,6 +804,22 @@ export class PhStatusBar extends LitElement {
     @keyframes pulse { 0%, 100% { transform: scale(.75); opacity: .55; } 50% { transform: scale(1.2); opacity: 1; } }
   `;
   static properties = { live: { attribute: false }, running: { attribute: false } };
+  constructor() {
+    super();
+    // 分页加载更早消息/实时追加后：消息总数变化，状态栏同步刷新。
+    this._onLive = () => this.requestUpdate();
+    this._onTranscript = () => this.requestUpdate();
+  }
+  connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener("ph-session-message", this._onLive);
+    window.addEventListener("ph-session-transcript", this._onTranscript);
+  }
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    window.removeEventListener("ph-session-message", this._onLive);
+    window.removeEventListener("ph-session-transcript", this._onTranscript);
+  }
   render() {
     const st = sessionState;
     const active = st.sending || this.running;
@@ -899,10 +943,8 @@ export class PhMessageStream extends LitElement {
     .rail-track { position: relative; height: 4px; margin-top: 4px; border-radius: 999px; background: color-mix(in srgb, var(--pw-border-muted) 34%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--pw-bg) 55%, transparent); }
     .rail-progress { position: absolute; left: 0; width: var(--rail-position, 100%); top: 0; bottom: 0; border-radius: 999px; background: color-mix(in srgb, var(--pw-accent) 42%, var(--pw-border-muted)); }
     .rail-marker { position: absolute; left: var(--rail-position, 100%); top: 50%; width: 10px; height: 10px; border: 2px solid var(--pw-bg); border-radius: 50%; background: var(--pw-accent); box-shadow: 0 2px 8px var(--pw-shadow); transform: translate(-50%, -50%); }
-    /* history-boundary：顶部历史边界（加载更早/会话起点 + 消息区间） */
+    /* pi-web history-boundary：顶部历史边界（自动加载中/会话起点 + 消息区间） */
     .history-boundary { position: relative; z-index: 5; display: grid; gap: 3px; justify-items: center; margin: 0 0 14px; color: var(--pw-muted); font-size: 12px; text-align: center; }
-    .history-load-button { border: 1px solid var(--pw-border); border-radius: 999px; background: var(--pw-surface); color: var(--pw-text-secondary); padding: 5px 12px; font: 12px var(--font-sans); cursor: pointer; }
-    .history-load-button:hover, .history-load-button:focus { border-color: var(--pw-accent); color: var(--pw-text-bright); }
     .history-boundary small { color: var(--pw-dim); }
     /* activity-dock：右下悬浮运行状态药丸 */
     .activity-dock { position: absolute; left: 16px; right: 16px; bottom: 12px; z-index: 20; display: flex; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box; border: 1px solid var(--pw-border); border-radius: 999px; background: var(--pw-bg-overlay); color: var(--pw-muted); padding: 8px 12px; font-size: 13px; pointer-events: none; box-shadow: 0 8px 28px var(--pw-shadow); backdrop-filter: blur(6px); }
@@ -921,6 +963,12 @@ export class PhMessageStream extends LitElement {
     this._loadingOlder = false;
     // SSE 事件 → 强制重渲染（entries 原地变更，属性引用不变）
     this._onLive = () => this.requestUpdate();
+    // loadEarlier 分页合并后：同步本地 entries 快照并重渲染。
+    // （store 里是新数组，本组件属性绑定的是旧引用，lit 不会自动刷新。）
+    this._onTranscript = () => {
+      this.entries = sessionState.entries;
+      this.requestUpdate();
+    };
     // 问答卡片应答成功 → 把 ask 条目替换为用户消息回显。
     // 按 _id 查找而非 kind==="ask"：agent 可能比应答 fetch 回调先恢复
     // （agent_settled 已把卡片标为「已跳过」），此时要覆盖占位而不是丢回显。
@@ -943,11 +991,13 @@ export class PhMessageStream extends LitElement {
     super.connectedCallback();
     window.addEventListener("ph-session-message", this._onLive);
     window.addEventListener("ph-session-ask-answered", this._onAskAnswered);
+    window.addEventListener("ph-session-transcript", this._onTranscript);
   }
   disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener("ph-session-message", this._onLive);
     window.removeEventListener("ph-session-ask-answered", this._onAskAnswered);
+    window.removeEventListener("ph-session-transcript", this._onTranscript);
   }
   willUpdate(ch) {
     if (ch.has("sessionId")) this._atBottom = true; // 切换会话后回到底部
@@ -980,24 +1030,29 @@ export class PhMessageStream extends LitElement {
     // 滚到顶部加载更早（pi-web：Scroll up to load earlier messages）
     if (chat.scrollTop <= 40) this._loadMore();
   }
-  _loadMore() {
+  async _loadMore() {
     if (this._loadingOlder || !this._hasOlder()) return;
     const chat = this.renderRoot.querySelector(".chat");
     if (!chat) return;
     this._loadingOlder = true;
     const prevHeight = chat.scrollHeight;
-    // 等待页面合并后修正滚动位置
-    setTimeout(() => {
+    try {
       const page = document.querySelector("ph-sessions-page");
-      page.loadEarlier().then(() => {
-        if (chat.isConnected) chat.scrollTop = chat.scrollHeight - prevHeight + 40;
-        this._loadingOlder = false;
-      });
-    }, 50);
+      await page.loadEarlier();
+      if (!chat.isConnected) return;
+      // ph-msg-* 子组件的 shadow 内容在本组件更新后还要等一帧才渲染完
+      // （同 scrollToBottom），此时 scrollHeight 还没长全：等两帧再补偿
+      // 滚动位置，把视口拉回原来阅读的内容处。
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      if (!chat.isConnected) return;
+      chat.scrollTop = chat.scrollHeight - prevHeight + 40;
+    } finally {
+      this._loadingOlder = false;
+    }
   }
   _hasOlder() {
     const st = sessionState;
-    return st.transcriptLoaded < st.transcriptTotal;
+    return !st.transcriptExhausted && st.transcriptLoaded < st.transcriptTotal;
   }
   // pi-web formatted-text 代码块复制按钮（事件委托，全消息流共享）。
   // 注意：composed 事件在 shadow 边界外观察时 e.target 会被 retarget 成
@@ -1020,15 +1075,11 @@ export class PhMessageStream extends LitElement {
     if (!st.entries.length) return null;
     const from = st.transcriptTotal - st.transcriptLoaded + 1;
     const to = st.transcriptTotal;
-    const range = html`<small>第 ${Math.max(from, 1)}–${to} 条，共 ${to} 条</small>`;
+    const range = html`<small>显示第 ${Math.max(from, 1)}–${to} 条，共 ${to} 条</small>`;
     if (this._hasOlder()) {
-      return html`<div class="history-boundary">
-        <button type="button" class="history-load-button" @click=${() => this._loadMore()}>加载更早消息</button>
-        <span>向上滚动加载更早消息</span>
-        ${range}
-      </div>`;
+      return html`<div class="history-boundary"><span>向上滚动自动加载更早消息</span>${range}</div>`;
     }
-    return html`<div class="history-boundary"><span>会话起点</span>${range}</div>`;
+    return html`<div class="history-boundary"><span>已到会话开头</span>${range}</div>`;
   }
   renderDock() {
     const st = sessionState;

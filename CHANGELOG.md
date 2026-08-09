@@ -5,8 +5,10 @@ This file records notable user-facing and maintainer-facing changes. The format 
 ## Unreleased
 
 ### Added
-
 - **模板管理页（管理分组新增「模板」入口）**：任务模板此前只能从任务详情「保存为模板」沉淀、列表渲染代码指向不存在的元素（无任何管理入口，只能改数据库）。现在侧栏「管理」分组新增「模板」页：完整管理列表（名称/角色/内容预览/创建时间）+ 新建/编辑/删除（新增 `PATCH /api/templates/{id}` 与 `GET` 单条接口），弹窗可直接编辑名称、提示词与绑定角色；列表操作「新建任务」用模板直接打开新建任务弹窗并预填内容与角色，与新建任务弹窗的「从模板填充」下拉同源联动。
+- **会话加载更早消息改为自动加载并修复分页**：会话页顶部「Load earlier messages」按钮此前无法加载任何更早消息——transcript 分页的 `before` 游标取的是「游标及其后」一页，而前端向上滚动要的是「游标之前」一页，两者恰好重叠导致每次请求都返回同一窗口、去重后零新增；且合并后只刷新了页面组件、消息流未重渲染，点了像没点（刷新页面才看到）。现在 `before` 游标改为返回该 entry 之前的 limit 条（不含游标），删除按钮，向上滚动自动逐页加载（滚动位置精确补偿，不再跳进新加载区），加载完自动停（「已到会话开头」），翻到底判定不再依赖「已加载数 < 文件行数」（toolResult 等不可渲染条目会让该判定永远为真、反复请求空页）。
+- **会话顶部进度条与消息计数实时同步**：conversation-rail 与状态栏「N 条消息」此前只在页面刷新后同步——分页加载后 `transcriptLoaded` 从未更新（进度条永远停在首屏位置），实时消息追加也不计入计数，且消息流在 store 变化后不重渲染。现在分页合并后派发 `ph-session-transcript` 事件驱动消息流/状态栏刷新，实时追加（user_echo / message_start / 提问卡片）同步递增已加载与总数，进度条与计数随对话实时移动，无需刷新。
+
 - **修复「进行中」计数显示全部任务数**：`ProjectStatsOf`/`OverviewStatsOf` 把 `statusCountsOf` 的第二个返回值（任务总数）误赋给 `in_flight`——项目页/全局统计条的「进行中」一直显示该范围的全部任务数（含已完成的会话交付任务及其合并任务），而不是 queued/claimed/running/awaiting_review 的实际进行中数量。现在统一用 `inflightCount` 按状态求和（与 `AgentStatsOf` 既有语义一致），交付会话后项目页「进行中」不再虚高。
 - **会话交付即终态，杜绝反复交付**：交付任务此前被删除时会话自动**解冻回 suspended**——会话可恢复、修改、再次交付，反复创建新的合并任务（同一会话的成果被反复合并）。现在 `delivered` 是终态：不再解冻、不可恢复、不可再次交付；删除交付任务时会话**联动清理**（delivered → deleted，清理 worktree）；已交付会话也可手动「丢弃」（归档出口，不影响已创建的任务）。git 项目交付时（full 与 review 均）快照会话 worktree 到会话分支，最终成果落定分支，合并任务（含审批后的 review 合并）不再依赖会话 worktree 仍存在。
 - **非 git 会话任务不再携带伪分支**：`workspace.Ensure` 对 SessionID 任务只要会话复制目录存在就无条件返回 `paihuo/session-<id>` 分支名（不管项目是否 git），执行器持久化后 `finishRun` 误入代码合并分支、`Snapshot` 对非 git 目录跑 git 失败（线上任务 #169「测试skills」即因此 failed）。现在非 git 项目一律返回空分支，与「非 git 项目无合并环节」语义一致；review 驳回重做的非 git 会话任务结算恢复正常。

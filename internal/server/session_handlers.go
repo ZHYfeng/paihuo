@@ -329,7 +329,7 @@ func (s *Server) sessionTranscript(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "会话 id 非法"})
 		return
 	}
-	// 分页：?limit=100&before=<entryId>（before 含该条向后取；不传=取尾部 limit 条）
+	// 分页：?limit=100&before=<entryId>（before 返回该条之前的 limit 条；不传=取尾部 limit 条）
 	limit := 0
 	before := r.URL.Query().Get("before")
 	if v := r.URL.Query().Get("limit"); v != "" {

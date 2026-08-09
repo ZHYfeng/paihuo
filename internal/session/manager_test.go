@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -440,4 +442,72 @@ func TestLifecycleWithRealPi(t *testing.T) {
 	m.ex.ReleaseAgentSlot(agents[0].ID)
 	m.ex.ReleaseAgentSlot(agents[0].ID)
 	_ = ex
+}
+
+// TestTranscriptPagination before 游标语义：返回该 entry 之前的 limit 条
+// （不含游标，即上一页）；不足一页贴到文件开头；游标找不到返回空页。
+// 会话页「向上滚动自动加载更早消息」依赖此语义做分页合并。
+func TestTranscriptPagination(t *testing.T) {
+	m, st, _, root := newTestEnv(t)
+	dir := filepath.Join(root, "sessions", "tx-sess")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for i := 0; i < 60; i++ {
+		b, _ := json.Marshal(map[string]any{
+			"type":    "message",
+			"id":      fmt.Sprintf("e%03d", i),
+			"message": map[string]any{"role": "user", "content": []any{}},
+		})
+		lines = append(lines, string(b))
+	}
+	if err := os.WriteFile(filepath.Join(dir, "2026-01-01T00-00-00-000Z_test.jsonl"),
+		[]byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sid, err := st.CreateSession(store.Session{
+		AgentID: 1, Title: "pagination", Status: store.SessionStatusDelivered,
+		SessionDir: dir, CreatedAt: store.Now(), UpdatedAt: store.Now(),
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	ctx := context.Background()
+	firstID := func(es []map[string]any) any {
+		if len(es) == 0 {
+			return nil
+		}
+		return es[0]["id"]
+	}
+
+	// 不传游标：尾部 limit 条。
+	entries, total, err := m.Transcript(ctx, sid, 10, "")
+	if err != nil || total != 60 || len(entries) != 10 || firstID(entries) != "e050" {
+		t.Fatalf("tail: err=%v total=%d n=%d first=%v", err, total, len(entries), firstID(entries))
+	}
+	// before 游标：返回该条之前的 limit 条（不含游标）。
+	entries, total, err = m.Transcript(ctx, sid, 10, "e050")
+	if err != nil || total != 60 || len(entries) != 10 || firstID(entries) != "e040" {
+		t.Fatalf("prev: err=%v n=%d first=%v", err, len(entries), firstID(entries))
+	}
+	if last := entries[len(entries)-1]["id"]; last != "e049" {
+		t.Fatalf("prev 末条=%v，应 e049（不含游标）", last)
+	}
+	// 跨页向前翻。
+	entries, _, _ = m.Transcript(ctx, sid, 10, "e015")
+	if len(entries) != 10 || firstID(entries) != "e005" {
+		t.Fatalf("prev2: n=%d first=%v", len(entries), firstID(entries))
+	}
+	// 不足一页：贴到文件开头。
+	entries, _, _ = m.Transcript(ctx, sid, 10, "e003")
+	if len(entries) != 3 || firstID(entries) != "e000" {
+		t.Fatalf("short: n=%d first=%v", len(entries), firstID(entries))
+	}
+	// 游标找不到：返回空页（total 仍为全量）。
+	entries, total, _ = m.Transcript(ctx, sid, 10, "missing")
+	if len(entries) != 0 || total != 60 {
+		t.Fatalf("missing cursor: n=%d total=%d", len(entries), total)
+	}
 }

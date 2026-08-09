@@ -615,8 +615,8 @@ func (m *Manager) State(ctx context.Context, id int64) (json.RawMessage, error) 
 
 // Transcript 返回会话完整时间线（解析 pi 会话 JSONL 文件，含全部 entry 类型：
 // message / model_change / compaction / branch_summary 等）。挂起/交付后仍可读。
-// limit <= 0 表示全量；before 是分页游标（返回该 entry id 开始的 limit 条）。
-// 返回 (entries, total, err)——total 为全部条目数（分页指示用）。
+// limit <= 0 表示全量；before 是分页游标（返回该 entry 之前的 limit 条，
+// 不含该条，即「上一页」）。返回 (entries, total, err)——total 为全部条目数（分页指示用）。
 func (m *Manager) Transcript(ctx context.Context, id int64, limit int, before string) ([]map[string]any, int, error) {
 	ss, err := m.st.GetSession(id)
 	if err != nil {
@@ -644,21 +644,24 @@ func (m *Manager) Transcript(ctx context.Context, id int64, limit int, before st
 		entries = append(entries, entry)
 	}
 	total := len(entries)
-	// 分页：before 游标 → 从包含 before 的条目开始（含）向后取 limit 条。
+	// 分页：before 游标 → 返回该 entry 之前的 limit 条（不含该条；上一页）。
+	// 游标找不到（会话文件已轮转）→ 保守返回空，避免与当前已加载窗口重叠。
 	if before != "" {
-		start := 0
+		start := -1
 		for i, e := range entries {
 			if idStr, _ := e["id"].(string); idStr == before {
 				start = i
 				break
 			}
 		}
-		if start > 0 && limit > 0 {
-			end := start + limit
-			if end > total {
-				end = total
+		if start < 0 {
+			entries = nil
+		} else if limit > 0 {
+			begin := start - limit
+			if begin < 0 {
+				begin = 0
 			}
-			entries = entries[start:end]
+			entries = entries[begin:start]
 		}
 	} else if limit > 0 && total > limit {
 		entries = entries[total-limit:]
