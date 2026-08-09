@@ -6,6 +6,8 @@
 // 数据源：全量 = GET /api/sessions/{id}/transcript（pi 会话 JSONL 解析）；
 // 增量 = SSE session.message 事件（RPC 事件流透传）。
 import { LitElement, html, css, nothing } from "lit";
+import DOMPurify from "dompurify";
+import { marked } from "marked";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { ref } from "lit/directives/ref.js";
 import { api } from "./core.js";
@@ -59,48 +61,73 @@ const STATUS_LABEL = {
   delivered: "已交付", deleted: "已删除",
 };
 
-// ---------------------------------------------------------------- markdown 轻量渲染
-function esc(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// ---------------------------------------------------------------- markdown 渲染
+// OMP 的回答大量使用 GFM 表格、有序/嵌套列表和任务列表。旧的正则版
+// “轻量 markdown”会产生游离在 <ul> 外的 <li>，也不识别表格和段落。
+// 这里用 marked 按 GFM 解析，再用 DOMPurify 的显式白名单清洗后才交给 unsafeHTML。
+const MD_ALLOWED_TAGS = [
+  "a", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3", "h4", "h5", "h6",
+  "hr", "input", "kbd", "li", "ol", "p", "pre", "strong", "table", "tbody", "td", "tfoot",
+  "th", "thead", "tr", "ul",
+];
+const MD_ALLOWED_ATTR = [
+  "aria-hidden", "aria-label", "checked", "class", "disabled", "href", "rel", "start", "target",
+  "title", "type",
+];
+
+function safeMarkdownHref(raw) {
+  const url = String(raw || "").trim();
+  if (!url || /[\u0000-\u001f\u007f]/.test(url)) return "#";
+  if (/^(?:https?:|mailto:|#|\/(?!\/)|\.{1,2}\/)/i.test(url)) return url;
+  // 无 scheme 的文档相对路径（例如 docs/guide.md）可用；//host 和其它
+  // scheme 不允许，避免 javascript:/data:/file: 等协议注入。
+  if (!/^[a-z][a-z\d+.-]*:/i.test(url) && !url.startsWith("//")) return url;
+  return "#";
 }
 
 export function md(src) {
   if (!src) return "";
-  src = String(src);
-  const out = [];
-  let rest = src;
-  while (rest.length) {
-    const m = /```([\w-]*)\n?([\s\S]*?)```/.exec(rest);
-    if (!m) { out.push(inlineMd(rest)); break; }
-    out.push(inlineMd(rest.slice(0, m.index)));
-    // pi-web formattedText：pre 外包 code-block-wrapper + 右上角复制按钮
-    const code = esc(m[2].replace(/\n$/, ""));
-    const lang = esc(m[1]);
-    out.push(`<div class="code-block-wrapper"><pre><code${lang ? ` data-lang="${lang}"` : ""}>${code}</code></pre><button type="button" class="code-copy-button" title="复制代码块" aria-label="复制代码块"><span aria-hidden="true">⧉</span></button></div>`);
-    rest = rest.slice(m.index + m[0].length);
-  }
-  return out.join("");
-}
-
-function inlineMd(src) {
-  let s = esc(src);
-  s = s.replace(/^(#{1,4})\s+(.+)$/gm, (_, h, t) => `<h${h.length}>${t}</h${h.length}>`);
-  s = s.replace(/^&gt;\s?(.+)$/gm, "<blockquote>$1</blockquote>");
-  s = s.replace(/^[-*]\s+(.+)$/gm, "<li>$1</li>");
-  s = s.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, "<ul>$1</ul>");
-  const codes = [];
-  s = s.replace(/`([^`]+)`/g, (_, c) => { codes.push(esc(c)); return `\u0000${codes.length - 1}\u0000`; });
-  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) => {
-    // unsafeHTML 下 href 是真实属性：剥引号、限制协议（http/https/mailto/锚点/相对路径），
-    // 防 agent/用户消息里的链接注入事件属性或 javascript:。
-    let url = String(u).replace(/["'<>`\s]/g, "");
-    if (!/^(https?:|mailto:|#|\/|\.\/|\.\.\/)/i.test(url)) url = "#";
-    return `<a href="${url}" target="_blank" rel="noopener">${t}</a>`;
+  // marked 文档特别指出文本开头的零宽字符会干扰块级语法。
+  const source = String(src).replace(/^[\u200b-\u200f\ufeff]+/, "");
+  const rendered = marked.parse(source, { async: false, breaks: false, gfm: true });
+  const fragment = DOMPurify.sanitize(String(rendered), {
+    ALLOWED_ATTR: MD_ALLOWED_ATTR,
+    ALLOWED_TAGS: MD_ALLOWED_TAGS,
+    RETURN_DOM_FRAGMENT: true,
   });
-  s = s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[+i]}</code>`);
-  return s;
+
+  // DOMPurify 先剔除事件属性/危险协议，再把链接收窄到产品明确支持的
+  // http(s)/mailto/锚点/相对路径，并统一新窗口的隔离属性。
+  for (const link of fragment.querySelectorAll("a")) {
+    link.setAttribute("href", safeMarkdownHref(link.getAttribute("href")));
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
+  }
+
+  // 复制按钮在清洗之后由本地代码创建，不将消息原文里的 button/div
+  // 放入白名单。同时兼容 fenced code 与缩进 code。
+  for (const pre of [...fragment.querySelectorAll("pre")]) {
+    const code = pre.querySelector("code");
+    const languageClass = [...(code && code.classList || [])].find(name => name.startsWith("language-"));
+    if (languageClass) code.dataset.lang = languageClass.slice("language-".length);
+    const wrapper = document.createElement("div");
+    wrapper.className = "code-block-wrapper";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "code-copy-button";
+    button.title = "复制代码块";
+    button.setAttribute("aria-label", "复制代码块");
+    const icon = document.createElement("span");
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "⧉";
+    button.append(icon);
+    pre.replaceWith(wrapper);
+    wrapper.append(pre, button);
+  }
+
+  const box = document.createElement("div");
+  box.append(fragment);
+  return box.innerHTML;
 }
 
 // ---------------------------------------------------------------- 工具卡片辅助
@@ -1164,6 +1191,9 @@ const msgStyles = css`
   .ph-md :is(p, ul, ol, pre, blockquote, .code-block-wrapper):last-child { margin-bottom: 0; }
   .ph-md ul, .ph-md ol { padding-left: 22px; }
   .ph-md li + li { margin-top: 3px; }
+  .ph-md li > :is(p, ul, ol) { margin-top: 4px; margin-bottom: 4px; }
+  .ph-md li > p:first-child { margin-top: 0; }
+  .ph-md input[type="checkbox"] { margin: 0 6px 0 0; accent-color: var(--pw-accent); vertical-align: -1px; }
   .ph-md code { border: 1px solid var(--pw-border); border-radius: 4px; background: var(--pw-bg); padding: 1px 4px; font: 13px var(--font-mono); direction: ltr; text-align: left; unicode-bidi: isolate; }
   .ph-md .code-block-wrapper { position: relative; }
   .ph-md .code-block-wrapper pre { margin: 0; padding-right: 40px; }
@@ -1173,12 +1203,19 @@ const msgStyles = css`
   .code-copy-button:hover, .code-copy-button:focus { color: var(--pw-text); border-color: var(--pw-accent); }
   .ph-md blockquote { border-left: 3px solid var(--pw-border); padding-left: 10px; color: var(--pw-muted); margin-top: 4px; }
   .ph-md a { color: var(--pw-accent); }
-  .ph-md h1, .ph-md h2, .ph-md h3, .ph-md h4 { margin: 14px 0 8px; line-height: 1.2; font-weight: 600; }
-  .ph-md h1:first-child, .ph-md h2:first-child, .ph-md h3:first-child, .ph-md h4:first-child { margin-top: 0; }
+  .ph-md hr { height: 1px; margin: 14px 0; border: 0; background: var(--pw-border); }
+  .ph-md table { display: block; width: max-content; max-width: 100%; margin: 0 0 10px; border-collapse: collapse; overflow-x: auto; }
+  .ph-md th, .ph-md td { min-width: 88px; border: 1px solid var(--pw-border); padding: 6px 9px; text-align: start; vertical-align: top; }
+  .ph-md th { background: var(--pw-bg); color: var(--pw-text-bright); font-weight: 650; }
+  .ph-md tr:nth-child(even) td { background: color-mix(in srgb, var(--pw-bg) 42%, transparent); }
+  .ph-md del { color: var(--pw-muted); }
+  .ph-md h1, .ph-md h2, .ph-md h3, .ph-md h4, .ph-md h5, .ph-md h6 { margin: 14px 0 8px; line-height: 1.2; font-weight: 600; }
+  .ph-md h1:first-child, .ph-md h2:first-child, .ph-md h3:first-child, .ph-md h4:first-child, .ph-md h5:first-child, .ph-md h6:first-child { margin-top: 0; }
   .ph-md h1 { font-size: 20px; }
   .ph-md h2 { font-size: 17px; }
   .ph-md h3 { font-size: 15px; }
   .ph-md h4 { font-size: 14px; }
+  .ph-md h5, .ph-md h6 { font-size: 13.5px; }
   .ph-md strong { font-weight: 700; }
   /* 消息 part（pi-web .part） */
   .part { max-width: 100%; min-width: 0; box-sizing: border-box; overflow: visible; }
@@ -1287,7 +1324,7 @@ class PhMsgAssistant extends LitElement {
     const blocks = Array.isArray(m.content) ? m.content : [];
     const parts = [];
     for (const b of blocks) {
-      if (b.type === "text") parts.push(html`<div class="part">${unsafeHTML(md(b.text || ""))}</div>`);
+      if (b.type === "text") parts.push(html`<div class="part ph-md">${unsafeHTML(md(b.text || ""))}</div>`);
       else if (b.type === "thinking") parts.push(html`<details class="part thinking"><summary>思考</summary><div class="ph-md">${unsafeHTML(md(b.thinking || ""))}</div></details>`);
       else if (b.type === "toolCall") parts.push(html`<ph-tool-card class="part" .call=${b} .result=${(this.toolResults && this.toolResults.get(b.id)) || null}></ph-tool-card>`);
       else if (b.type === "toolExecution") parts.push(html`<ph-tool-card class="part" .call=${b} .result=${(this.toolResults && this.toolResults.get(b.id)) || null}></ph-tool-card>`);
@@ -1334,7 +1371,7 @@ class PhMsgBash extends LitElement {
 customElements.define("ph-msg-bash", PhMsgBash);
 
 class PhMsgCustom extends LitElement {
-  static styles = css`
+  static styles = [msgStyles, css`
     ${PW}
     :host { display: block; margin: 0 0 14px; }
     .box { border: 1px solid var(--pw-purple-border); border-radius: var(--r-lg); padding: 12px; font-size: 14px; line-height: 1.45; background: var(--pw-purple-surface); color: var(--pw-text); }
@@ -1344,7 +1381,7 @@ class PhMsgCustom extends LitElement {
     .q-text { font-weight: 600; }
     .a { color: var(--pw-text-secondary); font-size: 13px; margin-top: 2px; }
     .a::before { content: "→ "; color: var(--pw-purple); }
-  `;
+  `];
   static properties = { msg: { attribute: false } };
   render() {
     const m = this.msg || {};
@@ -1352,7 +1389,7 @@ class PhMsgCustom extends LitElement {
     const qa = d && Array.isArray(d.questions) ? d.questions : null;
     return html`<div class="box"><div class="t">${m.customType || "custom"}</div>
       ${qa && qa.length ? html`<div class="qa">${qa.map(q => html`<div class="q">
-        <div class="q-text">${unsafeHTML(md((q.question && q.question.question) || ""))}</div>
+        <div class="q-text ph-md">${unsafeHTML(md((q.question && q.question.question) || ""))}</div>
         <div class="a">${askAnsweredText(q)}</div>
       </div>`)}</div>` : html`<div class="ph-md">${unsafeHTML(md(typeof m.content === "string" ? m.content : ""))}</div>`}
     </div>`;

@@ -84,6 +84,85 @@ function findChrome() {
     else ok(p);
   }
 
+  // OMP 回答会密集使用 GFM 表格、多级列表和代码块。直接挂载一条
+  // assistant 消息，同时校验语义 DOM、横向表格样式和不可信 HTML/链接清洗。
+  await page.goto(URL + "/sessions");
+  const markdownProbe = await page.evaluate(async () => {
+    window.__paihuoMarkdownXss = 0;
+    const el = document.createElement("ph-msg-assistant");
+    el.msg = {
+      role: "assistant",
+      content: [{
+        type: "text",
+        text: [
+          "# OMP 标题",
+          "",
+          "第一段有 **粗体** 和 `inline()`。",
+          "",
+          "第二段不应和第一段挤在一起。",
+          "",
+          "- 无序一",
+          "- 无序二",
+          "  - 嵌套项",
+          "",
+          "1. 有序一",
+          "2. 有序二",
+          "",
+          "| 工具 | 能力 |",
+          "|---|---|",
+          "| read | 读取 |",
+          "| bash | 执行 |",
+          "",
+          "[safe](https://example.com) [relative](docs/guide.md) [unsafe](javascript:evil)",
+          "",
+          "```js",
+          "const answer = 42;",
+          "```",
+          "",
+          '<img src=x onerror="window.__paihuoMarkdownXss=1"><script>window.__paihuoMarkdownXss=2</script>',
+        ].join("\n"),
+      }],
+    };
+    document.body.appendChild(el);
+    await el.updateComplete;
+    const root = el.shadowRoot;
+    const part = root.querySelector(".part.ph-md");
+    const links = [...root.querySelectorAll("a")];
+    const link = text => links.find(a => a.textContent === text);
+    const table = root.querySelector("table");
+    const result = {
+      heading: root.querySelector("h1")?.textContent,
+      paragraphs: root.querySelectorAll("p").length,
+      unorderedItems: root.querySelectorAll("ul > li").length,
+      nestedItems: root.querySelectorAll("ul ul > li").length,
+      orderedItems: root.querySelectorAll("ol > li").length,
+      tableRows: root.querySelectorAll("table tr").length,
+      codeCopy: !!root.querySelector(".code-block-wrapper .code-copy-button"),
+      codeLanguage: root.querySelector("pre code")?.dataset.lang,
+      markdownClass: !!part,
+      tableOverflow: table ? getComputedStyle(table).overflowX : "",
+      safeHref: link("safe")?.getAttribute("href"),
+      relativeHref: link("relative")?.getAttribute("href"),
+      unsafeHref: link("unsafe")?.getAttribute("href"),
+      safeRel: link("safe")?.getAttribute("rel"),
+      unsafeTags: part?.querySelectorAll("script, img, button:not(.code-copy-button)").length ?? -1,
+      xss: window.__paihuoMarkdownXss,
+    };
+    el.remove();
+    return result;
+  });
+  const markdownOK = markdownProbe.heading === "OMP 标题" &&
+    markdownProbe.paragraphs >= 2 && markdownProbe.unorderedItems === 3 &&
+    markdownProbe.nestedItems === 1 && markdownProbe.orderedItems === 2 &&
+    markdownProbe.tableRows === 3 && markdownProbe.codeCopy &&
+    markdownProbe.codeLanguage === "js" && markdownProbe.markdownClass &&
+    markdownProbe.tableOverflow === "auto" &&
+    markdownProbe.safeHref === "https://example.com" &&
+    markdownProbe.relativeHref === "docs/guide.md" &&
+    markdownProbe.unsafeHref === "#" && markdownProbe.safeRel === "noopener noreferrer" &&
+    markdownProbe.unsafeTags === 0 && markdownProbe.xss === 0;
+  markdownOK ? ok("OMP 消息 GFM 渲染与 HTML 清洗") : fail(`OMP markdown 回归失败：${JSON.stringify(markdownProbe)}`);
+
   // 2) 关键交互
   console.log("— 交互回归 —");
   await page.goto(URL + "/roles");
