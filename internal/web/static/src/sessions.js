@@ -1261,6 +1261,43 @@ class PhToolCard extends LitElement {
 }
 customElements.define("ph-tool-card", PhToolCard);
 
+// ---------------------------------------------------------------- 终端帧工具
+// 终端列宽按显示宽度计算：CJK/全角/宽字符占 2 列，仅按 JS 字符串长度
+// 截断会让中文行实际超宽，xterm 自动折行后整帧错位（codex 对话中文
+// 必触发）。逐码点统计宽度（for...of 迭代码点，代理对不拆）。
+function charWidth(ch) {
+  const c = ch.codePointAt(0);
+  if (c >= 0x1100 && (c <= 0x115f || c === 0x2329 || c === 0x232a ||
+      (c >= 0x2e80 && c <= 0xa4cf && c !== 0x303f) ||
+      (c >= 0xac00 && c <= 0xd7a3) ||
+      (c >= 0xf900 && c <= 0xfaff) ||
+      (c >= 0xfe10 && c <= 0xfe19) || (c >= 0xfe30 && c <= 0xfe6f) ||
+      (c >= 0xff00 && c <= 0xff60) || (c >= 0xffe0 && c <= 0xffe6) ||
+      (c >= 0x1f300 && c <= 0x1f64f) || (c >= 0x1f900 && c <= 0x1f9ff) ||
+      (c >= 0x20000 && c <= 0x2fffd) || (c >= 0x30000 && c <= 0x3fffd))) {
+    return 2;
+  }
+  return 1;
+}
+function strWidth(s) {
+  let w = 0;
+  for (const ch of s) w += charWidth(ch);
+  return w;
+}
+// 按显示宽度截断到 maxW 列（不拆宽字符：放不下的整字符丢弃）。
+function sliceByWidth(s, maxW) {
+  if (maxW <= 0) return "";
+  let w = 0;
+  let out = "";
+  for (const ch of s) {
+    const cw = charWidth(ch);
+    if (w + cw > maxW) break;
+    w += cw;
+    out += ch;
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- 组件：终端式会话面板（S5）
 export class PhSessionTerm extends LitElement {
   static styles = css`
@@ -1329,38 +1366,38 @@ export class PhSessionTerm extends LitElement {
           const cur = r.output;
           const prev = this._lastFrame || "";
           if (cur !== prev) {
-            const cl = cur.split("\n");
             const rows = this._term.rows;
             const cols = this._term.cols;
-            let maxCol = 0;
-            for (const l of cl) if (l.length > maxCol) maxCol = l.length;
-            if (maxCol > cols) {
-              // 帧宽于画布（resize 同步窗口期，tmux pane 尚未跟上浏览器）：
-              // 按画布截断行宽整帧重写，避免 xterm 自动折行后行号错位。
-              // 换行必须 CRLF：xterm 的 LF 不归列，连续写入会从上一行
-              // 末尾列继续，整帧 wrap 错乱。
-              this._term.write("\x1b[2J\x1b[3J\x1b[H" + cl.slice(0, rows).map((l) => l.slice(0, cols)).join("\r\n"));
-            } else {
-              const pl = prev.split("\n");
-              if (pl.length === cl.length && cl.length <= rows + 1) {
-                // TUI 原地重绘（等行数）：光标定位重写变化行，避免整屏
-                // reset 导致 DOM renderer 渲染丢失/闪烁。循环上界按画布
-                // 行数截断（帧尾多出的空行/超界行不写，防止定位超界）。
-                let patch = "";
-                const n = Math.min(cl.length, rows);
-                for (let i = 0; i < n; i++) {
-                  if (cl[i] !== pl[i]) patch += `\x1b[${i + 1};1H${cl[i]}\x1b[K`;
-                }
-                // 帧变矮时清掉画布多出的残留行。
-                if (cl.length < rows) patch += `\x1b[${cl.length + 1};1H\x1b[J`;
-                if (patch) this._term.write(patch + "\x1b[H");
-              } else {
-                // 清屏/随尺寸重排：清屏（含回滚区）后按画布行数截断整帧
-                // 写入——帧行数 > 画布行数时直接整帧写入会触底滚动，把
-                // 帧顶内容滚出视口且永不修复（行级 diff 只改变化行）。
-                // 换行必须 CRLF（xterm 的 LF 不归列，见上）。
-                this._term.write("\x1b[2J\x1b[3J\x1b[H" + cl.slice(0, rows).join("\r\n"));
+            // 统一按显示宽度截断行宽（CJK 占 2 列，字符串截断会超宽折行）
+            // 并按画布行数截断行数；帧宽于画布（resize 同步窗口期，tmux
+            // pane 尚未跟上浏览器）或含宽字符的行都不会再触发 xterm 折行。
+            const norm = (s) => s.split("\n").map((l) => sliceByWidth(l, cols)).slice(0, rows);
+            const cl = norm(cur);
+            const pl = norm(prev);
+            if (cl.length === pl.length && cl.length <= rows + 1) {
+              // TUI 原地重绘（等行数）：光标定位重写变化行，避免整屏
+              // reset 导致 DOM renderer 渲染丢失/闪烁。循环上界按画布
+              // 行数截断（帧尾多出的空行/超界行不写，防止定位超界）。
+              let patch = "";
+              const n = Math.min(cl.length, rows);
+              for (let i = 0; i < n; i++) {
+                if (cl[i] !== pl[i]) patch += `\x1b[${i + 1};1H${cl[i]}\x1b[K`;
               }
+              // 帧变矮时清掉画布多出的残留行。
+              if (cl.length < rows) patch += `\x1b[${cl.length + 1};1H\x1b[J`;
+              if (patch) {
+                // 光标归位到帧最后一行内容末尾（TUI 输入框通常在底部；
+                // capture-pane 不携带光标位置，这是最接近真实位置的落点）。
+                const lastRow = Math.max(cl.length, 1);
+                const lastCol = Math.min(strWidth(cl[cl.length - 1] || "") + 1, cols);
+                this._term.write(patch + `\x1b[${lastRow};${lastCol}H`);
+              }
+            } else {
+              // 清屏/随尺寸重排：清屏（含回滚区）后按画布写入整帧——
+              // 帧行数 > 画布行数时直接整帧写入会触底滚动，把帧顶内容
+              // 滚出视口且永不修复（行级 diff 只改变化行）。
+              // 换行必须 CRLF（xterm 的 LF 不归列，见上）。
+              this._term.write("\x1b[2J\x1b[3J\x1b[H" + cl.join("\r\n"));
             }
             this._lastFrame = cur;
           }

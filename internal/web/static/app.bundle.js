@@ -1306,6 +1306,30 @@
     const pad = (n6) => String(n6).padStart(2, "0");
     return `${d3.getFullYear()}-${pad(d3.getMonth() + 1)}-${pad(d3.getDate())} ${pad(d3.getHours())}:${pad(d3.getMinutes())}:${pad(d3.getSeconds())}`;
   }
+  function charWidth(ch) {
+    const c5 = ch.codePointAt(0);
+    if (c5 >= 4352 && (c5 <= 4447 || c5 === 9001 || c5 === 9002 || c5 >= 11904 && c5 <= 42191 && c5 !== 12351 || c5 >= 44032 && c5 <= 55203 || c5 >= 63744 && c5 <= 64255 || c5 >= 65040 && c5 <= 65049 || c5 >= 65072 && c5 <= 65135 || c5 >= 65280 && c5 <= 65376 || c5 >= 65504 && c5 <= 65510 || c5 >= 127744 && c5 <= 128591 || c5 >= 129280 && c5 <= 129535 || c5 >= 131072 && c5 <= 196605 || c5 >= 196608 && c5 <= 262141)) {
+      return 2;
+    }
+    return 1;
+  }
+  function strWidth(s5) {
+    let w2 = 0;
+    for (const ch of s5) w2 += charWidth(ch);
+    return w2;
+  }
+  function sliceByWidth(s5, maxW) {
+    if (maxW <= 0) return "";
+    let w2 = 0;
+    let out = "";
+    for (const ch of s5) {
+      const cw = charWidth(ch);
+      if (w2 + cw > maxW) break;
+      w2 += cw;
+      out += ch;
+    }
+    return out;
+  }
   function relTime(iso) {
     if (!iso) return "";
     const t5 = new Date(iso).getTime();
@@ -2342,26 +2366,25 @@
                 const cur = r6.output;
                 const prev = this._lastFrame || "";
                 if (cur !== prev) {
-                  const cl = cur.split("\n");
                   const rows = this._term.rows;
                   const cols = this._term.cols;
-                  let maxCol = 0;
-                  for (const l3 of cl) if (l3.length > maxCol) maxCol = l3.length;
-                  if (maxCol > cols) {
-                    this._term.write("\x1B[2J\x1B[3J\x1B[H" + cl.slice(0, rows).map((l3) => l3.slice(0, cols)).join("\r\n"));
-                  } else {
-                    const pl = prev.split("\n");
-                    if (pl.length === cl.length && cl.length <= rows + 1) {
-                      let patch = "";
-                      const n6 = Math.min(cl.length, rows);
-                      for (let i6 = 0; i6 < n6; i6++) {
-                        if (cl[i6] !== pl[i6]) patch += `\x1B[${i6 + 1};1H${cl[i6]}\x1B[K`;
-                      }
-                      if (cl.length < rows) patch += `\x1B[${cl.length + 1};1H\x1B[J`;
-                      if (patch) this._term.write(patch + "\x1B[H");
-                    } else {
-                      this._term.write("\x1B[2J\x1B[3J\x1B[H" + cl.slice(0, rows).join("\r\n"));
+                  const norm = (s5) => s5.split("\n").map((l3) => sliceByWidth(l3, cols)).slice(0, rows);
+                  const cl = norm(cur);
+                  const pl = norm(prev);
+                  if (cl.length === pl.length && cl.length <= rows + 1) {
+                    let patch = "";
+                    const n6 = Math.min(cl.length, rows);
+                    for (let i6 = 0; i6 < n6; i6++) {
+                      if (cl[i6] !== pl[i6]) patch += `\x1B[${i6 + 1};1H${cl[i6]}\x1B[K`;
                     }
+                    if (cl.length < rows) patch += `\x1B[${cl.length + 1};1H\x1B[J`;
+                    if (patch) {
+                      const lastRow = Math.max(cl.length, 1);
+                      const lastCol = Math.min(strWidth(cl[cl.length - 1] || "") + 1, cols);
+                      this._term.write(patch + `\x1B[${lastRow};${lastCol}H`);
+                    }
+                  } else {
+                    this._term.write("\x1B[2J\x1B[3J\x1B[H" + cl.join("\r\n"));
                   }
                   this._lastFrame = cur;
                 }
