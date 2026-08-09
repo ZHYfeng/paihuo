@@ -103,6 +103,57 @@ func TestDefaultTemplateSeedRunsOnce(t *testing.T) {
 	}
 }
 
+// v2 迁移：老库中「未被用户编辑」的默认模板（正文仍等于 v1 原文）升级为
+// 完整操作说明；用户编辑过的模板保持原状，重启不覆盖不恢复。
+func TestTemplateSeedV2UpgradeBehavior(t *testing.T) {
+	path := t.TempDir() + "/seed-v2.db"
+	open := func() *Store {
+		s, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	// 撤掉 v2 迁移标记（模拟「该迁移尚未应用」的老库），正文按各场景自行设定。
+	dropV2Marker := func(s *Store) {
+		t.Helper()
+		if _, err := s.db.Exec(`DELETE FROM data_migrations WHERE key=?`, createTasksTemplateSeedV2); err != nil {
+			t.Fatal(err)
+		}
+		s.Close()
+	}
+
+	// 场景 1：默认模板未被编辑（正文仍是 v1 原文）→ 重新打开后升级为完整正文。
+	s := open()
+	if _, err := s.db.Exec(`UPDATE templates SET body=?`, createTasksTemplateBodyV1); err != nil {
+		t.Fatal(err)
+	}
+	dropV2Marker(s)
+	s = open()
+	templates, err := s.ListTemplates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(templates) != 1 || templates[0].Body != createTasksTemplateBody {
+		t.Fatalf("未编辑的默认模板应升级为完整正文, got %+v", templates)
+	}
+
+	// 场景 2：用户已编辑（正文不等于 v1 原文）→ 升级不覆盖。
+	if _, err := s.db.Exec(`UPDATE templates SET body='用户自定义内容'`); err != nil {
+		t.Fatal(err)
+	}
+	dropV2Marker(s)
+	s = open()
+	t.Cleanup(func() { s.Close() })
+	templates, err = s.ListTemplates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(templates) != 1 || templates[0].Body != "用户自定义内容" {
+		t.Fatalf("用户编辑过的模板不应被 v2 覆盖, got %+v", templates)
+	}
+}
+
 // 任务模板：创建 → 读取 → 更新 → 删除 全链路，agent 关联随更新迁移。
 func TestTemplateCRUDRoundTrip(t *testing.T) {
 	s := openTest(t)

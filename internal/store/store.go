@@ -392,9 +392,45 @@ func Open(path string) (*Store, error) {
 }
 
 const (
-	createTasksTemplateSeed = "default-template-create-tasks-v1"
-	createTasksTemplateName = "根据对话创建任务"
-	createTasksTemplateBody = "请根据当前对话的内容，在 paihuo 系统中的当前项目中创建合适的任务。"
+	// 内置模板迁移标记：每个 key 只执行一次；用户编辑/删除后不再覆盖或恢复。
+	createTasksTemplateSeedV1 = "default-template-create-tasks-v1"
+	createTasksTemplateSeedV2 = "default-template-create-tasks-v2"
+	createTasksTemplateName   = "根据对话创建任务"
+	// v1 原文：仅用于升级时识别「未被用户编辑」的默认模板（正文等于该值才升级）。
+	createTasksTemplateBodyV1 = "请根据当前对话的内容，在 paihuo 系统中的当前项目中创建合适的任务。"
+	// 当前默认正文：写清「如何在本机实例调用接口创建任务、字段如何填写」，
+	// agent 收到模板即可照做。
+	createTasksTemplateBody = `请根据当前对话的内容，在本机部署的 PaiHuo（派活）实例中为当前项目创建一个任务。PaiHuo 即本系统，其 HTTP API 默认监听 http://127.0.0.1:8080（若连不上，请先向用户确认实例的实际地址与端口）。
+
+按以下步骤调用接口创建任务：
+
+1. 登录换取会话 cookie（登录只需一次，之后所有请求带同一 cookie 即可）：
+   curl -s -c /tmp/paihuo.cookies -o /dev/null -d "token=$PAIHUO_TOKEN" http://127.0.0.1:8080/login
+   任务进程环境通常已注入 PAIHUO_TOKEN；若环境里没有该变量，请向用户索要登录令牌再继续。
+
+2. 查询角色与项目，确定要填的 ID：
+   curl -s -b /tmp/paihuo.cookies http://127.0.0.1:8080/api/agents
+   curl -s -b /tmp/paihuo.cookies http://127.0.0.1:8080/api/projects
+   - agent_id：从 /api/agents 返回的数组里选合适的角色，取它的 id；
+   - project_id：从 /api/projects 里取与当前对话/工作目录对应的项目 id；没有对应项目就省略该字段（创建无项目任务）。
+
+3. 创建任务（POST /api/tasks，请求体为 JSON）：
+   curl -s -b /tmp/paihuo.cookies -H "Content-Type: application/json" -d '{"title":"任务标题","body":"给执行 agent 的完整提示词（写清目标、上下文与验收标准）","agent_id":1,"project_id":2,"perm":"full","run_mode":"batch","concurrent":false,"dependency_mode":"none","depends_on":null,"block_on_failure":false}' http://127.0.0.1:8080/api/tasks
+
+字段说明：
+- title：任务标题，必填；
+- body：任务提示词，需包含完整上下文、目标与验收标准；
+- agent_id：执行角色 ID，必填，取自 /api/agents；
+- project_id：所属项目 ID，取自 /api/projects；省略则不归属项目；
+- perm：权限模式，"full"=自动执行并在成功后自动派发代码合并任务，"review"=完成后人工审批；
+- run_mode："batch"=批处理（默认），"interactive"=交互式终端（仅 pi / omp 角色支持）；
+- concurrent：是否允许与同项目其他任务并行；false=项目内串行（默认）；
+- dependency_mode："none"=无依赖，"weak"=弱依赖（项目任务默认，按创建时间自动排队），"strong"=强依赖（必须同时提供 depends_on）；
+- depends_on：强依赖的前置任务 ID；
+- block_on_failure：前置任务失败时本任务是否阻塞执行；
+- parent_id：父任务 ID（拆分子任务时填写，通常省略）。
+
+创建成功返回 HTTP 201 与任务对象（含 id），请向用户报告任务编号与标题；若返回 4xx，按响应里的 error 字段修正后重试，不要重复创建相同任务。`
 )
 
 // seedDefaultTemplates 为新库和已有库各添加一次内置模板。迁移标记与模板
@@ -406,26 +442,50 @@ func seedDefaultTemplates(db *sql.DB) error {
 	}
 	defer tx.Rollback()
 
-	res, err := tx.Exec(`INSERT OR IGNORE INTO data_migrations (key, applied_at) VALUES (?, ?)`, createTasksTemplateSeed, Now())
-	if err != nil {
+	// v1：首次提供「根据对话创建任务」默认模板。已有用户可能手工创建了
+	// 相同模板；升级时保留原记录，不制造重复项。
+	if _, err := seedOnce(tx, createTasksTemplateSeedV1, func() error {
+		_, err := tx.Exec(`INSERT INTO templates (name, body, agent_id, created_at)
+			SELECT ?, ?, NULL, ?
+			WHERE NOT EXISTS (SELECT 1 FROM templates WHERE name=? AND body=?)`,
+			createTasksTemplateName, createTasksTemplateBodyV1, Now(), createTasksTemplateName, createTasksTemplateBodyV1)
 		return err
+	}); err != nil {
+		return err
+	}
+
+	// v2：默认模板补全「如何调用接口、字段如何填写」的操作说明。仅当模板
+	// 仍是 v1 原文（用户未编辑过）时升级正文；编辑过或删除过的一律保留
+	// 原状，重启不覆盖不恢复。
+	if _, err := seedOnce(tx, createTasksTemplateSeedV2, func() error {
+		_, err := tx.Exec(`UPDATE templates SET body=? WHERE name=? AND body=?`,
+			createTasksTemplateBody, createTasksTemplateName, createTasksTemplateBodyV1)
+		return err
+	}); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// seedOnce 执行一次内置模板迁移：data_migrations 标记与变更在同一事务内
+// 写入，返回本次是否首次执行（false 表示该迁移此前已应用过）。
+func seedOnce(tx *sql.Tx, key string, apply func() error) (bool, error) {
+	res, err := tx.Exec(`INSERT OR IGNORE INTO data_migrations (key, applied_at) VALUES (?, ?)`, key, Now())
+	if err != nil {
+		return false, err
 	}
 	inserted, err := res.RowsAffected()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if inserted == 0 {
-		return tx.Commit()
+		return false, nil
 	}
-
-	// 已有用户可能手工创建了相同模板；升级时保留原记录，不制造重复项。
-	if _, err := tx.Exec(`INSERT INTO templates (name, body, agent_id, created_at)
-		SELECT ?, ?, NULL, ?
-		WHERE NOT EXISTS (SELECT 1 FROM templates WHERE name=? AND body=?)`,
-		createTasksTemplateName, createTasksTemplateBody, Now(), createTasksTemplateName, createTasksTemplateBody); err != nil {
-		return err
+	if err := apply(); err != nil {
+		return false, err
 	}
-	return tx.Commit()
+	return true, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
