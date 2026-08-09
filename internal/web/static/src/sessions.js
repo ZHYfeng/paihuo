@@ -10,7 +10,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { ref } from "lit/directives/ref.js";
-import { api } from "./core.js";
+import { api, toast } from "./core.js";
 
 // ---------------------------------------------------------------- 会话页设计 token
 // 会话页与全站共用同一套设计系统（app.css 根变量 Carbon lattice v4）：
@@ -572,6 +572,25 @@ function applyLiveEvent(ev) {
 
 function toastErr(msg) {
   import("./core.js").then(m => m.toast(msg, true)).catch(() => alert(msg));
+}
+
+// 把完整模板作为独立段落插入输入框选区。选区两侧已有内容时自动补空行，
+// 避免模板与用户草稿粘连；返回光标位置，供 Lit 更新 DOM 后恢复编辑焦点。
+export function insertTemplateText(value, body, selectionStart, selectionEnd) {
+  const current = String(value || "");
+  const snippet = String(body || "");
+  const clamp = n => Math.max(0, Math.min(current.length, Number.isFinite(n) ? n : current.length));
+  let start = clamp(selectionStart);
+  let end = clamp(selectionEnd);
+  if (start > end) [start, end] = [end, start];
+  const before = current.slice(0, start);
+  const after = current.slice(end);
+  const prefix = before && snippet && !/\s$/.test(before) && !/^\s/.test(snippet) ? "\n\n" : "";
+  const suffix = after && snippet && !/\s$/.test(snippet) && !/^\s/.test(after) ? "\n\n" : "";
+  return {
+    value: before + prefix + snippet + suffix + after,
+    cursor: before.length + prefix.length + snippet.length,
+  };
 }
 
 // ---------------------------------------------------------------- 组件：会话列表（左侧导航面板）
@@ -1589,6 +1608,10 @@ export class PhSessionInput extends LitElement {
     .mode-hint { position: absolute; right: 12px; bottom: 10px; max-width: calc(100% - 24px); border: 1px solid var(--pw-success-border); border-radius: 999px; background: var(--pw-success-surface); color: var(--pw-success); padding: 2px 8px; font-size: 12px; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: nowrap; white-space: nowrap; }
     .hint { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--pw-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 8px; }
+    .template-picker { box-sizing: border-box; flex: 0 1 160px; width: 160px; min-width: 104px; height: 32px; border: 1px solid var(--border-strong); border-radius: 9px; background: rgba(244, 247, 241, .055); color: var(--pw-text); padding: 0 28px 0 10px; cursor: pointer; font: 12.5px var(--font-sans); text-overflow: ellipsis; }
+    .template-picker:hover { background: rgba(244, 247, 241, .09); border-color: rgba(228, 238, 226, .26); }
+    .template-picker:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(199, 243, 106, .11); }
+    .template-picker:disabled { opacity: .45; cursor: not-allowed; }
     .mode { display: flex; border: 1px solid var(--pw-border); border-radius: 7px; overflow: hidden; flex: 0 0 auto; }
     .mode span { padding: 3px 9px; font-size: 11.5px; cursor: pointer; color: var(--pw-muted); user-select: none; }
     .mode span.on { background: var(--pw-selection-bg); color: var(--pw-accent); }
@@ -1602,12 +1625,61 @@ export class PhSessionInput extends LitElement {
     .send-button:not(:disabled) { background: var(--brand-grad); border-color: transparent; color: #10140e; box-shadow: 0 8px 22px rgba(122, 177, 77, .14), inset 0 1px 0 rgba(255, 255, 255, .38); }
     .send-button:not(:disabled):hover { filter: brightness(1.04); box-shadow: 0 10px 28px rgba(122, 177, 77, .2), inset 0 1px 0 rgba(255, 255, 255, .42); }
     .send-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+    @media (max-width: 600px) {
+      .hint { display: none; }
+      .template-picker { flex-basis: 88px; width: 88px; min-width: 0; padding-left: 8px; }
+      button { padding-inline: 9px; }
+    }
   `;
-  static properties = { session: { attribute: false }, running: { attribute: false }, value: { state: true }, mode: { state: true } };
+  static properties = {
+    session: { attribute: false }, running: { attribute: false }, value: { state: true }, mode: { state: true },
+    templates: { state: true }, templatesLoading: { state: true }, templatesFailed: { state: true },
+  };
   constructor() {
     super();
     this.value = "";
     this.mode = "steer";
+    this.templates = [];
+    this.templatesLoading = true;
+    this.templatesFailed = false;
+  }
+  connectedCallback() {
+    super.connectedCallback();
+    this._loadTemplates();
+  }
+  async _loadTemplates() {
+    this.templatesLoading = true;
+    this.templatesFailed = false;
+    try {
+      const templates = await api("/api/templates");
+      this.templates = Array.isArray(templates) ? templates : [];
+    } catch (_) {
+      this.templates = [];
+      this.templatesFailed = true;
+    } finally {
+      this.templatesLoading = false;
+    }
+  }
+  _insertTemplate(event) {
+    const select = event.currentTarget;
+    const template = this.templates.find(item => String(item.id) === select.value);
+    select.value = "";
+    if (!template || !template.body) return;
+    const editor = this.renderRoot.querySelector("textarea");
+    const inserted = insertTemplateText(
+      this.value,
+      template.body,
+      editor ? editor.selectionStart : this.value.length,
+      editor ? editor.selectionEnd : this.value.length,
+    );
+    this.value = inserted.value;
+    this.updateComplete.then(() => {
+      const nextEditor = this.renderRoot.querySelector("textarea");
+      if (!nextEditor || nextEditor.disabled) return;
+      nextEditor.focus();
+      nextEditor.setSelectionRange(inserted.cursor, inserted.cursor);
+    });
+    toast(`已插入模板「${template.name}」`);
   }
   _send() {
     const msg = this.value.trim();
@@ -1676,6 +1748,12 @@ export class PhSessionInput extends LitElement {
               <span class=${this.mode === "followUp" ? "on" : ""} @click=${() => this.mode = "followUp"}>排队</span>
             </span>
             <button class="danger" @click=${this._abort}>■ 中止</button>` : ""}
+          <select class="template-picker" aria-label="插入模板" title="将模板内容插入当前输入位置"
+            ?disabled=${disabled || this.templatesLoading || !this.templates.length}
+            @change=${this._insertTemplate}>
+            <option value="">${this.templatesLoading ? "模板加载中…" : this.templatesFailed ? "模板加载失败" : this.templates.length ? "插入模板" : "暂无模板"}</option>
+            ${this.templates.map(template => html`<option value=${template.id}>${template.name}</option>`)}
+          </select>
           <span class="hint">${hint}</span>
           <button class="send-button" ?disabled=${disabled || !this.value.trim()} @click=${this._send} title="发送 (Enter)" aria-label="发送">
             <svg class="send-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 19V5"></path><path d="m5 12 7-7 7 7"></path></svg>

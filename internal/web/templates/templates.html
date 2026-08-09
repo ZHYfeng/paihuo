@@ -13,7 +13,7 @@
 </header>
 <div class="page-content">
   <div class="toolbar">
-    <span class="toolbar-note">新建任务时可用模板填充「任务内容」与「角色」；任务详情中可将任务的提示词保存为模板。</span>
+    <span class="toolbar-note">新建任务时可用模板填充「任务内容」与「角色」；会话中可将模板插入输入框；任务详情中可将提示词保存为模板。</span>
     <span class="spacer"></span>
   </div>
   <div class="list-wrap">
@@ -32,7 +32,7 @@
 <div class="modal hidden" id="templateModal">
   <div class="modal-box">
     <h3 id="templateModalTitle">新建模板</h3>
-    <div class="sub">模板在新建任务时填充「任务内容」，并预选绑定的角色。</div>
+    <div class="sub">模板可填充新建任务或插入会话输入框；绑定角色仅在新建任务时预选。</div>
     <input type="hidden" id="tpId">
     <label class="field">名称 <input id="tpName" data-autofocus placeholder="如：发布检查"></label>
     <label class="field">角色 <select id="tpAgent"></select></label>

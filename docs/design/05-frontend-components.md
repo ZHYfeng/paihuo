@@ -107,6 +107,7 @@
 
 ### 3.7 `<ph-session-input>`
 - 多行 textarea：Enter 发送 / Shift+Enter 换行；自适应高度（≤6 行）
+- 模板插入：`GET /api/templates` 加载提示词模板；选择后在当前选区插入完整模板内容，保留已有草稿且不自动发送
 - 状态机：
   | 会话/agent 状态 | 输入行为 |
   |---|---|

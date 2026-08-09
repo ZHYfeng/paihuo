@@ -163,6 +163,45 @@ function findChrome() {
     markdownProbe.unsafeTags === 0 && markdownProbe.xss === 0;
   markdownOK ? ok("OMP 消息 GFM 渲染与 HTML 清洗") : fail(`OMP markdown 回归失败：${JSON.stringify(markdownProbe)}`);
 
+  // 会话输入区的模板选择只修改草稿，不触发发送；已有草稿按当前选区
+  // 保留，并在模板两侧补段落间隔。组件实例内覆写加载函数，避免依赖
+  // 回归数据库里是否预置模板。
+  const sessionTemplateProbe = await page.evaluate(async () => {
+    const el = document.createElement("ph-session-input");
+    el.session = { id: 999, status: "active" };
+    el.running = false;
+    el._loadTemplates = async function () {
+      this.templates = [{ id: 7, name: "发布检查", body: "模板正文" }];
+      this.templatesLoading = false;
+      this.templatesFailed = false;
+    };
+    document.body.appendChild(el);
+    await el.updateComplete;
+    el.value = "前后";
+    await el.updateComplete;
+    const editor = el.shadowRoot.querySelector("textarea");
+    editor.focus();
+    editor.setSelectionRange(1, 1);
+    const picker = el.shadowRoot.querySelector(".template-picker");
+    picker.value = "7";
+    picker.dispatchEvent(new Event("change", { bubbles: true }));
+    await el.updateComplete;
+    await new Promise(requestAnimationFrame);
+    const result = {
+      value: editor.value,
+      cursor: editor.selectionStart,
+      pickerReset: picker.value,
+      focused: el.shadowRoot.activeElement === editor,
+      label: picker.getAttribute("aria-label"),
+    };
+    el.remove();
+    return result;
+  });
+  const sessionTemplateOK = sessionTemplateProbe.value === "前\n\n模板正文\n\n后" &&
+    sessionTemplateProbe.cursor === 7 && sessionTemplateProbe.pickerReset === "" &&
+    sessionTemplateProbe.focused && sessionTemplateProbe.label === "插入模板";
+  sessionTemplateOK ? ok("会话草稿插入模板") : fail(`会话模板插入回归失败：${JSON.stringify(sessionTemplateProbe)}`);
+
   // 2) 关键交互
   console.log("— 交互回归 —");
   await page.goto(URL + "/roles");
