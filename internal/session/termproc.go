@@ -6,11 +6,9 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -27,73 +25,50 @@ type termProc struct {
 	mu     sync.Mutex
 	window string // session-<id>
 	socket string
+	done   chan struct{} // Kill 时关闭，终止 autoConfirmTrust 等后台协程
 }
 
 const termInteractiveCols = 80
 const termInteractiveRows = 24
 
-// codexTrustConfig 返回 codex 配置文件路径（~/.codex/config.toml）。
-func codexTrustConfig() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".codex", "config.toml")
+// isCodexTrustPrompt 判断 capture 画面是否为 codex 的目录信任确认
+// （codex 专属文案，其它 CLI / codex 其它画面不会出现）。
+func isCodexTrustPrompt(out string) bool {
+	return strings.Contains(out, "Do you trust the contents of this directory?") &&
+		strings.Contains(out, "1. Yes, continue")
 }
 
-// ensureCodexTrust 在 spawn codex 交互 TUI 前把工作目录写入 codex 的信任
-// 列表（~/.codex/config.toml 的 [projects."<dir>"] trust_level = "trusted"）。
-// 会话目录是 paihuo 管理的隔离 worktree（与批处理任务同权），每次新进程
-// 都弹「Press enter to continue」信任确认会让会话看起来卡死；预信任后
-// 直接进入 TUI。codex 无命令行开关（--skip-git-repo-check 仅 exec 子命令），
-// 只能写配置文件。追加新表是安全的（TOML 表可分散定义，仅重复表名报错）。
-// 失败仅记日志，不阻塞启动（用户仍可手动回车确认）。
-func ensureCodexTrust(dir string) {
-	if dir == "" {
-		return
+// autoConfirmTrust 自动确认 codex 的目录信任提示。codex 交互 TUI 对不在
+// 信任列表的目录每次新进程都会弹「Do you trust the contents of this
+// directory?」并要求回车确认；实测没有可用的跳过开关（--skip-git-repo-check
+// 仅 exec 子命令，skip_git_repo_check 配置项与 -c 覆盖对 TUI 均无效，也无
+// 环境变量），唯一无侵入途径是自动回车选择「Yes, continue」——会话目录是
+// paihuo 管理的隔离 worktree，与批处理任务（exec 自动跳过检查）同权。
+// 仅在 spawn 后短暂窗口内轮询，命中后只确认一次；进程/窗口消失即退出。
+func (p *termProc) autoConfirmTrust(win string) {
+	deadline := time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case <-p.done:
+			return
+		case <-time.After(1 * time.Second):
+		}
+		out, err := p.tmux("capture-pane", "-t", "paihuo:"+win, "-p")
+		if err != nil {
+			return // 窗口已消失
+		}
+		if isCodexTrustPrompt(out) {
+			time.Sleep(400 * time.Millisecond) // 等画面稳定（选项渲染完整）
+			_, _ = p.tmux("send-keys", "-t", "paihuo:"+win, "Enter")
+			log.Printf("↻ 会话 %s 已自动确认 codex 目录信任（等效 exec --skip-git-repo-check）", win)
+			return
+		}
 	}
-	p := codexTrustConfig()
-	if p == "" {
-		return
-	}
-	data, err := os.ReadFile(p)
-	if err != nil {
-		return // 无配置：不干预（codex 首次运行会自己创建）
-	}
-	key := "[projects." + strconv.Quote(dir) + "]"
-	if bytes.Contains(data, []byte(key)) {
-		return // 已信任（codex 或此前写入）
-	}
-	// 跨进程互斥：避免并发 spawn 双写同一表导致 codex 解析失败。
-	lock, err := os.OpenFile(p+".lock", os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return
-	}
-	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		return
-	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	// 持锁后复查（另一进程可能刚写入）。
-	if data, err := os.ReadFile(p); err == nil && bytes.Contains(data, []byte(key)) {
-		return
-	}
-	line := "\n" + key + "\ntrust_level = \"trusted\"\n"
-	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	if _, err := f.WriteString(line); err != nil {
-		log.Printf("⚠ 写入 codex 信任配置失败: %v", err)
-		return
-	}
-	log.Printf("↻ 已把 %s 加入 codex 信任目录", dir)
 }
 
 // newTermProc 创建终端通道（不 spawn）。
 func newTermProc(socket string) *termProc {
-	return &termProc{socket: socket}
+	return &termProc{socket: socket, done: make(chan struct{})}
 }
 
 func (p *termProc) windowName(id int64) string { return fmt.Sprintf("session-%d", id) }
@@ -135,6 +110,9 @@ func (p *termProc) Spawn(id int64, bin string, args []string, env []string, cwd 
 	// new-window 无 -x/-y（new-session 才有）；窗口尺寸用 resize-window 设定。
 	_, _ = p.tmux("resize-window", "-t", "paihuo:"+win,
 		"-x", strconv.Itoa(termInteractiveCols), "-y", strconv.Itoa(termInteractiveRows))
+	// codex 首次进入未信任目录会弹信任确认：自动回车确认（等效跳过检查），
+	// 避免会话打开就卡在确认画面。非 codex 画面无对应文案，不会误触发。
+	go p.autoConfirmTrust(win)
 	return nil
 }
 
@@ -208,6 +186,11 @@ func (p *termProc) Output(id int64) (string, bool, error) {
 
 // Kill 终止窗口（挂起/交付/删除）。
 func (p *termProc) Kill(id int64) error {
+	select {
+	case <-p.done:
+	default:
+		close(p.done)
+	}
 	if p.window == "" {
 		return nil
 	}

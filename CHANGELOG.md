@@ -6,7 +6,7 @@ This file records notable user-facing and maintainer-facing changes. The format 
 
 ### Added
 
-- **codex 会话不再弹目录信任确认**：codex 交互 TUI 每次新进程都会对不在 `~/.codex/config.toml` 信任列表的工作目录弹出「Press enter to continue」确认（且 `--skip-git-repo-check` 仅限 exec 子命令，TUI 无命令行开关），恢复会话时重新 spawn 就会卡在确认画面，看起来像显示异常。现在 spawn 前把会话 worktree 目录预写入 codex 信任列表（`[projects."<dir>"] trust_level = "trusted"`，文件锁防并发双写、已存在跳过），直接进入 TUI；会话目录是 paihuo 管理的隔离 worktree，与批处理任务同权。
+- **codex 会话不再卡在目录信任确认**：codex 交互 TUI 对不在信任列表的目录每次新进程都会弹「Do you trust the contents of this directory?」并等回车（实测 `--skip-git-repo-check` 仅 exec 子命令可用、`skip_git_repo_check` 配置项与 `-c` 覆盖对 TUI 均无效、无环境变量，交互模式没有真正的跳过开关），会话恢复时重新 spawn 就卡在确认画面。现在 spawn 后自动检测该确认并回车选择「Yes, continue」（仅匹配 codex 专属文案，120 秒窗口、命中一次即止、窗口消失即退），等效跳过检查：paihuo 不写任何配置文件，确认由 codex 正常处理（与用户手动回车等价，codex 自行记录已确认目录）。会话目录是 paihuo 管理的隔离 worktree，与批处理任务（exec 自动跳过检查）同权。
 - **新建会话不再默认绑定项目**：此前「项目」下拉默认选中第一个项目，不手动选择也会实际归属该项目；现在默认「（无项目）」，不选择即不关联任何项目——会话在独立目录（`sessions/session-N`）运行，头部/列表不再显示项目名。无项目会话无法交付为任务（任务必须在项目目录执行，后端显式拒绝并提示）。
 - **会话统一自动启动，去掉「启动」按钮**：打开会话视图时 `created` 状态自动启动、终端式（codex/claude）`suspended` 状态自动恢复（pi/omp 挂起会话仍由发送消息触发恢复，不提前拉起）；新建会话带初始指令时等待自动启动完成后自动发送，不再重复调用 start。
 - **会话支持 omp（Oh My Pi）agent**：omp 与 pi 同族 RPC 协议（`--mode rpc`，实测 `ready` 握手、`get_state`/`prompt`/`abort`/`switch_session` 命令与事件流兼容），会话走与 pi 相同的消息流视图（思考/文本/工具卡片/提问卡片），支持挂起恢复（`switch_session` 接续会话文件）与角色参数映射（`--model`/`--append-system-prompt`/`--thinking`/`--skills` 或角色级 overlay `--config`/`--tools`/`--max-time`/`--profile`/`--provider`/plugins）。差异点已适配：omp 回合结束用 `agent_end`+`turn_end`（pi 用 `agent_settled`），前端按同一语义清空挂起状态。
