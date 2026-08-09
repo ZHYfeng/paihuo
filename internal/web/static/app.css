@@ -2058,6 +2058,18 @@ button, [role="button"], a, input, select, textarea { -webkit-tap-highlight-colo
 #projectDetailShell > .page-header, #agentDetailShell > .page-header,
 #skillDetailShell > .page-header, #detailShell > .page-header { height: 60px; padding-left: 22px; }
 
+/* 项目名再长也只占用剩余空间，状态与删除操作始终留在同一行。 */
+#projectDetailShell > .page-header { flex-wrap: nowrap; }
+#projectDetailShell > .page-header .crumb {
+  flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap;
+}
+#projectDetailShell > .page-header .crumb b {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#projectDetailShell > .page-header > .spacer { display: none; }
+#projectDetailShell > .page-header > .btn,
+#projectDetailShell > .page-header > #pdBadge { flex: 0 0 auto; }
+
 .toolbar {
   min-height: var(--toolbar-h); height: var(--toolbar-h); padding: 0 28px; gap: 9px;
   background: rgba(7, 10, 8, .38); border-bottom-color: rgba(222, 238, 226, .07);

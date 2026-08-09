@@ -552,7 +552,10 @@ function findChrome() {
     const r = await fetch("/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "e2e 派活验证", description: "", project_dir: "", status: "active" }),
+      body: JSON.stringify({
+        name: "e2e 派活验证项目名称很长时页头操作按钮仍然保持在同一行且项目名称自动省略显示",
+        description: "", project_dir: "", status: "active",
+      }),
     });
     return r.ok ? await r.json() : null;
   });
@@ -576,6 +579,32 @@ function findChrome() {
     });
     btn.has && btn.detail ? ok("项目详情页新建任务按钮") : fail("项目详情页无新建任务入口");
     btn.mergeArea ? ok("项目页区分代码合并任务") : fail("项目页未显示代码合并分区");
+    await page.setViewportSize({ width: 320, height: 812 });
+    const longProjectHeader = await page.evaluate(() => {
+      const header = document.querySelector("#projectDetailShell > .page-header");
+      const crumb = document.getElementById("pdCrumb");
+      const name = crumb?.querySelector("b");
+      const badge = document.getElementById("pdBadge");
+      const deleteButton = [...(header?.querySelectorAll(":scope > .btn") || [])]
+        .find(button => button.textContent.trim() === "删除");
+      if (!header || !crumb || !name || !badge || !deleteButton) return null;
+      const headerRect = header.getBoundingClientRect();
+      const crumbRect = crumb.getBoundingClientRect();
+      const badgeRect = badge.getBoundingClientRect();
+      const deleteRect = deleteButton.getBoundingClientRect();
+      const centerY = rect => rect.top + rect.height / 2;
+      return {
+        sameRow: Math.max(centerY(crumbRect), centerY(badgeRect), centerY(deleteRect)) -
+          Math.min(centerY(crumbRect), centerY(badgeRect), centerY(deleteRect)) <= 1,
+        deleteVisible: deleteRect.right <= headerRect.right + 1 && deleteRect.right <= innerWidth,
+        clippedName: name.scrollWidth > name.clientWidth && getComputedStyle(name).textOverflow === "ellipsis",
+        noOverflow: document.documentElement.scrollWidth <= innerWidth,
+      };
+    });
+    const longProjectHeaderOK = longProjectHeader && Object.values(longProjectHeader).every(Boolean);
+    longProjectHeaderOK ? ok("项目详情页长名称不挤压删除按钮") :
+      fail(`项目详情页长名称布局异常：${JSON.stringify(longProjectHeader)}`);
+    await page.setViewportSize({ width: W, height: H });
     await page.evaluate(id => openProjectTask(id), proj.id);
     await page.waitForTimeout(350);
     const pre = await page.evaluate(id => {
