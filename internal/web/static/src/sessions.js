@@ -1,8 +1,8 @@
-// 会话页面（S-2/S-3）：lit 组件实现，UI 一比一复刻 pi-web。
-// 设计 token 与组件结构对齐 pi-web 当前默认主题 pi-web-dark：
-//   bg #070912 / surface #101527 / border #26304f / accent #7c3cff
-//   .msg 卡片（user accent 边框+selection 底 / assistant surface，吸顶 header）、
-//   tool-execution-view 状态工具卡片、prompt-editor 输入区（shell-mode 运行中态）。
+// 会话页面（S-2/S-3）：lit 组件实现，UI 并入全站设计系统（Carbon lattice v4）。
+// 结构保留 pi-web 的成熟模式：.msg 卡片（吸顶 header/label/meta）、
+// tool-execution-view 状态工具卡片、prompt-editor 输入区（shell-mode 运行中态）；
+// 视觉 token 全部经 PW 别名映射到 app.css 全局变量（b7de0d6 的 pi-web-dark
+// 独立调色板已废弃），一处改动全站生效。
 // 数据源：全量 = GET /api/sessions/{id}/transcript（pi 会话 JSONL 解析）；
 // 增量 = SSE session.message 事件（RPC 事件流透传）。
 import { LitElement, html, css, nothing } from "lit";
@@ -10,45 +10,46 @@ import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { ref } from "lit/directives/ref.js";
 import { api } from "./core.js";
 
-// ---------------------------------------------------------------- pi-web 设计 token
-// （组件内使用；会话页自成一体，不依赖 paihuo 全局主题变量）
-// 一比一复刻 pi-web 当前默认主题 pi-web-dark（src/plugins/themes/index.ts），
-// 非早前的 GitHub 暗色 classic 调色板。
+// ---------------------------------------------------------------- 会话页设计 token
+// 会话页与全站共用同一套设计系统（app.css 根变量 Carbon lattice v4）：
+// 本层把组件内使用的 --pw-* 语义别名映射到全局 token，主题变化一处生效。
+// 自 pi-web 复刻版（b7de0d6）起，配色从 pi-web-dark（#070912/#7c3cff）切换为
+// 全站调色板（碳色背景 + lime→mint 品牌渐变 + 状态语义色）。
 export const PW = css`
   :host {
-  --pw-bg: #070912;
-  --pw-surface: #101527;
-  --pw-surface-hover: #151b31;
-  --pw-terminal-bg: #050710;
-  --pw-terminal-text: #f7f4ff;
-  --pw-border: #26304f;
-  --pw-border-muted: #26304f;
-  --pw-text: #f7f4ff;
-  --pw-text-secondary: #aaa4bd;
-  --pw-text-bright: #ffffff;
-  --pw-muted: #aaa4bd;
-  --pw-dim: #817a99;
-  --pw-accent: #7c3cff;
-  --pw-accent-border: #5a47b0;
-  --pw-selection-bg: #1d2547;
-  --pw-success: #00f0d8;
-  --pw-success-border: #00f0d8;
-  --pw-success-bg: #071e22;
-  --pw-success-surface: #092d31;
-  --pw-success-ring: #00f0d855;
-  --pw-warning: #ffb000;
-  --pw-warning-border: #ffb000;
-  --pw-warning-surface: #16140d;
-  --pw-danger: #ff4f7b;
-  --pw-purple: #b7a2ff;
-  --pw-purple-border: #7c3cff;
-  --pw-purple-surface: #181026;
-  --pw-overlay: #0008;
-  --pw-shadow-soft: #0006;
-  --pw-shadow: #0008;
-  --pw-shadow-strong: #000b;
-  --pw-bg-overlay: #070912e6;
-  --pw-success-bg-overlay: #071e22ee;
+  --pw-bg: var(--bg-page);
+  --pw-surface: var(--surface);
+  --pw-surface-hover: var(--hover);
+  --pw-terminal-bg: var(--inset);
+  --pw-terminal-text: var(--fg);
+  --pw-border: var(--border);
+  --pw-border-muted: var(--border);
+  --pw-text: var(--fg);
+  --pw-text-secondary: var(--fg-muted);
+  --pw-text-bright: var(--fg);
+  --pw-muted: var(--fg-muted);
+  --pw-dim: var(--fg-faint);
+  --pw-accent: var(--brand);
+  --pw-accent-border: rgba(199, 243, 106, .38);
+  --pw-selection-bg: var(--brand-dim);
+  --pw-success: var(--success);
+  --pw-success-border: var(--success);
+  --pw-success-bg: rgba(121, 220, 164, .07);
+  --pw-success-surface: rgba(121, 220, 164, .14);
+  --pw-success-ring: rgba(121, 220, 164, .38);
+  --pw-warning: var(--warning);
+  --pw-warning-border: var(--warning);
+  --pw-warning-surface: rgba(237, 195, 111, .08);
+  --pw-danger: var(--danger);
+  --pw-purple: var(--merge-accent);
+  --pw-purple-border: rgba(185, 162, 241, .42);
+  --pw-purple-surface: rgba(185, 162, 241, .09);
+  --pw-overlay: var(--dialog-overlay);
+  --pw-shadow-soft: rgba(0, 0, 0, .42);
+  --pw-shadow: rgba(0, 0, 0, .55);
+  --pw-shadow-strong: rgba(0, 0, 0, .7);
+  --pw-bg-overlay: rgba(8, 11, 9, .78);
+  --pw-success-bg-overlay: rgba(14, 29, 20, .86);
   }
 `;
 
@@ -140,14 +141,13 @@ export class PhSessionsPage extends LitElement {
   static styles = css`
     ${PW}
     :host {
+      flex: 1; min-height: 0; /* 铺满 .page-content，与其他页面同构 */
       display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 0;
-      height: calc(100vh - 150px); min-height: 480px;
-      background: var(--pw-bg); color: var(--pw-text);
-      font: 14px system-ui, sans-serif; border: 1px solid var(--pw-border);
-      border-radius: 12px; overflow: hidden;
+      background: var(--bg-page); color: var(--pw-text);
+      font: 13px/1.45 var(--font-sans);
     }
-    .col-list { border-right: 1px solid var(--pw-border); min-height: 0; background: var(--pw-bg); }
-    .col-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--pw-bg); }
+    .col-list { border-right: 1px solid var(--pw-border); min-height: 0; background: var(--bg-page); }
+    .col-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--bg-page); }
     .pw-empty { margin: auto; color: var(--pw-muted); font-size: 14px; }
     @media (max-width: 860px) {
       :host { grid-template-columns: 1fr; grid-template-rows: 1fr; height: 100%; min-height: 0; }
@@ -240,7 +240,7 @@ export class PhSessionsPage extends LitElement {
     }
   }
 
-  // 分页：加载更早的消息（pi-web：Scroll up to load earlier messages）。
+  // 分页：向上滚动加载更早的消息。
   async loadEarlier() {
     const id = sessionState.detail?.id;
     if (!id || !sessionState.entries.length) return;
@@ -519,7 +519,7 @@ function toastErr(msg) {
   import("./core.js").then(m => m.toast(msg, true)).catch(() => alert(msg));
 }
 
-// ---------------------------------------------------------------- 组件：会话列表（pi-web 导航面板风格）
+// ---------------------------------------------------------------- 组件：会话列表（左侧导航面板）
 export class PhSessionList extends LitElement {
   static styles = css`
     ${PW}
@@ -539,11 +539,10 @@ export class PhSessionList extends LitElement {
     .action-row.selected .action-name { color: var(--pw-text-bright); }
     .row-meta { display: flex; gap: 6px; align-items: center; margin-top: 4px; color: var(--pw-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .dot { font-size: 11px; flex: 0 0 auto; }
-    .dot.st-running { color: var(--pw-success); }
-    .dot.st-succeeded { color: var(--pw-accent); }
-    .dot.st-cancelled { color: var(--pw-dim); }
-    .dot.st-failed { color: var(--pw-danger); }
-    .dot.st-created, .dot.st-suspended { color: var(--pw-dim); }
+    .dot.st-active { color: var(--info); } /* 活跃 = 任务执行中语义色 */
+    .dot.st-delivered { color: var(--success); }
+    .dot.st-failed { color: var(--danger); }
+    .dot.st-created, .dot.st-suspended, .dot.st-deleted, .dot.st-cancelled { color: var(--fg-faint); }
     .cli { flex: 0 0 auto; border: 1px solid var(--pw-border); border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: 700; color: var(--pw-text-secondary); }
     .row-meta a { color: var(--pw-accent); text-decoration: none; }
     .row-meta a:hover { text-decoration: underline; }
@@ -604,23 +603,24 @@ export class PhSessionList extends LitElement {
 }
 customElements.define("ph-session-list", PhSessionList);
 
-// ---------------------------------------------------------------- 组件：新建会话（pi-web 弹窗风格）
+// ---------------------------------------------------------------- 组件：新建会话（弹窗）
 export class PhSessionCreate extends LitElement {
   static styles = css`
     ${PW}
-    :host { position: fixed; inset: 0; background: var(--pw-overlay); display: flex; align-items: center; justify-content: center; z-index: 60; }
-    .box { background: var(--pw-surface); border: 1px solid var(--pw-border); border-radius: 12px; padding: 20px; width: 440px; max-width: 92vw; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 12px 48px var(--pw-shadow); color: var(--pw-text); font: 14px system-ui, sans-serif; }
-    h3 { margin: 0; font-size: 15px; }
-    label { font-size: 12.5px; color: var(--pw-muted); display: flex; flex-direction: column; gap: 5px; }
-    input, select, textarea { border: 1px solid var(--pw-border); border-radius: 8px; padding: 8px 10px; font-size: 14px; background: var(--pw-bg); color: var(--pw-text); font-family: inherit; }
+    :host { position: fixed; inset: 0; background: var(--pw-overlay); display: flex; align-items: center; justify-content: center; z-index: 100; animation: fadeIn var(--t-med) ease-out; }
+    .box { background: linear-gradient(180deg, var(--raised), var(--surface)); border: 1px solid var(--border-strong); border-radius: var(--r-2xl); padding: 22px; width: 440px; max-width: 92vw; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--sh-floating); color: var(--pw-text); font: 13px/1.45 var(--font-sans); animation: popIn var(--t-med) var(--ease-out); }
+    h3 { margin: 0 0 3px; font-size: 15.5px; font-weight: 700; letter-spacing: -.1px; }
+    label { font-size: 12px; color: var(--pw-muted); display: flex; flex-direction: column; gap: 5px; }
+    input, select, textarea { border: 1px solid var(--border-strong); border-radius: 10px; padding: 7px 11px; font-size: 13px; background: var(--inset); color: var(--pw-text); font-family: inherit; line-height: 18px; }
     textarea { resize: vertical; }
-    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--pw-accent-border); }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(199, 243, 106, .11); }
     .hint { font-size: 12px; color: var(--pw-muted); }
     .row { display: flex; gap: 8px; justify-content: flex-end; }
-    button { border-radius: 8px; padding: 7px 14px; border: 1px solid var(--pw-border); cursor: pointer; font-size: 13.5px; background: var(--pw-bg); color: var(--pw-text); }
-    button:hover { background: var(--pw-surface-hover); }
-    button.primary { background: var(--pw-selection-bg); border-color: var(--pw-accent-border); color: var(--pw-accent); font-weight: 600; }
-    button.primary:hover { background: var(--pw-accent); border-color: var(--pw-accent); color: #fff; }
+    button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 13px; border-radius: 9px; border: 1px solid var(--border-strong); cursor: pointer; font-size: 12.5px; font-weight: 580; background: rgba(244, 247, 241, .055); color: var(--pw-text); transition: background var(--t-fast), border-color var(--t-fast), transform var(--t-fast), filter var(--t-fast); }
+    button:hover { background: rgba(244, 247, 241, .09); border-color: rgba(228, 238, 226, .26); }
+    button:active { transform: scale(.97); }
+    button.primary { background: var(--brand-grad); border-color: transparent; color: #10140e; font-weight: 700; box-shadow: 0 8px 22px rgba(122, 177, 77, .14), inset 0 1px 0 rgba(255, 255, 255, .38); }
+    button.primary:hover { filter: brightness(1.04); box-shadow: 0 10px 28px rgba(122, 177, 77, .2), inset 0 1px 0 rgba(255, 255, 255, .42); }
   `;
   static properties = { agents: { state: true }, projects: { state: true }, prefill: { attribute: false } };
   constructor() {
@@ -760,12 +760,12 @@ export class PhSessionView extends LitElement {
 }
 customElements.define("ph-session-view", PhSessionView);
 
-// ---------------------------------------------------------------- 组件：状态栏（pi-web status-bar）
+// ---------------------------------------------------------------- 组件：状态栏
 // 底部细条：左侧活动指示（点 + 文本），右侧模型/思考级别/消息数。
 export class PhStatusBar extends LitElement {
   static styles = css`
     ${PW}
-    :host { display: block; color: var(--pw-muted); font: 12px system-ui, sans-serif; }
+    :host { display: block; color: var(--pw-muted); font: 12px var(--font-sans); }
     .bar { display: flex; justify-content: flex-end; gap: 12px; align-items: center; min-width: 0; padding: 7px 12px; border-top: 1px solid var(--pw-border); background: var(--pw-bg); white-space: nowrap; overflow: hidden; }
     .activity { margin-right: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--pw-muted); }
     .activity.active { color: var(--pw-success); }
@@ -791,7 +791,7 @@ export class PhStatusBar extends LitElement {
 }
 customElements.define("ph-status-bar", PhStatusBar);
 
-// ---------------------------------------------------------------- 组件：会话头部（pi-web workspace-header）
+// ---------------------------------------------------------------- 组件：会话头部
 export class PhSessionHeader extends LitElement {
   static styles = css`
     ${PW}
@@ -799,21 +799,24 @@ export class PhSessionHeader extends LitElement {
     .strip { display: flex; align-items: center; gap: 10px; padding: 12px; flex-wrap: wrap; }
     .title { font-weight: 600; font-size: 14px; color: var(--pw-text); display: flex; align-items: center; gap: 8px; min-width: 0; }
     .title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .badge { font-size: 11px; border-radius: 999px; padding: 2px 10px; font-weight: 600; border: 1px solid var(--pw-border); color: var(--pw-text-secondary); flex: 0 0 auto; }
-    .badge.running { border-color: var(--pw-success-border); background: var(--pw-success-surface); color: var(--pw-success); }
-    .badge.suspended { color: var(--pw-dim); }
-    .badge.delivered { border-color: var(--pw-accent-border); background: var(--pw-selection-bg); color: var(--pw-accent); }
-    .badge.created { color: var(--pw-muted); }
+    .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; border-radius: 20px; padding: 1.5px 9px; font-weight: 550; border: 1px solid var(--pw-border); color: var(--fg-muted); background: color-mix(in srgb, var(--border) 45%, transparent); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+    .badge.running { color: var(--info); border-color: rgba(56, 189, 248, .35); background: rgba(56, 189, 248, .1); }
+    .badge.delivered { color: var(--success); border-color: rgba(52, 211, 153, .35); background: rgba(52, 211, 153, .1); }
+    .badge.failed, .badge.deleted { color: var(--danger); border-color: rgba(248, 113, 113, .35); background: rgba(248, 113, 113, .1); }
+    .badge.suspended, .badge.created, .badge.active { color: var(--fg-faint); }
     .meta { color: var(--pw-muted); font-size: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
     .meta .cli { border: 1px solid var(--pw-border); border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: 700; }
     .spacer { flex: 1; }
     .back { display: none; }
     @media (max-width: 860px) { .back { display: inline-flex; } }
-    button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-surface); color: var(--pw-text); padding: 5px 10px; cursor: pointer; font-size: 12.5px; }
-    button:hover { background: var(--pw-surface-hover); }
-    button.primary { border-color: var(--pw-accent-border); background: var(--pw-selection-bg); color: var(--pw-accent); }
-    button.danger { color: var(--pw-danger); border-color: var(--pw-danger); }
-    button:disabled { opacity: .5; cursor: not-allowed; }
+    button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 29px; border: 1px solid var(--border-strong); border-radius: 8px; background: rgba(244, 247, 241, .055); color: var(--pw-text); padding: 0 10px; cursor: pointer; font-size: 12px; font-weight: 580; transition: background var(--t-fast), border-color var(--t-fast), transform var(--t-fast), filter var(--t-fast); }
+    button:hover { background: rgba(244, 247, 241, .09); border-color: rgba(228, 238, 226, .26); }
+    button:active { transform: scale(.97); }
+    button.primary { background: var(--brand-grad); border-color: transparent; color: #10140e; font-weight: 700; box-shadow: 0 8px 22px rgba(122, 177, 77, .14), inset 0 1px 0 rgba(255, 255, 255, .38); }
+    button.primary:hover { filter: brightness(1.04); box-shadow: 0 10px 28px rgba(122, 177, 77, .2), inset 0 1px 0 rgba(255, 255, 255, .42); }
+    button.danger { color: var(--danger); }
+    button.danger:hover { background: var(--danger-dim); border-color: rgba(248, 113, 113, .4); }
+    button:disabled { opacity: .45; pointer-events: none; }
     .link { color: var(--pw-accent); font-size: 12.5px; text-decoration: none; }
     .link:hover { text-decoration: underline; }
   `;
@@ -882,7 +885,7 @@ export class PhSessionHeader extends LitElement {
 }
 customElements.define("ph-session-header", PhSessionHeader);
 
-// ---------------------------------------------------------------- 组件：消息流（pi-web chat）
+// ---------------------------------------------------------------- 组件：消息流
 export class PhMessageStream extends LitElement {
   static styles = css`
     ${PW}
@@ -890,18 +893,18 @@ export class PhMessageStream extends LitElement {
     .chat-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
     .chat { --pw-chat-sticky-top: -26px; height: 100%; min-height: 0; overflow: auto; overflow-anchor: none; padding: 26px 16px 64px; box-sizing: border-box; }
     .pw-empty { margin: 60px auto; max-width: 420px; color: var(--pw-muted); text-align: center; font-size: 14px; line-height: 1.8; }
-    /* pi-web conversation-meter：聊天区顶部位置进度条 */
+    /* conversation-meter：聊天区顶部位置进度条 */
     .conversation-rail { position: absolute; top: -4px; left: 16px; right: 16px; z-index: 6; display: block; height: 12px; opacity: .58; transition: opacity .15s ease; }
     .conversation-rail:hover { opacity: .92; }
     .rail-track { position: relative; height: 4px; margin-top: 4px; border-radius: 999px; background: color-mix(in srgb, var(--pw-border-muted) 34%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--pw-bg) 55%, transparent); }
     .rail-progress { position: absolute; left: 0; width: var(--rail-position, 100%); top: 0; bottom: 0; border-radius: 999px; background: color-mix(in srgb, var(--pw-accent) 42%, var(--pw-border-muted)); }
     .rail-marker { position: absolute; left: var(--rail-position, 100%); top: 50%; width: 10px; height: 10px; border: 2px solid var(--pw-bg); border-radius: 50%; background: var(--pw-accent); box-shadow: 0 2px 8px var(--pw-shadow); transform: translate(-50%, -50%); }
-    /* pi-web history-boundary：顶部历史边界（加载更早/会话起点 + 消息区间） */
+    /* history-boundary：顶部历史边界（加载更早/会话起点 + 消息区间） */
     .history-boundary { position: relative; z-index: 5; display: grid; gap: 3px; justify-items: center; margin: 0 0 14px; color: var(--pw-muted); font-size: 12px; text-align: center; }
-    .history-load-button { border: 1px solid var(--pw-border); border-radius: 999px; background: var(--pw-surface); color: var(--pw-text-secondary); padding: 5px 12px; font: 12px system-ui, sans-serif; cursor: pointer; }
+    .history-load-button { border: 1px solid var(--pw-border); border-radius: 999px; background: var(--pw-surface); color: var(--pw-text-secondary); padding: 5px 12px; font: 12px var(--font-sans); cursor: pointer; }
     .history-load-button:hover, .history-load-button:focus { border-color: var(--pw-accent); color: var(--pw-text-bright); }
     .history-boundary small { color: var(--pw-dim); }
-    /* pi-web activity-dock：右下悬浮运行状态药丸 */
+    /* activity-dock：右下悬浮运行状态药丸 */
     .activity-dock { position: absolute; left: 16px; right: 16px; bottom: 12px; z-index: 20; display: flex; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box; border: 1px solid var(--pw-border); border-radius: 999px; background: var(--pw-bg-overlay); color: var(--pw-muted); padding: 8px 12px; font-size: 13px; pointer-events: none; box-shadow: 0 8px 28px var(--pw-shadow); backdrop-filter: blur(6px); }
     .activity-dock.active { border-color: var(--pw-success-border); color: var(--pw-success); background: var(--pw-success-bg-overlay); }
     .activity-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1017,15 +1020,15 @@ export class PhMessageStream extends LitElement {
     if (!st.entries.length) return null;
     const from = st.transcriptTotal - st.transcriptLoaded + 1;
     const to = st.transcriptTotal;
-    const range = html`<small>Showing messages ${Math.max(from, 1)}–${to} of ${to}</small>`;
+    const range = html`<small>第 ${Math.max(from, 1)}–${to} 条，共 ${to} 条</small>`;
     if (this._hasOlder()) {
       return html`<div class="history-boundary">
-        <button type="button" class="history-load-button" @click=${() => this._loadMore()}>Load earlier messages</button>
-        <span>Scroll up to load earlier messages</span>
+        <button type="button" class="history-load-button" @click=${() => this._loadMore()}>加载更早消息</button>
+        <span>向上滚动加载更早消息</span>
         ${range}
       </div>`;
     }
-    return html`<div class="history-boundary"><span>Beginning of session</span>${range}</div>`;
+    return html`<div class="history-boundary"><span>会话起点</span>${range}</div>`;
   }
   renderDock() {
     const st = sessionState;
@@ -1069,39 +1072,38 @@ function renderItem(it, key) {
     case "bash": return html`<ph-msg-bash .msg=${it.msg}></ph-msg-bash>`;
     case "custom": return html`<ph-msg-custom .msg=${it.msg}></ph-msg-custom>`;
     case "ask": return html`<ph-ask-card .ask=${it.ask}></ph-ask-card>`;
-    case "ev-model": return html`<div class="pw-event">🔄 模型切换 → ${it.provider}/${it.modelId}</div>`;
-    case "ev-thinking": return html`<div class="pw-event">💭 思考级别 → ${it.level}</div>`;
-    case "ev-compaction": return html`<div class="pw-event" title=${it.summary || ""}>🧹 上下文已压缩（-${it.tokensBefore || "?"} tokens）</div>`;
-    case "ev-branch": return html`<div class="pw-event">🌿 分支摘要${it.summary ? `: ${it.summary.slice(0, 60)}` : ""}</div>`;
+    case "ev-model": return html`<div class="pw-event">模型切换 → ${it.provider}/${it.modelId}</div>`;
+    case "ev-thinking": return html`<div class="pw-event">思考级别 → ${it.level}</div>`;
+    case "ev-compaction": return html`<div class="pw-event" title=${it.summary || ""}>上下文已压缩（-${it.tokensBefore || "?"} tokens）</div>`;
+    case "ev-branch": return html`<div class="pw-event">分支摘要${it.summary ? `: ${it.summary.slice(0, 60)}` : ""}</div>`;
     default: return nothing;
   }
 }
 
-// pi-web .msg 消息卡片样式（chatStyles + formattedTextStyles 一比一对齐）
-// 关键视觉：.msg 卡片（12px 内边距/10px 圆角/1px 边框）、吸顶 msg-header
-// （12px 大写 label + 右侧 meta/复制操作，hover 渐显）、formatted-text 排版。
+// .msg 消息卡片样式：.msg 卡片（12px 内边距/全站圆角/1px 边框）、吸顶 msg-header
+// （小号 label + 右侧 meta/复制操作，hover 渐显）、formatted-text 排版。
 const msgStyles = css`
   ${PW}
   :host { display: block; max-width: 100%; min-width: 0; }
-  .msg { max-width: 100%; min-width: 0; box-sizing: border-box; margin: 0 0 14px; padding: 12px; border: 1px solid var(--pw-border); border-radius: 10px; background: var(--pw-surface); overflow: visible; color: var(--pw-text); font-size: 14px; line-height: 1.45; }
+  .msg { max-width: 100%; min-width: 0; box-sizing: border-box; margin: 0 0 14px; padding: 12px; border: 1px solid var(--pw-border); border-radius: var(--r-lg); background: var(--pw-surface); overflow: visible; color: var(--pw-text); font-size: 14px; line-height: 1.45; }
   .msg.user { border-color: var(--pw-accent-border); background: var(--pw-selection-bg); }
   .msg.assistant { background: var(--pw-surface); }
   .msg.streaming { border-color: var(--pw-success-border); }
-  .msg.bash { border-color: var(--pw-success); background: var(--pw-success-bg); }
+  .msg.bash { border-color: var(--pw-success-border); background: var(--pw-success-bg); }
   .msg-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 22px; margin-bottom: 8px; }
-  .msg > .msg-header { position: sticky; top: -26px; z-index: 4; margin: -12px -12px 8px; padding: 7px 10px 6px; border-radius: 9px 9px 0 0; border-bottom: 1px solid color-mix(in srgb, var(--pw-border-muted) 35%, transparent); background: var(--pw-surface); box-shadow: 0 8px 18px var(--pw-shadow-soft); }
-  .msg.user > .msg-header { border-bottom-color: color-mix(in srgb, var(--pw-accent-border) 35%, transparent); background: var(--pw-selection-bg); }
+  .msg > .msg-header { position: sticky; top: -26px; z-index: 4; margin: -12px -12px 8px; padding: 7px 10px 6px; border-radius: var(--r-lg) var(--r-lg) 0 0; border-bottom: 1px solid color-mix(in srgb, var(--pw-border-muted) 35%, transparent); background: var(--pw-surface); box-shadow: 0 8px 18px var(--pw-shadow-soft); }
+  .msg.user > .msg-header { border-bottom-color: color-mix(in srgb, var(--brand) 32%, transparent); background: color-mix(in srgb, var(--brand) 8%, var(--surface)); }
   .msg.assistant > .msg-header .label { color: var(--pw-text-secondary); }
-  .msg.user > .msg-header .label { color: var(--pw-accent); }
-  .msg.bash > .msg-header { border-bottom-color: color-mix(in srgb, var(--pw-success) 35%, transparent); background: var(--pw-success-bg); }
+  .msg.user > .msg-header .label { color: var(--brand); }
+  .msg.bash > .msg-header { border-bottom-color: color-mix(in srgb, var(--success) 32%, transparent); background: color-mix(in srgb, var(--success) 8%, var(--surface)); }
   .label { display: block; color: var(--pw-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .02em; }
   .msg-header .label { margin: 0; }
   .msg-header-trailing { min-width: 0; flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; }
   .msg-actions { flex: 0 0 auto; display: inline-flex; gap: 6px; opacity: 0; transition: opacity .12s ease; }
-  .msg-action { display: inline-grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--pw-border); border-radius: 6px; background: var(--pw-surface); color: var(--pw-muted); padding: 0; font: 14px system-ui, sans-serif; line-height: 1; cursor: pointer; }
+  .msg-action { display: inline-grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--pw-border); border-radius: 6px; background: var(--pw-surface); color: var(--pw-muted); padding: 0; font: 14px var(--font-sans); line-height: 1; cursor: pointer; }
   .msg-action:hover, .msg-action:focus { color: var(--pw-text); border-color: var(--pw-accent); }
   .msg:hover > .msg-header .msg-actions, .msg:focus-within > .msg-header .msg-actions { opacity: 1; }
-  .msg-meta { min-width: 0; opacity: .28; border: 0; background: transparent; color: var(--pw-dim); padding: 0; font: 11px system-ui, sans-serif; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity .12s ease; cursor: pointer; user-select: text; -webkit-user-select: text; }
+  .msg-meta { min-width: 0; opacity: .28; border: 0; background: transparent; color: var(--pw-dim); padding: 0; font: 11px var(--font-sans); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity .12s ease; cursor: pointer; user-select: text; -webkit-user-select: text; }
   .msg:hover > .msg-header .msg-meta, .msg:focus-within > .msg-header .msg-meta, .msg-meta:focus, .msg-meta.expanded { opacity: 1; }
   .msg-meta.expanded { flex: 1 1 auto; max-width: 100%; white-space: normal; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; }
   .stop-aborted { color: var(--pw-danger); }
@@ -1111,12 +1113,12 @@ const msgStyles = css`
   .ph-md :is(p, ul, ol, pre, blockquote, .code-block-wrapper):last-child { margin-bottom: 0; }
   .ph-md ul, .ph-md ol { padding-left: 22px; }
   .ph-md li + li { margin-top: 3px; }
-  .ph-md code { border: 1px solid var(--pw-border); border-radius: 4px; background: var(--pw-bg); padding: 1px 4px; font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; direction: ltr; text-align: left; unicode-bidi: isolate; }
+  .ph-md code { border: 1px solid var(--pw-border); border-radius: 4px; background: var(--pw-bg); padding: 1px 4px; font: 13px var(--font-mono); direction: ltr; text-align: left; unicode-bidi: isolate; }
   .ph-md .code-block-wrapper { position: relative; }
   .ph-md .code-block-wrapper pre { margin: 0; padding-right: 40px; }
-  .ph-md pre { border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-bg); padding: 10px; overflow-x: auto; overflow-y: hidden; direction: ltr; text-align: left; unicode-bidi: isolate; font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.5; }
+  .ph-md pre { border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-bg); padding: 10px; overflow-x: auto; overflow-y: hidden; direction: ltr; text-align: left; unicode-bidi: isolate; font: 12.5px var(--font-mono); line-height: 1.5; }
   .ph-md pre code { border: 0; padding: 0; background: transparent; }
-  .code-copy-button { position: absolute; top: 6px; right: 6px; z-index: 1; display: inline-grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--pw-border); border-radius: 6px; background: var(--pw-surface); color: var(--pw-muted); padding: 0; font: 14px system-ui, sans-serif; line-height: 1; cursor: pointer; }
+  .code-copy-button { position: absolute; top: 6px; right: 6px; z-index: 1; display: inline-grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--pw-border); border-radius: 6px; background: var(--pw-surface); color: var(--pw-muted); padding: 0; font: 14px var(--font-sans); line-height: 1; cursor: pointer; }
   .code-copy-button:hover, .code-copy-button:focus { color: var(--pw-text); border-color: var(--pw-accent); }
   .ph-md blockquote { border-left: 3px solid var(--pw-border); padding-left: 10px; color: var(--pw-muted); margin-top: 4px; }
   .ph-md a { color: var(--pw-accent); }
@@ -1133,7 +1135,7 @@ const msgStyles = css`
   .part > summary { cursor: pointer; color: var(--pw-muted); }
   .thinking { border-top: 1px solid var(--pw-border); padding-top: 8px; margin: 10px 0 0; }
   .thinking > summary { font-size: 12px; text-transform: uppercase; letter-spacing: .02em; color: var(--pw-muted); }
-  .shell-output { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--pw-text); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.45; direction: ltr; text-align: left; unicode-bidi: isolate; }
+  .shell-output { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--pw-text); font: 13px var(--font-mono); line-height: 1.45; direction: ltr; text-align: left; unicode-bidi: isolate; }
   .tool-line { color: var(--pw-warning); }
   .tool-line .summary { color: var(--pw-muted); margin-left: 6px; }
   .chat-image { display: block; max-width: 100%; max-height: 320px; margin: 8px 0 0; border: 1px solid var(--pw-border-muted); border-radius: 8px; object-fit: contain; cursor: zoom-in; }
@@ -1189,7 +1191,7 @@ class PhMsgUser extends LitElement {
     const blocks = Array.isArray(m.content) ? m.content : [{ type: "text", text: m.content }];
     return html`<div class="msg user">
       <div class="msg-header">
-        <b class="label">user</b>
+        <b class="label">用户</b>
         <div class="msg-header-trailing">
           <div class="msg-actions" aria-label="消息操作">
             <button type="button" class="msg-action" title="复制消息" aria-label="复制消息" @click=${(e) => copyText(msgTextOf(m), e.currentTarget)}><span aria-hidden="true">⧉</span></button>
@@ -1235,14 +1237,14 @@ class PhMsgAssistant extends LitElement {
     const parts = [];
     for (const b of blocks) {
       if (b.type === "text") parts.push(html`<div class="part">${unsafeHTML(md(b.text || ""))}</div>`);
-      else if (b.type === "thinking") parts.push(html`<details class="part thinking"><summary>thinking</summary><div class="ph-md">${unsafeHTML(md(b.thinking || ""))}</div></details>`);
+      else if (b.type === "thinking") parts.push(html`<details class="part thinking"><summary>思考</summary><div class="ph-md">${unsafeHTML(md(b.thinking || ""))}</div></details>`);
       else if (b.type === "toolCall") parts.push(html`<ph-tool-card class="part" .call=${b} .result=${(this.toolResults && this.toolResults.get(b.id)) || null}></ph-tool-card>`);
       else if (b.type === "toolExecution") parts.push(html`<ph-tool-card class="part" .call=${b} .result=${(this.toolResults && this.toolResults.get(b.id)) || null}></ph-tool-card>`);
     }
     const meta = pwMeta(m) + (m.stopReason === "aborted" ? " · 已中止" : "");
     return html`<div class="msg assistant ${streaming ? "streaming" : ""}">
       <div class="msg-header">
-        <b class="label">assistant</b>
+        <b class="label">助手</b>
         <div class="msg-header-trailing">
           <div class="msg-actions" aria-label="消息操作">
             <button type="button" class="msg-action" title="复制消息" aria-label="复制消息" @click=${(e) => copyText(msgTextOf(m), e.currentTarget)}><span aria-hidden="true">⧉</span></button>
@@ -1284,7 +1286,7 @@ class PhMsgCustom extends LitElement {
   static styles = css`
     ${PW}
     :host { display: block; margin: 0 0 14px; }
-    .box { border: 1px solid var(--pw-purple-border); border-radius: 10px; padding: 12px; font-size: 14px; line-height: 1.45; background: var(--pw-purple-surface); color: var(--pw-text); }
+    .box { border: 1px solid var(--pw-purple-border); border-radius: var(--r-lg); padding: 12px; font-size: 14px; line-height: 1.45; background: var(--pw-purple-surface); color: var(--pw-text); }
     .t { font-size: 12px; text-transform: uppercase; letter-spacing: .02em; color: var(--pw-purple); margin-bottom: 6px; }
     .qa { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
     .q { border-left: 2px solid var(--pw-purple-border); padding-left: 8px; }
@@ -1319,17 +1321,18 @@ class PhAskCard extends LitElement {
     .title { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
     .msg { font-size: 13.5px; color: var(--pw-text-secondary); margin-bottom: 10px; white-space: pre-wrap; }
     .opts { display: flex; flex-direction: column; gap: 6px; }
-    .opt { text-align: left; border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-surface); color: var(--pw-text); padding: 8px 12px; cursor: pointer; font-size: 13.5px; }
-    .opt:hover { border-color: var(--pw-accent-border); background: var(--pw-surface-hover); }
+    .opt { text-align: left; border: 1px solid var(--pw-border); border-radius: 9px; background: var(--pw-surface); color: var(--pw-text); padding: 8px 12px; cursor: pointer; font-size: 13.5px; }
+    .opt:hover { border-color: var(--brand); background: var(--pw-surface-hover); }
     .opt:disabled { opacity: .55; cursor: not-allowed; }
-    input, textarea { box-sizing: border-box; width: 100%; border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-bg); color: var(--pw-text); padding: 8px 10px; font: 14px/1.4 system-ui, sans-serif; resize: vertical; }
-    input:focus, textarea:focus { outline: none; border-color: var(--pw-accent-border); }
+    input, textarea { box-sizing: border-box; width: 100%; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--inset); color: var(--pw-text); padding: 8px 10px; font: 14px/1.4 var(--font-sans); resize: vertical; }
+    input:focus, textarea:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(199, 243, 106, .11); }
     .acts { display: flex; gap: 8px; margin-top: 10px; }
-    button { border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-surface); color: var(--pw-text); padding: 6px 12px; cursor: pointer; font-size: 13px; }
-    button:hover { background: var(--pw-surface-hover); }
-    button.primary { border-color: var(--pw-accent-border); background: var(--pw-selection-bg); color: var(--pw-accent); font-weight: 600; }
-    button.primary:hover { background: var(--pw-accent-border); color: #fff; }
-    button:disabled { opacity: .55; cursor: not-allowed; }
+    button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 32px; border: 1px solid var(--border-strong); border-radius: 9px; background: rgba(244, 247, 241, .055); color: var(--pw-text); padding: 0 13px; cursor: pointer; font-size: 12.5px; font-weight: 580; transition: background var(--t-fast), border-color var(--t-fast), transform var(--t-fast), filter var(--t-fast); }
+    button:hover { background: rgba(244, 247, 241, .09); border-color: rgba(228, 238, 226, .26); }
+    button:active { transform: scale(.97); }
+    button.primary { background: var(--brand-grad); border-color: transparent; color: #10140e; font-weight: 700; box-shadow: 0 8px 22px rgba(122, 177, 77, .14), inset 0 1px 0 rgba(255, 255, 255, .38); }
+    button.primary:hover { filter: brightness(1.04); box-shadow: 0 10px 28px rgba(122, 177, 77, .2), inset 0 1px 0 rgba(255, 255, 255, .42); }
+    button:disabled { opacity: .45; pointer-events: none; }
     .err { color: var(--pw-danger); font-size: 12.5px; margin-top: 8px; }
   `;
   static properties = { ask: { attribute: false }, value: { state: true }, busy: { state: true }, err: { state: true } };
@@ -1405,8 +1408,8 @@ class PhAskCard extends LitElement {
 }
 customElements.define("ph-ask-card", PhAskCard);
 
-// pi-web tool-execution-view 工具卡片：状态边框（pending/success/error）+ 标题行
-// （状态图标 + 工具名 + 目标）+ 状态徽标（大写），Details 折叠结果/diff。
+// 工具卡片：状态边框（pending/running/success/error）+ 标题行
+// （状态图标 + 工具名 + 目标）+ 状态徽标，折叠结果/diff。
 class PhToolCard extends LitElement {
   static styles = css`
     ${PW}
@@ -1420,7 +1423,7 @@ class PhToolCard extends LitElement {
     .tool-title { flex: 1 1 auto; display: inline-flex; align-items: baseline; gap: 7px; min-width: 0; }
     .status-icon { flex: 0 0 auto; color: var(--pw-muted); }
     .tool-title strong { flex: 0 0 auto; color: var(--pw-text); font-size: 13px; font-weight: 600; }
-    .path { display: block; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; white-space: pre; color: var(--pw-accent); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; direction: ltr; text-align: left; }
+    .path { display: block; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; white-space: pre; color: var(--pw-accent); font: 13px var(--font-mono); direction: ltr; text-align: left; }
     .summary { display: block; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pw-muted); font-size: 12.5px; }
     .tool-meta { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 8px; color: var(--pw-muted); font-size: 12px; }
     .status-label { text-transform: uppercase; letter-spacing: .04em; color: var(--pw-muted); }
@@ -1428,8 +1431,8 @@ class PhToolCard extends LitElement {
     .text-body > summary { cursor: pointer; color: var(--pw-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
     .detail-result { display: grid; gap: 4px; margin-top: 8px; min-width: 0; }
     .detail-label { color: var(--pw-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-    .detail-result pre { box-sizing: border-box; max-width: 100%; overflow-x: auto; overflow-y: hidden; border: 1px solid var(--pw-border-muted); border-radius: 7px; background: var(--pw-bg); padding: 8px; margin: 0; white-space: pre; overflow-wrap: normal; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--pw-text); }
-    .diff { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; margin: 8px 0 0; overflow-x: auto; border: 1px solid var(--pw-border-muted); border-radius: 7px; background: var(--pw-bg); padding: 8px 0; color: var(--pw-muted); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.45; }
+    .detail-result pre { box-sizing: border-box; max-width: 100%; overflow-x: auto; overflow-y: hidden; border: 1px solid var(--pw-border-muted); border-radius: 7px; background: var(--pw-bg); padding: 8px; margin: 0; white-space: pre; overflow-wrap: normal; font: 12px var(--font-mono); color: var(--pw-text); }
+    .diff { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; margin: 8px 0 0; overflow-x: auto; border: 1px solid var(--pw-border-muted); border-radius: 7px; background: var(--pw-bg); padding: 8px 0; color: var(--pw-muted); font: 12px var(--font-mono); line-height: 1.45; }
     .diff span { display: block; min-height: 1.45em; padding: 0 8px; white-space: pre; }
     .diff .context { color: var(--pw-muted); }
     .diff .hunk { color: var(--pw-accent); }
@@ -1447,7 +1450,7 @@ class PhToolCard extends LitElement {
     const isErr = !!(r && r.isError);
     const status = r ? (isErr ? "error" : "success") : "pending";
     const icon = status === "success" ? "✓" : status === "error" ? "✖" : status === "running" ? "●" : "○";
-    const statusLabel = status === "success" ? "done" : status === "error" ? "failed" : status === "running" ? "running" : "pending";
+    const statusLabel = status === "success" ? "完成" : status === "error" ? "失败" : status === "running" ? "运行中" : "等待";
     const targetClass = name === "bash" || name === "grep" || name === "glob" || name === "execute_bash" ? "summary" : "path";
     const body = r ? (Array.isArray(r.content) ? r.content.map(c => (c && c.text) || "").join("\n") : String(r.content || "")) : "";
     const diff = (r && r.details && typeof r.details.diff === "string") ? r.details.diff : "";
@@ -1464,9 +1467,9 @@ class PhToolCard extends LitElement {
         ${diff ? html`<pre class="diff">${diff.split("\n").map(l => html`<span class=${diffLineClass(l)}>${l}</span>`)}</pre>` : ""}
         ${!diff && body !== "" ? html`
           <details class="text-body" ?open=${isErr}>
-            <summary>Details</summary>
+            <summary>详情</summary>
             <div class="detail-result">
-              <span class="detail-label">Result</span>
+              <span class="detail-label">结果</span>
               <pre>${body}</pre>
             </div>
           </details>` : ""}
@@ -1483,16 +1486,16 @@ function diffLineClass(line) {
   return "context";
 }
 
-// ---------------------------------------------------------------- 组件：输入区（pi-web prompt-editor footer）
+// ---------------------------------------------------------------- 组件：输入区
 export class PhSessionInput extends LitElement {
   static styles = css`
     ${PW}
-    :host { flex: 0 0 auto; color: var(--pw-text); font: 14px system-ui, sans-serif; }
+    :host { flex: 0 0 auto; color: var(--pw-text); font: 14px var(--font-sans); }
     footer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px; border-top: 1px solid var(--pw-border); }
     footer.shell-mode { border-top-color: var(--pw-success); background: var(--pw-success-bg); }
     .editor-wrap { position: relative; min-width: 0; }
-    textarea { box-sizing: border-box; width: 100%; min-height: 54px; max-height: 220px; resize: none; overflow-y: auto; border-radius: 8px; border: 1px solid var(--pw-border); background: var(--pw-bg); color: var(--pw-text); font: 15px/1.4 system-ui, sans-serif; padding: 8px 10px; }
-    textarea:focus { outline: none; border-color: var(--pw-accent); }
+    textarea { box-sizing: border-box; width: 100%; min-height: 54px; max-height: 220px; resize: none; overflow-y: auto; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--inset); color: var(--pw-text); font: 15px/1.4 var(--font-sans); padding: 8px 10px; transition: border-color var(--t-fast), box-shadow var(--t-fast); }
+    textarea:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(199, 243, 106, .11); }
     .shell-mode textarea { border-color: var(--pw-success); box-shadow: 0 0 0 1px var(--pw-success-ring); }
     textarea:disabled { opacity: .5; cursor: not-allowed; }
     .mode-hint { position: absolute; right: 12px; bottom: 10px; max-width: calc(100% - 24px); border: 1px solid var(--pw-success-border); border-radius: 999px; background: var(--pw-success-surface); color: var(--pw-success); padding: 2px 8px; font-size: 12px; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1501,13 +1504,15 @@ export class PhSessionInput extends LitElement {
     .mode { display: flex; border: 1px solid var(--pw-border); border-radius: 7px; overflow: hidden; flex: 0 0 auto; }
     .mode span { padding: 3px 9px; font-size: 11.5px; cursor: pointer; color: var(--pw-muted); user-select: none; }
     .mode span.on { background: var(--pw-selection-bg); color: var(--pw-accent); }
-    button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--pw-border); border-radius: 8px; background: var(--pw-surface); color: var(--pw-text); padding: 6px 10px; cursor: pointer; font-size: 13px; }
-    button:hover { background: var(--pw-surface-hover); }
-    button.danger { color: var(--pw-danger); border-color: var(--pw-danger); }
-    button:disabled { opacity: .5; cursor: not-allowed; }
+    button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 32px; border: 1px solid var(--border-strong); border-radius: 9px; background: rgba(244, 247, 241, .055); color: var(--pw-text); padding: 0 13px; cursor: pointer; font-size: 12.5px; font-weight: 580; transition: background var(--t-fast), border-color var(--t-fast), transform var(--t-fast), filter var(--t-fast); }
+    button:hover { background: rgba(244, 247, 241, .09); border-color: rgba(228, 238, 226, .26); }
+    button:active { transform: scale(.97); }
+    button.danger { color: var(--danger); }
+    button.danger:hover { background: var(--danger-dim); border-color: rgba(248, 113, 113, .4); }
+    button:disabled { opacity: .45; pointer-events: none; }
     .send-button { flex: 0 0 auto; display: inline-grid; place-items: center; width: 36px; height: 36px; padding: 0; }
-    .send-button:not(:disabled) { color: var(--pw-accent); border-color: var(--pw-accent-border); }
-    .send-button:not(:disabled):hover { background: var(--pw-selection-bg); }
+    .send-button:not(:disabled) { background: var(--brand-grad); border-color: transparent; color: #10140e; box-shadow: 0 8px 22px rgba(122, 177, 77, .14), inset 0 1px 0 rgba(255, 255, 255, .38); }
+    .send-button:not(:disabled):hover { filter: brightness(1.04); box-shadow: 0 10px 28px rgba(122, 177, 77, .2), inset 0 1px 0 rgba(255, 255, 255, .42); }
     .send-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
   `;
   static properties = { session: { attribute: false }, running: { attribute: false }, value: { state: true }, mode: { state: true } };
