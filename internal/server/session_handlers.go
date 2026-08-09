@@ -347,69 +347,6 @@ func (s *Server) sessionTranscript(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"entries": entries, "total": total})
 }
 
-// S5：终端式会话（codex/claude）通道。
-type termIn struct {
-	Text string `json:"text"`
-	Cols int    `json:"cols"`
-	Rows int    `json:"rows"`
-	Raw  bool   `json:"raw"` // 原始按键（不追加回车）
-}
-
-func (s *Server) sessionTermInput(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r.PathValue("id"))
-	if err != nil {
-		writeJSON(w, 400, map[string]any{"error": "会话 id 非法"})
-		return
-	}
-	var in termIn
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeJSON(w, 400, map[string]any{"error": "请求体非法"})
-		return
-	}
-	if in.Raw {
-		err = s.sess.TermInputRaw(id, in.Text)
-	} else {
-		err = s.sess.TermInput(id, in.Text)
-	}
-	if err != nil {
-		writeJSON(w, 409, map[string]any{"error": err.Error()})
-		return
-	}
-	writeJSON(w, 200, map[string]any{"ok": true})
-}
-
-func (s *Server) sessionTermResize(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r.PathValue("id"))
-	if err != nil {
-		writeJSON(w, 400, map[string]any{"error": "会话 id 非法"})
-		return
-	}
-	var in termIn
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeJSON(w, 400, map[string]any{"error": "请求体非法"})
-		return
-	}
-	if err := s.sess.TermResize(id, in.Cols, in.Rows); err != nil {
-		writeJSON(w, 409, map[string]any{"error": err.Error()})
-		return
-	}
-	writeJSON(w, 200, map[string]any{"ok": true})
-}
-
-func (s *Server) sessionTermOutput(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r.PathValue("id"))
-	if err != nil {
-		writeJSON(w, 400, map[string]any{"error": "会话 id 非法"})
-		return
-	}
-	out, alive, err := s.sess.TermOutput(id)
-	if err != nil {
-		writeJSON(w, 409, map[string]any{"error": err.Error()})
-		return
-	}
-	writeJSON(w, 200, map[string]any{"output": out, "alive": alive})
-}
-
 func (s *Server) sessionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sessions", s.listSessions)
 	mux.HandleFunc("POST /api/sessions", s.createSession)
@@ -426,9 +363,6 @@ func (s *Server) sessionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sessions/{id}/messages", s.sessionMessages)
 	mux.HandleFunc("GET /api/sessions/{id}/state", s.sessionState)
 	mux.HandleFunc("GET /api/sessions/{id}/transcript", s.sessionTranscript)
-	mux.HandleFunc("POST /api/sessions/{id}/terminal/input", s.sessionTermInput)
-	mux.HandleFunc("POST /api/sessions/{id}/terminal/resize", s.sessionTermResize)
-	mux.HandleFunc("GET /api/sessions/{id}/terminal/output", s.sessionTermOutput)
 }
 
 func parseID(s string) (int64, error) {

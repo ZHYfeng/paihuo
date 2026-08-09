@@ -65,6 +65,13 @@ func GetAdapter(id string) (Adapter, bool) {
 	return a, ok
 }
 
+// SupportsInteractiveMode 报告该 CLI 是否支持交互式会话。交互式会话
+// （会话页消息流 / 任务交互终端）只支持 pi 与 omp——两者有 RPC 消息流
+// 通道；opencode / claude / codex 无结构化消息通道，仅批处理执行。
+func SupportsInteractiveMode(cli string) bool {
+	return cli == "pi" || cli == "omp"
+}
+
 func Adapters() []Adapter {
 	out := make([]Adapter, 0, len(registry))
 	for _, a := range registry {
@@ -521,15 +528,6 @@ func BuildOmpRPCSessionArgs(role store.RoleConfig, skillMount *RoleSkillMount, s
 	}
 	args = append(args, role.ExtraArgs...)
 	return args, nil
-}
-
-// BuildInteractiveArgs 构造某 CLI 交互模式的启动命令（S5 会话终端通道用）。
-func BuildInteractiveArgs(adapterID string, o RunOptions) (string, []string, []string, error) {
-	a, ok := GetAdapter(adapterID)
-	if !ok {
-		return "", nil, nil, fmt.Errorf("未知 CLI 适配器: %s", adapterID)
-	}
-	return a.Build(o)
 }
 
 // MergeEnv 把角色环境变量合并进系统环境（会话管理器用）。

@@ -32,8 +32,7 @@ type Manager struct {
 	agentSessions string // <sessionsRoot>/.agent-sessions（与任务会话平级，session- 前缀）
 
 	mu    sync.Mutex
-	procs map[int64]*rpcProc  // pi 会话进程（RPC 通道）
-	terms map[int64]*termProc // codex/claude 会话终端（tmux 通道，S5）
+	procs map[int64]*rpcProc // pi/omp 会话进程（RPC 通道）
 	// stopping 置位后禁止再启动新进程（服务关闭）
 	stopping bool
 	stopIdle chan struct{} // 空闲挂起巡检停止信号（Stop 时关闭）
@@ -50,7 +49,6 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sessionsRoot, inst
 		sessionsRoot:  sessionsRoot,
 		agentSessions: filepath.Join(sessionsRoot, ".agent-sessions"),
 		procs:         make(map[int64]*rpcProc),
-		terms:         make(map[int64]*termProc),
 		stopIdle:      make(chan struct{}),
 	}
 }
@@ -180,18 +178,15 @@ func (m *Manager) Start(ctx context.Context, id int64) error {
 	if dir == "" {
 		dir = m.projectDir(ss) // 非 git / 无 worktree 回退
 	}
-	if agent.CLI == "pi" || agent.CLI == "omp" {
-		// pi/omp 有 RPC 模式（JSONL 事件流 + 命令通道）→ 消息流视图。
-		if err := m.startRPC(ss, *agent, dir); err != nil {
-			m.ex.ReleaseAgentSlot(agent.ID)
-			return err
-		}
-	} else {
-		// S5：codex/claude 降级通道（tmux 终端）。
-		if err := m.startTerminal(ss, *agent, dir); err != nil {
-			m.ex.ReleaseAgentSlot(agent.ID)
-			return err
-		}
+	// 交互式会话只支持 pi / omp（RPC 消息流通道）；其余 CLI 无结构化
+	// 消息通道，S5 终端降级通道已移除，无法启动。
+	if !exec.SupportsInteractiveMode(agent.CLI) {
+		m.ex.ReleaseAgentSlot(agent.ID)
+		return fmt.Errorf("交互式会话只支持 pi / omp 角色（%s 不支持），该会话无法启动", agent.CLI)
+	}
+	if err := m.startRPC(ss, *agent, dir); err != nil {
+		m.ex.ReleaseAgentSlot(agent.ID)
+		return err
 	}
 
 	now := store.Now()
@@ -223,118 +218,11 @@ func (m *Manager) startRPC(ss *store.Session, agent store.Agent, dir string) err
 	return nil
 }
 
-// startTerminal 启动 codex/claude 会话终端窗口（S5）。
-func (m *Manager) startTerminal(ss *store.Session, agent store.Agent, dir string) error {
-	adapter, ok := exec.GetAdapter(agent.CLI)
-	if !ok {
-		return fmt.Errorf("未知 CLI: %s", agent.CLI)
-	}
-	bin, err := adapter.Detect()
-	if err != nil {
-		return err
-	}
-	var mount *exec.RoleSkillMount
-	if mnt, err := exec.EnsureRoleSkills(agent.ID, agent.Name, agent.RoleConfig.Skills,
-		filepath.Join(m.sessionsRoot, ".role-agents", fmt.Sprintf("%d", agent.ID))); err == nil {
-		mount = mnt
-	}
-	// 初始消息：恢复时为空（CLI 交互 TUI 启动后由用户继续）；新建时用会话标题提示。
-	initial := ""
-	_, args, env, err := exec.BuildInteractiveArgs(agent.CLI, exec.RunOptions{
-		Dir: dir, Role: agent.RoleConfig, RunMode: store.RunModeInteractive, SkillMount: mount,
-	})
-	if err != nil {
-		return err
-	}
-	term := newTermProc(m.termSocket())
-	term.archive = filepath.Join(m.sessionDirOf(ss.ID), "term.out")
-	if err := term.Spawn(ss.ID, bin, args, env, dir, initial); err != nil {
-		return err
-	}
-	m.mu.Lock()
-	m.terms[ss.ID] = term
-	m.mu.Unlock()
-	return nil
-}
-
-// termSocket 与会话终端共享 Executor 的 tmux server（window 前缀隔离）。
-func (m *Manager) termSocket() string { return "paihuo" }
-
-// stopChannel 停止会话的执行通道（RPC 进程或终端窗口）。
+// stopChannel 停止会话的执行通道（RPC 进程）。
 func (m *Manager) stopChannel(id int64) {
 	if proc := m.detach(id); proc != nil {
 		proc.terminate()
 	}
-	m.mu.Lock()
-	term := m.terms[id]
-	delete(m.terms, id)
-	m.mu.Unlock()
-	if term != nil {
-		_ = term.Kill(id)
-	}
-}
-
-// TermInput 向终端式会话发送整行输入（S5）。挂起时自动恢复。
-func (m *Manager) TermInput(id int64, text string) error {
-	term, err := m.activeTerm(id)
-	if err != nil {
-		if auto := m.autoStart(context.Background(), id); auto != nil {
-			return fmt.Errorf("%v", auto)
-		}
-		term, err = m.activeTerm(id)
-		if err != nil {
-			return err
-		}
-	}
-	return term.Input(id, text)
-}
-
-// TermInputRaw 发送原始按键（S5）。
-func (m *Manager) TermInputRaw(id int64, text string) error {
-	term, err := m.activeTerm(id)
-	if err != nil {
-		return err
-	}
-	return term.InputRaw(id, text)
-}
-
-// TermResize 同步终端尺寸（S5）。
-func (m *Manager) TermResize(id int64, cols, rows int) error {
-	term, err := m.activeTerm(id)
-	if err != nil {
-		return err
-	}
-	return term.Resize(id, cols, rows)
-}
-
-// TermOutput 增量读取终端输出（S5）。
-func (m *Manager) TermOutput(id int64) (string, bool, error) {
-	term, err := m.activeTerm(id)
-	if err == nil {
-		return term.Output(id)
-	}
-	// 无活跃终端：回退读最后捕获帧。终态会话（delivered/deleted）返回
-	// alive=false 供前端停止轮询；可启动会话（created/suspended）保持
-	// alive=true 直到自动恢复拉起真实窗口，避免前端过早停轮询显示空白。
-	ss, gerr := m.st.GetSession(id)
-	if gerr == nil && ss != nil && (ss.CLI == "codex" || ss.CLI == "claude") {
-		archive := filepath.Join(m.sessionDirOf(id), "term.out")
-		if data, rerr := os.ReadFile(archive); rerr == nil {
-			alive := ss.Status == store.SessionStatusCreated || ss.Status == store.SessionStatusSuspended
-			return string(data), alive, nil
-		}
-	}
-	return "", false, err
-}
-
-func (m *Manager) activeTerm(id int64) (*termProc, error) {
-	m.mu.Lock()
-	term := m.terms[id]
-	m.mu.Unlock()
-	if term == nil {
-		return nil, fmt.Errorf("会话终端未运行（仅 codex/claude 会话支持）")
-	}
-	return term, nil
 }
 
 // spawn 启动 pi/omp RPC 进程并注入事件/退出回调。

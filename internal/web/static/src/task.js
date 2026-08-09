@@ -1055,6 +1055,7 @@ export function openProjectTask(projectId) {
 }
 
 // 会话模式走会话页（与「＋ 新建会话」同一入口），任务级字段隐藏。
+// 交互式会话只支持 pi / omp 角色：其余 CLI 的「会话」选项置灰并回退批处理。
 export function syncTaskRunMode() {
   const agentID = Number(document.getElementById("tAgent")?.value) || 0;
   const agent = state.agents.find(a => a.id === agentID);
@@ -1062,6 +1063,15 @@ export function syncTaskRunMode() {
   const help = document.getElementById("tRunModeHelp");
   const taskOnly = document.getElementById("tTaskOnlyFields");
   if (!select) return;
+  const sessionOK = !!agent && (agent.cli === "pi" || agent.cli === "omp");
+  const sessionOpt = select.querySelector('option[value="session"]');
+  if (sessionOpt) {
+    sessionOpt.disabled = !sessionOK;
+    sessionOpt.textContent = sessionOK
+      ? "会话（推荐：复杂问题，与 agent 多轮协作）"
+      : "会话（仅 pi / omp 角色支持）";
+    if (!sessionOK && select.value === "session") select.value = "batch";
+  }
   if (select.value === "session") {
     if (help) help.textContent = "创建常驻会话：复杂问题与 agent 多轮协作（独立工作目录），完成时点「交付」转为任务走审批合并流程。";
     if (taskOnly) taskOnly.classList.add("hidden");

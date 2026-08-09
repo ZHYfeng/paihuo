@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 
+	"paihuo/internal/exec"
 	"paihuo/internal/store"
 )
 
@@ -64,9 +65,14 @@ func transitionErr(from, to string) error {
 }
 
 // ValidCreate 校验创建参数；agentID 必须指向存在且可用的角色。
+// 交互式会话只支持 pi / omp（RPC 消息流通道）；opencode / claude /
+// codex 无结构化消息通道，不支持会话。
 func (m *Manager) validateCreate(agent store.Agent) error {
 	if !agent.Enabled {
 		return fmt.Errorf("角色「%s」已停用，无法创建会话", agent.Name)
+	}
+	if !exec.SupportsInteractiveMode(agent.CLI) {
+		return fmt.Errorf("交互式会话只支持 pi / omp 角色，「%s」（%s）不支持", agent.Name, agent.CLI)
 	}
 	return nil
 }

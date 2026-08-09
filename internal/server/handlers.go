@@ -213,6 +213,10 @@ func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agen
 			writeErr(w, http.StatusBadRequest, "角色不存在")
 			return
 		}
+		if runMode == store.RunModeInteractive && resumeOf == nil && !exec.SupportsInteractiveMode(a.CLI) {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("交互式任务只支持 pi / omp 角色（%s 不支持）", a.CLI))
+			return
+		}
 		if tk.ProjectDir == "" {
 			tk.ProjectDir = a.ProjectDir // 兼容旧数据：角色级目录
 		}
@@ -450,6 +454,10 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 			a, err := s.st.GetAgent(int64(aid))
 			if err != nil {
 				writeErr(w, http.StatusBadRequest, "角色不存在")
+				return
+			}
+			if cur.RunMode == store.RunModeInteractive && !exec.SupportsInteractiveMode(a.CLI) {
+				writeErr(w, http.StatusBadRequest, fmt.Sprintf("交互式任务只支持 pi / omp 角色（%s 不支持）", a.CLI))
 				return
 			}
 			set["agent_id"] = int64(aid)

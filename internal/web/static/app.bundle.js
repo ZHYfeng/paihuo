@@ -1306,42 +1306,6 @@
     const pad = (n6) => String(n6).padStart(2, "0");
     return `${d3.getFullYear()}-${pad(d3.getMonth() + 1)}-${pad(d3.getDate())} ${pad(d3.getHours())}:${pad(d3.getMinutes())}:${pad(d3.getSeconds())}`;
   }
-  function charWidth(ch) {
-    const c5 = ch.codePointAt(0);
-    if (c5 >= 4352 && (c5 <= 4447 || c5 === 9001 || c5 === 9002 || c5 >= 11904 && c5 <= 42191 && c5 !== 12351 || c5 >= 44032 && c5 <= 55203 || c5 >= 63744 && c5 <= 64255 || c5 >= 65040 && c5 <= 65049 || c5 >= 65072 && c5 <= 65135 || c5 >= 65280 && c5 <= 65376 || c5 >= 65504 && c5 <= 65510 || c5 >= 127744 && c5 <= 128591 || c5 >= 129280 && c5 <= 129535 || c5 >= 131072 && c5 <= 196605 || c5 >= 196608 && c5 <= 262141)) {
-      return 2;
-    }
-    return 1;
-  }
-  function strWidth(s5) {
-    let w2 = 0;
-    for (const ch of s5) w2 += charWidth(ch);
-    return w2;
-  }
-  function sliceByWidth(s5, maxW) {
-    if (maxW <= 0) return "";
-    let w2 = 0;
-    let out = "";
-    for (const ch of s5) {
-      const cw = charWidth(ch);
-      if (w2 + cw > maxW) break;
-      w2 += cw;
-      out += ch;
-    }
-    return out;
-  }
-  function cursorTarget(lines) {
-    for (let i6 = lines.length - 1; i6 >= 0; i6--) {
-      const t5 = lines[i6].trimStart();
-      if (t5.startsWith("\u203A") || t5.startsWith("\u276F")) {
-        return { row: i6 + 1, col: strWidth(lines[i6]) + 1 };
-      }
-    }
-    for (let i6 = lines.length - 1; i6 >= 0; i6--) {
-      if (lines[i6].trim()) return { row: i6 + 1, col: strWidth(lines[i6]) + 1 };
-    }
-    return { row: 1, col: 1 };
-  }
   function relTime(iso) {
     if (!iso) return "";
     const t5 = new Date(iso).getTime();
@@ -1353,7 +1317,7 @@
     if (d3 < 86400 * 7) return `${Math.floor(d3 / 86400)} \u5929\u524D`;
     return new Date(iso).toLocaleDateString();
   }
-  var PW, STATUS_DOT, STATUS_LABEL2, sessionState, PhSessionsPage, PhSessionList, PhSessionCreate, PhSessionView, PhSessionHeader, PhMessageStream, msgStyles, PhMsgUser, PhMsgAssistant, PhMsgBash, PhMsgCustom, PhAskCard, PhToolCard, PhSessionTerm, PhSessionInput;
+  var PW, STATUS_DOT, STATUS_LABEL2, sessionState, PhSessionsPage, PhSessionList, PhSessionCreate, PhSessionView, PhSessionHeader, PhMessageStream, msgStyles, PhMsgUser, PhMsgAssistant, PhMsgBash, PhMsgCustom, PhAskCard, PhToolCard, PhSessionInput;
   var init_sessions = __esm({
     "internal/web/static/src/sessions.js"() {
       init_lit();
@@ -1703,7 +1667,7 @@
           super.connectedCallback();
           const pf = this.prefill || {};
           Promise.all([api("/api/agents"), api("/api/projects")]).then(([a3, p3]) => {
-            this.agents = a3.filter((x2) => x2.enabled);
+            this.agents = a3.filter((x2) => x2.enabled && (x2.cli === "pi" || x2.cli === "omp"));
             this.projects = p3;
             if (pf.agent && this.agents.some((x2) => String(x2.id) === String(pf.agent))) this.agentId = String(pf.agent);
             else if (this.agents.length) this.agentId = String(this.agents[0].id);
@@ -1749,9 +1713,9 @@
           <textarea .value=${this.body} @input=${(e6) => this.body = e6.target.value} rows="3" placeholder="可选：创建后自动启动并发送第一条指令（与任务弹窗的「任务内容」一致）"></textarea>
         </label>
         <label>角色
-          <select .value=${this.agentId} @change=${(e6) => this.agentId = e6.target.value}>
+          ${this.agents.length ? b2`<select .value=${this.agentId} @change=${(e6) => this.agentId = e6.target.value}>
             ${this.agents.map((a3) => b2`<option value=${a3.id}>${a3.name}（${a3.cli}）</option>`)}
-          </select>
+          </select>` : b2`<div class="hint">交互式会话只支持 pi / omp 角色；请先在 Agents 页安装并创建 pi / omp 角色。</div>`}
         </label>
         <label>项目
           <select .value=${this.projectId} @change=${(e6) => this.projectId = e6.target.value}>
@@ -1801,13 +1765,12 @@
           window.removeEventListener("ph-session-message", this._onLive);
           window.removeEventListener("ph-session-updated", this._onLive);
         }
-        // 统一自动启动：created 会话打开即启动；终端式（codex/claude）挂起会话
-        // 打开即恢复。pi/omp 挂起会话靠发送消息自动恢复（Prompt 触发），不提前拉起。
+        // 统一自动启动：created 会话打开即启动。pi/omp 挂起会话靠发送消息
+        // 自动恢复（Prompt 触发），不提前拉起。
         updated() {
           const ss = sessionState.detail;
           if (!ss || this._bootedFor === ss.id) return;
-          const needStart = ss.status === "created" || ss.status === "suspended" && ss.cli !== "pi" && ss.cli !== "omp";
-          if (!needStart) return;
+          if (ss.status !== "created") return;
           this._bootedFor = ss.id;
           this._autoStart(ss.id);
         }
@@ -1825,11 +1788,10 @@
           const st = sessionState;
           const ss = st.detail;
           if (!ss) return b2`<div class="pw-empty">加载中…</div>`;
-          const msgFlow = ss.cli === "pi" || ss.cli === "omp";
           return b2`
       <ph-session-header .session=${ss} .live=${st.live} .running=${st.agentRunning}></ph-session-header>
-      ${msgFlow ? b2`<ph-message-stream .sessionId=${this.sessionId} .entries=${st.entries}></ph-message-stream>
-             <ph-session-input .session=${ss} .running=${st.agentRunning} @refresh=${() => this.requestUpdate()}></ph-session-input>` : b2`<ph-session-term .session=${ss}></ph-session-term>`}
+      <ph-message-stream .sessionId=${this.sessionId} .entries=${st.entries}></ph-message-stream>
+      <ph-session-input .session=${ss} .running=${st.agentRunning} @refresh=${() => this.requestUpdate()}></ph-session-input>
     `;
         }
       };
@@ -2304,129 +2266,6 @@
   `);
       __publicField(PhToolCard, "properties", { call: { attribute: false }, result: { attribute: false }, open: { state: true } });
       customElements.define("ph-tool-card", PhToolCard);
-      PhSessionTerm = class extends i4 {
-        constructor() {
-          super();
-          this._term = null;
-          this._fit = null;
-          this._timer = null;
-          this._dead = false;
-          this._lastFrame = "";
-        }
-        connectedCallback() {
-          super.connectedCallback();
-        }
-        // Lit 的 connectedCallback 先于首次 render：此时 shadowRoot 里还没有
-        // .term-wrap，connectedCallback 里取节点必然为空 → xterm 永远不初始化。
-        // 首次渲染完成后再挂载终端。
-        firstUpdated() {
-          this._init();
-        }
-        disconnectedCallback() {
-          super.disconnectedCallback();
-          clearInterval(this._timer);
-          this._timer = null;
-          clearInterval(this._resizeTimer);
-          if (this._term) {
-            try {
-              this._term.dispose();
-            } catch (_2) {
-            }
-          }
-          this._term = null;
-        }
-        async _init() {
-          const id = this.session.id;
-          const wrap = this.shadowRoot.querySelector(".term-wrap");
-          if (!wrap || !globalThis.Terminal) return;
-          this._term = new Terminal({ fontSize: 13, fontFamily: "ui-monospace, monospace", theme: { background: "#05070a", foreground: "#e6edf3", cursor: "#58a6ff" }, scrollback: 5e3 });
-          if (globalThis.FitAddon) {
-            this._fit = new globalThis.FitAddon.FitAddon();
-            this._term.loadAddon(this._fit);
-          }
-          this._term.open(wrap);
-          if (this._fit) this._fit.fit();
-          this._term.onData((data) => {
-            api(`/api/sessions/${id}/terminal/input`, { method: "POST", body: JSON.stringify({ text: data, raw: true }) }).catch(() => {
-            });
-          });
-          if (this._fit) {
-            const fit = this._fit;
-            const pushResize = () => {
-              if (this._term && !this._dead) {
-                api(`/api/sessions/${id}/terminal/resize`, { method: "POST", body: JSON.stringify({ cols: this._term.cols, rows: this._term.rows }) }).catch(() => {
-                });
-              }
-            };
-            try {
-              fit.fit();
-              pushResize();
-            } catch (_2) {
-            }
-            this._resizeTimer = setInterval(() => {
-              try {
-                fit.fit();
-                pushResize();
-              } catch (_2) {
-              }
-            }, 3e3);
-          }
-          this._timer = setInterval(async () => {
-            try {
-              const r6 = await api(`/api/sessions/${id}/terminal/output`);
-              if (r6.output != null && this._term) {
-                const cur = r6.output;
-                const prev = this._lastFrame || "";
-                if (cur !== prev) {
-                  const rows = this._term.rows;
-                  const cols = this._term.cols;
-                  const norm = (s5) => s5.split("\n").map((l3) => sliceByWidth(l3, cols)).slice(0, rows);
-                  const cl = norm(cur);
-                  const pl = norm(prev);
-                  if (cl.length === pl.length && cl.length <= rows + 1) {
-                    let patch = "";
-                    const n6 = Math.min(cl.length, rows);
-                    for (let i6 = 0; i6 < n6; i6++) {
-                      if (cl[i6] !== pl[i6]) patch += `\x1B[${i6 + 1};1H${cl[i6]}\x1B[K`;
-                    }
-                    if (cl.length < rows) patch += `\x1B[${cl.length + 1};1H\x1B[J`;
-                    if (patch) {
-                      const target = cursorTarget(cl);
-                      this._term.write(patch + `\x1B[${target.row};${target.col}H`);
-                    }
-                  } else {
-                    const target = cursorTarget(cl);
-                    this._term.write("\x1B[2J\x1B[3J\x1B[H" + cl.join("\r\n") + `\x1B[${target.row};${target.col}H`);
-                  }
-                  this._lastFrame = cur;
-                }
-              }
-              if (r6.alive === false) {
-                this._dead = true;
-                clearInterval(this._timer);
-              }
-            } catch (_2) {
-            }
-          }, 700);
-        }
-        render() {
-          const s5 = this.session;
-          return b2`
-      <div class="bar">终端式会话（${s5.cli}）· 输出由 tmux 实时捕获</div>
-      <div class="term-wrap"></div>
-      <div class="tip">点击终端直接输入 · 输入 /exit 退出 · 空闲自动挂起，输入自动恢复</div>
-    `;
-        }
-      };
-      __publicField(PhSessionTerm, "styles", i`
-    ${PW}
-    :host { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 12px; gap: 8px; background: var(--pw-bg); }
-    .bar { font-size: 12px; color: var(--pw-muted); display: flex; align-items: center; gap: 8px; }
-    .term-wrap { flex: 1; min-height: 240px; border: 1px solid var(--pw-border); border-radius: 10px; overflow: hidden; padding: 6px; background: var(--pw-terminal-bg); }
-    .tip { font-size: 12px; color: var(--pw-dim); }
-  `);
-      __publicField(PhSessionTerm, "properties", { session: { attribute: false } });
-      customElements.define("ph-session-term", PhSessionTerm);
       PhSessionInput = class extends i4 {
         constructor() {
           super();
@@ -5017,6 +4856,13 @@
     const help = document.getElementById("tRunModeHelp");
     const taskOnly = document.getElementById("tTaskOnlyFields");
     if (!select) return;
+    const sessionOK = !!agent && (agent.cli === "pi" || agent.cli === "omp");
+    const sessionOpt = select.querySelector('option[value="session"]');
+    if (sessionOpt) {
+      sessionOpt.disabled = !sessionOK;
+      sessionOpt.textContent = sessionOK ? "\u4F1A\u8BDD\uFF08\u63A8\u8350\uFF1A\u590D\u6742\u95EE\u9898\uFF0C\u4E0E agent \u591A\u8F6E\u534F\u4F5C\uFF09" : "\u4F1A\u8BDD\uFF08\u4EC5 pi / omp \u89D2\u8272\u652F\u6301\uFF09";
+      if (!sessionOK && select.value === "session") select.value = "batch";
+    }
     if (select.value === "session") {
       if (help) help.textContent = "\u521B\u5EFA\u5E38\u9A7B\u4F1A\u8BDD\uFF1A\u590D\u6742\u95EE\u9898\u4E0E agent \u591A\u8F6E\u534F\u4F5C\uFF08\u72EC\u7ACB\u5DE5\u4F5C\u76EE\u5F55\uFF09\uFF0C\u5B8C\u6210\u65F6\u70B9\u300C\u4EA4\u4ED8\u300D\u8F6C\u4E3A\u4EFB\u52A1\u8D70\u5BA1\u6279\u5408\u5E76\u6D41\u7A0B\u3002";
       if (taskOnly) taskOnly.classList.add("hidden");

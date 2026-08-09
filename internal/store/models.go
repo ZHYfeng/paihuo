@@ -70,7 +70,7 @@ type Session struct {
 	AgentName      string  `json:"agent_name,omitempty"`
 	Title          string  `json:"title"`
 	Status         string  `json:"status"`
-	CLI            string  `json:"cli"` // 冗余自角色，前端展示用：pi | codex | claude | ...
+	CLI            string  `json:"cli"` // 冗余自角色，前端展示用：pi | omp
 	WorktreeBranch string  `json:"worktree_branch"`
 	WorktreePath   string  `json:"worktree_path"`
 	BaseCommit     string  `json:"base_commit"` // 创建 worktree 时主分支 HEAD

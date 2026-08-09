@@ -5,6 +5,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"paihuo/internal/events"
@@ -125,6 +126,52 @@ func TestCreateWorktree(t *testing.T) {
 	branch := gitCmd(t, proj[0].ProjectDir, "branch", "--list", "paihuo/session-1")
 	if branch == "" {
 		t.Error("会话分支未创建")
+	}
+}
+
+// 交互式会话只支持 pi / omp：opencode / claude / codex 角色创建会话应被拒绝
+// （validateCreate 在 worktree 创建前拦截），pi / omp 正常创建。
+func TestCreateSessionRejectsNonPiOmpAgents(t *testing.T) {
+	m, st, _, _ := newTestEnv(t)
+	for _, cli := range []string{"pi", "omp", "opencode", "claude", "codex"} {
+		id, err := st.CreateAgent(store.Agent{Name: cli + "-sess", CLI: cli, Enabled: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = m.Create(nil, id, "会话"+cli)
+		if cli == "pi" || cli == "omp" {
+			if err != nil {
+				t.Fatalf("%s 创建会话应成功: %v", cli, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), "只支持 pi / omp") {
+			t.Fatalf("%s 创建会话应被拒绝（只支持 pi / omp），得到: %v", cli, err)
+		}
+	}
+}
+
+// 遗留的非 pi/omp 会话（绕过创建校验直接落库）启动时应被拒绝——
+// S5 终端降级通道已移除，会话只支持 pi/omp 消息流。
+func TestStartRejectsLegacyNonPiOmpSession(t *testing.T) {
+	m, st, _, _ := newTestEnv(t)
+	cxID, err := st.CreateAgent(store.Agent{Name: "codex-sess", CLI: "codex", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := st.CreateSession(store.Session{
+		AgentID: cxID, Title: "遗留", Status: store.SessionStatusCreated, CLI: "codex",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = m.Start(context.Background(), id)
+	if err == nil || !strings.Contains(err.Error(), "只支持 pi / omp") {
+		t.Fatalf("遗留 codex 会话启动应被拒绝: %v", err)
+	}
+	got, _ := m.Get(id)
+	if got.Status != store.SessionStatusCreated {
+		t.Fatalf("启动失败不应改变状态，得到 %s", got.Status)
 	}
 }
 

@@ -620,7 +620,9 @@ export class PhSessionCreate extends LitElement {
     super.connectedCallback();
     const pf = this.prefill || {};
     Promise.all([api("/api/agents"), api("/api/projects")]).then(([a, p]) => {
-      this.agents = a.filter(x => x.enabled);
+      // 交互式会话只支持 pi / omp（RPC 消息流通道）；opencode / claude /
+      // codex 无结构化消息通道，仅批处理执行，不进入会话创建表单。
+      this.agents = a.filter(x => x.enabled && (x.cli === "pi" || x.cli === "omp"));
       this.projects = p;
       if (pf.agent && this.agents.some(x => String(x.id) === String(pf.agent))) this.agentId = String(pf.agent);
       else if (this.agents.length) this.agentId = String(this.agents[0].id);
@@ -660,9 +662,9 @@ export class PhSessionCreate extends LitElement {
           <textarea .value=${this.body} @input=${(e) => this.body = e.target.value} rows="3" placeholder="可选：创建后自动启动并发送第一条指令（与任务弹窗的「任务内容」一致）"></textarea>
         </label>
         <label>角色
-          <select .value=${this.agentId} @change=${(e) => this.agentId = e.target.value}>
+          ${this.agents.length ? html`<select .value=${this.agentId} @change=${(e) => this.agentId = e.target.value}>
             ${this.agents.map(a => html`<option value=${a.id}>${a.name}（${a.cli}）</option>`)}
-          </select>
+          </select>` : html`<div class="hint">交互式会话只支持 pi / omp 角色；请先在 Agents 页安装并创建 pi / omp 角色。</div>`}
         </label>
         <label>项目
           <select .value=${this.projectId} @change=${(e) => this.projectId = e.target.value}>
@@ -707,14 +709,12 @@ export class PhSessionView extends LitElement {
     window.removeEventListener("ph-session-message", this._onLive);
     window.removeEventListener("ph-session-updated", this._onLive);
   }
-  // 统一自动启动：created 会话打开即启动；终端式（codex/claude）挂起会话
-  // 打开即恢复。pi/omp 挂起会话靠发送消息自动恢复（Prompt 触发），不提前拉起。
+  // 统一自动启动：created 会话打开即启动。pi/omp 挂起会话靠发送消息
+  // 自动恢复（Prompt 触发），不提前拉起。
   updated() {
     const ss = sessionState.detail;
     if (!ss || this._bootedFor === ss.id) return;
-    const needStart = ss.status === "created" ||
-      (ss.status === "suspended" && ss.cli !== "pi" && ss.cli !== "omp");
-    if (!needStart) return;
+    if (ss.status !== "created") return;
     this._bootedFor = ss.id;
     this._autoStart(ss.id);
   }
@@ -732,14 +732,11 @@ export class PhSessionView extends LitElement {
     const st = sessionState;
     const ss = st.detail;
     if (!ss) return html`<div class="pw-empty">加载中…</div>`;
-    // pi/omp 走 RPC 事件流 → 消息流视图；其余 CLI（codex/claude/…）走终端式。
-    const msgFlow = ss.cli === "pi" || ss.cli === "omp";
+    // 交互式会话只支持 pi / omp：一律走 RPC 消息流视图。
     return html`
       <ph-session-header .session=${ss} .live=${st.live} .running=${st.agentRunning}></ph-session-header>
-      ${msgFlow
-        ? html`<ph-message-stream .sessionId=${this.sessionId} .entries=${st.entries}></ph-message-stream>
-             <ph-session-input .session=${ss} .running=${st.agentRunning} @refresh=${() => this.requestUpdate()}></ph-session-input>`
-        : html`<ph-session-term .session=${ss}></ph-session-term>`}
+      <ph-message-stream .sessionId=${this.sessionId} .entries=${st.entries}></ph-message-stream>
+      <ph-session-input .session=${ss} .running=${st.agentRunning} @refresh=${() => this.requestUpdate()}></ph-session-input>
     `;
   }
 }
@@ -1260,179 +1257,6 @@ class PhToolCard extends LitElement {
   }
 }
 customElements.define("ph-tool-card", PhToolCard);
-
-// ---------------------------------------------------------------- 终端帧工具
-// 终端列宽按显示宽度计算：CJK/全角/宽字符占 2 列，仅按 JS 字符串长度
-// 截断会让中文行实际超宽，xterm 自动折行后整帧错位（codex 对话中文
-// 必触发）。逐码点统计宽度（for...of 迭代码点，代理对不拆）。
-function charWidth(ch) {
-  const c = ch.codePointAt(0);
-  if (c >= 0x1100 && (c <= 0x115f || c === 0x2329 || c === 0x232a ||
-      (c >= 0x2e80 && c <= 0xa4cf && c !== 0x303f) ||
-      (c >= 0xac00 && c <= 0xd7a3) ||
-      (c >= 0xf900 && c <= 0xfaff) ||
-      (c >= 0xfe10 && c <= 0xfe19) || (c >= 0xfe30 && c <= 0xfe6f) ||
-      (c >= 0xff00 && c <= 0xff60) || (c >= 0xffe0 && c <= 0xffe6) ||
-      (c >= 0x1f300 && c <= 0x1f64f) || (c >= 0x1f900 && c <= 0x1f9ff) ||
-      (c >= 0x20000 && c <= 0x2fffd) || (c >= 0x30000 && c <= 0x3fffd))) {
-    return 2;
-  }
-  return 1;
-}
-function strWidth(s) {
-  let w = 0;
-  for (const ch of s) w += charWidth(ch);
-  return w;
-}
-// 按显示宽度截断到 maxW 列（不拆宽字符：放不下的整字符丢弃）。
-function sliceByWidth(s, maxW) {
-  if (maxW <= 0) return "";
-  let w = 0;
-  let out = "";
-  for (const ch of s) {
-    const cw = charWidth(ch);
-    if (w + cw > maxW) break;
-    w += cw;
-    out += ch;
-  }
-  return out;
-}
-
-// 光标归位目标：capture-pane 不携带光标位置，TUI 输入框通常在底部
-// 提示符行（codex 用 ›，claude 用 ❯），把光标放到最后一个提示符行的
-// 内容末尾最接近真实输入位置；找不到提示符行则回退到最后一个非空行
-// 末尾（避免把光标丢进帧尾的空行，输入框在底部时用户会看不到光标）。
-function cursorTarget(lines) {
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const t = lines[i].trimStart();
-    if (t.startsWith("\u203A") || t.startsWith("\u276F")) {
-      return { row: i + 1, col: strWidth(lines[i]) + 1 };
-    }
-  }
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i].trim()) return { row: i + 1, col: strWidth(lines[i]) + 1 };
-  }
-  return { row: 1, col: 1 };
-}
-
-// ---------------------------------------------------------------- 组件：终端式会话面板（S5）
-export class PhSessionTerm extends LitElement {
-  static styles = css`
-    ${PW}
-    :host { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 12px; gap: 8px; background: var(--pw-bg); }
-    .bar { font-size: 12px; color: var(--pw-muted); display: flex; align-items: center; gap: 8px; }
-    .term-wrap { flex: 1; min-height: 240px; border: 1px solid var(--pw-border); border-radius: 10px; overflow: hidden; padding: 6px; background: var(--pw-terminal-bg); }
-    .tip { font-size: 12px; color: var(--pw-dim); }
-  `;
-  static properties = { session: { attribute: false } };
-  constructor() {
-    super();
-    this._term = null;
-    this._fit = null;
-    this._timer = null;
-    this._dead = false;
-    this._lastFrame = "";
-  }
-  connectedCallback() {
-    super.connectedCallback();
-  }
-  // Lit 的 connectedCallback 先于首次 render：此时 shadowRoot 里还没有
-  // .term-wrap，connectedCallback 里取节点必然为空 → xterm 永远不初始化。
-  // 首次渲染完成后再挂载终端。
-  firstUpdated() {
-    this._init();
-  }
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    clearInterval(this._timer);
-    this._timer = null;
-    clearInterval(this._resizeTimer);
-    if (this._term) { try { this._term.dispose(); } catch (_) {} }
-    this._term = null;
-  }
-  async _init() {
-    const id = this.session.id;
-    const wrap = this.shadowRoot.querySelector(".term-wrap");
-    if (!wrap || !globalThis.Terminal) return;
-    this._term = new Terminal({ fontSize: 13, fontFamily: "ui-monospace, monospace", theme: { background: "#05070a", foreground: "#e6edf3", cursor: "#58a6ff" }, scrollback: 5000 });
-    if (globalThis.FitAddon) {
-      this._fit = new globalThis.FitAddon.FitAddon();
-      this._term.loadAddon(this._fit);
-    }
-    this._term.open(wrap);
-    if (this._fit) this._fit.fit();
-    this._term.onData((data) => {
-      api(`/api/sessions/${id}/terminal/input`, { method: "POST", body: JSON.stringify({ text: data, raw: true }) }).catch(() => {});
-    });
-    if (this._fit) {
-      const fit = this._fit;
-      const pushResize = () => {
-        if (this._term && !this._dead) {
-          api(`/api/sessions/${id}/terminal/resize`, { method: "POST", body: JSON.stringify({ cols: this._term.cols, rows: this._term.rows }) }).catch(() => {});
-        }
-      };
-      try { fit.fit(); pushResize(); } catch (_) {}
-      this._resizeTimer = setInterval(() => {
-        try { fit.fit(); pushResize(); } catch (_) {}
-      }, 3000);
-    }
-    this._timer = setInterval(async () => {
-      try {
-        const r = await api(`/api/sessions/${id}/terminal/output`);
-        if (r.output != null && this._term) {
-          const cur = r.output;
-          const prev = this._lastFrame || "";
-          if (cur !== prev) {
-            const rows = this._term.rows;
-            const cols = this._term.cols;
-            // 统一按显示宽度截断行宽（CJK 占 2 列，字符串截断会超宽折行）
-            // 并按画布行数截断行数；帧宽于画布（resize 同步窗口期，tmux
-            // pane 尚未跟上浏览器）或含宽字符的行都不会再触发 xterm 折行。
-            const norm = (s) => s.split("\n").map((l) => sliceByWidth(l, cols)).slice(0, rows);
-            const cl = norm(cur);
-            const pl = norm(prev);
-            if (cl.length === pl.length && cl.length <= rows + 1) {
-              // TUI 原地重绘（等行数）：光标定位重写变化行，避免整屏
-              // reset 导致 DOM renderer 渲染丢失/闪烁。循环上界按画布
-              // 行数截断（帧尾多出的空行/超界行不写，防止定位超界）。
-              let patch = "";
-              const n = Math.min(cl.length, rows);
-              for (let i = 0; i < n; i++) {
-                if (cl[i] !== pl[i]) patch += `\x1b[${i + 1};1H${cl[i]}\x1b[K`;
-              }
-              // 帧变矮时清掉画布多出的残留行。
-              if (cl.length < rows) patch += `\x1b[${cl.length + 1};1H\x1b[J`;
-              if (patch) {
-                // 光标归位到输入提示行末尾（TUI 输入框通常在底部；
-                // capture-pane 不携带光标位置，提示符行末尾最接近）。
-                const target = cursorTarget(cl);
-                this._term.write(patch + `\x1b[${target.row};${target.col}H`);
-              }
-            } else {
-              // 清屏/随尺寸重排：清屏（含回滚区）后按画布写入整帧——
-              // 帧行数 > 画布行数时直接整帧写入会触底滚动，把帧顶内容
-              // 滚出视口且永不修复（行级 diff 只改变化行）。
-              // 换行必须 CRLF（xterm 的 LF 不归列，见上）。
-              const target = cursorTarget(cl);
-              this._term.write("\x1b[2J\x1b[3J\x1b[H" + cl.join("\r\n") + `\x1b[${target.row};${target.col}H`);
-            }
-            this._lastFrame = cur;
-          }
-        }
-        if (r.alive === false) { this._dead = true; clearInterval(this._timer); }
-      } catch (_) {}
-    }, 700);
-  }
-  render() {
-    const s = this.session;
-    return html`
-      <div class="bar">终端式会话（${s.cli}）· 输出由 tmux 实时捕获</div>
-      <div class="term-wrap"></div>
-      <div class="tip">点击终端直接输入 · 输入 /exit 退出 · 空闲自动挂起，输入自动恢复</div>
-    `;
-  }
-}
-customElements.define("ph-session-term", PhSessionTerm);
 
 // ---------------------------------------------------------------- 组件：输入区（pi-web prompt-editor footer）
 export class PhSessionInput extends LitElement {

@@ -34,6 +34,7 @@ This file records notable user-facing and maintainer-facing changes. The format 
 
 ### Changed
 
+- **交互式会话收窄到 pi / omp，S5 终端降级通道彻底移除**：会话页（常驻交互工作区）与任务交互式执行方式现在只支持 pi / omp 角色（两者有 RPC 消息流通道）；opencode / claude / codex 无结构化消息通道，仅批处理执行。新建会话表单只列出 pi / omp 角色（无可用角色时给出引导提示），任务弹窗的「会话」选项对其它角色置灰并回退批处理，后端在创建/改派交互式任务与创建会话时显式拒绝（「交互式任务/会话只支持 pi / omp 角色」）。会话的 S5 终端降级通道整体移除：删除 `termProc` 实现、`/api/sessions/{id}/terminal/{input,resize,output}` 端点、`BuildInteractiveArgs` 与前端终端式会话组件，会话一律为 pi/omp 消息流视图；遗留的非 pi/omp 会话无法再启动（启动报错），可在会话页删除。定时任务与批处理不受任何限制。
 - **测试执行器改用独立 tmux socket**（`exec.NewForTest`）：此前 `internal/server` 测试经 `exec.New` 创建的执行器与生产共用同一个 tmux server（`-L paihuo` / session `paihuo`），测试删除任务（`DELETE /api/tasks/{id}`）会真实执行 `kill-window -t paihuo:task-<测试ID>`，经 tmux 窗口名前缀匹配误杀线上存活任务窗口（任务 113/116 的多次失败均源于此——后两次甚至是 OMP agent 自己运行 `go test ./...` 所致）；现在 12 处测试调用点全部切到独立 socket，对生产 tmux 零接触。
 - **任务 tmux 窗口名加 `ph-` 前缀**（`ph-task-<ID>`）：tmux 对窗口名做唯一前缀匹配，外部命令 `kill-window -t paihuo:task-1` 会因 `task-1` 是 `task-116` 等的前缀而误杀任务窗口（任务 116/123 因此两次失败）；加前缀后此类输入不再匹配任务窗口（报错或仅命中 control 回退）。运行目录仍为 `task-<ID>`，与历史任务目录/归档兼容。
 - 任务窗口创建后切回 control 为会话当前窗口：外部 kill-window 目标解析回退时不再以任务窗口为靶。
