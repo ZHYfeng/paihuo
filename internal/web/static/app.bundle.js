@@ -1557,7 +1557,7 @@
     .col-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--pw-bg); }
     .pw-empty { margin: auto; color: var(--pw-muted); font-size: 14px; }
     @media (max-width: 860px) {
-      :host { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; }
+      :host { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: 0; }
       .col-list { border-right: 0; border-bottom: 1px solid var(--pw-border); max-height: 38vh; }
       .col-main { height: 70vh; }
     }
@@ -2706,7 +2706,7 @@
     button.ok { background: var(--pw-success); border-color: var(--pw-success-border); color: #fff; font-weight: 600; }
     button.no { background: var(--pw-danger); border-color: var(--pw-danger); color: #fff; font-weight: 600; }
     button:disabled { opacity: .5; cursor: not-allowed; }
-    textarea { border: 1px solid var(--pw-border); border-radius: 8px; padding: 6px 10px; font-size: 13px; width: 260px; background: var(--pw-bg); color: var(--pw-text); font-family: inherit; }
+    textarea { border: 1px solid var(--pw-border); border-radius: 8px; padding: 6px 10px; font-size: 13px; width: 100%; max-width: 260px; box-sizing: border-box; background: var(--pw-bg); color: var(--pw-text); font-family: inherit; }
     textarea:focus { outline: none; border-color: var(--pw-accent-border); }
     .fhead { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--pw-border); border-radius: 8px; margin: 4px 0; cursor: pointer; background: var(--pw-surface); font-size: 13px; color: var(--pw-text); }
     .fhead:hover { border-color: var(--pw-accent-border); }
@@ -6706,13 +6706,13 @@
     body.innerHTML = state.schedules.map((sc) => `
     <tr>
       <td class="t-name"><b>${esc(sc.name)}</b></td>
-      <td><span class="cron-chip">${icon("clock")}${esc(scheduleLabel(sc.cron))}</span></td>
-      <td>${esc(sc.agent_name || "-")}</td>
-      <td>${sc.project_id ? `<span class="chip" title="\u9879\u76EE\u5B9A\u65F6\u4EFB\u52A1\uFF1A\u521B\u5EFA\u540E\u6309\u9879\u76EE\u987A\u5E8F\u6267\u884C">\u9879\u76EE \xB7 ${esc(sc.project_name || "#" + sc.project_id)}</span>${sc.block_on_failure ? `<span class="chip merge-blocked">\u5931\u8D25\u963B\u585E</span>` : ""}` : `<span class="chip">\u901A\u7528</span>`}</td>
+      <td class="t-cron"><span class="cron-chip">${icon("clock")}${esc(scheduleLabel(sc.cron))}</span></td>
+      <td class="t-agent">${esc(sc.agent_name || "-")}</td>
+      <td class="t-type">${sc.project_id ? `<span class="chip" title="\u9879\u76EE\u5B9A\u65F6\u4EFB\u52A1\uFF1A\u521B\u5EFA\u540E\u6309\u9879\u76EE\u987A\u5E8F\u6267\u884C">\u9879\u76EE \xB7 ${esc(sc.project_name || "#" + sc.project_id)}</span>${sc.block_on_failure ? `<span class="chip merge-blocked">\u5931\u8D25\u963B\u585E</span>` : ""}` : `<span class="chip">\u901A\u7528</span>`}</td>
       <td class="t-tpl">${esc(sc.title_template || "-")}</td>
-      <td class="num">${esc((sc.last_run_at || "-").slice(0, 16).replace("T", " "))}</td>
-      <td><label class="sw" title="${sc.enabled ? "\u505C\u7528" : "\u542F\u7528"}"><input type="checkbox" ${sc.enabled ? "checked" : ""} onchange="toggleSchedule(${sc.id})"><span class="sw-slider"></span></label></td>
-      <td>
+      <td class="t-last num">${esc((sc.last_run_at || "-").slice(0, 16).replace("T", " "))}</td>
+      <td class="t-enable"><label class="sw" title="${sc.enabled ? "\u505C\u7528" : "\u542F\u7528"}"><input type="checkbox" ${sc.enabled ? "checked" : ""} onchange="toggleSchedule(${sc.id})"><span class="sw-slider"></span></label></td>
+      <td class="t-ops">
         <span class="ops">
           <button class="btn xs" onclick="openScheduleModal(${sc.id})">\u7F16\u8F91</button>
           <button class="btn xs danger" onclick="deleteSchedule(${sc.id})">\u5220\u9664</button>

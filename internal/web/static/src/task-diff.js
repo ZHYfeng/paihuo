@@ -58,7 +58,7 @@ export class PhTaskDiff extends LitElement {
     button.ok { background: var(--pw-success); border-color: var(--pw-success-border); color: #fff; font-weight: 600; }
     button.no { background: var(--pw-danger); border-color: var(--pw-danger); color: #fff; font-weight: 600; }
     button:disabled { opacity: .5; cursor: not-allowed; }
-    textarea { border: 1px solid var(--pw-border); border-radius: 8px; padding: 6px 10px; font-size: 13px; width: 260px; background: var(--pw-bg); color: var(--pw-text); font-family: inherit; }
+    textarea { border: 1px solid var(--pw-border); border-radius: 8px; padding: 6px 10px; font-size: 13px; width: 100%; max-width: 260px; box-sizing: border-box; background: var(--pw-bg); color: var(--pw-text); font-family: inherit; }
     textarea:focus { outline: none; border-color: var(--pw-accent-border); }
     .fhead { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--pw-border); border-radius: 8px; margin: 4px 0; cursor: pointer; background: var(--pw-surface); font-size: 13px; color: var(--pw-text); }
     .fhead:hover { border-color: var(--pw-accent-border); }

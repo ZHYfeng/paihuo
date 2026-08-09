@@ -140,7 +140,7 @@ export class PhSessionsPage extends LitElement {
     .col-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--pw-bg); }
     .pw-empty { margin: auto; color: var(--pw-muted); font-size: 14px; }
     @media (max-width: 860px) {
-      :host { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; }
+      :host { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: 0; }
       .col-list { border-right: 0; border-bottom: 1px solid var(--pw-border); max-height: 38vh; }
       .col-main { height: 70vh; }
     }

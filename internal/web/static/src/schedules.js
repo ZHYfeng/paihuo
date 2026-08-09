@@ -8,15 +8,15 @@ export function renderScheduleList() {
   body.innerHTML = state.schedules.map(sc => `
     <tr>
       <td class="t-name"><b>${esc(sc.name)}</b></td>
-      <td><span class="cron-chip">${icon("clock")}${esc(scheduleLabel(sc.cron))}</span></td>
-      <td>${esc(sc.agent_name || "-")}</td>
-      <td>${sc.project_id
+      <td class="t-cron"><span class="cron-chip">${icon("clock")}${esc(scheduleLabel(sc.cron))}</span></td>
+      <td class="t-agent">${esc(sc.agent_name || "-")}</td>
+      <td class="t-type">${sc.project_id
         ? `<span class="chip" title="项目定时任务：创建后按项目顺序执行">项目 · ${esc(sc.project_name || "#" + sc.project_id)}</span>${sc.block_on_failure ? `<span class="chip merge-blocked">失败阻塞</span>` : ""}`
         : `<span class="chip">通用</span>`}</td>
       <td class="t-tpl">${esc(sc.title_template || "-")}</td>
-      <td class="num">${esc((sc.last_run_at || "-").slice(0, 16).replace("T", " "))}</td>
-      <td><label class="sw" title="${sc.enabled ? "停用" : "启用"}"><input type="checkbox" ${sc.enabled ? "checked" : ""} onchange="toggleSchedule(${sc.id})"><span class="sw-slider"></span></label></td>
-      <td>
+      <td class="t-last num">${esc((sc.last_run_at || "-").slice(0, 16).replace("T", " "))}</td>
+      <td class="t-enable"><label class="sw" title="${sc.enabled ? "停用" : "启用"}"><input type="checkbox" ${sc.enabled ? "checked" : ""} onchange="toggleSchedule(${sc.id})"><span class="sw-slider"></span></label></td>
+      <td class="t-ops">
         <span class="ops">
           <button class="btn xs" onclick="openScheduleModal(${sc.id})">编辑</button>
           <button class="btn xs danger" onclick="deleteSchedule(${sc.id})">删除</button>
