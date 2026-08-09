@@ -8,8 +8,9 @@ import { appendInstLine, closeInstTerminal, copyText, createDefaultRole, install
 import { changeRoleStudioCli, copyCurrentRole, copyRole, openCurrentRoleEditor, openRoleStudio, roleStudioQuickAsk, saveRoleStudio, sendRoleStudioChat, sendRoleStudioTest } from "./role_studio.js";
 import { deleteSchedule, openScheduleModal, renderScheduleList, submitSchedule, syncScheduleFields, toggleSchedule } from "./schedules.js";
 import { loadSettings, runCleanup, saveRetention, saveWtRetention } from "./settings.js";
-import { closeSkillDetail, copySkillContent, deleteSelectedSkills, deleteSkill, deleteSkillFromDetail, deleteTemplate, hideSkillDetail, loadSkillLib, loadTemplates, openExtModal, openSkillDetail, openSkillModal, removeExt, renderSkillLib, saveSkillTags, saveSkillTagsInline, scanSkills, setSkillTab, setSkillView, showSkillDetail, submitExt, submitSkill, toggleAllSkills, toggleSkillGroup, toggleSkillSelection, toggleSkillTagsEditor } from "./skills.js";
+import { closeSkillDetail, copySkillContent, deleteSelectedSkills, deleteSkill, deleteSkillFromDetail, hideSkillDetail, loadSkillLib, openExtModal, openSkillDetail, openSkillModal, removeExt, renderSkillLib, saveSkillTags, saveSkillTagsInline, scanSkills, setSkillTab, setSkillView, showSkillDetail, submitExt, submitSkill, toggleAllSkills, toggleSkillGroup, toggleSkillSelection, toggleSkillTagsEditor } from "./skills.js";
 import { appendLog, applyFilters, applyTemplate, closeDetail, copyLogs, deleteTask, endInteractiveTask, gitInitProject, hideDetail, openNewTask, openProjectTask, openSubTask, openTask, patchTask, refreshDetail, rejectTask, renderBoard, renderList, resumeTask, saveAsTemplate, setTaskStatus, setView, showDetail, submitTask, syncTaskConcurrency, syncTaskDependency, syncTaskRunMode, toggleLogFilter, wsDiscard } from "./task.js";
+import { deleteTemplate, loadTemplates, newTaskFromTemplate, openTemplateModal, submitTemplate } from "./templates.js";
 import { closeTerminal, focusFullscreenTerminal, focusTaskTerminal, openTerminal, syncTerminalInput } from "./terminal.js";
 
 export async function loadAll() {
@@ -392,6 +393,7 @@ document.addEventListener("visibilitychange", () => {
       else if (path === "/projects") renderProjectList();
       else if (path === "/autopilots") renderScheduleList();
       else if (path === "/skills") loadSkillLib().then(() => { renderSkillLib(); route(); });
+      else if (path === "/templates") loadTemplates();
       else if (path === "/settings") loadSettings();
     }).catch(() => {});
   }
@@ -439,6 +441,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     setSkillTab("skills");
     await loadSkillLib();
     renderSkillLib();
+  } else if (path === "/templates") {
+    loadTemplates();
   } else if (path === "/settings") {
     loadSettings();
   }
@@ -495,6 +499,7 @@ window.loadHistory = loadHistory;
 window.logout = logout;
 window.mkdirCurrent = mkdirCurrent;
 window.moveProjectTask = moveProjectTask;
+window.newTaskFromTemplate = newTaskFromTemplate;
 window.openAgentDetail = openAgentDetail;
 window.openCurrentRoleEditor = openCurrentRoleEditor;
 window.openDirPicker = openDirPicker;
@@ -509,6 +514,7 @@ window.openSkillDetail = openSkillDetail;
 window.openSkillModal = openSkillModal;
 window.openSubTask = openSubTask;
 window.openTask = openTask;
+window.openTemplateModal = openTemplateModal;
 window.openTerminal = openTerminal;
 window.patchProject = patchProject;
 window.patchTask = patchTask;
@@ -548,6 +554,7 @@ window.submitProject = submitProject;
 window.submitSchedule = submitSchedule;
 window.submitSkill = submitSkill;
 window.submitTask = submitTask;
+window.submitTemplate = submitTemplate;
 window.syncModelThinking = syncModelThinking;
 window.syncScheduleFields = syncScheduleFields;
 window.syncTaskConcurrency = syncTaskConcurrency;

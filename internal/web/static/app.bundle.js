@@ -3088,608 +3088,7 @@
     }
   });
 
-  // internal/web/static/src/skills.js
-  function setSkillTab(tab) {
-    const skills = tab === "skills";
-    if (skills && state.skillDetail !== null) {
-      hideSkillDetail();
-      if (/^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
-    }
-    if (!skills && /^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
-    if (!skills) hideSkillDetail();
-    document.getElementById("segSkillLib").classList.toggle("active", skills);
-    document.getElementById("segExt").classList.toggle("active", !skills);
-    document.getElementById("skillShell").classList.toggle("hidden", !skills);
-    document.getElementById("extShell").classList.toggle("hidden", skills);
-    document.getElementById("btnAddSkill").classList.toggle("hidden", !skills);
-    document.getElementById("btnAddExt").classList.toggle("hidden", skills);
-    const detail = state.skillDetail !== null;
-    document.getElementById("skillDisplaySeg")?.classList.toggle("hidden", !skills || detail);
-    document.getElementById("skillFilterControls")?.classList.toggle("hidden", !skills || detail);
-    document.getElementById("skillManageControls")?.classList.toggle("hidden", !skills || state.skillDetail !== null);
-    if (!skills) loadExtensions();
-  }
-  function setSkillView(view) {
-    state.skillView = view === "list" ? "list" : "grid";
-    document.getElementById("skillDisplaySeg")?.classList.remove("hidden");
-    document.getElementById("segSkillGrid")?.classList.toggle("active", state.skillView === "grid");
-    document.getElementById("segSkillList")?.classList.toggle("active", state.skillView === "list");
-    try {
-      localStorage.setItem("paihuo.skillView", state.skillView);
-    } catch (_2) {
-    }
-    renderSkillLib();
-  }
-  async function loadExtensions() {
-    const raw = document.getElementById("extRaw");
-    if (!raw) return;
-    try {
-      const d3 = await api("/api/extensions");
-      raw.textContent = d3.raw || "\uFF08\u7A7A\uFF09";
-      if (d3.error && d3.raw) raw.textContent = d3.raw + "\n\n[\u6267\u884C\u63D0\u793A] " + d3.error;
-    } catch (e6) {
-      raw.textContent = "\u52A0\u8F7D\u5931\u8D25: " + e6.message;
-    }
-  }
-  function openExtModal() {
-    document.getElementById("extSource").value = "";
-    openModal("extModal");
-  }
-  async function submitExt() {
-    const source = document.getElementById("extSource").value.trim();
-    if (!source) return toast("\u9700\u8981 extension \u6765\u6E90", true);
-    try {
-      const d3 = await api("/api/extensions/install", { method: "POST", body: JSON.stringify({ source }) });
-      closeModal("extModal");
-      toast("\u5DF2\u5B89\u88C5");
-      loadExtensions();
-    } catch (e6) {
-      toast(e6.message, true);
-    }
-  }
-  async function removeExt() {
-    const name = prompt("\u8F93\u5165\u8981\u79FB\u9664\u7684 extension \u540D\u79F0\uFF08\u53EF\u4ECE\u4E0A\u65B9\u5217\u8868\u67E5\u770B\uFF09");
-    if (!name) return;
-    try {
-      await api(`/api/extensions/${encodeURIComponent(name)}`, { method: "DELETE" });
-      toast("\u5DF2\u79FB\u9664");
-      loadExtensions();
-    } catch (e6) {
-      toast(e6.message, true);
-    }
-  }
-  async function loadSkillLib() {
-    try {
-      state.skillLib = await api("/api/skills");
-      const known = new Set(state.skillLib.map((s5) => s5.id));
-      state.skillSelected.forEach((id) => {
-        if (!known.has(id)) state.skillSelected.delete(id);
-      });
-      syncSkillTagFilter();
-    } catch (_2) {
-      state.skillLib = [];
-      state.skillSelected.clear();
-      syncSkillTagFilter();
-    }
-  }
-  function skillTags(skill) {
-    return Array.isArray(skill?.tags) ? skill.tags.filter(Boolean).map(String) : [];
-  }
-  function skillTagsHTML(skill) {
-    const tags = skillTags(skill);
-    return tags.length ? tags.map((tag) => `<span class="skill-tag">${esc(tag)}</span>`).join("") : `<span class="skill-tag muted">\u672A\u5206\u7C7B</span>`;
-  }
-  function skillTagsEditorHTML(skill) {
-    const inputId = `skill-tags-${skill.id}`;
-    return `
-    <div class="skill-tags-row">
-      <div class="skill-tags" aria-label="\u5F53\u524D\u6807\u7B7E">${skillTagsHTML(skill)}</div>
-      <button type="button" class="btn xs ghost skill-tags-edit" data-skill-tags-toggle="${skill.id}"
-        aria-controls="skill-tag-editor-${skill.id}" aria-expanded="false"
-        onclick="event.stopPropagation();toggleSkillTagsEditor(${skill.id})">\u7F16\u8F91\u6807\u7B7E</button>
-    </div>
-    <div class="skill-tag-editor hidden" id="skill-tag-editor-${skill.id}" onclick="event.stopPropagation()">
-      <input id="${inputId}" class="skill-tags-input" value="${esc(skillTags(skill).join(", "))}"
-        aria-label="\u7F16\u8F91 ${esc(skill.name)} \u7684\u6807\u7B7E" placeholder="\u6807\u7B7E\uFF0C\u7528\u9017\u53F7\u5206\u9694"
-        onkeydown="if (event.key === 'Enter') { event.preventDefault(); saveSkillTagsInline(${skill.id}, this); }">
-      <button type="button" class="btn xs primary" onclick="saveSkillTagsInline(${skill.id}, this)">\u4FDD\u5B58</button>
-    </div>`;
-  }
-  function parseTagInput(raw) {
-    const seen = /* @__PURE__ */ new Set();
-    return String(raw || "").split(/[,，\n]/).map((tag) => tag.trim()).filter((tag) => {
-      if (!tag) return false;
-      const key = tag.toLocaleLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }
-  function allSkillTags() {
-    const tags = /* @__PURE__ */ new Map();
-    state.skillLib.forEach((skill) => skillTags(skill).forEach((tag) => {
-      const key = tag.toLocaleLowerCase();
-      if (!tags.has(key)) tags.set(key, tag);
-    }));
-    return [...tags.values()].sort((a3, b3) => a3.localeCompare(b3));
-  }
-  function syncSkillTagFilter() {
-    const select = document.getElementById("skillTagFilter");
-    if (!select) return;
-    const current = select.value;
-    const options = [`<option value="">\u5168\u90E8\u6807\u7B7E</option>`].concat(allSkillTags().map((tag) => `<option value="${esc(tag)}">${esc(tag)}</option>`));
-    if (state.skillLib.some((skill) => !skillTags(skill).length)) {
-      options.push(`<option value="__untagged__">\u672A\u5206\u7C7B</option>`);
-    }
-    select.innerHTML = options.join("");
-    if ([...select.options].some((option) => option.value === current)) select.value = current;
-  }
-  function filteredSkills() {
-    const query = (document.getElementById("skillSearch")?.value || "").trim().toLocaleLowerCase();
-    const tag = document.getElementById("skillTagFilter")?.value || "";
-    const list = state.skillLib.filter((skill) => {
-      const tags = skillTags(skill);
-      const matchesTag = !tag || (tag === "__untagged__" ? tags.length === 0 : tags.some((item) => item.toLocaleLowerCase() === tag.toLocaleLowerCase()));
-      if (!matchesTag) return false;
-      if (!query) return true;
-      return [skill.name, skill.description, skill.dir, skill.source_path, ...tags].some((value) => String(value || "").toLocaleLowerCase().includes(query));
-    });
-    return { list, query, tag };
-  }
-  function skillGroupDirectory(skill) {
-    const raw = String(skill.source_path || skill.dir || "").trim().replace(/[\\/]+$/, "");
-    if (!raw) return "\u672A\u6307\u5B9A\u6765\u6E90\u76EE\u5F55";
-    const slash = Math.max(raw.lastIndexOf("/"), raw.lastIndexOf("\\"));
-    if (slash < 0) return "\u6839\u76EE\u5F55";
-    if (slash === 0) return raw.slice(0, 1);
-    if (slash === 2 && raw[1] === ":") return raw.slice(0, 3);
-    return raw.slice(0, slash) || "\u6839\u76EE\u5F55";
-  }
-  function skillPathName(path) {
-    const raw = String(path || "").trim().replace(/[\\/]+$/, "");
-    if (!raw) return "\u672A\u6307\u5B9A";
-    const slash = Math.max(raw.lastIndexOf("/"), raw.lastIndexOf("\\"));
-    return slash >= 0 ? raw.slice(slash + 1) || raw : raw;
-  }
-  function skillCreatedDate(skill) {
-    return String(skill.created_at || "").slice(0, 10) || "\u2014";
-  }
-  function skillGroups(skills = state.skillLib) {
-    const groups = /* @__PURE__ */ new Map();
-    skills.forEach((skill) => {
-      const directory = skillGroupDirectory(skill);
-      let group = groups.get(directory);
-      if (!group) {
-        group = { directory, skills: [] };
-        groups.set(directory, group);
-      }
-      group.skills.push(skill);
-    });
-    return [...groups.values()].sort((a3, b3) => a3.directory.localeCompare(b3.directory));
-  }
-  function skillCardHTML(s5) {
-    const selected = state.skillSelected.has(s5.id);
-    const sourcePath = s5.source_path || s5.dir || "";
-    const sourceName = skillPathName(sourcePath);
-    const copyName = skillPathName(s5.dir);
-    return `
-    <article class="skill-card${selected ? " selected" : ""}" tabindex="0" aria-label="\u6253\u5F00\u6280\u80FD ${esc(s5.name)}"
-      onclick="openSkillDetail(${s5.id})"
-      onkeydown="if (!event.target.closest('a,button,input,select,textarea') && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openSkillDetail(${s5.id}); }">
-      <div class="sk-top">
-        <label class="skill-select" onclick="event.stopPropagation()" title="\u9009\u62E9 ${esc(s5.name)}">
-          <input type="checkbox" data-skill-id="${s5.id}" ${selected ? "checked" : ""} aria-label="\u9009\u62E9\u6280\u80FD ${esc(s5.name)}" onchange="toggleSkillSelection(${s5.id}, this.checked)">
-        </label>
-        <span class="avatar">${esc((s5.name || "?").slice(0, 1))}</span>
-        <div class="sk-id">
-          <a class="sk-name card-primary-action" href="#/skill/${s5.id}" onclick="event.stopPropagation()">${esc(s5.name)}</a>
-          <div class="sk-desc">${esc(s5.description || "\u65E0\u63CF\u8FF0")}</div>
-        </div>
-      </div>
-      <div class="sk-meta">
-        ${skillTagsEditorHTML(s5)}
-        <div class="skill-card-context">
-          <span class="skill-card-context-item" title="${esc(sourcePath || "\u672A\u6307\u5B9A\u6765\u6E90\u8DEF\u5F84")}">
-            ${icon("folder")}<span><small>\u6765\u6E90\u76EE\u5F55</small><b>${esc(sourceName)}</b></span>
-          </span>
-          <span class="skill-card-context-item">
-            ${icon("clock")}<span><small>\u6DFB\u52A0\u65F6\u95F4</small><time>${esc(skillCreatedDate(s5))}</time></span>
-          </span>
-        </div>
-      </div>
-      <div class="sk-foot">
-        <span class="skill-copy-path" title="${esc(s5.dir || "\u672A\u6307\u5B9A\u526F\u672C\u8DEF\u5F84")}">${icon("copy")}<span>\u526F\u672C</span><code>${esc(copyName)}</code></span>
-        <span class="ac-ops">
-          <button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s5.id})">\u6253\u5F00\u8BE6\u60C5${icon("expand")}</button>
-          <button class="btn xs danger" onclick="event.stopPropagation();deleteSkill(${s5.id})">${icon("trash")}\u5220\u9664</button>
-        </span>
-      </div>
-    </article>`;
-  }
-  function skillListRowHTML(s5) {
-    const selected = state.skillSelected.has(s5.id);
-    const sourcePath = s5.source_path || s5.dir || "";
-    const sourceName = skillPathName(sourcePath);
-    return `<tr class="skill-list-row${selected ? " selected" : ""}" tabindex="0" aria-label="\u6253\u5F00\u6280\u80FD ${esc(s5.name)}"
-    onclick="openSkillDetail(${s5.id})"
-    onkeydown="if (!event.target.closest('a,button,input,select,textarea') && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openSkillDetail(${s5.id}); }">
-    <td class="skill-list-check" data-label="\u9009\u62E9"><label class="skill-select" onclick="event.stopPropagation()" title="\u9009\u62E9 ${esc(s5.name)}">
-      <input type="checkbox" data-skill-id="${s5.id}" ${selected ? "checked" : ""} aria-label="\u9009\u62E9\u6280\u80FD ${esc(s5.name)}" onchange="toggleSkillSelection(${s5.id}, this.checked)">
-    </label></td>
-    <td class="skill-list-main-cell" data-label="\u6280\u80FD"><span class="skill-list-name"><span class="avatar">${esc((s5.name || "?").slice(0, 1))}</span><span><a class="table-primary-action" href="#/skill/${s5.id}" onclick="event.stopPropagation()">${esc(s5.name)}</a><small>${esc(s5.description || "\u65E0\u63CF\u8FF0")}</small></span></span></td>
-    <td class="skill-list-tags-cell" data-label="\u6807\u7B7E">${skillTagsEditorHTML(s5)}</td>
-    <td class="skill-list-source-cell" data-label="\u6765\u6E90\u76EE\u5F55">
-      <span class="skill-list-source" title="${esc(sourcePath || "\u672A\u6307\u5B9A\u6765\u6E90\u8DEF\u5F84")}">
-        <b>${esc(sourceName)}</b><code>${esc(skillGroupDirectory(s5))}</code>
-      </span>
-    </td>
-    <td class="skill-list-date-cell num" data-label="\u6DFB\u52A0\u65F6\u95F4"><time>${esc(skillCreatedDate(s5))}</time></td>
-    <td class="skill-list-actions-cell" data-label="\u64CD\u4F5C"><span class="ops"><button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s5.id})">\u6253\u5F00\u8BE6\u60C5${icon("expand")}</button><button class="btn xs danger" onclick="event.stopPropagation();deleteSkill(${s5.id})">${icon("trash")}\u5220\u9664</button></span></td>
-  </tr>`;
-  }
-  function syncSkillSelectionControls(groups = skillGroups(filteredSkills().list)) {
-    const lib = state.skillLib;
-    const selected = state.skillSelected;
-    const selectedCount = selected.size;
-    const all = lib.length > 0 && selectedCount === lib.length;
-    const checkAll = document.getElementById("skillCheckAll");
-    if (checkAll) {
-      checkAll.checked = all;
-      checkAll.indeterminate = selectedCount > 0 && !all;
-    }
-    document.querySelectorAll("#skillGrid input[data-skill-id]").forEach((cb) => {
-      const on = selected.has(Number(cb.dataset.skillId));
-      cb.checked = on;
-      cb.closest(".skill-card")?.classList.toggle("selected", on);
-      cb.closest("tr")?.classList.toggle("selected", on);
-    });
-    groups.forEach((group, i6) => {
-      const groupSelected = group.skills.filter((s5) => selected.has(s5.id)).length;
-      const cb = document.querySelector(`#skillGrid input[data-skill-group="${i6}"]`);
-      if (!cb) return;
-      cb.checked = groupSelected === group.skills.length;
-      cb.indeterminate = groupSelected > 0 && groupSelected < group.skills.length;
-    });
-    const cnt = document.getElementById("skillSelectedCount");
-    if (cnt) cnt.textContent = `\u5DF2\u9009 ${selectedCount}`;
-    const del = document.getElementById("btnDeleteSkills");
-    if (del) del.disabled = selectedCount === 0;
-  }
-  function renderSkillLib() {
-    const grid = document.getElementById("skillGrid");
-    if (!grid) return;
-    const lib = state.skillLib;
-    const { list, query, tag } = filteredSkills();
-    const groups = skillGroups(list);
-    grid.className = state.skillView === "list" ? "skill-list-shell" : "skill-groups";
-    if (state.skillView === "list") {
-      grid.innerHTML = `<div class="list-wrap skill-list-wrap"><table class="list-grid skill-list-grid" aria-label="\u6280\u80FD\u5217\u8868">
-      <caption class="sr-only">\u6280\u80FD\u5217\u8868\uFF0C\u5171 ${list.length} \u4E2A\u6280\u80FD</caption>
-      <thead><tr><th class="skill-list-check">\u9009\u62E9</th><th>\u6280\u80FD</th><th>\u6807\u7B7E</th><th>\u6765\u6E90\u76EE\u5F55</th><th>\u6DFB\u52A0\u65F6\u95F4</th><th class="skill-list-actions-head">\u64CD\u4F5C</th></tr></thead>
-      <tbody>${list.map(skillListRowHTML).join("")}</tbody>
-    </table></div>`;
-    } else {
-      grid.innerHTML = groups.map((group, i6) => `
-      <section class="skill-group">
-        <header class="skill-group-head">
-          <label class="skill-group-select" title="\u9009\u62E9\u76EE\u5F55 ${esc(group.directory)}">
-            <input type="checkbox" data-skill-group="${i6}" aria-label="\u9009\u62E9\u76EE\u5F55 ${esc(group.directory)}" onchange="toggleSkillGroup(${i6}, this.checked)">
-          </label>
-          ${icon("folder")}
-          <div class="skill-group-title">
-            <b>\u6765\u6E90\u76EE\u5F55</b>
-            <code title="${esc(group.directory)}">${esc(group.directory)}</code>
-          </div>
-          <span class="count-info">${group.skills.length} \u4E2A\u6280\u80FD</span>
-        </header>
-        <div class="skill-group-grid">${group.skills.map(skillCardHTML).join("")}</div>
-      </section>`).join("");
-    }
-    const empty = document.getElementById("skillEmpty");
-    if (empty) {
-      empty.innerHTML = lib.length === 0 ? `<b class="empty-title">\u6C89\u6DC0\u7B2C\u4E00\u4E2A\u53EF\u590D\u7528\u6280\u80FD</b>
-        <span class="empty-copy">\u5BFC\u5165\u5355\u4E2A\u6280\u80FD\u76EE\u5F55\uFF0C\u6216\u626B\u63CF\u4E00\u4E2A\u76EE\u5F55\u6811\u4E2D\u7684\u5168\u90E8 skills\u3002</span>
-        <button type="button" class="btn brand sm" onclick="openSkillModal()">\u6DFB\u52A0\u6280\u80FD</button>` : `<b class="empty-title">\u6CA1\u6709\u7B26\u5408\u5F53\u524D\u6761\u4EF6\u7684\u6280\u80FD</b>
-        <span class="empty-copy">\u6E05\u9664\u641C\u7D22\u8BCD\u4E0E\u6807\u7B7E\u7B5B\u9009\u540E\uFF0C\u518D\u67E5\u770B\u5B8C\u6574\u6280\u80FD\u5E93\u3002</span>
-        <button type="button" class="btn sm" onclick="document.getElementById('skillSearch').value='';document.getElementById('skillTagFilter').value='';renderSkillLib()">\u6E05\u9664\u7B5B\u9009</button>`;
-      empty.classList.toggle("hidden", list.length > 0);
-    }
-    const hasLibrary = lib.length > 0;
-    document.getElementById("skillDisplaySeg")?.classList.toggle("hidden", !hasLibrary);
-    document.getElementById("skillFilterControls")?.classList.toggle("hidden", !hasLibrary);
-    document.getElementById("skillManageControls")?.classList.toggle("hidden", !hasLibrary);
-    const cnt = document.getElementById("skillCount");
-    if (cnt) cnt.textContent = list.length === lib.length ? `${lib.length} \u4E2A\u6280\u80FD` : `${list.length} / ${lib.length} \u4E2A\u6280\u80FD`;
-    syncSkillSelectionControls(groups);
-  }
-  function toggleSkillSelection(id, checked) {
-    if (checked) state.skillSelected.add(id);
-    else state.skillSelected.delete(id);
-    syncSkillSelectionControls();
-  }
-  function toggleSkillGroup(groupIndex, checked) {
-    const group = skillGroups(filteredSkills().list)[groupIndex];
-    if (!group) return;
-    group.skills.forEach((skill) => {
-      if (checked) state.skillSelected.add(skill.id);
-      else state.skillSelected.delete(skill.id);
-    });
-    syncSkillSelectionControls();
-  }
-  function toggleAllSkills(checked) {
-    state.skillSelected.clear();
-    if (checked) state.skillLib.forEach((skill) => state.skillSelected.add(skill.id));
-    syncSkillSelectionControls();
-  }
-  async function deleteSelectedSkills() {
-    const ids = [...state.skillSelected];
-    if (!ids.length) return toast("\u5148\u52FE\u9009\u8981\u5220\u9664\u7684\u6280\u80FD", true);
-    if (!confirm(`\u5220\u9664\u9009\u4E2D\u7684 ${ids.length} \u4E2A\u6280\u80FD\uFF1F\u5C06\u540C\u65F6\u79FB\u9664\u5DE5\u4F5C\u76EE\u5F55\u4E2D\u7684\u526F\u672C\uFF0C\u5DF2\u5F15\u7528\u5B83\u4EEC\u7684\u89D2\u8272\u914D\u7F6E\u4F1A\u5931\u6548\u3002`)) return;
-    try {
-      const result = await api("/api/skills", { method: "DELETE", body: JSON.stringify({ ids }) });
-      if (state.skillDetail && ids.includes(state.skillDetail.id)) {
-        hideSkillDetail();
-        if (/^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
-      }
-      state.skillSelected.clear();
-      await loadSkillLib();
-      renderSkillLib();
-      toast(`\u5DF2\u5220\u9664 ${result.count ?? ids.length} \u4E2A\u6280\u80FD`);
-    } catch (e6) {
-      toast(e6.message, true);
-    }
-  }
-  function toggleSkillTagsEditor(id) {
-    const editor = document.getElementById(`skill-tag-editor-${id}`);
-    if (!editor) return;
-    const opening = editor.classList.contains("hidden");
-    editor.classList.toggle("hidden", !opening);
-    document.querySelector(`[data-skill-tags-toggle="${id}"]`)?.setAttribute("aria-expanded", String(opening));
-    if (opening) {
-      const input = document.getElementById(`skill-tags-${id}`);
-      requestAnimationFrame(() => {
-        input?.focus();
-        input?.select();
-      });
-    }
-  }
-  async function persistSkillTags(id, tags) {
-    const updated = await api(`/api/skills/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ tags })
-    });
-    const index = state.skillLib.findIndex((item) => item.id === id);
-    if (index >= 0) state.skillLib[index] = { ...state.skillLib[index], ...updated };
-    if (state.skillDetail?.id === id) state.skillDetail = { ...state.skillDetail, ...updated };
-    syncSkillTagFilter();
-    return updated;
-  }
-  async function saveSkillTagsInline(id, source) {
-    const input = document.getElementById(`skill-tags-${id}`);
-    if (!input) return;
-    const editor = input.closest(".skill-tag-editor");
-    const button = source?.tagName === "BUTTON" ? source : editor?.querySelector("button");
-    const tags = parseTagInput(input.value);
-    if (button) {
-      button.disabled = true;
-      button.textContent = "\u4FDD\u5B58\u4E2D\u2026";
-    }
-    try {
-      await persistSkillTags(id, tags);
-      renderSkillLib();
-      toast(tags.length ? "\u6807\u7B7E\u5DF2\u4FDD\u5B58" : "\u5DF2\u6E05\u9664\u6807\u7B7E");
-    } catch (e6) {
-      if (button?.isConnected) {
-        button.disabled = false;
-        button.textContent = "\u4FDD\u5B58";
-      }
-      toast(e6.message, true);
-    }
-  }
-  function formatSkillBytes(size) {
-    const n6 = Number(size);
-    if (!Number.isFinite(n6) || n6 < 0) return "-";
-    if (n6 < 1024) return `${n6} B`;
-    if (n6 < 1024 * 1024) return `${(n6 / 1024).toFixed(1)} KB`;
-    return `${(n6 / (1024 * 1024)).toFixed(1)} MB`;
-  }
-  function skillDetailSideHTML(skill) {
-    return `
-    <section class="side-panel">
-      <div class="side-heading">\u6280\u80FD\u4FE1\u606F</div>
-      <div class="prop-row"><span class="k">\u540D\u79F0</span><span class="v" title="${esc(skill.name)}">${esc(skill.name)}</span></div>
-      <div class="prop-row"><span class="k">\u6807\u7B7E</span><span class="skill-tags">${skillTagsHTML(skill)}</span></div>
-      <div class="prop-row"><span class="k">\u6280\u80FD\u76EE\u5F55</span><code class="prop-mono" title="${esc(skill.dir)}">${esc(skill.dir)}</code></div>
-      <div class="prop-row"><span class="k">\u6765\u6E90\u8DEF\u5F84</span><code class="prop-mono" title="${esc(skill.source_path || "-")}">${esc(skill.source_path || "-")}</code></div>
-      <div class="prop-row"><span class="k">\u521B\u5EFA\u65F6\u95F4</span><span class="v">${esc((skill.created_at || "").slice(0, 16).replace("T", " ") || "-")}</span></div>
-      <div class="prop-row"><span class="k">\u8BF4\u660E\u6587\u4EF6</span><span class="v">SKILL.md${skill.size_bytes !== void 0 ? ` \xB7 ${formatSkillBytes(skill.size_bytes)}` : ""}</span></div>
-    </section>
-    <div class="side-actions">
-      <div class="side-heading">\u6807\u7B7E\u7BA1\u7406</div>
-      <input id="sdTags" class="skill-tags-input" value="${esc(skillTags(skill).join(", "))}" placeholder="\u5982\uFF1A\u7F16\u7A0B, \u6587\u6863, \u4EE3\u7801\u5BA1\u67E5">
-      <div class="field-help">\u591A\u4E2A\u6807\u7B7E\u7528\u9017\u53F7\u5206\u9694\uFF0C\u4FDD\u5B58\u540E\u53EF\u5728\u89D2\u8272\u521B\u5EFA\u65F6\u6309\u6807\u7B7E\u7B5B\u9009\u3002</div>
-      <button class="btn sm primary" onclick="saveSkillTags()">\u4FDD\u5B58\u6807\u7B7E</button>
-    </div>
-    <div class="side-actions">
-      <div class="side-heading">\u64CD\u4F5C</div>
-      <div class="detail-actions">
-        <button class="btn" onclick="copySkillContent()">${icon("copy")}\u590D\u5236 SKILL.md</button>
-        <button class="btn danger" onclick="deleteSkillFromDetail()">${icon("trash")}\u5220\u9664\u6280\u80FD</button>
-      </div>
-    </div>`;
-  }
-  function renderSkillDetailShell(skill) {
-    const main = document.getElementById("sdMain");
-    const side = document.getElementById("sdSide");
-    if (!main || !side) return;
-    document.getElementById("sdCrumb").innerHTML = `\u6280\u80FD / <b>${esc(skill.name)}</b>`;
-    document.getElementById("sdBadge").innerHTML = `<span class="badge" style="--st-color:var(--brand)">SKILL.md</span>`;
-    main.innerHTML = `
-    <section class="skill-hero">
-      <span class="avatar lg skill-avatar">${esc((skill.name || "?").slice(0, 1))}</span>
-      <div class="skill-hero-copy">
-        <div class="detail-id">\u6280\u80FD\u8BF4\u660E \xB7 Markdown</div>
-        <h2>${esc(skill.name)}</h2>
-        ${skill.description ? `<div class="skill-hero-desc">${esc(skill.description)}</div>` : ""}
-        <div id="sdTagsDisplay" class="skill-tags skill-hero-tags">${skillTagsHTML(skill)}</div>
-      </div>
-    </section>
-    <div class="skill-doc-head">
-      <div>
-        <div class="section-title">SKILL.md</div>
-        <div class="section-sub" id="sdDocMeta">\u6B63\u5728\u8BFB\u53D6\u6280\u80FD\u8BF4\u660E\u2026</div>
-      </div>
-      <button class="btn ghost xs" onclick="copySkillContent()">${icon("copy")}\u590D\u5236</button>
-    </div>
-    <pre class="skill-doc" id="sdDoc">\u52A0\u8F7D\u4E2D\u2026</pre>`;
-    side.innerHTML = skillDetailSideHTML(skill);
-  }
-  function renderSkillDocument(detail) {
-    const doc = document.getElementById("sdDoc");
-    const meta = document.getElementById("sdDocMeta");
-    if (!doc || !meta) return;
-    const content = String(detail.content || "");
-    doc.textContent = content || "\uFF08SKILL.md \u4E3A\u7A7A\uFF09";
-    doc.classList.toggle("is-empty", !content);
-    meta.textContent = content ? `${formatSkillBytes(detail.size_bytes ?? content.length)} \xB7 ${content.split("\n").length} \u884C` : "\u7A7A\u6587\u4EF6";
-    const side = document.getElementById("sdSide");
-    if (side) side.innerHTML = skillDetailSideHTML(detail);
-  }
-  function openSkillDetail(id) {
-    location.hash = "#/skill/" + id;
-  }
-  function closeSkillDetail() {
-    location.hash = "#/";
-  }
-  function hideSkillDetail() {
-    document.getElementById("skillDetailShell")?.classList.add("hidden");
-    document.getElementById("skillShell")?.classList.remove("hidden");
-    state.skillDetail = null;
-    document.getElementById("skillDisplaySeg")?.classList.remove("hidden");
-    document.getElementById("skillFilterControls")?.classList.remove("hidden");
-    document.getElementById("skillManageControls")?.classList.remove("hidden");
-  }
-  async function showSkillDetail(id) {
-    let skill = state.skillLib.find((x2) => x2.id === id);
-    if (!skill) {
-      await loadSkillLib();
-      renderSkillLib();
-      skill = state.skillLib.find((x2) => x2.id === id);
-    }
-    if (!skill) {
-      toast("\u6280\u80FD\u4E0D\u5B58\u5728\u6216\u5DF2\u88AB\u5220\u9664", true);
-      return;
-    }
-    state.skillDetail = skill;
-    document.getElementById("skillShell")?.classList.add("hidden");
-    document.getElementById("skillDetailShell")?.classList.remove("hidden");
-    document.getElementById("skillDisplaySeg")?.classList.add("hidden");
-    document.getElementById("skillFilterControls")?.classList.add("hidden");
-    document.getElementById("skillManageControls")?.classList.add("hidden");
-    renderSkillDetailShell(skill);
-    try {
-      const detail = await api(`/api/skills/${id}`);
-      if (state.skillDetail?.id !== id) return;
-      state.skillDetail = detail;
-      renderSkillDocument(detail);
-    } catch (e6) {
-      if (state.skillDetail?.id !== id) return;
-      const doc = document.getElementById("sdDoc");
-      const meta = document.getElementById("sdDocMeta");
-      if (doc) {
-        doc.textContent = `\u8BFB\u53D6\u5931\u8D25\uFF1A${e6.message}`;
-        doc.classList.add("is-error");
-      }
-      if (meta) meta.textContent = "\u65E0\u6CD5\u8BFB\u53D6 SKILL.md";
-    }
-  }
-  async function copySkillContent() {
-    const content = state.skillDetail?.content;
-    if (content === void 0) return toast("\u6280\u80FD\u8BF4\u660E\u8FD8\u5728\u52A0\u8F7D\u4E2D", true);
-    try {
-      await navigator.clipboard.writeText(content);
-      toast("\u5DF2\u590D\u5236 SKILL.md");
-    } catch (_2) {
-      toast("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u9009\u62E9\u5185\u5BB9", true);
-    }
-  }
-  async function saveSkillTags() {
-    const skill = state.skillDetail;
-    if (!skill) return;
-    const input = document.getElementById("sdTags");
-    const tags = parseTagInput(input?.value || "");
-    try {
-      await persistSkillTags(skill.id, tags);
-      const side = document.getElementById("sdSide");
-      if (side) side.innerHTML = skillDetailSideHTML(state.skillDetail);
-      const display = document.getElementById("sdTagsDisplay");
-      if (display) display.innerHTML = skillTagsHTML(state.skillDetail);
-      toast(tags.length ? "\u6807\u7B7E\u5DF2\u4FDD\u5B58" : "\u5DF2\u6E05\u9664\u6807\u7B7E");
-    } catch (e6) {
-      toast(e6.message, true);
-    }
-  }
-  function deleteSkillFromDetail() {
-    const id = state.skillDetail?.id;
-    if (id !== void 0) deleteSkill(id);
-  }
-  function openSkillModal() {
-    document.getElementById("sSkillPath").value = "";
-    document.getElementById("sSkillTags").value = "";
-    loadProjDatalist();
-    openModal("skillModal");
-  }
-  async function submitSkill() {
-    const path = document.getElementById("sSkillPath").value.trim();
-    if (!path) return toast("\u9700\u8981\u6280\u80FD\u76EE\u5F55\u8DEF\u5F84", true);
-    const tags = parseTagInput(document.getElementById("sSkillTags")?.value || "");
-    try {
-      const sk = await api("/api/skills", { method: "POST", body: JSON.stringify({ source_path: path, tags }) });
-      closeModal("skillModal");
-      toast(`\u5DF2\u5BFC\u5165 skill: ${sk.name}`);
-      await loadSkillLib();
-      renderSkillLib();
-    } catch (e6) {
-      toast(e6.message, true);
-    }
-  }
-  async function scanSkills() {
-    const path = document.getElementById("sSkillPath").value.trim();
-    if (!path) return toast("\u9700\u8981\u626B\u63CF\u6839\u76EE\u5F55\u8DEF\u5F84", true);
-    const tags = parseTagInput(document.getElementById("sSkillTags")?.value || "");
-    try {
-      const result = await api("/api/skills/scan", { method: "POST", body: JSON.stringify({ source_path: path, tags }) });
-      closeModal("skillModal");
-      const imported = (result.imported || []).length;
-      const skipped = (result.skipped || []).length;
-      const failed = (result.errors || []).length;
-      let summary = `\u53D1\u73B0 ${result.found || 0} \u4E2A skill\uFF0C\u5DF2\u5BFC\u5165 ${imported} \u4E2A`;
-      if (skipped) summary += `\uFF0C\u8DF3\u8FC7\u5DF2\u5BFC\u5165 ${skipped} \u4E2A`;
-      if (failed) summary += `\uFF0C\u5931\u8D25 ${failed} \u4E2A`;
-      toast(summary, failed > 0);
-      await loadSkillLib();
-      renderSkillLib();
-    } catch (e6) {
-      toast(e6.message, true);
-    }
-  }
-  async function deleteSkill(id) {
-    const s5 = state.skillLib.find((x2) => x2.id === id);
-    if (!confirm(`\u5220\u9664 skill\u300C${s5 ? s5.name : id}\u300D\uFF1F\u5C06\u540C\u65F6\u79FB\u9664\u5DE5\u4F5C\u76EE\u5F55\u4E2D\u7684\u526F\u672C\uFF0C\u5DF2\u5F15\u7528\u5B83\u7684\u89D2\u8272\u914D\u7F6E\u4F1A\u5931\u6548\u3002`)) return;
-    try {
-      await api(`/api/skills/${id}`, { method: "DELETE" });
-      toast("\u5DF2\u5220\u9664");
-      state.skillSelected.delete(id);
-      await loadSkillLib();
-      renderSkillLib();
-      if (state.skillDetail?.id === id) {
-        hideSkillDetail();
-        if (/^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
-      }
-    } catch (e6) {
-      toast(e6.message, true);
-    }
-  }
+  // internal/web/static/src/templates.js
   async function loadTemplates() {
     try {
       state.templates = await api("/api/templates");
@@ -3705,14 +3104,62 @@
     if (!body) return;
     body.innerHTML = state.templates.map((t5) => `
     <tr>
-      <td><b>${esc(t5.name)}</b></td>
-      <td style="font-size:12px;color:var(--fg-muted);max-width:480px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc((t5.body || "").slice(0, 90))}</td>
-      <td>${esc(t5.agent_name || "-")}</td>
-      <td class="num">${(t5.created_at || "").slice(0, 16).replace("T", " ")}</td>
-      <td><button class="btn xs danger" onclick="deleteTemplate(${t5.id})">${icon("trash")}\u5220\u9664</button></td>
+      <td class="t-name"><b>${esc(t5.name)}</b></td>
+      <td class="t-agent">${esc(t5.agent_name || "-")}</td>
+      <td class="t-body" title="${esc(t5.body || "")}">${esc((t5.body || "").slice(0, 90)) || "\u2014"}</td>
+      <td class="t-created num">${(t5.created_at || "").slice(0, 16).replace("T", " ")}</td>
+      <td class="t-ops">
+        <span class="ops">
+          <button class="btn xs" onclick="openTemplateModal(${t5.id})">\u7F16\u8F91</button>
+          <button class="btn xs" onclick="newTaskFromTemplate(${t5.id})">${icon("plus")}\u65B0\u5EFA\u4EFB\u52A1</button>
+          <button class="btn xs danger" onclick="deleteTemplate(${t5.id})">${icon("trash")}\u5220\u9664</button>
+        </span>
+      </td>
     </tr>`).join("");
     const empty = document.getElementById("templateEmpty");
     if (empty) empty.classList.toggle("hidden", state.templates.length > 0);
+  }
+  function fillTemplateAgentSelect(selected) {
+    const sel = document.getElementById("tpAgent");
+    if (!sel) return;
+    const opts = state.agents.filter((a3) => a3.enabled);
+    sel.innerHTML = `<option value="">\u4E0D\u6307\u5B9A\uFF08\u521B\u5EFA\u4EFB\u52A1\u65F6\u9009\u62E9\uFF09</option>` + opts.map((a3) => `<option value="${a3.id}" ${a3.id === selected ? "selected" : ""}>${esc(a3.name)}</option>`).join("");
+  }
+  function openTemplateModal(id) {
+    const t5 = id ? state.templates.find((x2) => x2.id === id) : null;
+    document.getElementById("templateModalTitle").textContent = t5 ? "\u7F16\u8F91\u6A21\u677F" : "\u65B0\u5EFA\u6A21\u677F";
+    document.getElementById("tpId").value = t5 ? t5.id : "";
+    document.getElementById("tpName").value = t5 ? t5.name : "";
+    document.getElementById("tpBody").value = t5 ? t5.body : "";
+    fillTemplateAgentSelect(t5?.agent_id || 0);
+    openModal("templateModal");
+  }
+  async function submitTemplate() {
+    const id = Number(document.getElementById("tpId").value) || 0;
+    const name = document.getElementById("tpName").value.trim();
+    const body = document.getElementById("tpBody").value.trim();
+    const agent_id = Number(document.getElementById("tpAgent").value) || null;
+    if (!name) {
+      toast("\u6A21\u677F\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A", true);
+      return;
+    }
+    if (!body) {
+      toast("\u6A21\u677F\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A", true);
+      return;
+    }
+    try {
+      if (id) {
+        await api(`/api/templates/${id}`, { method: "PATCH", body: JSON.stringify({ name, body, agent_id }) });
+        toast("\u5DF2\u4FDD\u5B58");
+      } else {
+        await api("/api/templates", { method: "POST", body: JSON.stringify({ name, body, agent_id }) });
+        toast("\u5DF2\u521B\u5EFA");
+      }
+      closeModal("templateModal");
+      await loadTemplates();
+    } catch (e6) {
+      toast(e6.message, true);
+    }
   }
   async function deleteTemplate(id) {
     if (!confirm("\u5220\u9664\u8BE5\u6A21\u677F\uFF1F")) return;
@@ -3723,10 +3170,16 @@
       toast(e6.message, true);
     }
   }
-  var init_skills = __esm({
-    "internal/web/static/src/skills.js"() {
+  function newTaskFromTemplate(id) {
+    openNewTask();
+    const sel = document.getElementById("tTemplate");
+    if (sel) sel.value = String(id);
+    applyTemplate();
+  }
+  var init_templates = __esm({
+    "internal/web/static/src/templates.js"() {
       init_core();
-      init_projects();
+      init_task();
     }
   });
 
@@ -5232,7 +4685,7 @@
       init_history();
       init_main();
       init_projects();
-      init_skills();
+      init_templates();
       init_terminal();
       detailBackground = null;
       detailReturnHash = "#/";
@@ -6455,6 +5908,615 @@
     }
   });
 
+  // internal/web/static/src/skills.js
+  function setSkillTab(tab) {
+    const skills = tab === "skills";
+    if (skills && state.skillDetail !== null) {
+      hideSkillDetail();
+      if (/^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
+    }
+    if (!skills && /^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
+    if (!skills) hideSkillDetail();
+    document.getElementById("segSkillLib").classList.toggle("active", skills);
+    document.getElementById("segExt").classList.toggle("active", !skills);
+    document.getElementById("skillShell").classList.toggle("hidden", !skills);
+    document.getElementById("extShell").classList.toggle("hidden", skills);
+    document.getElementById("btnAddSkill").classList.toggle("hidden", !skills);
+    document.getElementById("btnAddExt").classList.toggle("hidden", skills);
+    const detail = state.skillDetail !== null;
+    document.getElementById("skillDisplaySeg")?.classList.toggle("hidden", !skills || detail);
+    document.getElementById("skillFilterControls")?.classList.toggle("hidden", !skills || detail);
+    document.getElementById("skillManageControls")?.classList.toggle("hidden", !skills || state.skillDetail !== null);
+    if (!skills) loadExtensions();
+  }
+  function setSkillView(view) {
+    state.skillView = view === "list" ? "list" : "grid";
+    document.getElementById("skillDisplaySeg")?.classList.remove("hidden");
+    document.getElementById("segSkillGrid")?.classList.toggle("active", state.skillView === "grid");
+    document.getElementById("segSkillList")?.classList.toggle("active", state.skillView === "list");
+    try {
+      localStorage.setItem("paihuo.skillView", state.skillView);
+    } catch (_2) {
+    }
+    renderSkillLib();
+  }
+  async function loadExtensions() {
+    const raw = document.getElementById("extRaw");
+    if (!raw) return;
+    try {
+      const d3 = await api("/api/extensions");
+      raw.textContent = d3.raw || "\uFF08\u7A7A\uFF09";
+      if (d3.error && d3.raw) raw.textContent = d3.raw + "\n\n[\u6267\u884C\u63D0\u793A] " + d3.error;
+    } catch (e6) {
+      raw.textContent = "\u52A0\u8F7D\u5931\u8D25: " + e6.message;
+    }
+  }
+  function openExtModal() {
+    document.getElementById("extSource").value = "";
+    openModal("extModal");
+  }
+  async function submitExt() {
+    const source = document.getElementById("extSource").value.trim();
+    if (!source) return toast("\u9700\u8981 extension \u6765\u6E90", true);
+    try {
+      const d3 = await api("/api/extensions/install", { method: "POST", body: JSON.stringify({ source }) });
+      closeModal("extModal");
+      toast("\u5DF2\u5B89\u88C5");
+      loadExtensions();
+    } catch (e6) {
+      toast(e6.message, true);
+    }
+  }
+  async function removeExt() {
+    const name = prompt("\u8F93\u5165\u8981\u79FB\u9664\u7684 extension \u540D\u79F0\uFF08\u53EF\u4ECE\u4E0A\u65B9\u5217\u8868\u67E5\u770B\uFF09");
+    if (!name) return;
+    try {
+      await api(`/api/extensions/${encodeURIComponent(name)}`, { method: "DELETE" });
+      toast("\u5DF2\u79FB\u9664");
+      loadExtensions();
+    } catch (e6) {
+      toast(e6.message, true);
+    }
+  }
+  async function loadSkillLib() {
+    try {
+      state.skillLib = await api("/api/skills");
+      const known = new Set(state.skillLib.map((s5) => s5.id));
+      state.skillSelected.forEach((id) => {
+        if (!known.has(id)) state.skillSelected.delete(id);
+      });
+      syncSkillTagFilter();
+    } catch (_2) {
+      state.skillLib = [];
+      state.skillSelected.clear();
+      syncSkillTagFilter();
+    }
+  }
+  function skillTags(skill) {
+    return Array.isArray(skill?.tags) ? skill.tags.filter(Boolean).map(String) : [];
+  }
+  function skillTagsHTML(skill) {
+    const tags = skillTags(skill);
+    return tags.length ? tags.map((tag) => `<span class="skill-tag">${esc(tag)}</span>`).join("") : `<span class="skill-tag muted">\u672A\u5206\u7C7B</span>`;
+  }
+  function skillTagsEditorHTML(skill) {
+    const inputId = `skill-tags-${skill.id}`;
+    return `
+    <div class="skill-tags-row">
+      <div class="skill-tags" aria-label="\u5F53\u524D\u6807\u7B7E">${skillTagsHTML(skill)}</div>
+      <button type="button" class="btn xs ghost skill-tags-edit" data-skill-tags-toggle="${skill.id}"
+        aria-controls="skill-tag-editor-${skill.id}" aria-expanded="false"
+        onclick="event.stopPropagation();toggleSkillTagsEditor(${skill.id})">\u7F16\u8F91\u6807\u7B7E</button>
+    </div>
+    <div class="skill-tag-editor hidden" id="skill-tag-editor-${skill.id}" onclick="event.stopPropagation()">
+      <input id="${inputId}" class="skill-tags-input" value="${esc(skillTags(skill).join(", "))}"
+        aria-label="\u7F16\u8F91 ${esc(skill.name)} \u7684\u6807\u7B7E" placeholder="\u6807\u7B7E\uFF0C\u7528\u9017\u53F7\u5206\u9694"
+        onkeydown="if (event.key === 'Enter') { event.preventDefault(); saveSkillTagsInline(${skill.id}, this); }">
+      <button type="button" class="btn xs primary" onclick="saveSkillTagsInline(${skill.id}, this)">\u4FDD\u5B58</button>
+    </div>`;
+  }
+  function parseTagInput(raw) {
+    const seen = /* @__PURE__ */ new Set();
+    return String(raw || "").split(/[,，\n]/).map((tag) => tag.trim()).filter((tag) => {
+      if (!tag) return false;
+      const key = tag.toLocaleLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+  function allSkillTags() {
+    const tags = /* @__PURE__ */ new Map();
+    state.skillLib.forEach((skill) => skillTags(skill).forEach((tag) => {
+      const key = tag.toLocaleLowerCase();
+      if (!tags.has(key)) tags.set(key, tag);
+    }));
+    return [...tags.values()].sort((a3, b3) => a3.localeCompare(b3));
+  }
+  function syncSkillTagFilter() {
+    const select = document.getElementById("skillTagFilter");
+    if (!select) return;
+    const current = select.value;
+    const options = [`<option value="">\u5168\u90E8\u6807\u7B7E</option>`].concat(allSkillTags().map((tag) => `<option value="${esc(tag)}">${esc(tag)}</option>`));
+    if (state.skillLib.some((skill) => !skillTags(skill).length)) {
+      options.push(`<option value="__untagged__">\u672A\u5206\u7C7B</option>`);
+    }
+    select.innerHTML = options.join("");
+    if ([...select.options].some((option) => option.value === current)) select.value = current;
+  }
+  function filteredSkills() {
+    const query = (document.getElementById("skillSearch")?.value || "").trim().toLocaleLowerCase();
+    const tag = document.getElementById("skillTagFilter")?.value || "";
+    const list = state.skillLib.filter((skill) => {
+      const tags = skillTags(skill);
+      const matchesTag = !tag || (tag === "__untagged__" ? tags.length === 0 : tags.some((item) => item.toLocaleLowerCase() === tag.toLocaleLowerCase()));
+      if (!matchesTag) return false;
+      if (!query) return true;
+      return [skill.name, skill.description, skill.dir, skill.source_path, ...tags].some((value) => String(value || "").toLocaleLowerCase().includes(query));
+    });
+    return { list, query, tag };
+  }
+  function skillGroupDirectory(skill) {
+    const raw = String(skill.source_path || skill.dir || "").trim().replace(/[\\/]+$/, "");
+    if (!raw) return "\u672A\u6307\u5B9A\u6765\u6E90\u76EE\u5F55";
+    const slash = Math.max(raw.lastIndexOf("/"), raw.lastIndexOf("\\"));
+    if (slash < 0) return "\u6839\u76EE\u5F55";
+    if (slash === 0) return raw.slice(0, 1);
+    if (slash === 2 && raw[1] === ":") return raw.slice(0, 3);
+    return raw.slice(0, slash) || "\u6839\u76EE\u5F55";
+  }
+  function skillPathName(path) {
+    const raw = String(path || "").trim().replace(/[\\/]+$/, "");
+    if (!raw) return "\u672A\u6307\u5B9A";
+    const slash = Math.max(raw.lastIndexOf("/"), raw.lastIndexOf("\\"));
+    return slash >= 0 ? raw.slice(slash + 1) || raw : raw;
+  }
+  function skillCreatedDate(skill) {
+    return String(skill.created_at || "").slice(0, 10) || "\u2014";
+  }
+  function skillGroups(skills = state.skillLib) {
+    const groups = /* @__PURE__ */ new Map();
+    skills.forEach((skill) => {
+      const directory = skillGroupDirectory(skill);
+      let group = groups.get(directory);
+      if (!group) {
+        group = { directory, skills: [] };
+        groups.set(directory, group);
+      }
+      group.skills.push(skill);
+    });
+    return [...groups.values()].sort((a3, b3) => a3.directory.localeCompare(b3.directory));
+  }
+  function skillCardHTML(s5) {
+    const selected = state.skillSelected.has(s5.id);
+    const sourcePath = s5.source_path || s5.dir || "";
+    const sourceName = skillPathName(sourcePath);
+    const copyName = skillPathName(s5.dir);
+    return `
+    <article class="skill-card${selected ? " selected" : ""}" tabindex="0" aria-label="\u6253\u5F00\u6280\u80FD ${esc(s5.name)}"
+      onclick="openSkillDetail(${s5.id})"
+      onkeydown="if (!event.target.closest('a,button,input,select,textarea') && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openSkillDetail(${s5.id}); }">
+      <div class="sk-top">
+        <label class="skill-select" onclick="event.stopPropagation()" title="\u9009\u62E9 ${esc(s5.name)}">
+          <input type="checkbox" data-skill-id="${s5.id}" ${selected ? "checked" : ""} aria-label="\u9009\u62E9\u6280\u80FD ${esc(s5.name)}" onchange="toggleSkillSelection(${s5.id}, this.checked)">
+        </label>
+        <span class="avatar">${esc((s5.name || "?").slice(0, 1))}</span>
+        <div class="sk-id">
+          <a class="sk-name card-primary-action" href="#/skill/${s5.id}" onclick="event.stopPropagation()">${esc(s5.name)}</a>
+          <div class="sk-desc">${esc(s5.description || "\u65E0\u63CF\u8FF0")}</div>
+        </div>
+      </div>
+      <div class="sk-meta">
+        ${skillTagsEditorHTML(s5)}
+        <div class="skill-card-context">
+          <span class="skill-card-context-item" title="${esc(sourcePath || "\u672A\u6307\u5B9A\u6765\u6E90\u8DEF\u5F84")}">
+            ${icon("folder")}<span><small>\u6765\u6E90\u76EE\u5F55</small><b>${esc(sourceName)}</b></span>
+          </span>
+          <span class="skill-card-context-item">
+            ${icon("clock")}<span><small>\u6DFB\u52A0\u65F6\u95F4</small><time>${esc(skillCreatedDate(s5))}</time></span>
+          </span>
+        </div>
+      </div>
+      <div class="sk-foot">
+        <span class="skill-copy-path" title="${esc(s5.dir || "\u672A\u6307\u5B9A\u526F\u672C\u8DEF\u5F84")}">${icon("copy")}<span>\u526F\u672C</span><code>${esc(copyName)}</code></span>
+        <span class="ac-ops">
+          <button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s5.id})">\u6253\u5F00\u8BE6\u60C5${icon("expand")}</button>
+          <button class="btn xs danger" onclick="event.stopPropagation();deleteSkill(${s5.id})">${icon("trash")}\u5220\u9664</button>
+        </span>
+      </div>
+    </article>`;
+  }
+  function skillListRowHTML(s5) {
+    const selected = state.skillSelected.has(s5.id);
+    const sourcePath = s5.source_path || s5.dir || "";
+    const sourceName = skillPathName(sourcePath);
+    return `<tr class="skill-list-row${selected ? " selected" : ""}" tabindex="0" aria-label="\u6253\u5F00\u6280\u80FD ${esc(s5.name)}"
+    onclick="openSkillDetail(${s5.id})"
+    onkeydown="if (!event.target.closest('a,button,input,select,textarea') && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openSkillDetail(${s5.id}); }">
+    <td class="skill-list-check" data-label="\u9009\u62E9"><label class="skill-select" onclick="event.stopPropagation()" title="\u9009\u62E9 ${esc(s5.name)}">
+      <input type="checkbox" data-skill-id="${s5.id}" ${selected ? "checked" : ""} aria-label="\u9009\u62E9\u6280\u80FD ${esc(s5.name)}" onchange="toggleSkillSelection(${s5.id}, this.checked)">
+    </label></td>
+    <td class="skill-list-main-cell" data-label="\u6280\u80FD"><span class="skill-list-name"><span class="avatar">${esc((s5.name || "?").slice(0, 1))}</span><span><a class="table-primary-action" href="#/skill/${s5.id}" onclick="event.stopPropagation()">${esc(s5.name)}</a><small>${esc(s5.description || "\u65E0\u63CF\u8FF0")}</small></span></span></td>
+    <td class="skill-list-tags-cell" data-label="\u6807\u7B7E">${skillTagsEditorHTML(s5)}</td>
+    <td class="skill-list-source-cell" data-label="\u6765\u6E90\u76EE\u5F55">
+      <span class="skill-list-source" title="${esc(sourcePath || "\u672A\u6307\u5B9A\u6765\u6E90\u8DEF\u5F84")}">
+        <b>${esc(sourceName)}</b><code>${esc(skillGroupDirectory(s5))}</code>
+      </span>
+    </td>
+    <td class="skill-list-date-cell num" data-label="\u6DFB\u52A0\u65F6\u95F4"><time>${esc(skillCreatedDate(s5))}</time></td>
+    <td class="skill-list-actions-cell" data-label="\u64CD\u4F5C"><span class="ops"><button class="btn xs ghost" onclick="event.stopPropagation();openSkillDetail(${s5.id})">\u6253\u5F00\u8BE6\u60C5${icon("expand")}</button><button class="btn xs danger" onclick="event.stopPropagation();deleteSkill(${s5.id})">${icon("trash")}\u5220\u9664</button></span></td>
+  </tr>`;
+  }
+  function syncSkillSelectionControls(groups = skillGroups(filteredSkills().list)) {
+    const lib = state.skillLib;
+    const selected = state.skillSelected;
+    const selectedCount = selected.size;
+    const all = lib.length > 0 && selectedCount === lib.length;
+    const checkAll = document.getElementById("skillCheckAll");
+    if (checkAll) {
+      checkAll.checked = all;
+      checkAll.indeterminate = selectedCount > 0 && !all;
+    }
+    document.querySelectorAll("#skillGrid input[data-skill-id]").forEach((cb) => {
+      const on = selected.has(Number(cb.dataset.skillId));
+      cb.checked = on;
+      cb.closest(".skill-card")?.classList.toggle("selected", on);
+      cb.closest("tr")?.classList.toggle("selected", on);
+    });
+    groups.forEach((group, i6) => {
+      const groupSelected = group.skills.filter((s5) => selected.has(s5.id)).length;
+      const cb = document.querySelector(`#skillGrid input[data-skill-group="${i6}"]`);
+      if (!cb) return;
+      cb.checked = groupSelected === group.skills.length;
+      cb.indeterminate = groupSelected > 0 && groupSelected < group.skills.length;
+    });
+    const cnt = document.getElementById("skillSelectedCount");
+    if (cnt) cnt.textContent = `\u5DF2\u9009 ${selectedCount}`;
+    const del = document.getElementById("btnDeleteSkills");
+    if (del) del.disabled = selectedCount === 0;
+  }
+  function renderSkillLib() {
+    const grid = document.getElementById("skillGrid");
+    if (!grid) return;
+    const lib = state.skillLib;
+    const { list, query, tag } = filteredSkills();
+    const groups = skillGroups(list);
+    grid.className = state.skillView === "list" ? "skill-list-shell" : "skill-groups";
+    if (state.skillView === "list") {
+      grid.innerHTML = `<div class="list-wrap skill-list-wrap"><table class="list-grid skill-list-grid" aria-label="\u6280\u80FD\u5217\u8868">
+      <caption class="sr-only">\u6280\u80FD\u5217\u8868\uFF0C\u5171 ${list.length} \u4E2A\u6280\u80FD</caption>
+      <thead><tr><th class="skill-list-check">\u9009\u62E9</th><th>\u6280\u80FD</th><th>\u6807\u7B7E</th><th>\u6765\u6E90\u76EE\u5F55</th><th>\u6DFB\u52A0\u65F6\u95F4</th><th class="skill-list-actions-head">\u64CD\u4F5C</th></tr></thead>
+      <tbody>${list.map(skillListRowHTML).join("")}</tbody>
+    </table></div>`;
+    } else {
+      grid.innerHTML = groups.map((group, i6) => `
+      <section class="skill-group">
+        <header class="skill-group-head">
+          <label class="skill-group-select" title="\u9009\u62E9\u76EE\u5F55 ${esc(group.directory)}">
+            <input type="checkbox" data-skill-group="${i6}" aria-label="\u9009\u62E9\u76EE\u5F55 ${esc(group.directory)}" onchange="toggleSkillGroup(${i6}, this.checked)">
+          </label>
+          ${icon("folder")}
+          <div class="skill-group-title">
+            <b>\u6765\u6E90\u76EE\u5F55</b>
+            <code title="${esc(group.directory)}">${esc(group.directory)}</code>
+          </div>
+          <span class="count-info">${group.skills.length} \u4E2A\u6280\u80FD</span>
+        </header>
+        <div class="skill-group-grid">${group.skills.map(skillCardHTML).join("")}</div>
+      </section>`).join("");
+    }
+    const empty = document.getElementById("skillEmpty");
+    if (empty) {
+      empty.innerHTML = lib.length === 0 ? `<b class="empty-title">\u6C89\u6DC0\u7B2C\u4E00\u4E2A\u53EF\u590D\u7528\u6280\u80FD</b>
+        <span class="empty-copy">\u5BFC\u5165\u5355\u4E2A\u6280\u80FD\u76EE\u5F55\uFF0C\u6216\u626B\u63CF\u4E00\u4E2A\u76EE\u5F55\u6811\u4E2D\u7684\u5168\u90E8 skills\u3002</span>
+        <button type="button" class="btn brand sm" onclick="openSkillModal()">\u6DFB\u52A0\u6280\u80FD</button>` : `<b class="empty-title">\u6CA1\u6709\u7B26\u5408\u5F53\u524D\u6761\u4EF6\u7684\u6280\u80FD</b>
+        <span class="empty-copy">\u6E05\u9664\u641C\u7D22\u8BCD\u4E0E\u6807\u7B7E\u7B5B\u9009\u540E\uFF0C\u518D\u67E5\u770B\u5B8C\u6574\u6280\u80FD\u5E93\u3002</span>
+        <button type="button" class="btn sm" onclick="document.getElementById('skillSearch').value='';document.getElementById('skillTagFilter').value='';renderSkillLib()">\u6E05\u9664\u7B5B\u9009</button>`;
+      empty.classList.toggle("hidden", list.length > 0);
+    }
+    const hasLibrary = lib.length > 0;
+    document.getElementById("skillDisplaySeg")?.classList.toggle("hidden", !hasLibrary);
+    document.getElementById("skillFilterControls")?.classList.toggle("hidden", !hasLibrary);
+    document.getElementById("skillManageControls")?.classList.toggle("hidden", !hasLibrary);
+    const cnt = document.getElementById("skillCount");
+    if (cnt) cnt.textContent = list.length === lib.length ? `${lib.length} \u4E2A\u6280\u80FD` : `${list.length} / ${lib.length} \u4E2A\u6280\u80FD`;
+    syncSkillSelectionControls(groups);
+  }
+  function toggleSkillSelection(id, checked) {
+    if (checked) state.skillSelected.add(id);
+    else state.skillSelected.delete(id);
+    syncSkillSelectionControls();
+  }
+  function toggleSkillGroup(groupIndex, checked) {
+    const group = skillGroups(filteredSkills().list)[groupIndex];
+    if (!group) return;
+    group.skills.forEach((skill) => {
+      if (checked) state.skillSelected.add(skill.id);
+      else state.skillSelected.delete(skill.id);
+    });
+    syncSkillSelectionControls();
+  }
+  function toggleAllSkills(checked) {
+    state.skillSelected.clear();
+    if (checked) state.skillLib.forEach((skill) => state.skillSelected.add(skill.id));
+    syncSkillSelectionControls();
+  }
+  async function deleteSelectedSkills() {
+    const ids = [...state.skillSelected];
+    if (!ids.length) return toast("\u5148\u52FE\u9009\u8981\u5220\u9664\u7684\u6280\u80FD", true);
+    if (!confirm(`\u5220\u9664\u9009\u4E2D\u7684 ${ids.length} \u4E2A\u6280\u80FD\uFF1F\u5C06\u540C\u65F6\u79FB\u9664\u5DE5\u4F5C\u76EE\u5F55\u4E2D\u7684\u526F\u672C\uFF0C\u5DF2\u5F15\u7528\u5B83\u4EEC\u7684\u89D2\u8272\u914D\u7F6E\u4F1A\u5931\u6548\u3002`)) return;
+    try {
+      const result = await api("/api/skills", { method: "DELETE", body: JSON.stringify({ ids }) });
+      if (state.skillDetail && ids.includes(state.skillDetail.id)) {
+        hideSkillDetail();
+        if (/^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
+      }
+      state.skillSelected.clear();
+      await loadSkillLib();
+      renderSkillLib();
+      toast(`\u5DF2\u5220\u9664 ${result.count ?? ids.length} \u4E2A\u6280\u80FD`);
+    } catch (e6) {
+      toast(e6.message, true);
+    }
+  }
+  function toggleSkillTagsEditor(id) {
+    const editor = document.getElementById(`skill-tag-editor-${id}`);
+    if (!editor) return;
+    const opening = editor.classList.contains("hidden");
+    editor.classList.toggle("hidden", !opening);
+    document.querySelector(`[data-skill-tags-toggle="${id}"]`)?.setAttribute("aria-expanded", String(opening));
+    if (opening) {
+      const input = document.getElementById(`skill-tags-${id}`);
+      requestAnimationFrame(() => {
+        input?.focus();
+        input?.select();
+      });
+    }
+  }
+  async function persistSkillTags(id, tags) {
+    const updated = await api(`/api/skills/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ tags })
+    });
+    const index = state.skillLib.findIndex((item) => item.id === id);
+    if (index >= 0) state.skillLib[index] = { ...state.skillLib[index], ...updated };
+    if (state.skillDetail?.id === id) state.skillDetail = { ...state.skillDetail, ...updated };
+    syncSkillTagFilter();
+    return updated;
+  }
+  async function saveSkillTagsInline(id, source) {
+    const input = document.getElementById(`skill-tags-${id}`);
+    if (!input) return;
+    const editor = input.closest(".skill-tag-editor");
+    const button = source?.tagName === "BUTTON" ? source : editor?.querySelector("button");
+    const tags = parseTagInput(input.value);
+    if (button) {
+      button.disabled = true;
+      button.textContent = "\u4FDD\u5B58\u4E2D\u2026";
+    }
+    try {
+      await persistSkillTags(id, tags);
+      renderSkillLib();
+      toast(tags.length ? "\u6807\u7B7E\u5DF2\u4FDD\u5B58" : "\u5DF2\u6E05\u9664\u6807\u7B7E");
+    } catch (e6) {
+      if (button?.isConnected) {
+        button.disabled = false;
+        button.textContent = "\u4FDD\u5B58";
+      }
+      toast(e6.message, true);
+    }
+  }
+  function formatSkillBytes(size) {
+    const n6 = Number(size);
+    if (!Number.isFinite(n6) || n6 < 0) return "-";
+    if (n6 < 1024) return `${n6} B`;
+    if (n6 < 1024 * 1024) return `${(n6 / 1024).toFixed(1)} KB`;
+    return `${(n6 / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  function skillDetailSideHTML(skill) {
+    return `
+    <section class="side-panel">
+      <div class="side-heading">\u6280\u80FD\u4FE1\u606F</div>
+      <div class="prop-row"><span class="k">\u540D\u79F0</span><span class="v" title="${esc(skill.name)}">${esc(skill.name)}</span></div>
+      <div class="prop-row"><span class="k">\u6807\u7B7E</span><span class="skill-tags">${skillTagsHTML(skill)}</span></div>
+      <div class="prop-row"><span class="k">\u6280\u80FD\u76EE\u5F55</span><code class="prop-mono" title="${esc(skill.dir)}">${esc(skill.dir)}</code></div>
+      <div class="prop-row"><span class="k">\u6765\u6E90\u8DEF\u5F84</span><code class="prop-mono" title="${esc(skill.source_path || "-")}">${esc(skill.source_path || "-")}</code></div>
+      <div class="prop-row"><span class="k">\u521B\u5EFA\u65F6\u95F4</span><span class="v">${esc((skill.created_at || "").slice(0, 16).replace("T", " ") || "-")}</span></div>
+      <div class="prop-row"><span class="k">\u8BF4\u660E\u6587\u4EF6</span><span class="v">SKILL.md${skill.size_bytes !== void 0 ? ` \xB7 ${formatSkillBytes(skill.size_bytes)}` : ""}</span></div>
+    </section>
+    <div class="side-actions">
+      <div class="side-heading">\u6807\u7B7E\u7BA1\u7406</div>
+      <input id="sdTags" class="skill-tags-input" value="${esc(skillTags(skill).join(", "))}" placeholder="\u5982\uFF1A\u7F16\u7A0B, \u6587\u6863, \u4EE3\u7801\u5BA1\u67E5">
+      <div class="field-help">\u591A\u4E2A\u6807\u7B7E\u7528\u9017\u53F7\u5206\u9694\uFF0C\u4FDD\u5B58\u540E\u53EF\u5728\u89D2\u8272\u521B\u5EFA\u65F6\u6309\u6807\u7B7E\u7B5B\u9009\u3002</div>
+      <button class="btn sm primary" onclick="saveSkillTags()">\u4FDD\u5B58\u6807\u7B7E</button>
+    </div>
+    <div class="side-actions">
+      <div class="side-heading">\u64CD\u4F5C</div>
+      <div class="detail-actions">
+        <button class="btn" onclick="copySkillContent()">${icon("copy")}\u590D\u5236 SKILL.md</button>
+        <button class="btn danger" onclick="deleteSkillFromDetail()">${icon("trash")}\u5220\u9664\u6280\u80FD</button>
+      </div>
+    </div>`;
+  }
+  function renderSkillDetailShell(skill) {
+    const main = document.getElementById("sdMain");
+    const side = document.getElementById("sdSide");
+    if (!main || !side) return;
+    document.getElementById("sdCrumb").innerHTML = `\u6280\u80FD / <b>${esc(skill.name)}</b>`;
+    document.getElementById("sdBadge").innerHTML = `<span class="badge" style="--st-color:var(--brand)">SKILL.md</span>`;
+    main.innerHTML = `
+    <section class="skill-hero">
+      <span class="avatar lg skill-avatar">${esc((skill.name || "?").slice(0, 1))}</span>
+      <div class="skill-hero-copy">
+        <div class="detail-id">\u6280\u80FD\u8BF4\u660E \xB7 Markdown</div>
+        <h2>${esc(skill.name)}</h2>
+        ${skill.description ? `<div class="skill-hero-desc">${esc(skill.description)}</div>` : ""}
+        <div id="sdTagsDisplay" class="skill-tags skill-hero-tags">${skillTagsHTML(skill)}</div>
+      </div>
+    </section>
+    <div class="skill-doc-head">
+      <div>
+        <div class="section-title">SKILL.md</div>
+        <div class="section-sub" id="sdDocMeta">\u6B63\u5728\u8BFB\u53D6\u6280\u80FD\u8BF4\u660E\u2026</div>
+      </div>
+      <button class="btn ghost xs" onclick="copySkillContent()">${icon("copy")}\u590D\u5236</button>
+    </div>
+    <pre class="skill-doc" id="sdDoc">\u52A0\u8F7D\u4E2D\u2026</pre>`;
+    side.innerHTML = skillDetailSideHTML(skill);
+  }
+  function renderSkillDocument(detail) {
+    const doc = document.getElementById("sdDoc");
+    const meta = document.getElementById("sdDocMeta");
+    if (!doc || !meta) return;
+    const content = String(detail.content || "");
+    doc.textContent = content || "\uFF08SKILL.md \u4E3A\u7A7A\uFF09";
+    doc.classList.toggle("is-empty", !content);
+    meta.textContent = content ? `${formatSkillBytes(detail.size_bytes ?? content.length)} \xB7 ${content.split("\n").length} \u884C` : "\u7A7A\u6587\u4EF6";
+    const side = document.getElementById("sdSide");
+    if (side) side.innerHTML = skillDetailSideHTML(detail);
+  }
+  function openSkillDetail(id) {
+    location.hash = "#/skill/" + id;
+  }
+  function closeSkillDetail() {
+    location.hash = "#/";
+  }
+  function hideSkillDetail() {
+    document.getElementById("skillDetailShell")?.classList.add("hidden");
+    document.getElementById("skillShell")?.classList.remove("hidden");
+    state.skillDetail = null;
+    document.getElementById("skillDisplaySeg")?.classList.remove("hidden");
+    document.getElementById("skillFilterControls")?.classList.remove("hidden");
+    document.getElementById("skillManageControls")?.classList.remove("hidden");
+  }
+  async function showSkillDetail(id) {
+    let skill = state.skillLib.find((x2) => x2.id === id);
+    if (!skill) {
+      await loadSkillLib();
+      renderSkillLib();
+      skill = state.skillLib.find((x2) => x2.id === id);
+    }
+    if (!skill) {
+      toast("\u6280\u80FD\u4E0D\u5B58\u5728\u6216\u5DF2\u88AB\u5220\u9664", true);
+      return;
+    }
+    state.skillDetail = skill;
+    document.getElementById("skillShell")?.classList.add("hidden");
+    document.getElementById("skillDetailShell")?.classList.remove("hidden");
+    document.getElementById("skillDisplaySeg")?.classList.add("hidden");
+    document.getElementById("skillFilterControls")?.classList.add("hidden");
+    document.getElementById("skillManageControls")?.classList.add("hidden");
+    renderSkillDetailShell(skill);
+    try {
+      const detail = await api(`/api/skills/${id}`);
+      if (state.skillDetail?.id !== id) return;
+      state.skillDetail = detail;
+      renderSkillDocument(detail);
+    } catch (e6) {
+      if (state.skillDetail?.id !== id) return;
+      const doc = document.getElementById("sdDoc");
+      const meta = document.getElementById("sdDocMeta");
+      if (doc) {
+        doc.textContent = `\u8BFB\u53D6\u5931\u8D25\uFF1A${e6.message}`;
+        doc.classList.add("is-error");
+      }
+      if (meta) meta.textContent = "\u65E0\u6CD5\u8BFB\u53D6 SKILL.md";
+    }
+  }
+  async function copySkillContent() {
+    const content = state.skillDetail?.content;
+    if (content === void 0) return toast("\u6280\u80FD\u8BF4\u660E\u8FD8\u5728\u52A0\u8F7D\u4E2D", true);
+    try {
+      await navigator.clipboard.writeText(content);
+      toast("\u5DF2\u590D\u5236 SKILL.md");
+    } catch (_2) {
+      toast("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u9009\u62E9\u5185\u5BB9", true);
+    }
+  }
+  async function saveSkillTags() {
+    const skill = state.skillDetail;
+    if (!skill) return;
+    const input = document.getElementById("sdTags");
+    const tags = parseTagInput(input?.value || "");
+    try {
+      await persistSkillTags(skill.id, tags);
+      const side = document.getElementById("sdSide");
+      if (side) side.innerHTML = skillDetailSideHTML(state.skillDetail);
+      const display = document.getElementById("sdTagsDisplay");
+      if (display) display.innerHTML = skillTagsHTML(state.skillDetail);
+      toast(tags.length ? "\u6807\u7B7E\u5DF2\u4FDD\u5B58" : "\u5DF2\u6E05\u9664\u6807\u7B7E");
+    } catch (e6) {
+      toast(e6.message, true);
+    }
+  }
+  function deleteSkillFromDetail() {
+    const id = state.skillDetail?.id;
+    if (id !== void 0) deleteSkill(id);
+  }
+  function openSkillModal() {
+    document.getElementById("sSkillPath").value = "";
+    document.getElementById("sSkillTags").value = "";
+    loadProjDatalist();
+    openModal("skillModal");
+  }
+  async function submitSkill() {
+    const path = document.getElementById("sSkillPath").value.trim();
+    if (!path) return toast("\u9700\u8981\u6280\u80FD\u76EE\u5F55\u8DEF\u5F84", true);
+    const tags = parseTagInput(document.getElementById("sSkillTags")?.value || "");
+    try {
+      const sk = await api("/api/skills", { method: "POST", body: JSON.stringify({ source_path: path, tags }) });
+      closeModal("skillModal");
+      toast(`\u5DF2\u5BFC\u5165 skill: ${sk.name}`);
+      await loadSkillLib();
+      renderSkillLib();
+    } catch (e6) {
+      toast(e6.message, true);
+    }
+  }
+  async function scanSkills() {
+    const path = document.getElementById("sSkillPath").value.trim();
+    if (!path) return toast("\u9700\u8981\u626B\u63CF\u6839\u76EE\u5F55\u8DEF\u5F84", true);
+    const tags = parseTagInput(document.getElementById("sSkillTags")?.value || "");
+    try {
+      const result = await api("/api/skills/scan", { method: "POST", body: JSON.stringify({ source_path: path, tags }) });
+      closeModal("skillModal");
+      const imported = (result.imported || []).length;
+      const skipped = (result.skipped || []).length;
+      const failed = (result.errors || []).length;
+      let summary = `\u53D1\u73B0 ${result.found || 0} \u4E2A skill\uFF0C\u5DF2\u5BFC\u5165 ${imported} \u4E2A`;
+      if (skipped) summary += `\uFF0C\u8DF3\u8FC7\u5DF2\u5BFC\u5165 ${skipped} \u4E2A`;
+      if (failed) summary += `\uFF0C\u5931\u8D25 ${failed} \u4E2A`;
+      toast(summary, failed > 0);
+      await loadSkillLib();
+      renderSkillLib();
+    } catch (e6) {
+      toast(e6.message, true);
+    }
+  }
+  async function deleteSkill(id) {
+    const s5 = state.skillLib.find((x2) => x2.id === id);
+    if (!confirm(`\u5220\u9664 skill\u300C${s5 ? s5.name : id}\u300D\uFF1F\u5C06\u540C\u65F6\u79FB\u9664\u5DE5\u4F5C\u76EE\u5F55\u4E2D\u7684\u526F\u672C\uFF0C\u5DF2\u5F15\u7528\u5B83\u7684\u89D2\u8272\u914D\u7F6E\u4F1A\u5931\u6548\u3002`)) return;
+    try {
+      await api(`/api/skills/${id}`, { method: "DELETE" });
+      toast("\u5DF2\u5220\u9664");
+      state.skillSelected.delete(id);
+      await loadSkillLib();
+      renderSkillLib();
+      if (state.skillDetail?.id === id) {
+        hideSkillDetail();
+        if (/^#\/skill\/\d+/.test(location.hash)) location.hash = "#/";
+      }
+    } catch (e6) {
+      toast(e6.message, true);
+    }
+  }
+  var init_skills = __esm({
+    "internal/web/static/src/skills.js"() {
+      init_core();
+      init_projects();
+    }
+  });
+
   // internal/web/static/src/role_studio.js
   function clone(value) {
     return JSON.parse(JSON.stringify(value ?? {}));
@@ -7412,6 +7474,7 @@
       init_settings();
       init_skills();
       init_task();
+      init_templates();
       init_terminal();
       init_sessions();
       init_task_diff();
@@ -7442,6 +7505,7 @@
               renderSkillLib();
               route();
             });
+            else if (path === "/templates") loadTemplates();
             else if (path === "/settings") loadSettings();
           }).catch(() => {
           });
@@ -7501,6 +7565,8 @@
           setSkillTab("skills");
           await loadSkillLib();
           renderSkillLib();
+        } else if (path === "/templates") {
+          loadTemplates();
         } else if (path === "/settings") {
           loadSettings();
         }
@@ -7551,6 +7617,7 @@
       window.logout = logout;
       window.mkdirCurrent = mkdirCurrent;
       window.moveProjectTask = moveProjectTask;
+      window.newTaskFromTemplate = newTaskFromTemplate;
       window.openAgentDetail = openAgentDetail;
       window.openCurrentRoleEditor = openCurrentRoleEditor;
       window.openDirPicker = openDirPicker;
@@ -7565,6 +7632,7 @@
       window.openSkillModal = openSkillModal;
       window.openSubTask = openSubTask;
       window.openTask = openTask;
+      window.openTemplateModal = openTemplateModal;
       window.openTerminal = openTerminal;
       window.patchProject = patchProject;
       window.patchTask = patchTask;
@@ -7604,6 +7672,7 @@
       window.submitSchedule = submitSchedule;
       window.submitSkill = submitSkill;
       window.submitTask = submitTask;
+      window.submitTemplate = submitTemplate;
       window.syncModelThinking = syncModelThinking;
       window.syncScheduleFields = syncScheduleFields;
       window.syncTaskConcurrency = syncTaskConcurrency;

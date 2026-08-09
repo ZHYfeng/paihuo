@@ -34,6 +34,47 @@ func mustTask(t *testing.T, s *Store, title string, agentID *int64, status strin
 	return id
 }
 
+// 任务模板：创建 → 读取 → 更新 → 删除 全链路，agent 关联随更新迁移。
+func TestTemplateCRUDRoundTrip(t *testing.T) {
+	s := openTest(t)
+	aid := mustAgent(t, s, "tpl-agent", true)
+
+	id, err := s.CreateTemplate(Template{Name: "发布检查", Body: "检查发布清单", AgentID: &aid})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetTemplate(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "发布检查" || got.Body != "检查发布清单" || got.AgentID == nil || *got.AgentID != aid {
+		t.Fatalf("GetTemplate = %+v, want 完整字段", got)
+	}
+
+	// 更新名称与内容；agent 置空应落库为 NULL
+	if err := s.UpdateTemplate(id, map[string]any{"name": "发布检查 v2", "body": "更新后的提示词", "agent_id": nil}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetTemplate(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "发布检查 v2" || got.Body != "更新后的提示词" || got.AgentID != nil {
+		t.Fatalf("UpdateTemplate 后 GetTemplate = %+v, want 新值且 agent_id NULL", got)
+	}
+	if got.AgentName != "" {
+		t.Fatalf("agent 置空后 AgentName = %q, want 空", got.AgentName)
+	}
+
+	if err := s.DeleteTemplate(id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetTemplate(id); err == nil {
+		t.Fatal("删除后 GetTemplate 应报错")
+	}
+}
+
 // 停用的角色不应出现在可派发队列里。
 func TestListQueuedTasksSkipsDisabledAgents(t *testing.T) {
 	s := openTest(t)

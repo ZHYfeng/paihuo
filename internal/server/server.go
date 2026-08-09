@@ -147,6 +147,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 			"projects":   template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/projects.html")),
 			"autopilots": template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/autopilots.html")),
 			"skills":     template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/skills.html")),
+			"templates":  template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/templates.html")),
 			"sessions":   template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/sessions.html")),
 			"settings":   template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/settings.html")),
 			"login":      template.Must(template.ParseFS(web.FS, "templates/login.html")),
@@ -164,6 +165,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 	m.HandleFunc("GET /projects", s.pageProjects)
 	m.HandleFunc("GET /autopilots", s.pageAutopilots)
 	m.HandleFunc("GET /skills", s.pageSkills)
+	m.HandleFunc("GET /templates", s.pageTemplates)
 	m.HandleFunc("GET /sessions", s.pageSessions)
 	m.HandleFunc("GET /settings", s.pageSettings)
 	m.HandleFunc("GET /login", s.pageLogin)
@@ -222,6 +224,7 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 
 	m.HandleFunc("GET /api/templates", s.listTemplates)
 	m.HandleFunc("POST /api/templates", s.createTemplate)
+	m.HandleFunc("PATCH /api/templates/{id}", s.patchTemplate)
 	m.HandleFunc("DELETE /api/templates/{id}", s.deleteTemplate)
 
 	m.HandleFunc("GET /api/agents", s.listAgents)
@@ -359,6 +362,10 @@ func (s *Server) pageAutopilots(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) pageSkills(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "skills", pageData{Active: "skills"})
+}
+
+func (s *Server) pageTemplates(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "templates", pageData{Active: "templates"})
 }
 
 func (s *Server) pageSessions(w http.ResponseWriter, r *http.Request) {

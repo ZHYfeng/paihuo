@@ -1,0 +1,48 @@
+{{define "content"}}
+<header class="page-header">
+  <div class="page-identity">
+    <span class="page-kicker">PROMPT TEMPLATES</span>
+    <h1>模板</h1>
+  </div>
+  <span class="spacer"></span>
+  <span class="header-note">沉淀可复用的任务提示词</span>
+  <button class="btn brand sm" onclick="openTemplateModal()">
+    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    新建模板
+  </button>
+</header>
+<div class="page-content">
+  <div class="toolbar">
+    <span class="toolbar-note">新建任务时可用模板填充「任务内容」与「角色」；任务详情中可将任务的提示词保存为模板。</span>
+    <span class="spacer"></span>
+  </div>
+  <div class="list-wrap">
+    <table class="list-grid template-grid">
+      <thead><tr><th>名称</th><th>角色</th><th>内容预览</th><th>创建时间</th><th style="width:180px">操作</th></tr></thead>
+      <tbody id="templateList"></tbody>
+    </table>
+    <div id="templateEmpty" class="empty hidden">
+      <b class="empty-title">还没有模板</b>
+      <span class="empty-copy">在任务详情点击「保存为模板」沉淀成功任务的提示词，或直接新建一个。</span>
+      <button type="button" class="btn brand sm" onclick="openTemplateModal()">新建模板</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal hidden" id="templateModal">
+  <div class="modal-box">
+    <h3 id="templateModalTitle">新建模板</h3>
+    <div class="sub">模板在新建任务时填充「任务内容」，并预选绑定的角色。</div>
+    <input type="hidden" id="tpId">
+    <label class="field">名称 <input id="tpName" data-autofocus placeholder="如：发布检查"></label>
+    <label class="field">角色 <select id="tpAgent"></select></label>
+    <label class="field">任务内容
+      <textarea id="tpBody" rows="8" placeholder="给 agent 的详细指令；创建任务时作为提示词填充。"></textarea>
+    </label>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('templateModal')">取消</button>
+      <button class="btn primary" onclick="submitTemplate()">保存</button>
+    </div>
+  </div>
+</div>
+{{end}}

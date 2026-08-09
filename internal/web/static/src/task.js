@@ -6,7 +6,7 @@ import { loadDashboard } from "./dashboard.js";
 import { loadHistory } from "./history.js";
 import { fillSelects, loadAll, refreshOverview } from "./main.js";
 import { refreshProjectDetail } from "./projects.js";
-import { loadTemplates } from "./skills.js";
+import { loadTemplates } from "./templates.js";
 import { INTERACTIVE_TERM_COLS, INTERACTIVE_TERM_ROWS, closeTaskTerminal, openTaskTerminal, openTerminal, sendTaskInput, taskTermAppendLog, taskTerminalText, termAppendLog } from "./terminal.js";
 
 // 任务详情是全站共享的视图。打开时只临时隐藏当前页面原本可见的直属内容，

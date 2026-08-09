@@ -627,41 +627,6 @@ export async function deleteSkill(id) {
   } catch (e) { toast(e.message, true); }
 }
 
-/* ---- 模板列表（提示词模板，任务详情「保存为模板」沉淀） ---- */
-
-export async function loadTemplates() {
-  try {
-    state.templates = await api("/api/templates");
-  } catch (_) { return; }
-  const sel = document.getElementById("tTemplate");
-  if (sel) sel.innerHTML = `<option value="">—</option>` + state.templates.map(t =>
-    `<option value="${t.id}">${esc(t.name)}</option>`).join("");
-  renderTemplateList();
-}
-
-export function renderTemplateList() {
-  const body = document.getElementById("templateList");
-  if (!body) return;
-  body.innerHTML = state.templates.map(t => `
-    <tr>
-      <td><b>${esc(t.name)}</b></td>
-      <td style="font-size:12px;color:var(--fg-muted);max-width:480px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc((t.body || "").slice(0, 90))}</td>
-      <td>${esc(t.agent_name || "-")}</td>
-      <td class="num">${(t.created_at || "").slice(0, 16).replace("T", " ")}</td>
-      <td><button class="btn xs danger" onclick="deleteTemplate(${t.id})">${icon("trash")}删除</button></td>
-    </tr>`).join("");
-  const empty = document.getElementById("templateEmpty");
-  if (empty) empty.classList.toggle("hidden", state.templates.length > 0);
-}
-
-export async function deleteTemplate(id) {
-  if (!confirm("删除该模板？")) return;
-  try {
-    await api(`/api/templates/${id}`, { method: "DELETE" });
-    await loadTemplates();
-  } catch (e) { toast(e.message, true); }
-}
-
 /* ============================================================
    设置页
    ============================================================ */

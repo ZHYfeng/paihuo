@@ -1132,6 +1132,60 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
 }
 
+func (s *Server) patchTemplate(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	set, ok := patchMap(w, r, "name", "body", "agent_id")
+	if !ok {
+		return
+	}
+	if v, ok := set["name"]; ok {
+		name, isString := v.(string)
+		if !isString || strings.TrimSpace(name) == "" {
+			writeErr(w, http.StatusBadRequest, "模板名不能为空")
+			return
+		}
+		set["name"] = strings.TrimSpace(name)
+	}
+	if v, ok := set["body"]; ok {
+		body, isString := v.(string)
+		if !isString || strings.TrimSpace(body) == "" {
+			writeErr(w, http.StatusBadRequest, "模板内容不能为空")
+			return
+		}
+	}
+	if v, ok := set["agent_id"]; ok {
+		if v == nil {
+			set["agent_id"] = nil
+		} else if aid, isNum := v.(float64); isNum && aid > 0 {
+			if _, err := s.st.GetAgent(int64(aid)); err != nil {
+				writeErr(w, http.StatusBadRequest, "角色不存在")
+				return
+			}
+			set["agent_id"] = int64(aid)
+		} else {
+			writeErr(w, http.StatusBadRequest, "agent_id 非法")
+			return
+		}
+	}
+	if len(set) == 0 {
+		writeErr(w, http.StatusBadRequest, "没有可更新的字段")
+		return
+	}
+	if err := s.st.UpdateTemplate(id, set); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	tpl, err := s.st.GetTemplate(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, tpl)
+}
+
 func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {

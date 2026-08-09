@@ -61,6 +61,10 @@
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.4L19 10l-5.2 1.6L12 17l-1.8-5.4L5 10l5.2-1.6L12 3Z"/></svg>
         <span>技能</span>
       </a>
+      <a class="sidebar-link {{if eq .Active "templates"}}active{{end}}" href="/templates" aria-label="模板" title="模板" {{if eq .Active "templates"}}aria-current="page"{{end}}>
+        <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-6-4-6 4V3Z"/></svg>
+        <span>模板</span>
+      </a>
       <a class="sidebar-link {{if eq .Active "autopilots"}}active{{end}}" href="/autopilots" aria-label="定时任务" title="定时任务" {{if eq .Active "autopilots"}}aria-current="page"{{end}}>
         <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg>
         <span>定时任务</span>

@@ -2249,6 +2249,35 @@ func (s *Store) CreateTemplate(tpl Template) (int64, error) {
 	return res.LastInsertId()
 }
 
+func (s *Store) GetTemplate(id int64) (*Template, error) {
+	row := s.db.QueryRow(`SELECT t.id, t.name, t.body, t.agent_id, COALESCE(a.name,''), t.created_at
+		FROM templates t LEFT JOIN agents a ON a.id=t.agent_id WHERE t.id=?`, id)
+	var tpl Template
+	var aid sql.NullInt64
+	if err := row.Scan(&tpl.ID, &tpl.Name, &tpl.Body, &aid, &tpl.AgentName, &tpl.CreatedAt); err != nil {
+		return nil, err
+	}
+	if aid.Valid {
+		tpl.AgentID = &aid.Int64
+	}
+	return &tpl, nil
+}
+
+func (s *Store) UpdateTemplate(id int64, set map[string]any) error {
+	if len(set) == 0 {
+		return nil
+	}
+	cols := make([]string, 0, len(set))
+	vals := make([]any, 0, len(set)+1)
+	for k, v := range set {
+		cols = append(cols, k+"=?")
+		vals = append(vals, v)
+	}
+	vals = append(vals, id)
+	_, err := s.db.Exec(fmt.Sprintf("UPDATE templates SET %s WHERE id=?", strings.Join(cols, ", ")), vals...)
+	return err
+}
+
 func (s *Store) DeleteTemplate(id int64) error {
 	_, err := s.db.Exec("DELETE FROM templates WHERE id=?", id)
 	return err
