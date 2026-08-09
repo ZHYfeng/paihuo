@@ -6,6 +6,9 @@ This file records notable user-facing and maintainer-facing changes. The format 
 
 ### Added
 
+- **交付任务删除后会话自动解冻**：会话交付的任务（`sessions.task_id` 外键引用）此前**无法删除**——硬删触发 `FOREIGN KEY constraint failed` 500，任务残留为 cancelled「任务已删除」，delivered 会话也永久冻结（`delivered` 状态无任何出口，前端无丢弃按钮）。现在删除任务时先解除会话引用（`task_id` 置空），delivered 会话自动回 `suspended`（可丢弃/重新交付），任务可正常删除。
+- **活跃会话可丢弃**：codex 等终端式会话 active 状态此前只有「中止/交付」，无法丢弃；现在 header 增加「丢弃」按钮（确认后中止进程、清理 worktree、删除会话），状态机 `active → deleted` 本就允许。
+- **终端式会话（codex/claude）结束后回放最后画面**：此前交付/挂起/进程退出后终端窗口消失，重新打开会话终端区域永远空白（`TermOutput` 对无活跃进程的会话返回 409，前端吞掉后停在初始空画面）。现在每次捕获帧都持久化到 `<session_dir>/term.out`，无活跃进程时回退读取：delivered/deleted 返回最后画面并停止轮询，created/suspended 保持轮询直到自动恢复拉起真实窗口（避免过早停轮询导致恢复后空白）。
 - **codex 会话不再卡在目录信任确认**：codex 交互 TUI 对不在信任列表的目录每次新进程都会弹「Do you trust the contents of this directory?」并等回车（实测 `--skip-git-repo-check` 仅 exec 子命令可用、`skip_git_repo_check` 配置项与 `-c` 覆盖对 TUI 均无效、无环境变量，交互模式没有真正的跳过开关），会话恢复时重新 spawn 就卡在确认画面。现在 spawn 后自动检测该确认并回车选择「Yes, continue」（仅匹配 codex 专属文案，120 秒窗口、命中一次即止、窗口消失即退），等效跳过检查：paihuo 不写任何配置文件，确认由 codex 正常处理（与用户手动回车等价，codex 自行记录已确认目录）。会话目录是 paihuo 管理的隔离 worktree，与批处理任务（exec 自动跳过检查）同权。
 - **新建会话不再默认绑定项目**：此前「项目」下拉默认选中第一个项目，不手动选择也会实际归属该项目；现在默认「（无项目）」，不选择即不关联任何项目——会话在独立目录（`sessions/session-N`）运行，头部/列表不再显示项目名。无项目会话无法交付为任务（任务必须在项目目录执行，后端显式拒绝并提示）。
 - **会话统一自动启动，去掉「启动」按钮**：打开会话视图时 `created` 状态自动启动、终端式（codex/claude）`suspended` 状态自动恢复（pi/omp 挂起会话仍由发送消息触发恢复，不提前拉起）；新建会话带初始指令时等待自动启动完成后自动发送，不再重复调用 start。

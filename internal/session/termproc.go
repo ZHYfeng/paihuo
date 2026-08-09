@@ -22,10 +22,11 @@ import (
 //
 // 设计：docs/design/07-fallback-cli.md
 type termProc struct {
-	mu     sync.Mutex
-	window string // session-<id>
-	socket string
-	done   chan struct{} // Kill 时关闭，终止 autoConfirmTrust 等后台协程
+	mu      sync.Mutex
+	window  string // session-<id>
+	socket  string
+	archive string        // 最后捕获帧的持久化路径（<session_dir>/term.out）
+	done    chan struct{} // Kill 时关闭，终止 autoConfirmTrust 等后台协程
 }
 
 const termInteractiveCols = 80
@@ -180,6 +181,11 @@ func (p *termProc) Output(id int64) (string, bool, error) {
 	if err != nil {
 		// 窗口丢失（进程退出/kill）
 		return "", false, nil
+	}
+	// 持久化最后帧：交付/挂起/进程退出后终端窗口消失，前端靠这个文件
+	// 回放最后一次画面（delivered 会话不再空白）。
+	if p.archive != "" {
+		_ = os.WriteFile(p.archive, []byte(out), 0o644)
 	}
 	return out, true, nil
 }

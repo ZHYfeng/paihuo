@@ -1666,6 +1666,37 @@ func (s *Store) DeleteTask(id int64) error {
 	return tx.Commit()
 }
 
+// DetachTaskFromSessions 解除所有会话对该任务的引用（sessions.task_id=NULL），
+// 返回受影响会话 id。任务硬删前必须调用：sessions.task_id 的外键（无 ON
+// DELETE 动作）会阻止删除交付任务，且任务删除后交付会话失去冻结对象，
+// 应解冻回可丢弃状态。
+func (s *Store) DetachTaskFromSessions(taskID int64) ([]int64, error) {
+	rows, err := s.db.Query("SELECT id FROM sessions WHERE task_id=?", taskID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if _, err := s.db.Exec("UPDATE sessions SET task_id=NULL, updated_at=? WHERE task_id=?", Now(), taskID); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 // collectTaskTreeIDs 收集级联删除的任务树。依赖关系不是父子关系，只有
 // parent_id/merge_of 指向的任务才会随根任务一起删除。
 func collectTaskTreeIDs(tx *sql.Tx, id int64, seen map[int64]bool) error {

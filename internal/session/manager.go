@@ -247,6 +247,7 @@ func (m *Manager) startTerminal(ss *store.Session, agent store.Agent, dir string
 		return err
 	}
 	term := newTermProc(m.termSocket())
+	term.archive = filepath.Join(m.sessionDirOf(ss.ID), "term.out")
 	if err := term.Spawn(ss.ID, bin, args, env, dir, initial); err != nil {
 		return err
 	}
@@ -309,10 +310,21 @@ func (m *Manager) TermResize(id int64, cols, rows int) error {
 // TermOutput 增量读取终端输出（S5）。
 func (m *Manager) TermOutput(id int64) (string, bool, error) {
 	term, err := m.activeTerm(id)
-	if err != nil {
-		return "", false, err
+	if err == nil {
+		return term.Output(id)
 	}
-	return term.Output(id)
+	// 无活跃终端：回退读最后捕获帧。终态会话（delivered/deleted）返回
+	// alive=false 供前端停止轮询；可启动会话（created/suspended）保持
+	// alive=true 直到自动恢复拉起真实窗口，避免前端过早停轮询显示空白。
+	ss, gerr := m.st.GetSession(id)
+	if gerr == nil && ss != nil && (ss.CLI == "codex" || ss.CLI == "claude") {
+		archive := filepath.Join(m.sessionDirOf(id), "term.out")
+		if data, rerr := os.ReadFile(archive); rerr == nil {
+			alive := ss.Status == store.SessionStatusCreated || ss.Status == store.SessionStatusSuspended
+			return string(data), alive, nil
+		}
+	}
+	return "", false, err
 }
 
 func (m *Manager) activeTerm(id int64) (*termProc, error) {

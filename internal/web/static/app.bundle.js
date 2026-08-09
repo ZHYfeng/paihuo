@@ -1850,7 +1850,8 @@
         ${s5.status === "created" ? b2`<button class="danger" @click=${() => this.act("delete")}>丢弃</button>` : ""}
         ${s5.status === "active" ? b2`
           ${running ? b2`<button @click=${() => this.act("abort")}>中止</button>` : ""}
-          <button class="primary" @click=${() => this.act("deliver")}>交付</button>` : ""}
+          <button class="primary" @click=${() => this.act("deliver")}>交付</button>
+          <button class="danger" @click=${() => this.act("delete")}>丢弃</button>` : ""}
         ${s5.status === "suspended" ? b2`
           <button class="primary" @click=${() => this.act("deliver")}>交付</button>
           <button class="danger" @click=${() => this.act("delete")}>丢弃</button>` : ""}

@@ -815,7 +815,8 @@ export class PhSessionHeader extends LitElement {
         ${s.status === "created" ? html`<button class="danger" @click=${() => this.act("delete")}>丢弃</button>` : ""}
         ${s.status === "active" ? html`
           ${running ? html`<button @click=${() => this.act("abort")}>中止</button>` : ""}
-          <button class="primary" @click=${() => this.act("deliver")}>交付</button>` : ""}
+          <button class="primary" @click=${() => this.act("deliver")}>交付</button>
+          <button class="danger" @click=${() => this.act("delete")}>丢弃</button>` : ""}
         ${s.status === "suspended" ? html`
           <button class="primary" @click=${() => this.act("deliver")}>交付</button>
           <button class="danger" @click=${() => this.act("delete")}>丢弃</button>` : ""}

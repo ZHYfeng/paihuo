@@ -692,6 +692,56 @@ func TestDeleteTaskRewiresWeakDependents(t *testing.T) {
 	}
 }
 
+// TestDetachTaskFromSessions 交付任务硬删前解除会话引用：
+// task_id 清空、只影响引用该任务的会话、引用其他任务的会话不动。
+func TestDetachTaskFromSessions(t *testing.T) {
+	s := openTest(t)
+	agentID := mustAgent(t, s, "detach-agent", true)
+	taskID, err := s.CreateTask(Task{Title: "delivered", AgentID: &agentID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID, err := s.CreateTask(Task{Title: "other", AgentID: &agentID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tid := taskID
+	sid1, err := s.CreateSession(Session{Title: "s1", AgentID: agentID, Status: SessionStatusDelivered, TaskID: &tid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid2, err := s.CreateSession(Session{Title: "s2", AgentID: agentID, Status: SessionStatusDelivered, TaskID: &tid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oid := otherID
+	if _, err := s.CreateSession(Session{Title: "s3", AgentID: agentID, Status: SessionStatusDelivered, TaskID: &oid}); err != nil {
+		t.Fatal(err)
+	}
+
+	affected, err := s.DetachTaskFromSessions(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(affected) != 2 || affected[0] != sid1 || affected[1] != sid2 {
+		t.Fatalf("应返回引用该任务的两个会话: %v", affected)
+	}
+	for _, sid := range []int64{sid1, sid2} {
+		ss, err := s.GetSession(sid)
+		if err != nil || ss.TaskID != nil {
+			t.Fatalf("会话 %d 的 task_id 应被清空: %+v err=%v", sid, ss, err)
+		}
+	}
+	ss3, err := s.GetSession(sid2 + 1)
+	if err != nil || ss3.TaskID == nil || *ss3.TaskID != otherID {
+		t.Fatalf("引用其他任务的会话不应被波及: %+v err=%v", ss3, err)
+	}
+	// 解除引用后硬删不应再触发外键约束。
+	if err := s.DeleteTask(taskID); err != nil {
+		t.Fatalf("解除引用后删除任务应成功: %v", err)
+	}
+}
+
 // 弱依赖在非阻塞失败时放行，强依赖始终等待成功交付；Git 任务的交付还包括
 // 它专属的代码合并任务。该测试同时覆盖“合并任务优先于后续实现任务”的队列顺序。
 func TestTaskDependencyFailureAndMergeDelivery(t *testing.T) {

@@ -29,8 +29,11 @@ var transitions = map[string]map[string]bool{
 		store.SessionStatusDelivered: true,
 		store.SessionStatusDeleted:   true,
 	},
-	store.SessionStatusDelivered: {},
-	store.SessionStatusDeleted:   {},
+	store.SessionStatusDelivered: {
+		// 交付任务被删除后解冻回挂起（任务没了，会话可丢弃/重新交付）。
+		store.SessionStatusSuspended: true,
+	},
+	store.SessionStatusDeleted: {},
 }
 
 var (

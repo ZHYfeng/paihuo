@@ -91,6 +91,7 @@ func TestStateMachine(t *testing.T) {
 		{store.SessionStatusSuspended, store.SessionStatusDeleted, true},
 		{store.SessionStatusDelivered, store.SessionStatusActive, false},
 		{store.SessionStatusDelivered, store.SessionStatusDeleted, false},
+		{store.SessionStatusDelivered, store.SessionStatusSuspended, true}, // 交付任务删除后解冻
 		{store.SessionStatusDeleted, store.SessionStatusActive, false},
 	}
 	for _, c := range cases {
