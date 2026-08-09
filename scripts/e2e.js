@@ -202,6 +202,33 @@ function findChrome() {
     sessionTemplateProbe.focused && sessionTemplateProbe.label === "插入模板";
   sessionTemplateOK ? ok("会话草稿插入模板") : fail(`会话模板插入回归失败：${JSON.stringify(sessionTemplateProbe)}`);
 
+  // 顶部进度条表示全文中的实际阅读位置。仅加载尾部 100/1000 条时，
+  // 可见窗口应覆盖 90%–100%；全部历史加载后则覆盖 0%–100%。
+  const sessionProgressProbe = await page.evaluate(() => {
+    const stream = document.createElement("ph-message-stream");
+    const metrics = scrollTop => ({ scrollTop, scrollHeight: 1100, clientHeight: 100 });
+    const tail = { transcriptLoaded: 100, transcriptTotal: 1000, transcriptExhausted: false };
+    const full = { transcriptLoaded: 1000, transcriptTotal: 1000, transcriptExhausted: true };
+    const filteredFull = { transcriptLoaded: 80, transcriptTotal: 100, transcriptExhausted: true };
+    return {
+      tailTop: stream._railPercent(metrics(0), tail),
+      tailMiddle: stream._railPercent(metrics(500), tail),
+      tailBottom: stream._railPercent(metrics(1000), tail),
+      fullTop: stream._railPercent(metrics(0), full),
+      fullMiddle: stream._railPercent(metrics(500), full),
+      fullBottom: stream._railPercent(metrics(1000), full),
+      filteredTop: stream._railPercent(metrics(0), filteredFull),
+      noOverflow: stream._railPercent({ scrollTop: 0, scrollHeight: 100, clientHeight: 100 }, full),
+    };
+  });
+  const near = (actual, expected) => Math.abs(actual - expected) < 0.001;
+  const sessionProgressOK = near(sessionProgressProbe.tailTop, 90) &&
+    near(sessionProgressProbe.tailMiddle, 95) && near(sessionProgressProbe.tailBottom, 100) &&
+    near(sessionProgressProbe.fullTop, 0) && near(sessionProgressProbe.fullMiddle, 50) &&
+    near(sessionProgressProbe.fullBottom, 100) && near(sessionProgressProbe.filteredTop, 0) &&
+    near(sessionProgressProbe.noOverflow, 100);
+  sessionProgressOK ? ok("会话顶部进度条跟随实际阅读位置") : fail(`会话进度条回归失败：${JSON.stringify(sessionProgressProbe)}`);
+
   // 2) 关键交互
   console.log("— 交互回归 —");
   await page.goto(URL + "/roles");

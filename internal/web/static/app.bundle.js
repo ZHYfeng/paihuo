@@ -4858,6 +4858,7 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
           this.sessionId = null;
           this._atBottom = true;
           this._loadingOlder = false;
+          this._lastRailPercent = 100;
           this._onLive = () => this.requestUpdate();
           this._onTranscript = () => {
             this.entries = sessionState.entries;
@@ -4889,15 +4890,22 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
           window.removeEventListener("ph-session-message", this._onLive);
           window.removeEventListener("ph-session-ask-answered", this._onAskAnswered);
           window.removeEventListener("ph-session-transcript", this._onTranscript);
+          cancelAnimationFrame(this._scrollRaf);
+          cancelAnimationFrame(this._railRaf);
         }
         willUpdate(ch) {
-          if (ch.has("sessionId")) this._atBottom = true;
+          if (ch.has("sessionId")) {
+            this._atBottom = true;
+            this._lastRailPercent = 100;
+          }
         }
         updated() {
           if (this._atBottom) {
             cancelAnimationFrame(this._scrollRaf);
             this._scrollRaf = requestAnimationFrame(() => this.scrollToBottom());
           }
+          cancelAnimationFrame(this._railRaf);
+          this._railRaf = requestAnimationFrame(() => this._syncRail());
           const chat = this.renderRoot.querySelector(".chat");
           if (chat) {
             for (const el of chat.querySelectorAll("ph-msg-user, ph-msg-assistant, ph-msg-bash, ph-msg-custom, ph-ask-card, ph-tool-card")) {
@@ -4907,11 +4915,15 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
         }
         scrollToBottom() {
           const chat = this.renderRoot.querySelector(".chat");
-          if (chat) chat.scrollTop = chat.scrollHeight;
+          if (chat) {
+            chat.scrollTop = chat.scrollHeight;
+            this._syncRail(chat);
+          }
         }
         onScroll(e6) {
           const chat = e6.currentTarget;
           this._atBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
+          this._syncRail(chat);
           if (chat.scrollTop <= 40) this._loadMore();
         }
         async _loadMore() {
@@ -4927,6 +4939,7 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
             await new Promise((r6) => requestAnimationFrame(() => requestAnimationFrame(r6)));
             if (!chat.isConnected) return;
             chat.scrollTop = chat.scrollHeight - prevHeight + 40;
+            this._syncRail(chat);
           } finally {
             this._loadingOlder = false;
           }
@@ -4945,11 +4958,31 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
           const pre = wrapper && wrapper.querySelector("pre code");
           if (pre) copyText(pre.textContent, btn);
         }
-        _railPosition() {
-          const st2 = sessionState;
-          const total = Math.max(1, st2.transcriptTotal);
-          const pos = st2.transcriptLoaded / total * 100;
-          return `${Math.min(100, Math.max(0, pos)).toFixed(2)}%`;
+        // 顶部 rail 表示「当前阅读位置」，不是「历史加载完成度」。首屏只加载
+        // 尾部一页时，已加载 100/1000 代表可见窗口覆盖全文的 90%–100%，而
+        // 不是阅读位置固定在 10%。窗口内再按真实 scrollTop 插值，滚动时同步。
+        // state 参数仅供浏览器回归测试注入边界数据，生产路径使用 sessionState。
+        _railPercent(chat, state2 = sessionState) {
+          const total = Math.max(0, Number(state2.transcriptTotal) || 0);
+          if (!total) return 100;
+          const loaded = Math.min(total, Math.max(0, Number(state2.transcriptLoaded) || 0));
+          const hiddenBefore = state2.transcriptExhausted ? 0 : Math.max(0, total - loaded);
+          const visibleWindow = total - hiddenBefore;
+          const maxScroll = chat ? Math.max(0, (Number(chat.scrollHeight) || 0) - (Number(chat.clientHeight) || 0)) : 0;
+          const local = maxScroll > 0 ? Math.min(1, Math.max(0, (Number(chat.scrollTop) || 0) / maxScroll)) : 1;
+          const percent = (hiddenBefore + visibleWindow * local) / total * 100;
+          return Math.min(100, Math.max(0, percent));
+        }
+        _syncRail(chat = this.renderRoot.querySelector(".chat")) {
+          if (!chat) return;
+          const rail = this.renderRoot.querySelector(".conversation-rail");
+          const track = this.renderRoot.querySelector(".rail-track");
+          if (!rail || !track) return;
+          const percent = this._railPercent(chat);
+          this._lastRailPercent = percent;
+          track.style.setProperty("--rail-position", `${percent.toFixed(2)}%`);
+          rail.setAttribute("aria-valuenow", String(Math.round(percent)));
+          rail.title = `\u5F53\u524D\u9605\u8BFB\u4F4D\u7F6E\uFF1A\u7EA6 ${Math.round(percent)}%\uFF08\u5DF2\u52A0\u8F7D ${sessionState.transcriptLoaded}/${sessionState.transcriptTotal}\uFF09`;
         }
         renderHistoryBoundary() {
           const st2 = sessionState;
@@ -4985,9 +5018,12 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
         ${this.renderDock()}
       </div>`;
           }
+          const railPercent = this._lastRailPercent;
           return b2`<div class="chat-wrap">
-      <div class="conversation-rail" title=${`\u6D88\u606F\u4F4D\u7F6E\uFF1A\u7EA6 ${Math.round(parseFloat(this._railPosition()))}%\uFF08\u5DF2\u52A0\u8F7D ${sessionState.transcriptLoaded}/${sessionState.transcriptTotal}\uFF09`}>
-        <div class="rail-track" style=${`--rail-position:${this._railPosition()}`}>
+      <div class="conversation-rail" role="progressbar" aria-label="当前阅读位置" aria-valuemin="0" aria-valuemax="100"
+        aria-valuenow=${Math.round(railPercent)}
+        title=${`\u5F53\u524D\u9605\u8BFB\u4F4D\u7F6E\uFF1A\u7EA6 ${Math.round(railPercent)}%\uFF08\u5DF2\u52A0\u8F7D ${sessionState.transcriptLoaded}/${sessionState.transcriptTotal}\uFF09`}>
+        <div class="rail-track" style=${`--rail-position:${railPercent.toFixed(2)}%`}>
           <div class="rail-progress"></div>
           <div class="rail-marker"></div>
         </div>

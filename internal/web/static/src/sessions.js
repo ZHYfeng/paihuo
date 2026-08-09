@@ -1007,6 +1007,7 @@ export class PhMessageStream extends LitElement {
     this.sessionId = null;
     this._atBottom = true;
     this._loadingOlder = false;
+    this._lastRailPercent = 100;
     // SSE 事件 → 强制重渲染（entries 原地变更，属性引用不变）
     this._onLive = () => this.requestUpdate();
     // loadEarlier 分页合并后：同步本地 entries 快照并重渲染。
@@ -1044,9 +1045,14 @@ export class PhMessageStream extends LitElement {
     window.removeEventListener("ph-session-message", this._onLive);
     window.removeEventListener("ph-session-ask-answered", this._onAskAnswered);
     window.removeEventListener("ph-session-transcript", this._onTranscript);
+    cancelAnimationFrame(this._scrollRaf);
+    cancelAnimationFrame(this._railRaf);
   }
   willUpdate(ch) {
-    if (ch.has("sessionId")) this._atBottom = true; // 切换会话后回到底部
+    if (ch.has("sessionId")) {
+      this._atBottom = true; // 切换会话后回到底部
+      this._lastRailPercent = 100;
+    }
   }
   updated() {
     if (this._atBottom) {
@@ -1055,6 +1061,11 @@ export class PhMessageStream extends LitElement {
       cancelAnimationFrame(this._scrollRaf);
       this._scrollRaf = requestAnimationFrame(() => this.scrollToBottom());
     }
+    // entries 更新、分页插入和子消息完成渲染都会改变 scrollHeight。
+    // 下一帧按最终布局重新校准阅读位置；只改 rail 自身，避免滚动时
+    // 重渲染整条消息列表。
+    cancelAnimationFrame(this._railRaf);
+    this._railRaf = requestAnimationFrame(() => this._syncRail());
     // 防御竞态：模板切换/高频重渲染下，个别 ph-msg-* 子组件的首次更新
     // 可能未执行（shadow 内容为空）。仅对从未渲染过的子组件强制刷新，
     // 正常路径零开销（hasUpdated 为 true 直接跳过）。
@@ -1068,11 +1079,15 @@ export class PhMessageStream extends LitElement {
   scrollToBottom() {
     // 滚动容器是 .chat，不是 host（host 无 overflow，设置 scrollTop 无效）
     const chat = this.renderRoot.querySelector(".chat");
-    if (chat) chat.scrollTop = chat.scrollHeight;
+    if (chat) {
+      chat.scrollTop = chat.scrollHeight;
+      this._syncRail(chat);
+    }
   }
   onScroll(e) {
     const chat = e.currentTarget;
     this._atBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
+    this._syncRail(chat);
     // 滚到顶部加载更早（pi-web：Scroll up to load earlier messages）
     if (chat.scrollTop <= 40) this._loadMore();
   }
@@ -1092,6 +1107,7 @@ export class PhMessageStream extends LitElement {
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       if (!chat.isConnected) return;
       chat.scrollTop = chat.scrollHeight - prevHeight + 40;
+      this._syncRail(chat);
     } finally {
       this._loadingOlder = false;
     }
@@ -1110,11 +1126,38 @@ export class PhMessageStream extends LitElement {
     const pre = wrapper && wrapper.querySelector("pre code");
     if (pre) copyText(pre.textContent, btn);
   }
-  _railPosition() {
-    const st = sessionState;
-    const total = Math.max(1, st.transcriptTotal);
-    const pos = (st.transcriptLoaded / total) * 100;
-    return `${Math.min(100, Math.max(0, pos)).toFixed(2)}%`;
+  // 顶部 rail 表示「当前阅读位置」，不是「历史加载完成度」。首屏只加载
+  // 尾部一页时，已加载 100/1000 代表可见窗口覆盖全文的 90%–100%，而
+  // 不是阅读位置固定在 10%。窗口内再按真实 scrollTop 插值，滚动时同步。
+  // state 参数仅供浏览器回归测试注入边界数据，生产路径使用 sessionState。
+  _railPercent(chat, state = sessionState) {
+    const total = Math.max(0, Number(state.transcriptTotal) || 0);
+    if (!total) return 100;
+
+    const loaded = Math.min(total, Math.max(0, Number(state.transcriptLoaded) || 0));
+    // transcriptTotal 是原始 JSONL 条目数，entries 是可渲染条目数；翻到
+    // 文件开头后两者可能不相等，此时仍应从全文 0% 起算。
+    const hiddenBefore = state.transcriptExhausted ? 0 : Math.max(0, total - loaded);
+    const visibleWindow = total - hiddenBefore;
+    const maxScroll = chat
+      ? Math.max(0, (Number(chat.scrollHeight) || 0) - (Number(chat.clientHeight) || 0))
+      : 0;
+    const local = maxScroll > 0
+      ? Math.min(1, Math.max(0, (Number(chat.scrollTop) || 0) / maxScroll))
+      : 1;
+    const percent = ((hiddenBefore + visibleWindow * local) / total) * 100;
+    return Math.min(100, Math.max(0, percent));
+  }
+  _syncRail(chat = this.renderRoot.querySelector(".chat")) {
+    if (!chat) return;
+    const rail = this.renderRoot.querySelector(".conversation-rail");
+    const track = this.renderRoot.querySelector(".rail-track");
+    if (!rail || !track) return;
+    const percent = this._railPercent(chat);
+    this._lastRailPercent = percent;
+    track.style.setProperty("--rail-position", `${percent.toFixed(2)}%`);
+    rail.setAttribute("aria-valuenow", String(Math.round(percent)));
+    rail.title = `当前阅读位置：约 ${Math.round(percent)}%（已加载 ${sessionState.transcriptLoaded}/${sessionState.transcriptTotal}）`;
   }
   renderHistoryBoundary() {
     const st = sessionState;
@@ -1145,9 +1188,12 @@ export class PhMessageStream extends LitElement {
         ${this.renderDock()}
       </div>`;
     }
+    const railPercent = this._lastRailPercent;
     return html`<div class="chat-wrap">
-      <div class="conversation-rail" title=${`消息位置：约 ${Math.round(parseFloat(this._railPosition()))}%（已加载 ${sessionState.transcriptLoaded}/${sessionState.transcriptTotal}）`}>
-        <div class="rail-track" style=${`--rail-position:${this._railPosition()}`}>
+      <div class="conversation-rail" role="progressbar" aria-label="当前阅读位置" aria-valuemin="0" aria-valuemax="100"
+        aria-valuenow=${Math.round(railPercent)}
+        title=${`当前阅读位置：约 ${Math.round(railPercent)}%（已加载 ${sessionState.transcriptLoaded}/${sessionState.transcriptTotal}）`}>
+        <div class="rail-track" style=${`--rail-position:${railPercent.toFixed(2)}%`}>
           <div class="rail-progress"></div>
           <div class="rail-marker"></div>
         </div>
