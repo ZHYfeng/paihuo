@@ -457,6 +457,9 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   min-width: 0; font-size: 10.5px; color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
 }
+.card .c-identity,
+.card .c-tags { display: contents; }
+.card .c-status { display: none; }
 .card .c-top .c-id,
 .card .c-top .c-time { flex: 0 0 auto; white-space: nowrap; }
 .card .c-top .c-id { font-weight: 700; color: var(--fg-muted); }
@@ -476,6 +479,7 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); cursor: pointe
   display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg-muted);
 }
 .card .c-agent .avatar { width: 15px; height: 15px; }
+.card .c-agent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .c-foot { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--fg-faint); }
 .card .chip {
   flex: 0 0 auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -3212,6 +3216,129 @@ a.project-card:hover { color: inherit; text-decoration: none; }
     padding: 10px 12px 20px;
     gap: 10px;
   }
+
+  /* 看板卡片在手机上使用明确的信息层级，避免桌面端标签流先于标题堆叠。 */
+  #boardShell .board-section-head {
+    gap: 5px;
+    padding: 12px 13px 10px;
+  }
+
+  #boardShell .board-section-head p {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+
+  #boardShell .board-section-counts { margin-left: 0; }
+
+  #boardShell .board-section-lanes {
+    gap: 9px;
+    padding: 8px;
+    scroll-padding-inline: 8px;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #boardShell .board-section-lanes::-webkit-scrollbar { display: none; }
+
+  #boardShell .board-col {
+    width: min(360px, calc(100vw - 50px));
+    min-width: min(360px, calc(100vw - 50px));
+    height: min(420px, 58vh);
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+  }
+
+  #boardShell .board-col-body {
+    gap: 8px;
+    padding: 3px 7px 9px;
+  }
+
+  #boardShell .card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "identity status"
+      "title title"
+      "desc desc"
+      "tags tags"
+      "meta meta";
+    column-gap: 9px;
+    row-gap: 7px;
+    min-width: 0;
+    padding: 12px 12px 12px 15px;
+  }
+
+  #boardShell .card .c-top { display: contents; }
+
+  #boardShell .card .c-identity {
+    grid-area: identity;
+    display: inline-flex;
+    align-items: center;
+    align-self: center;
+    gap: 7px;
+    min-width: 0;
+    color: var(--fg-faint);
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  #boardShell .card .c-status {
+    grid-area: status;
+    display: inline-flex;
+    align-self: center;
+    justify-self: end;
+    min-height: 22px;
+    padding: 2px 7px;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  #boardShell .card .c-title {
+    grid-area: title;
+    margin: 0;
+    font-size: 14px;
+    line-height: 19px;
+  }
+
+  #boardShell .card .c-desc {
+    grid-area: desc;
+    font-size: 12px;
+    line-height: 17px;
+  }
+
+  #boardShell .card .c-tags {
+    grid-area: tags;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  #boardShell .card .c-tags:empty { display: none; }
+
+  #boardShell .card .chip {
+    min-height: 20px;
+    display: inline-flex;
+    align-items: center;
+    padding-inline: 7px;
+    line-height: 16px;
+  }
+
+  #boardShell .card .c-meta {
+    grid-area: meta;
+    min-width: 0;
+    margin-top: 1px;
+    padding-top: 9px;
+    border-top: 1px solid var(--border);
+  }
+
+  #boardShell .card .c-meta > .chip { max-width: min(58%, 180px); }
+  #boardShell .card .c-foot { min-width: 0; }
+  #boardShell .card .c-agent { min-width: 0; max-width: 145px; }
 }
 
 /* V11 · 历史页移动端

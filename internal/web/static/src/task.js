@@ -193,26 +193,33 @@ export function renderBoard() {
 
 export function cardHTML(t) {
   const blocked = mergeBlockReason(t);
+  const status = STATUS_LABEL[t.status] || t.status || "未知";
+  const tags = [
+    taskKindChip(t),
+    dependencyChip(t),
+    dependencyStateChip(t),
+    sourceMergeChip(t),
+    blocked ? `<span class="chip merge-blocked">${blocked}</span>` : "",
+    t.perm === "review" ? `<span class="chip review">审批</span>` : "",
+    t.run_mode === "interactive" ? `<span class="chip">交互</span>` : "",
+    t.concurrent ? `<span class="chip">并发</span>` : "",
+    t.review_rounds > 0 ? `<span class="chip">第${t.review_rounds}轮</span>` : "",
+  ].join("");
   return `<article class="card" onclick="openTask(${t.id})" style="--st-color:${ST_COLOR[t.status]}">
     <div class="c-top">
-      <span class="st-dot"></span><span class="c-id">#${t.id}</span>
-      <span class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</span>
-      ${taskKindChip(t)}
-      ${dependencyChip(t)}
-      ${dependencyStateChip(t)}
-      ${sourceMergeChip(t)}
-      ${blocked ? `<span class="chip merge-blocked">${blocked}</span>` : ""}
-      ${t.perm === "review" ? `<span class="chip review">审批</span>` : ""}
-      ${t.run_mode === "interactive" ? `<span class="chip">交互</span>` : ""}
-      ${t.concurrent ? `<span class="chip">并发</span>` : ""}
-      ${t.review_rounds > 0 ? `<span class="chip">第${t.review_rounds}轮</span>` : ""}
+      <span class="c-identity">
+        <span class="st-dot"></span><span class="c-id">#${t.id}</span>
+        <time class="c-time">${(t.created_at || "").slice(5, 16).replace("T", " ")}</time>
+      </span>
+      <span class="badge c-status ${esc(t.status || "unknown")}"><span class="st-dot"></span>${esc(status)}</span>
+      <span class="c-tags">${tags}</span>
     </div>
     <a class="c-title card-primary-action" href="#/issue/${t.id}" onclick="event.stopPropagation();openTask(${t.id});return false">${esc(t.title)}</a>
     ${t.body ? `<div class="c-desc">${esc(t.body)}</div>` : ""}
     <div class="c-meta">
       ${t.project_id && t.project_name ? `<a class="chip chip-link" href="/projects#/project/${t.project_id}" title="打开项目页" onclick="event.stopPropagation()">${esc(t.project_name)}</a>` : ""}
       <span class="c-foot">
-        ${t.agent_name ? `<span class="c-agent"><span class="avatar sm">${esc((t.agent_name || "?").slice(0, 1))}</span>${esc(t.agent_name)}</span>` : `<span class="c-agent" style="color:var(--fg-faint)">未指派</span>`}
+        ${t.agent_name ? `<span class="c-agent"><span class="avatar sm">${esc((t.agent_name || "?").slice(0, 1))}</span><span class="c-agent-name">${esc(t.agent_name)}</span></span>` : `<span class="c-agent" style="color:var(--fg-faint)">未指派</span>`}
         ${t.error ? `<span style="color:var(--danger)">✗</span>` : ""}
       </span>
     </div>

@@ -3796,26 +3796,33 @@
   }
   function cardHTML(t5) {
     const blocked = mergeBlockReason(t5);
+    const status = STATUS_LABEL[t5.status] || t5.status || "\u672A\u77E5";
+    const tags = [
+      taskKindChip(t5),
+      dependencyChip(t5),
+      dependencyStateChip(t5),
+      sourceMergeChip(t5),
+      blocked ? `<span class="chip merge-blocked">${blocked}</span>` : "",
+      t5.perm === "review" ? `<span class="chip review">\u5BA1\u6279</span>` : "",
+      t5.run_mode === "interactive" ? `<span class="chip">\u4EA4\u4E92</span>` : "",
+      t5.concurrent ? `<span class="chip">\u5E76\u53D1</span>` : "",
+      t5.review_rounds > 0 ? `<span class="chip">\u7B2C${t5.review_rounds}\u8F6E</span>` : ""
+    ].join("");
     return `<article class="card" onclick="openTask(${t5.id})" style="--st-color:${ST_COLOR[t5.status]}">
     <div class="c-top">
-      <span class="st-dot"></span><span class="c-id">#${t5.id}</span>
-      <span class="c-time">${(t5.created_at || "").slice(5, 16).replace("T", " ")}</span>
-      ${taskKindChip(t5)}
-      ${dependencyChip(t5)}
-      ${dependencyStateChip(t5)}
-      ${sourceMergeChip(t5)}
-      ${blocked ? `<span class="chip merge-blocked">${blocked}</span>` : ""}
-      ${t5.perm === "review" ? `<span class="chip review">\u5BA1\u6279</span>` : ""}
-      ${t5.run_mode === "interactive" ? `<span class="chip">\u4EA4\u4E92</span>` : ""}
-      ${t5.concurrent ? `<span class="chip">\u5E76\u53D1</span>` : ""}
-      ${t5.review_rounds > 0 ? `<span class="chip">\u7B2C${t5.review_rounds}\u8F6E</span>` : ""}
+      <span class="c-identity">
+        <span class="st-dot"></span><span class="c-id">#${t5.id}</span>
+        <time class="c-time">${(t5.created_at || "").slice(5, 16).replace("T", " ")}</time>
+      </span>
+      <span class="badge c-status ${esc(t5.status || "unknown")}"><span class="st-dot"></span>${esc(status)}</span>
+      <span class="c-tags">${tags}</span>
     </div>
     <a class="c-title card-primary-action" href="#/issue/${t5.id}" onclick="event.stopPropagation();openTask(${t5.id});return false">${esc(t5.title)}</a>
     ${t5.body ? `<div class="c-desc">${esc(t5.body)}</div>` : ""}
     <div class="c-meta">
       ${t5.project_id && t5.project_name ? `<a class="chip chip-link" href="/projects#/project/${t5.project_id}" title="\u6253\u5F00\u9879\u76EE\u9875" onclick="event.stopPropagation()">${esc(t5.project_name)}</a>` : ""}
       <span class="c-foot">
-        ${t5.agent_name ? `<span class="c-agent"><span class="avatar sm">${esc((t5.agent_name || "?").slice(0, 1))}</span>${esc(t5.agent_name)}</span>` : `<span class="c-agent" style="color:var(--fg-faint)">\u672A\u6307\u6D3E</span>`}
+        ${t5.agent_name ? `<span class="c-agent"><span class="avatar sm">${esc((t5.agent_name || "?").slice(0, 1))}</span><span class="c-agent-name">${esc(t5.agent_name)}</span></span>` : `<span class="c-agent" style="color:var(--fg-faint)">\u672A\u6307\u6D3E</span>`}
         ${t5.error ? `<span style="color:var(--danger)">\u2717</span>` : ""}
       </span>
     </div>
