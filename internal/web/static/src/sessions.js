@@ -1321,23 +1321,37 @@ export class PhSessionTerm extends LitElement {
           const cur = r.output;
           const prev = this._lastFrame || "";
           if (cur !== prev) {
-            if (prev && cur.startsWith(prev)) {
-              // 纯追加（普通 CLI 滚动输出）：增量写入，保留 xterm 回滚。
-              this._term.write(cur.slice(prev.length));
+            const cl = cur.split("\n");
+            const rows = this._term.rows;
+            const cols = this._term.cols;
+            let maxCol = 0;
+            for (const l of cl) if (l.length > maxCol) maxCol = l.length;
+            if (maxCol > cols) {
+              // 帧宽于画布（resize 同步窗口期，tmux pane 尚未跟上浏览器）：
+              // 按画布截断行宽整帧重写，避免 xterm 自动折行后行号错位。
+              // 换行必须 CRLF：xterm 的 LF 不归列，连续写入会从上一行
+              // 末尾列继续，整帧 wrap 错乱。
+              this._term.write("\x1b[2J\x1b[3J\x1b[H" + cl.slice(0, rows).map((l) => l.slice(0, cols)).join("\r\n"));
             } else {
               const pl = prev.split("\n");
-              const cl = cur.split("\n");
-              if (pl.length === cl.length) {
+              if (pl.length === cl.length && cl.length <= rows + 1) {
                 // TUI 原地重绘（等行数）：光标定位重写变化行，避免整屏
-                // reset 导致 DOM renderer 渲染丢失/闪烁。
+                // reset 导致 DOM renderer 渲染丢失/闪烁。循环上界按画布
+                // 行数截断（帧尾多出的空行/超界行不写，防止定位超界）。
                 let patch = "";
-                for (let i = 0; i < cl.length; i++) {
+                const n = Math.min(cl.length, rows);
+                for (let i = 0; i < n; i++) {
                   if (cl[i] !== pl[i]) patch += `\x1b[${i + 1};1H${cl[i]}\x1b[K`;
                 }
+                // 帧变矮时清掉画布多出的残留行。
+                if (cl.length < rows) patch += `\x1b[${cl.length + 1};1H\x1b[J`;
                 if (patch) this._term.write(patch + "\x1b[H");
               } else {
-                // 清屏/随尺寸重排：ANSI 清屏后整帧写入。
-                this._term.write("\x1b[2J\x1b[H" + cur);
+                // 清屏/随尺寸重排：清屏（含回滚区）后按画布行数截断整帧
+                // 写入——帧行数 > 画布行数时直接整帧写入会触底滚动，把
+                // 帧顶内容滚出视口且永不修复（行级 diff 只改变化行）。
+                // 换行必须 CRLF（xterm 的 LF 不归列，见上）。
+                this._term.write("\x1b[2J\x1b[3J\x1b[H" + cl.slice(0, rows).join("\r\n"));
               }
             }
             this._lastFrame = cur;

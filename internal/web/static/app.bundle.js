@@ -2334,19 +2334,25 @@
                 const cur = r6.output;
                 const prev = this._lastFrame || "";
                 if (cur !== prev) {
-                  if (prev && cur.startsWith(prev)) {
-                    this._term.write(cur.slice(prev.length));
+                  const cl = cur.split("\n");
+                  const rows = this._term.rows;
+                  const cols = this._term.cols;
+                  let maxCol = 0;
+                  for (const l3 of cl) if (l3.length > maxCol) maxCol = l3.length;
+                  if (maxCol > cols) {
+                    this._term.write("\x1B[2J\x1B[3J\x1B[H" + cl.slice(0, rows).map((l3) => l3.slice(0, cols)).join("\r\n"));
                   } else {
                     const pl = prev.split("\n");
-                    const cl = cur.split("\n");
-                    if (pl.length === cl.length) {
+                    if (pl.length === cl.length && cl.length <= rows + 1) {
                       let patch = "";
-                      for (let i6 = 0; i6 < cl.length; i6++) {
+                      const n6 = Math.min(cl.length, rows);
+                      for (let i6 = 0; i6 < n6; i6++) {
                         if (cl[i6] !== pl[i6]) patch += `\x1B[${i6 + 1};1H${cl[i6]}\x1B[K`;
                       }
+                      if (cl.length < rows) patch += `\x1B[${cl.length + 1};1H\x1B[J`;
                       if (patch) this._term.write(patch + "\x1B[H");
                     } else {
-                      this._term.write("\x1B[2J\x1B[H" + cur);
+                      this._term.write("\x1B[2J\x1B[3J\x1B[H" + cl.slice(0, rows).join("\r\n"));
                     }
                   }
                   this._lastFrame = cur;

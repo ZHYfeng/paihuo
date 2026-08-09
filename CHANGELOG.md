@@ -6,6 +6,7 @@ This file records notable user-facing and maintainer-facing changes. The format 
 
 ### Added
 
+- **终端式会话（codex/claude）画面错位/顶部丢失修复**：此前终端帧渲染有三处缺陷——① 整帧写入用 LF 换行，而 xterm 的 LF 只换行不归列，连续写入时每行从上一行末尾列继续，帧逐行 wrap 错乱累积；帧行数超过画布行数（resize 同步窗口期：浏览器先 fit、tmux pane 后跟上）时整帧写入还会触底滚动，把帧顶内容滚出视口，行级 diff 只改变化行、错乱永不修复；② 「纯追加」分支在 TUI 快照语义下会把帧中段改写误判为帧尾追加，错位后不可自愈；③ 帧宽于画布时 xterm 自动折行导致行号错位。现在整帧换行统一 CRLF、删除追加分支、行级 diff 按画布行数截断并清残留行、超宽帧按画布列截断、整帧写入前清空回滚区。
 - **交付任务删除后会话自动解冻**：会话交付的任务（`sessions.task_id` 外键引用）此前**无法删除**——硬删触发 `FOREIGN KEY constraint failed` 500，任务残留为 cancelled「任务已删除」，delivered 会话也永久冻结（`delivered` 状态无任何出口，前端无丢弃按钮）。现在删除任务时先解除会话引用（`task_id` 置空），delivered 会话自动回 `suspended`（可丢弃/重新交付），任务可正常删除。
 - **活跃会话可丢弃**：codex 等终端式会话 active 状态此前只有「中止/交付」，无法丢弃；现在 header 增加「丢弃」按钮（确认后中止进程、清理 worktree、删除会话），状态机 `active → deleted` 本就允许。
 - **终端式会话（codex/claude）结束后回放最后画面**：此前交付/挂起/进程退出后终端窗口消失，重新打开会话终端区域永远空白（`TermOutput` 对无活跃进程的会话返回 409，前端吞掉后停在初始空画面）。现在每次捕获帧都持久化到 `<session_dir>/term.out`，无活跃进程时回退读取：delivered/deleted 返回最后画面并停止轮询，created/suspended 保持轮询直到自动恢复拉起真实窗口（避免过早停轮询导致恢复后空白）。
