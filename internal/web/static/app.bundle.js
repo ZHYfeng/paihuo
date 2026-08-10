@@ -4305,11 +4305,10 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
           window.addEventListener("ph-session-detail-refresh", this._onDetailRefresh);
           this.refreshList();
           const q2 = new URLSearchParams(location.search);
-          if (q2.has("agent") || q2.has("project") || q2.has("title") || q2.has("body")) {
+          if (q2.has("agent") || q2.has("project") || q2.has("body")) {
             this.prefill = {
               agent: q2.get("agent") || "",
               project: q2.get("project") || "",
-              title: q2.get("title") || "",
               body: q2.get("body") || ""
             };
             this.showCreate = true;
@@ -4571,7 +4570,6 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
           this.projects = [];
           this.agentId = "";
           this.projectId = "";
-          this.title = "";
           this.body = "";
           this.submitting = false;
         }
@@ -4584,15 +4582,14 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
             if (pf.agent && this.agents.some((x3) => String(x3.id) === String(pf.agent))) this.agentId = String(pf.agent);
             else if (this.agents.length) this.agentId = String(this.agents[0].id);
             if (pf.project && this.projects.some((x3) => String(x3.id) === String(pf.project))) this.projectId = String(pf.project);
-            this.title = pf.title || "";
             this.body = pf.body || "";
             this.requestUpdate();
           }).catch(() => {
           });
         }
         async submit() {
-          if (!this.agentId || !this.title.trim()) {
-            toastErr("\u8BF7\u586B\u5199\u89D2\u8272\u4E0E\u6807\u9898");
+          if (!this.agentId) {
+            toastErr("\u8BF7\u9009\u62E9\u89D2\u8272");
             return;
           }
           this.submitting = true;
@@ -4601,8 +4598,7 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
               method: "POST",
               body: JSON.stringify({
                 agent_id: Number(this.agentId),
-                project_id: this.projectId ? Number(this.projectId) : null,
-                title: this.title.trim()
+                project_id: this.projectId ? Number(this.projectId) : null
               })
             });
             this.dispatchEvent(new CustomEvent("created", {
@@ -4620,7 +4616,6 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
           return b2`
       <div class="box" @click=${(e6) => e6.stopPropagation()}>
         <h3>新建会话</h3>
-        <label>标题 <input .value=${this.title} @input=${(e6) => this.title = e6.target.value} placeholder="例如：修复登录失败" @keydown=${(e6) => e6.key === "Enter" && !e6.isComposing && this.submit()}></label>
         <label>初始指令
           <textarea .value=${this.body} @input=${(e6) => this.body = e6.target.value} rows="3" placeholder="可选：创建后自动启动并发送第一条指令（与任务弹窗的「任务内容」一致）"></textarea>
         </label>
@@ -7549,6 +7544,7 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
     const select = document.getElementById("tRunMode");
     const help = document.getElementById("tRunModeHelp");
     const taskOnly = document.getElementById("tTaskOnlyFields");
+    const titleField = document.getElementById("tTitleField");
     if (!select) return;
     const sessionOK = !!agent && (agent.cli === "pi" || agent.cli === "omp");
     const sessionOpt = select.querySelector('option[value="session"]');
@@ -7560,8 +7556,10 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
     if (select.value === "session") {
       if (help) help.textContent = "\u521B\u5EFA\u5E38\u9A7B\u4F1A\u8BDD\uFF1A\u590D\u6742\u95EE\u9898\u4E0E agent \u591A\u8F6E\u534F\u4F5C\uFF08\u72EC\u7ACB\u5DE5\u4F5C\u76EE\u5F55\uFF09\uFF0C\u5B8C\u6210\u65F6\u70B9\u300C\u4EA4\u4ED8\u300D\u8F6C\u4E3A\u4EFB\u52A1\u8D70\u5BA1\u6279\u5408\u5E76\u6D41\u7A0B\u3002";
       if (taskOnly) taskOnly.classList.add("hidden");
+      if (titleField) titleField.classList.add("hidden");
     } else {
       if (taskOnly) taskOnly.classList.remove("hidden");
+      if (titleField) titleField.classList.remove("hidden");
       if (help) help.textContent = agent ? `\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF0C\u5B8C\u6210\u540E\u6D3E\u53D1\u4EE3\u7801\u5408\u5E76\u4EFB\u52A1\u3002` : "\u6279\u5904\u7406\u4F1A\u81EA\u52A8\u7ED3\u7B97\uFF1B\u9009\u62E9\u89D2\u8272\u540E\u53EF\u6267\u884C\u3002";
     }
   }
@@ -7604,7 +7602,6 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
   }
   async function submitTask() {
     const title = document.getElementById("tTitle").value.trim();
-    if (!title) return toast("\u6807\u9898\u4E0D\u80FD\u4E3A\u7A7A", true);
     const runMode = document.getElementById("tRunMode").value;
     if (runMode === "session") {
       const agentId = Number(document.getElementById("tAgent").value) || 0;
@@ -7613,12 +7610,12 @@ Please report this to https://github.com/markedjs/marked.`, e6) {
       const params = new URLSearchParams();
       if (agentId) params.set("agent", agentId);
       if (projectId2) params.set("project", projectId2);
-      if (title) params.set("title", title);
       const body = document.getElementById("tBody").value;
       if (body.trim()) params.set("body", body);
       location.href = "/sessions" + (params.toString() ? "?" + params.toString() : "");
       return;
     }
+    if (!title) return toast("\u6807\u9898\u4E0D\u80FD\u4E3A\u7A7A", true);
     const parentId = Number(document.getElementById("tParentId").value) || null;
     const projectId = Number(document.getElementById("tProject").value) || null;
     let dependencyMode = document.getElementById("tDependencyMode").value || "none";

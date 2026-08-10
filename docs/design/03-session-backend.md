@@ -69,7 +69,7 @@ pi --mode rpc
 ## 6. API 设计
 
 ```
-POST   /api/sessions                    {project_id, agent_id, title} → 建记录+worktree
+POST   /api/sessions                    {project_id, agent_id} → 以 agent 名称为标题，建记录+worktree
 GET    /api/sessions?project_id=&status=
 GET    /api/sessions/{id}
 POST   /api/sessions/{id}/start         → active（spawn）

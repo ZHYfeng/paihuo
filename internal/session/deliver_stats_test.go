@@ -34,7 +34,7 @@ func TestDeliveredTaskCountsInProjectStats(t *testing.T) {
 	}
 
 	// 会话 → 交付（full + git：任务直接 succeeded + 自动创建合并任务）。
-	ss, err := m.Create(&pid, aid, "会话交付")
+	ss, err := m.Create(&pid, aid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestDeliveredSessionDiscardableNotReusable(t *testing.T) {
 	m, st, _, _ := newTestEnv(t)
 	proj, _ := st.ListProjects()
 	agents, _ := st.ListAgents()
-	ss, err := m.Create(&proj[0].ID, agents[0].ID, "会话归档")
+	ss, err := m.Create(&proj[0].ID, agents[0].ID)
 	if err != nil {
 		t.Fatal(err)
 	}

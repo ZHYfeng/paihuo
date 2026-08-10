@@ -112,12 +112,15 @@ func TestCreateWorktree(t *testing.T) {
 		t.Fatalf("projects: %v %d", err, len(proj))
 	}
 	agents, _ := st.ListAgents()
-	ss, err := m.Create(&proj[0].ID, agents[0].ID, "会话A")
+	ss, err := m.Create(&proj[0].ID, agents[0].ID)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if ss.Status != store.SessionStatusCreated {
 		t.Errorf("status=%s", ss.Status)
+	}
+	if ss.Title != agents[0].Name {
+		t.Errorf("title=%q, want agent name %q", ss.Title, agents[0].Name)
 	}
 	if ss.WorktreeBranch != "paihuo/session-1" {
 		t.Errorf("branch=%s", ss.WorktreeBranch)
@@ -140,7 +143,7 @@ func TestCreateSessionRejectsNonPiOmpAgents(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = m.Create(nil, id, "会话"+cli)
+		_, err = m.Create(nil, id)
 		if cli == "pi" || cli == "omp" {
 			if err != nil {
 				t.Fatalf("%s 创建会话应成功: %v", cli, err)
@@ -185,7 +188,7 @@ func TestDeliverReusesWorktree(t *testing.T) {
 	m, st, _, _ := newTestEnv(t)
 	proj, _ := st.ListProjects()
 	agents, _ := st.ListAgents()
-	ss, err := m.Create(&proj[0].ID, agents[0].ID, "会话B")
+	ss, err := m.Create(&proj[0].ID, agents[0].ID)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -247,7 +250,7 @@ func TestDeliverReviewSkipsExecution(t *testing.T) {
 	m, st, _, _ := newTestEnv(t)
 	proj, _ := st.ListProjects()
 	agents, _ := st.ListAgents()
-	ss, err := m.Create(&proj[0].ID, agents[0].ID, "会话review")
+	ss, err := m.Create(&proj[0].ID, agents[0].ID)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -295,7 +298,7 @@ func TestDeliverFullNonGitCompletesWithoutMerge(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 	agents, _ := st.ListAgents()
-	ss, err := m.Create(&pid, agents[0].ID, "会话plain")
+	ss, err := m.Create(&pid, agents[0].ID)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -330,7 +333,7 @@ func TestLifecycleWithRealPi(t *testing.T) {
 	m, st, ex, _ := newTestEnv(t)
 	proj, _ := st.ListProjects()
 	agents, _ := st.ListAgents()
-	ss, err := m.Create(&proj[0].ID, agents[0].ID, "冒烟")
+	ss, err := m.Create(&proj[0].ID, agents[0].ID)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -411,7 +414,7 @@ func TestLifecycleWithRealPi(t *testing.T) {
 		t.Fatalf("transcript: %v len=%d", err, len(entries))
 	}
 	// 崩溃恢复：再开一个会话，主动杀进程 → 自动 suspended。
-	ss2, err := m.Create(&proj[0].ID, agents[0].ID, "崩溃测试")
+	ss2, err := m.Create(&proj[0].ID, agents[0].ID)
 	if err != nil {
 		t.Fatalf("create2: %v", err)
 	}

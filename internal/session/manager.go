@@ -67,10 +67,10 @@ func (m *Manager) stderrPathOf(id int64) string {
 // ---------------------------------------------------------------------------
 // CRUD
 
-// Create 创建会话：git 项目建隔离 worktree（sessions/<project>/session-<id>），
-// 非 git 项目复制到专属会话目录，无项目时使用独立空目录
+// Create 创建会话，标题自动使用对应角色名称：git 项目建隔离 worktree
+// （sessions/<project>/session-<id>），非 git 项目复制到专属会话目录，无项目时使用独立空目录
 // （sessions/session-<id>，不关联任何项目）。
-func (m *Manager) Create(projectID *int64, agentID int64, title string) (*store.Session, error) {
+func (m *Manager) Create(projectID *int64, agentID int64) (*store.Session, error) {
 	agent, err := m.st.GetAgent(agentID)
 	if err != nil {
 		return nil, err
@@ -95,7 +95,7 @@ func (m *Manager) Create(projectID *int64, agentID int64, title string) (*store.
 	ss := store.Session{
 		ProjectID: projectID,
 		AgentID:   agentID,
-		Title:     title,
+		Title:     agent.Name,
 		Status:    store.SessionStatusCreated,
 		CLI:       agent.CLI,
 	}

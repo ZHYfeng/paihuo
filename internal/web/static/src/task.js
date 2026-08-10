@@ -1069,6 +1069,7 @@ export function syncTaskRunMode() {
   const select = document.getElementById("tRunMode");
   const help = document.getElementById("tRunModeHelp");
   const taskOnly = document.getElementById("tTaskOnlyFields");
+  const titleField = document.getElementById("tTitleField");
   if (!select) return;
   const sessionOK = !!agent && (agent.cli === "pi" || agent.cli === "omp");
   const sessionOpt = select.querySelector('option[value="session"]');
@@ -1082,8 +1083,10 @@ export function syncTaskRunMode() {
   if (select.value === "session") {
     if (help) help.textContent = "创建常驻会话：复杂问题与 agent 多轮协作（独立工作目录），完成时点「交付」转为任务走审批合并流程。";
     if (taskOnly) taskOnly.classList.add("hidden");
+    if (titleField) titleField.classList.add("hidden");
   } else {
     if (taskOnly) taskOnly.classList.remove("hidden");
+    if (titleField) titleField.classList.remove("hidden");
     if (help) help.textContent = agent
       ? `批处理会自动结算，完成后派发代码合并任务。`
       : "批处理会自动结算；选择角色后可执行。";
@@ -1140,8 +1143,8 @@ export function syncTaskConcurrency() {
 
 export async function submitTask() {
   const title = document.getElementById("tTitle").value.trim();
-  if (!title) return toast("标题不能为空", true);
-  // 会话模式：不创建任务，转去会话页新建会话（同一入口，预填角色/项目/标题/初始指令）。
+  // 会话模式：不创建任务，转去会话页新建会话（同一入口，预填角色/项目/初始指令）。
+  // 会话标题由后端读取所选 agent 的名称，无需用户填写。
   const runMode = document.getElementById("tRunMode").value;
   if (runMode === "session") {
     const agentId = Number(document.getElementById("tAgent").value) || 0;
@@ -1150,12 +1153,12 @@ export async function submitTask() {
     const params = new URLSearchParams();
     if (agentId) params.set("agent", agentId);
     if (projectId) params.set("project", projectId);
-    if (title) params.set("title", title);
     const body = document.getElementById("tBody").value;
     if (body.trim()) params.set("body", body);
     location.href = "/sessions" + (params.toString() ? "?" + params.toString() : "");
     return;
   }
+  if (!title) return toast("标题不能为空", true);
   const parentId = Number(document.getElementById("tParentId").value) || null;
   const projectId = Number(document.getElementById("tProject").value) || null;
   let dependencyMode = document.getElementById("tDependencyMode").value || "none";

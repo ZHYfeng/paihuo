@@ -220,10 +220,10 @@ export class PhSessionsPage extends LitElement {
     window.addEventListener("ph-session-detail-refresh", this._onDetailRefresh);
     this.refreshList();
     const q = new URLSearchParams(location.search);
-    if (q.has("agent") || q.has("project") || q.has("title") || q.has("body")) {
+    if (q.has("agent") || q.has("project") || q.has("body")) {
       this.prefill = {
         agent: q.get("agent") || "", project: q.get("project") || "",
-        title: q.get("title") || "", body: q.get("body") || "",
+        body: q.get("body") || "",
       };
       this.showCreate = true;
       history.replaceState(null, "", "/sessions");
@@ -703,7 +703,6 @@ export class PhSessionCreate extends LitElement {
     this.projects = [];
     this.agentId = "";
     this.projectId = "";
-    this.title = "";
     this.body = "";
     this.submitting = false;
   }
@@ -719,13 +718,12 @@ export class PhSessionCreate extends LitElement {
       else if (this.agents.length) this.agentId = String(this.agents[0].id);
       // 默认不选项目：不选择即不关联任何项目（会话在独立目录运行）。
       if (pf.project && this.projects.some(x => String(x.id) === String(pf.project))) this.projectId = String(pf.project);
-      this.title = pf.title || "";
       this.body = pf.body || "";
       this.requestUpdate();
     }).catch(() => {});
   }
   async submit() {
-    if (!this.agentId || !this.title.trim()) { toastErr("请填写角色与标题"); return; }
+    if (!this.agentId) { toastErr("请选择角色"); return; }
     this.submitting = true;
     try {
       const ss = await api("/api/sessions", {
@@ -733,7 +731,6 @@ export class PhSessionCreate extends LitElement {
         body: JSON.stringify({
           agent_id: Number(this.agentId),
           project_id: this.projectId ? Number(this.projectId) : null,
-          title: this.title.trim(),
         }),
       });
       this.dispatchEvent(new CustomEvent("created", {
@@ -748,7 +745,6 @@ export class PhSessionCreate extends LitElement {
     return html`
       <div class="box" @click=${(e) => e.stopPropagation()}>
         <h3>新建会话</h3>
-        <label>标题 <input .value=${this.title} @input=${(e) => this.title = e.target.value} placeholder="例如：修复登录失败" @keydown=${(e) => e.key === "Enter" && !e.isComposing && this.submit()}></label>
         <label>初始指令
           <textarea .value=${this.body} @input=${(e) => this.body = e.target.value} rows="3" placeholder="可选：创建后自动启动并发送第一条指令（与任务弹窗的「任务内容」一致）"></textarea>
         </label>

@@ -27,7 +27,7 @@
 
 | 迁移 | 触发 | 副作用 |
 |---|---|---|
-| create | 新建会话（项目+角色+标题） | git 项目建 worktree `sessions/<proj>/session-<id>`，分支 `paihuo/session-<id>` |
+| create | 新建会话（项目+角色，标题自动取角色名） | git 项目建 worktree `sessions/<proj>/session-<id>`，分支 `paihuo/session-<id>` |
 | start | 打开会话 | spawn agent 进程；**占角色并发槽**（与批处理任务共用池，防资源耗尽） |
 | suspend | 点挂起 / 进程退出 / 崩溃 | 杀进程、释放并发槽；transcript 由 pi 会话文件持久化 |
 | resume | 点恢复 | spawn 进程 + `switch_session <session.jsonl>` 接续原会话 |

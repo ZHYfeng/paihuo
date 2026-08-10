@@ -18,7 +18,6 @@ import (
 type sessionIn struct {
 	ProjectID *int64 `json:"project_id"`
 	AgentID   int64  `json:"agent_id"`
-	Title     string `json:"title"`
 }
 
 type deliverIn struct {
@@ -76,11 +75,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "请选择角色"})
 		return
 	}
-	if trimSpace(in.Title) == "" {
-		writeJSON(w, 400, map[string]any{"error": "请填写会话标题"})
-		return
-	}
-	ss, err := s.sess.Create(in.ProjectID, in.AgentID, trimSpace(in.Title))
+	ss, err := s.sess.Create(in.ProjectID, in.AgentID)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return

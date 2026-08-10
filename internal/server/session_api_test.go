@@ -16,6 +16,34 @@ import (
 	"paihuo/internal/store"
 )
 
+func TestCreateSessionUsesAgentNameAsTitle(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	aid, err := st.CreateAgent(store.Agent{Name: "会话角色", CLI: "pi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(st, events.NewHub(), nil, nil, "", filepath.Join(t.TempDir(), "skills"))
+	req := httptest.NewRequest("POST", "/api/sessions", strings.NewReader(`{"agent_id":`+itoa(aid)+`}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	s.Handler().ServeHTTP(resp, req)
+	if resp.Code != 201 {
+		t.Fatalf("create: %d %s", resp.Code, resp.Body.String())
+	}
+	var created store.Session
+	if err := json.Unmarshal(resp.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Title != "会话角色" {
+		t.Fatalf("title=%q, want agent name %q", created.Title, "会话角色")
+	}
+}
+
 // TestSessionAPI 会话 API 全流程（状态机 + 交付桥接，真实 pi 进程冒烟）。
 func TestSessionAPI(t *testing.T) {
 	if _, err := os.Stat("/usr/local/bin/pi"); err != nil {
@@ -76,13 +104,16 @@ func TestSessionAPI(t *testing.T) {
 	}
 
 	// 创建（created + worktree）
-	code, out := do("POST", "/api/sessions", `{"project_id":`+itoa(pid)+`,"agent_id":`+itoa(aid)+`,"title":"会话1"}`)
+	code, out := do("POST", "/api/sessions", `{"project_id":`+itoa(pid)+`,"agent_id":`+itoa(aid)+`}`)
 	if code != 201 {
 		t.Fatalf("create: %d %v", code, out)
 	}
 	sid := int64(out["id"].(float64))
 	if out["status"] != store.SessionStatusCreated {
 		t.Fatalf("status=%v", out["status"])
+	}
+	if out["title"] != "pi-role" {
+		t.Fatalf("title=%v, want agent name pi-role", out["title"])
 	}
 	if out["worktree_branch"] != "paihuo/session-1" {
 		t.Fatalf("branch=%v", out["worktree_branch"])
@@ -209,7 +240,7 @@ func TestSessionAPI(t *testing.T) {
 	}
 
 	// 第二会话：created 直接删除
-	code, out = do("POST", "/api/sessions", `{"project_id":`+itoa(pid)+`,"agent_id":`+itoa(aid)+`,"title":"会话2"}`)
+	code, out = do("POST", "/api/sessions", `{"project_id":`+itoa(pid)+`,"agent_id":`+itoa(aid)+`}`)
 	if code != 201 {
 		t.Fatalf("create2: %d %v", code, out)
 	}
