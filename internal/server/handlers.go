@@ -14,9 +14,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
+	"paihuo/internal/application"
 	"paihuo/internal/events"
 	"paihuo/internal/exec"
 	"paihuo/internal/store"
@@ -25,17 +25,6 @@ import (
 
 // ---------------------------------------------------------------------------
 // 任务
-
-// 允许的人工状态流转；其余流转由执行器驱动。
-var manualTransitions = map[string]map[string]bool{
-	store.StatusQueued:         {store.StatusCancelled: true},
-	store.StatusClaimed:        {store.StatusCancelled: true},
-	store.StatusRunning:        {store.StatusCancelled: true},
-	store.StatusAwaitingReview: {store.StatusQueued: true, store.StatusSucceeded: true, store.StatusCancelled: true},
-	store.StatusSucceeded:      {store.StatusQueued: true},
-	store.StatusFailed:         {store.StatusQueued: true},
-	store.StatusCancelled:      {store.StatusQueued: true},
-}
 
 var validPerms = map[string]bool{
 	store.PermFull: true, store.PermReview: true,
@@ -48,9 +37,9 @@ var validRunModes = map[string]bool{
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f := store.TaskFilter{}
-	if v := q.Get("agent_id"); v != "" {
+	if v := q.Get("role_id"); v != "" {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil && id > 0 {
-			f.AgentID = &id
+			f.RoleID = &id
 		}
 	}
 	if v := q.Get("project_id"); v != "" {
@@ -73,25 +62,16 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Title      string `json:"title"`
-		Body       string `json:"body"`
-		AgentID    *int64 `json:"agent_id"`
-		ProjectID  *int64 `json:"project_id"`
-		Perm       string `json:"perm"`
-		RunMode    string `json:"run_mode"`
-		Concurrent bool   `json:"concurrent"` // 是否并发执行（默认串行：同一项目同时只跑一个任务）
-		// dependency_mode: weak=按项目执行顺序自动依赖；strong=明确前置；none=独立。
-		DependencyMode string `json:"dependency_mode"`
-		DependsOn      *int64 `json:"depends_on"`
-		BlockOnFailure bool   `json:"block_on_failure"`
-		ParentID       *int64 `json:"parent_id"`
-	}
+	var in application.CreateTaskRequest
 	if !readJSON(w, r, &in) {
 		return
 	}
-	s.createTaskInner(w, in.Title, in.Body, in.AgentID, in.ProjectID, in.Perm, in.RunMode, in.Concurrent,
-		in.DependencyMode, in.DependsOn, in.BlockOnFailure, in.ParentID, nil)
+	task, err := s.tasks.Create(in)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeResource(w, http.StatusCreated, task.Revision, task)
 }
 
 // resumeTask 在原任务上续跑。任务 ID 同时绑定 agent 会话目录和 git worktree，
@@ -106,7 +86,7 @@ func (s *Server) resumeTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "任务不存在")
 		return
 	}
-	if src.AgentID == nil {
+	if src.RoleID == nil {
 		writeErr(w, http.StatusBadRequest, "原任务未指派角色，无法续跑")
 		return
 	}
@@ -170,113 +150,6 @@ func (s *Server) sourceHasOrNeedsMerge(tk store.Task) (bool, error) {
 		return true, nil
 	}
 	return s.st.HasMergeTaskForSource(tk.ID)
-}
-
-func (s *Server) createTaskInner(w http.ResponseWriter, title, body string, agentID, projectID *int64, perm, runMode string, concurrent bool, dependencyMode string, dependsOn *int64, blockOnFailure bool, parentID, resumeOf *int64) {
-	if title == "" {
-		writeErr(w, http.StatusBadRequest, "标题不能为空")
-		return
-	}
-	if perm == "" {
-		perm = store.PermFull
-	}
-	if !validPerms[perm] {
-		writeErr(w, http.StatusBadRequest, "非法权限模式: "+perm)
-		return
-	}
-	if runMode == "" {
-		runMode = store.RunModeBatch
-	}
-	if !validRunModes[runMode] {
-		writeErr(w, http.StatusBadRequest, "非法执行方式: "+runMode)
-		return
-	}
-	tk := store.Task{
-		Title: title, Body: body, Status: store.StatusQueued, Perm: perm, RunMode: runMode,
-		Concurrent: concurrent, AgentID: agentID, ParentID: parentID, ResumeOf: resumeOf,
-		DependencyMode: dependencyMode, DependsOn: dependsOn, BlockOnFailure: blockOnFailure,
-	}
-	// 工作目录属于项目：快照项目目录（历史记录不随配置漂移）；
-	// 老数据兼容：项目未设目录时回退角色的旧 project_dir。
-	if projectID != nil {
-		p, err := s.st.GetProject(*projectID)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "项目不存在")
-			return
-		}
-		tk.ProjectID = projectID
-		tk.ProjectDir = p.ProjectDir
-	}
-	if agentID != nil {
-		a, err := s.st.GetAgent(*agentID)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "角色不存在")
-			return
-		}
-		if runMode == store.RunModeInteractive && resumeOf == nil && !exec.SupportsInteractiveMode(a.CLI) {
-			writeErr(w, http.StatusBadRequest, fmt.Sprintf("交互式任务只支持 pi / omp 角色（%s 不支持）", a.CLI))
-			return
-		}
-		if tk.ProjectDir == "" {
-			tk.ProjectDir = a.ProjectDir // 兼容旧数据：角色级目录
-		}
-	} else if runMode == store.RunModeInteractive {
-		writeErr(w, http.StatusBadRequest, "交互式任务必须指派角色")
-		return
-	}
-	if err := normalizeNewTaskDependency(&tk); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	id, err := s.st.CreateTaskWithProjectDependency(tk)
-	if err != nil {
-		// 此处错误来自同一事务中的前置目标校验（不存在、跨项目、合并
-		// 子任务等），属于创建参数问题而不是服务故障。
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	s.ex.Wake()
-	tk2, err := s.st.GetTask(id)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, tk2)
-}
-
-// normalizeNewTaskDependency 收敛 HTTP 创建任务的依赖契约。项目任务若未
-// 显式选择，默认进入按创建时间排列的弱依赖链；无项目任务默认独立。强依赖
-// 只接受明确的源任务 ID，具体存在性和同项目校验由 Store 在事务内完成。
-func normalizeNewTaskDependency(tk *store.Task) error {
-	if tk.DependencyMode == "" {
-		if tk.ProjectID != nil {
-			tk.DependencyMode = store.DependencyWeak
-		} else {
-			tk.DependencyMode = store.DependencyNone
-		}
-	}
-	switch tk.DependencyMode {
-	case store.DependencyNone:
-		tk.DependsOn = nil
-		return nil
-	case store.DependencyWeak:
-		if tk.ProjectID == nil {
-			return fmt.Errorf("无项目任务不能使用自动前置依赖")
-		}
-		// 弱依赖的实际前置由 Store 以项目执行顺序确定，客户端不能指定。
-		tk.DependsOn = nil
-		return nil
-	case store.DependencyStrong:
-		if tk.ProjectID == nil {
-			return fmt.Errorf("明确前置依赖只能用于项目任务")
-		}
-		if tk.DependsOn == nil || *tk.DependsOn <= 0 {
-			return fmt.Errorf("明确依赖必须指定前置任务")
-		}
-		return nil
-	default:
-		return fmt.Errorf("非法依赖模式")
-	}
 }
 
 // sendTaskInput 把已登录用户的整行消息或 xterm 原始按键送进运行中的 agent
@@ -374,13 +247,21 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "title", "body", "agent_id", "perm", "status", "review_note", "parent_id", "project_id", "concurrent", "block_on_failure")
+	revision, ok := requiredRevision(w, r)
+	if !ok {
+		return
+	}
+	set, ok := patchMap(w, r, "title", "body", "role_id", "perm", "status", "review_note", "parent_id", "project_id", "concurrent", "block_on_failure")
 	if !ok {
 		return
 	}
 	cur, err := s.st.GetTask(id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "任务不存在")
+		return
+	}
+	if cur.Revision != revision {
+		writeErr(w, http.StatusConflict, store.ErrRevisionConflict.Error())
 		return
 	}
 	// 合并子任务是系统状态机的一部分，来源、工作目录、权限和串行策略都
@@ -399,7 +280,7 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	// 状态流转校验
 	if st, ok := set["status"]; ok {
 		to, _ := st.(string)
-		if !manualTransitions[cur.Status][to] {
+		if !s.tasks.CanTransition(cur.Status, to) {
 			writeErr(w, http.StatusBadRequest, "不允许从 "+cur.Status+" 转为 "+to)
 			return
 		}
@@ -447,32 +328,25 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 指派角色：没有项目的旧任务仍从角色继承目录；已绑定项目的任务
-	// 则必须保留项目目录快照，不能因为改派角色而跑到角色的遗留目录。
-	if v, ok := set["agent_id"]; ok {
+	// 指派角色不会改变项目工作目录。
+	if v, ok := set["role_id"]; ok {
 		if aid, isNum := v.(float64); isNum && aid > 0 {
-			a, err := s.st.GetAgent(int64(aid))
+			a, err := s.st.GetRole(int64(aid))
 			if err != nil {
 				writeErr(w, http.StatusBadRequest, "角色不存在")
 				return
 			}
-			if cur.RunMode == store.RunModeInteractive && !exec.SupportsInteractiveMode(a.CLI) {
-				writeErr(w, http.StatusBadRequest, fmt.Sprintf("交互式任务只支持 pi / omp 角色（%s 不支持）", a.CLI))
+			if cur.RunMode == store.RunModeInteractive && !s.ex.RuntimeService().Supports(a.RuntimeID, exec.CapabilityInteractive) {
+				writeErr(w, http.StatusBadRequest, fmt.Sprintf("交互式任务只支持 pi / omp 角色（%s 不支持）", a.RuntimeID))
 				return
 			}
-			set["agent_id"] = int64(aid)
-			if cur.ProjectID == nil {
-				set["project_dir"] = a.ProjectDir
-			}
+			set["role_id"] = int64(aid)
 		} else {
 			if cur.RunMode == store.RunModeInteractive {
 				writeErr(w, http.StatusBadRequest, "交互式任务必须指派角色")
 				return
 			}
-			set["agent_id"] = nil
-			if cur.ProjectID == nil {
-				set["project_dir"] = ""
-			}
+			set["role_id"] = nil
 		}
 	}
 
@@ -548,8 +422,12 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.st.UpdateTask(id, set); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if err := s.st.UpdateAtRevision("task", id, revision, set); err != nil {
+		if errors.Is(err, store.ErrRevisionConflict) {
+			writeErr(w, http.StatusConflict, err.Error())
+		} else {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	if v, ok := set["status"]; ok && v == store.StatusQueued {
@@ -570,7 +448,7 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 // approveReviewTask 固化已审批分支，并原子创建一个同角色的代码合并任务。
 // 合并任务会在自己的 worktree 中处理冲突、验证结果，成功后写入主分支。
 func (s *Server) approveReviewTask(w http.ResponseWriter, source store.Task) {
-	if source.AgentID == nil {
+	if source.RoleID == nil {
 		writeErr(w, http.StatusBadRequest, "原任务未指派角色，无法创建合并任务")
 		return
 	}
@@ -616,10 +494,18 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	revision, ok := requiredRevision(w, r)
+	if !ok {
+		return
+	}
 	// 先标记根任务取消，阻止它在删除竞态中再派发新的合并子任务。
 	target, err := s.st.GetTask(id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "任务不存在")
+		return
+	}
+	if target.Revision != revision {
+		writeErr(w, http.StatusConflict, store.ErrRevisionConflict.Error())
 		return
 	}
 	if target.MergeOf != nil {
@@ -802,12 +688,12 @@ func (s *Server) workspaceStatus(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tk, err := s.st.GetTask(id)
+	info, err := s.workspaces.Status(id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "任务不存在")
 		return
 	}
-	writeJSON(w, http.StatusOK, workspace.Status(*tk, s.sessionsRoot))
+	writeJSON(w, http.StatusOK, info)
 }
 
 func (s *Server) workspaceDiscard(w http.ResponseWriter, r *http.Request) {
@@ -815,43 +701,8 @@ func (s *Server) workspaceDiscard(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tk, err := s.st.GetTask(id)
-	if err != nil {
-		writeErr(w, http.StatusNotFound, "任务不存在")
-		return
-	}
-	if tk.MergeOf != nil && tk.Status != store.StatusSucceeded {
-		writeErr(w, http.StatusConflict, "代码合并任务尚未成功；如需放弃代码，请删除源任务")
-		return
-	}
-	if tk.Status != store.StatusSucceeded && tk.Status != store.StatusFailed && tk.Status != store.StatusCancelled {
-		writeErr(w, http.StatusConflict, "任务尚未结束，不能丢弃工作空间")
-		return
-	}
-	if tk.MergeOf == nil && tk.Status == store.StatusSucceeded {
-		hasMerge, err := s.st.HasMergeTaskForSource(tk.ID)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if tk.WorktreeBranch != "" && !hasMerge {
-			writeErr(w, http.StatusConflict, "代码合并任务正在创建；如需放弃代码，请删除源任务")
-			return
-		}
-		tasks, err := s.st.ListTaskDeletionOrder(tk.ID)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		for _, child := range tasks {
-			if child.MergeOf != nil && *child.MergeOf == tk.ID && child.Status != store.StatusSucceeded {
-				writeErr(w, http.StatusConflict, "代码合并任务尚未成功；如需放弃代码，请删除源任务")
-				return
-			}
-		}
-	}
-	if err := workspace.Discard(*tk, s.sessionsRoot); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if err := s.workspaces.Discard(id); err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"discarded": true})
@@ -864,11 +715,7 @@ func (s *Server) workspaceGitInit(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if strings.TrimSpace(in.Path) == "" {
-		writeErr(w, http.StatusBadRequest, "需要 path")
-		return
-	}
-	if err := workspace.GitInit(strings.TrimSpace(in.Path)); err != nil {
+	if err := s.workspaces.InitGit(in.Path); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -888,8 +735,8 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 // ---------------------------------------------------------------------------
 // 角色（agent）
 
-func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
-	agents, err := s.st.ListAgents()
+func (s *Server) listRoles(w http.ResponseWriter, r *http.Request) {
+	agents, err := s.st.ListRoles()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -897,22 +744,21 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, agents)
 }
 
-type agentIn struct {
+type roleIn struct {
 	Name           string           `json:"name"`
 	Description    string           `json:"description"`
-	CLI            string           `json:"cli"`
+	RuntimeID      string           `json:"runtime_id"`
 	RoleConfig     store.RoleConfig `json:"role_config"`
-	ProjectDir     string           `json:"project_dir"`
 	MaxConcurrency int              `json:"max_concurrency"`
 	Enabled        *bool            `json:"enabled"`
 }
 
-func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
-	var in agentIn
+func (s *Server) createRole(w http.ResponseWriter, r *http.Request) {
+	var in roleIn
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if err := s.validateAgent(&in); err != nil {
+	if err := s.validateRole(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -920,9 +766,9 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	if in.Enabled != nil {
 		enabled = *in.Enabled
 	}
-	id, err := s.st.CreateAgent(store.Agent{
-		Name: in.Name, Description: in.Description, CLI: in.CLI,
-		RoleConfig: in.RoleConfig, ProjectDir: in.ProjectDir,
+	id, err := s.st.CreateRole(store.Role{
+		Name: in.Name, Description: in.Description, RuntimeID: in.RuntimeID,
+		RoleConfig:     in.RoleConfig,
 		MaxConcurrency: in.MaxConcurrency,
 		Enabled:        enabled,
 	})
@@ -930,7 +776,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	a, err := s.st.GetAgent(id)
+	a, err := s.st.GetRole(id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -938,24 +784,18 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, a)
 }
 
-func (s *Server) validateAgent(in *agentIn) error {
+func (s *Server) validateRole(in *roleIn) error {
 	if in.Name == "" {
 		return errMsg("角色名不能为空")
 	}
-	if _, ok := exec.GetAdapter(in.CLI); !ok {
-		return errMsg("未知 CLI: " + in.CLI)
+	if !s.ex.RuntimeService().Has(in.RuntimeID) {
+		return errMsg("未知 Runtime: " + in.RuntimeID)
 	}
 	if in.MaxConcurrency == 0 {
 		in.MaxConcurrency = 1
 	}
 	if in.MaxConcurrency < 1 {
 		return errMsg("最大并发数必须至少为 1")
-	}
-	// 项目目录属于项目，不再属于角色（老数据保留兼容，创建任务时优先用项目目录）
-	if in.ProjectDir != "" {
-		if fi, err := os.Stat(in.ProjectDir); err != nil || !fi.IsDir() {
-			return errMsg("项目目录不存在: " + in.ProjectDir)
-		}
 	}
 	return nil
 }
@@ -964,12 +804,16 @@ type errMsg string
 
 func (e errMsg) Error() string { return string(e) }
 
-func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
+func (s *Server) patchRole(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "name", "description", "cli", "role_config", "project_dir", "max_concurrency", "enabled")
+	revision, ok := requiredRevision(w, r)
+	if !ok {
+		return
+	}
+	set, ok := patchMap(w, r, "name", "description", "runtime_id", "role_config", "max_concurrency", "enabled")
 	if !ok {
 		return
 	}
@@ -979,18 +823,10 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if v, ok := set["cli"]; ok {
+	if v, ok := set["runtime_id"]; ok {
 		if c, _ := v.(string); c != "" {
-			if _, ok := exec.GetAdapter(c); !ok {
-				writeErr(w, http.StatusBadRequest, "未知 CLI: "+c)
-				return
-			}
-		}
-	}
-	if v, ok := set["project_dir"]; ok {
-		if dir, _ := v.(string); dir != "" {
-			if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-				writeErr(w, http.StatusBadRequest, "项目目录不存在: "+dir)
+			if !s.ex.RuntimeService().Has(c) {
+				writeErr(w, http.StatusBadRequest, "未知 Runtime: "+c)
 				return
 			}
 		}
@@ -1003,11 +839,15 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		set["max_concurrency"] = n
 	}
-	if err := s.st.UpdateAgent(id, set); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if err := s.st.UpdateAtRevision("role", id, revision, set); err != nil {
+		if errors.Is(err, store.ErrRevisionConflict) {
+			writeErr(w, http.StatusConflict, err.Error())
+		} else {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
-	a, err := s.st.GetAgent(id)
+	a, err := s.st.GetRole(id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1035,17 +875,25 @@ func positiveInt(v any) (int, bool) {
 	return int(n), true
 }
 
-func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
+func (s *Server) deleteRole(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
-	if err := s.st.DeleteAgent(id); err != nil {
+	revision, ok := requiredRevision(w, r)
+	if !ok {
+		return
+	}
+	if err := s.st.AssertRevision("role", id, revision); err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err := s.st.DeleteRole(id); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// 技能挂载目录移入 .stale 暂存区（7 天兜底）；失败不阻断删除，
-	// 启动对账会再扫一次孤儿目录。
+	// Role 删除后立即移除技能挂载；失败不阻断数据库删除，启动对账会再扫
+	// 一次无主目录。
 	if err := s.ex.RemoveRoleSkills(id); err != nil {
 		log.Printf("⚠ 清理角色 %d 技能目录失败: %v", id, err)
 	}
@@ -1057,16 +905,25 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) cleanupTasks(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		AgentID *int64 `json:"agent_id"`
-		Before  string `json:"before"`
+		RoleID *int64 `json:"role_id"`
+		Before string `json:"before"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	n, err := s.st.CleanupTasks(in.AgentID, in.Before)
+	n, locators, err := s.st.CleanupTasks(in.RoleID, in.Before)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if s.artifacts != nil {
+		for _, locator := range locators {
+			if count, countErr := s.st.CountArtifactsByLocator(locator); countErr == nil && count == 0 {
+				if err := s.artifacts.Delete(r.Context(), locator); err != nil {
+					log.Printf("清理无引用 Artifact %s 失败: %v", locator, err)
+				}
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
 }
@@ -1137,7 +994,7 @@ func (s *Server) patchTemplate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "name", "body", "agent_id")
+	set, ok := patchMap(w, r, "name", "body", "role_id")
 	if !ok {
 		return
 	}
@@ -1156,17 +1013,17 @@ func (s *Server) patchTemplate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if v, ok := set["agent_id"]; ok {
+	if v, ok := set["role_id"]; ok {
 		if v == nil {
-			set["agent_id"] = nil
+			set["role_id"] = nil
 		} else if aid, isNum := v.(float64); isNum && aid > 0 {
-			if _, err := s.st.GetAgent(int64(aid)); err != nil {
+			if _, err := s.st.GetRole(int64(aid)); err != nil {
 				writeErr(w, http.StatusBadRequest, "角色不存在")
 				return
 			}
-			set["agent_id"] = int64(aid)
+			set["role_id"] = int64(aid)
 		} else {
-			writeErr(w, http.StatusBadRequest, "agent_id 非法")
+			writeErr(w, http.StatusBadRequest, "role_id 非法")
 			return
 		}
 	}
@@ -1219,7 +1076,7 @@ func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "名称、cron 表达式、标题模板不能为空")
 		return
 	}
-	if _, err := s.st.GetAgent(in.AgentID); err != nil {
+	if _, err := s.st.GetRole(in.RoleID); err != nil {
 		writeErr(w, http.StatusBadRequest, "角色不存在")
 		return
 	}
@@ -1253,19 +1110,23 @@ func (s *Server) patchSchedule(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "name", "cron", "title_template", "body_template", "agent_id", "project_id", "perm", "block_on_failure", "enabled", "next_run_at", "last_run_at")
+	revision, ok := requiredRevision(w, r)
 	if !ok {
 		return
 	}
-	if v, ok := set["agent_id"]; ok {
+	set, ok := patchMap(w, r, "name", "cron", "title_template", "body_template", "role_id", "project_id", "perm", "block_on_failure", "enabled", "next_run_at", "last_run_at")
+	if !ok {
+		return
+	}
+	if v, ok := set["role_id"]; ok {
 		if aid, isNum := v.(float64); isNum && aid > 0 {
-			if _, err := s.st.GetAgent(int64(aid)); err != nil {
+			if _, err := s.st.GetRole(int64(aid)); err != nil {
 				writeErr(w, http.StatusBadRequest, "角色不存在")
 				return
 			}
-			set["agent_id"] = int64(aid)
+			set["role_id"] = int64(aid)
 		} else {
-			writeErr(w, http.StatusBadRequest, "agent_id 非法")
+			writeErr(w, http.StatusBadRequest, "role_id 非法")
 			return
 		}
 	}
@@ -1299,8 +1160,12 @@ func (s *Server) patchSchedule(w http.ResponseWriter, r *http.Request) {
 		}
 		set["block_on_failure"] = b
 	}
-	if err := s.st.UpdateSchedule(id, set); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if err := s.st.UpdateAtRevision("schedule", id, revision, set); err != nil {
+		if errors.Is(err, store.ErrRevisionConflict) {
+			writeErr(w, http.StatusConflict, err.Error())
+		} else {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	s.sched.Reload()
@@ -1328,6 +1193,14 @@ func (s *Server) validateScheduleProject(projectID *int64) error {
 func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
+		return
+	}
+	revision, ok := requiredRevision(w, r)
+	if !ok {
+		return
+	}
+	if err := s.st.AssertRevision("schedule", id, revision); err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
 	if err := s.st.DeleteSchedule(id); err != nil {
@@ -1384,6 +1257,10 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	revision, ok := requiredRevision(w, r)
+	if !ok {
+		return
+	}
 	set, ok := patchMap(w, r, "name", "description", "status", "project_dir")
 	if !ok {
 		return
@@ -1401,8 +1278,12 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.st.UpdateProject(id, set); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if err := s.st.UpdateAtRevision("project", id, revision, set); err != nil {
+		if errors.Is(err, store.ErrRevisionConflict) {
+			writeErr(w, http.StatusConflict, err.Error())
+		} else {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	p, err := s.st.GetProject(id)
@@ -1461,6 +1342,14 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	revision, ok := requiredRevision(w, r)
+	if !ok {
+		return
+	}
+	if err := s.st.AssertRevision("project", id, revision); err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
 	if err := s.st.DeleteProject(id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1471,88 +1360,64 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 // 角色配置 schema（深度定制：按 CLI 文档声明可配置字段）
 
-func (s *Server) listAgentSchemas(w http.ResponseWriter, r *http.Request) {
-	type item struct {
-		a      exec.Adapter
-		fields []exec.Field
-	}
-	items := make([]item, 0, len(exec.Adapters()))
-	for _, a := range exec.Adapters() {
-		items = append(items, item{a, exec.Enrich(a.Schema())})
-	}
-	// 模型候选：探测该 CLI 在本机实例的实际配置，而非硬编码常用模型。
-	// 各 CLI 的探测命令耗时 1~4s（pi --list-models / omp models --json /
-	// opencode models --verbose），串行会把接口拖到十几秒、卡住前端首屏；并行探测
-	// 后总耗时 ≈ 最慢的一个（cachedModels 内部 singleflight 合并并发）。
-	var wg sync.WaitGroup
+func (s *Server) listRuntimes(w http.ResponseWriter, r *http.Request) {
+	items := s.ex.RuntimeService().Catalog()
 	for i := range items {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			catalog := exec.ModelCatalog(items[i].a)
-			models := exec.ModelIDs(catalog)
-			thinkingByModel := exec.ModelThinkingOptions(catalog)
-			for j := range items[i].fields {
-				if items[i].fields[j].Key == "model" {
-					items[i].fields[j].Suggestions = models
-				}
-				if items[i].fields[j].Key == "thinking" && len(thinkingByModel) > 0 {
-					items[i].fields[j].ThinkingOptionsByModel = thinkingByModel
-				}
+		models := exec.ModelIDs(items[i].Models)
+		thinkingByModel := exec.ModelThinkingOptions(items[i].Models)
+		for j := range items[i].Fields {
+			if items[i].Fields[j].Key == "model" {
+				items[i].Fields[j].Suggestions = models
 			}
-		}(i)
+			if items[i].Fields[j].Key == "thinking" && len(thinkingByModel) > 0 {
+				items[i].Fields[j].ThinkingOptionsByModel = thinkingByModel
+			}
+		}
 	}
-	wg.Wait()
-	out := make([]map[string]any, 0, len(items))
-	for _, it := range items {
-		out = append(out, map[string]any{
-			"id": it.a.ID(), "name": it.a.Name(), "docs": it.a.Docs(), "fields": it.fields,
-		})
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, items)
 }
 
-// refreshAgentSchemas 强制从 Linux 主机重查各 CLI 的模型目录后返回 schema。
+// refreshRuntimes 强制从 Linux 主机重查各 CLI 的模型目录后返回 schema。
 // 角色定义和 role_config 仍在 SQLite；这里仅刷新可选模型与其发现到的能力。
-func (s *Server) refreshAgentSchemas(w http.ResponseWriter, r *http.Request) {
+func (s *Server) refreshRuntimes(w http.ResponseWriter, r *http.Request) {
 	exec.RefreshModelCatalogs()
-	s.listAgentSchemas(w, r)
+	s.listRuntimes(w, r)
 }
 
 // ---------------------------------------------------------------------------
-// CLI 安装/登录状态（Dashboard Agent 区 + Agents 页共用）
+// Runtime 安装/登录状态（工作台与 Runtime 页共用）
 
 func (s *Server) provisionStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, exec.ProvisionStatus())
+	writeJSON(w, http.StatusOK, s.ex.RuntimeService().Provisioning())
 }
 
 // provisionInstall 按官方命令流式安装 CLI：输出经 SSE（provision 事件）推送，
 // 前端内嵌终端实时显示；同一 CLI 并发安装互斥。
 func (s *Server) provisionInstall(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		CLI string `json:"cli"`
+		RuntimeID string `json:"runtime_id"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if _, ok := exec.GetAdapter(in.CLI); !ok {
-		writeErr(w, http.StatusBadRequest, "未知 CLI: "+in.CLI)
+	cmd, ok := s.ex.RuntimeService().InstallCommand(in.RuntimeID)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "未知 Runtime: "+in.RuntimeID)
 		return
 	}
-	cmd := exec.InstallCommands[in.CLI]
 	if cmd == "" {
 		writeErr(w, http.StatusBadRequest, "该 CLI 暂无内置安装命令，请参考官方文档手动安装")
 		return
 	}
-	if !s.provTryLock(in.CLI) {
-		writeErr(w, http.StatusConflict, in.CLI+" 正在安装中")
+	if !s.provTryLock(in.RuntimeID) {
+		writeErr(w, http.StatusConflict, in.RuntimeID+" 正在安装中")
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"started": true, "cli": in.CLI, "cmd": cmd})
+	writeJSON(w, http.StatusAccepted, map[string]any{"started": true, "runtime_id": in.RuntimeID, "cmd": cmd})
 	go func() {
-		defer s.provUnlock(in.CLI)
+		defer s.provUnlock(in.RuntimeID)
 		push := func(line string) {
-			s.hub.Publish(events.Event{Type: "provision", Payload: map[string]any{"cli": in.CLI, "line": line}})
+			s.hub.Publish(events.Event{Type: "provision", Payload: map[string]any{"runtime_id": in.RuntimeID, "line": line}})
 		}
 		push("$ " + cmd)
 		c := osexec.Command("bash", "-c", cmd)
@@ -2149,12 +2014,12 @@ func (s *Server) overviewStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ov)
 }
 
-func (s *Server) agentStats(w http.ResponseWriter, r *http.Request) {
+func (s *Server) roleStats(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
-	st, err := s.st.AgentStatsOf(id)
+	st, err := s.st.RoleStatsOf(id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "角色不存在")
 		return

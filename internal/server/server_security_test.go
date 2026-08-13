@@ -23,7 +23,7 @@ func newSecurityTestServer(t *testing.T, token string) *Server {
 	t.Cleanup(func() { _ = st.Close() })
 
 	root := t.TempDir()
-	hub := events.NewHub()
+	hub := events.NewEventStream()
 	executor := paiexec.NewForTest(st, hub, filepath.Join(root, "sessions"), filepath.Join(root, "paihuo.db"), "paihuo-security-test")
 	return New(st, hub, executor, sched.New(st, hub, executor), token, filepath.Join(root, "skills"))
 }
@@ -34,7 +34,7 @@ func TestHandlerAuthenticationAndSecurityHeaders(t *testing.T) {
 	h := s.Handler()
 
 	unauthorized := httptest.NewRecorder()
-	h.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/tasks", nil))
+	h.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil))
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("未登录 API 应返回 401，得到 %d: %s", unauthorized.Code, unauthorized.Body.String())
 	}
@@ -61,7 +61,7 @@ func TestHandlerAuthenticationAndSecurityHeaders(t *testing.T) {
 		t.Fatalf("会话 cookie 格式错误: %q", cookie.Value)
 	}
 
-	authorizedReq := httptest.NewRequest(http.MethodGet, "/api/tasks", nil)
+	authorizedReq := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
 	authorizedReq.AddCookie(cookie)
 	authorized := httptest.NewRecorder()
 	h.ServeHTTP(authorized, authorizedReq)
@@ -76,7 +76,7 @@ func TestHandlerAuthenticationAndSecurityHeaders(t *testing.T) {
 
 	badCookie := *cookie
 	badCookie.Value += "x"
-	badReq := httptest.NewRequest(http.MethodGet, "/api/tasks", nil)
+	badReq := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
 	badReq.AddCookie(&badCookie)
 	bad := httptest.NewRecorder()
 	h.ServeHTTP(bad, badReq)
@@ -85,7 +85,7 @@ func TestHandlerAuthenticationAndSecurityHeaders(t *testing.T) {
 	}
 
 	asset := httptest.NewRecorder()
-	h.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/static/app.css", nil))
+	h.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/static/login.css", nil))
 	if asset.Code != http.StatusOK {
 		t.Fatalf("静态资源应可访问，得到 %d", asset.Code)
 	}

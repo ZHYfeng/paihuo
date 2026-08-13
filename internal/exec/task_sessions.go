@@ -26,7 +26,7 @@ func newTaskSessionStore(sessionsRoot, instanceID string) *taskSessionStore {
 	}
 	sum := sha256.Sum256([]byte(instanceID))
 	namespace := hex.EncodeToString(sum[:8])
-	return &taskSessionStore{root: filepath.Join(sessionsRoot, ".agent-sessions", namespace)}
+	return &taskSessionStore{root: filepath.Join(sessionsRoot, ".runtime-sessions", namespace)}
 }
 
 func (s *taskSessionStore) dir(taskID int64) string {

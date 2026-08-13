@@ -5,7 +5,7 @@ paihuo.db*
 *.db-journal
 /sessions/
 /skills/
-/node_modules/
+node_modules/
 /playwright-report/
 /test-results/
 /coverage.out

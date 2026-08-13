@@ -66,11 +66,11 @@ type Session struct {
 	ID             int64   `json:"id"`
 	ProjectID      *int64  `json:"project_id"`
 	ProjectName    string  `json:"project_name,omitempty"`
-	AgentID        int64   `json:"agent_id"`
-	AgentName      string  `json:"agent_name,omitempty"`
+	RoleID         int64   `json:"role_id"`
+	RoleName       string  `json:"role_name,omitempty"`
 	Title          string  `json:"title"`
 	Status         string  `json:"status"`
-	CLI            string  `json:"cli"` // 冗余自角色，前端展示用：pi | omp
+	RuntimeID      string  `json:"runtime_id"` // 冗余自角色，前端展示用：pi | omp
 	WorktreeBranch string  `json:"worktree_branch"`
 	WorktreePath   string  `json:"worktree_path"`
 	BaseCommit     string  `json:"base_commit"` // 创建 worktree 时主分支 HEAD
@@ -78,6 +78,7 @@ type Session struct {
 	TaskID         *int64  `json:"task_id"`     // 交付后关联
 	LastMessageAt  string  `json:"last_message_at"`
 	MessageCount   int     `json:"message_count"`
+	Revision       int64   `json:"revision"`
 	CreatedAt      string  `json:"created_at"`
 	StartedAt      *string `json:"started_at"`
 	SuspendedAt    *string `json:"suspended_at"`
@@ -89,7 +90,7 @@ type Session struct {
 type SessionFilter struct {
 	ProjectID      *int64
 	Status         string
-	AgentID        *int64
+	RoleID         *int64
 	IncludeDeleted bool
 }
 
@@ -108,22 +109,22 @@ type RoleConfig struct {
 	Custom       map[string]string `json:"custom,omitempty"` // CLI 特有参数（如 opencode 的 agent、claude 的 permission_mode）
 }
 
-type Agent struct {
+type Role struct {
 	ID             int64      `json:"id"`
 	Name           string     `json:"name"`
 	Description    string     `json:"description"`
-	CLI            string     `json:"cli"` // 适配器 id：omp | opencode | pi | claude | codex
+	RuntimeID      string     `json:"runtime_id"` // Runtime ID：omp | opencode | pi | claude | codex
 	RoleConfig     RoleConfig `json:"role_config"`
-	ProjectDir     string     `json:"project_dir"`     // 绑定的项目目录
 	MaxConcurrency int        `json:"max_concurrency"` // 该角色同时运行的任务上限
 	Enabled        bool       `json:"enabled"`
+	Revision       int64      `json:"revision"`
 	CreatedAt      string     `json:"created_at"`
 	UpdatedAt      string     `json:"updated_at"`
 }
 
-// ConcurrencyLimit 返回可执行的角色并发上限。数据库迁移前后和直接调用
-// Store 的场景都把零值收敛为 1，避免一个缺失配置意外阻塞整个队列。
-func (a Agent) ConcurrencyLimit() int {
+// ConcurrencyLimit 返回可执行的角色并发上限。零值收敛为 1，避免缺失配置
+// 意外阻塞整个队列。
+func (a Role) ConcurrencyLimit() int {
 	if a.MaxConcurrency < 1 {
 		return 1
 	}
@@ -138,8 +139,8 @@ type Task struct {
 	Perm           string  `json:"perm"`
 	RunMode        string  `json:"run_mode"`
 	Concurrent     bool    `json:"concurrent"` // 是否并发执行：默认串行（同一项目同时只执行一个任务）
-	AgentID        *int64  `json:"agent_id"`
-	AgentName      string  `json:"agent_name,omitempty"`
+	RoleID         *int64  `json:"role_id"`
+	RoleName       string  `json:"role_name,omitempty"`
 	ProjectID      *int64  `json:"project_id"`
 	ProjectName    string  `json:"project_name,omitempty"`
 	ProjectDir     string  `json:"project_dir"`
@@ -158,9 +159,11 @@ type Task struct {
 	ResumeOf       *int64  `json:"resume_of"`               // 续跑自哪个任务（复用其会话目录）
 	MergeOf        *int64  `json:"merge_of"`                // 合并任务整合自哪个源任务
 	SessionID      *int64  `json:"session_id"`              // 会话交付创建（复用会话 worktree/分支）
+	WorkflowRunID  *int64  `json:"workflow_run_id"`         // Workflow Run 原子实例化的归属
 	SortOrder      int64   `json:"sort_order"`              // 项目内执行顺序（合并任务不参与排序）
 	TerminalCols   int     `json:"terminal_cols,omitempty"` // 交互终端最近同步尺寸（列）；0=未同步（默认 80）
 	TerminalRows   int     `json:"terminal_rows,omitempty"` // 交互终端最近同步尺寸（行）；0=未同步（默认 24）
+	Revision       int64   `json:"revision"`
 	CreatedAt      string  `json:"created_at"`
 	StartedAt      *string `json:"started_at"`
 	FinishedAt     *string `json:"finished_at"`
@@ -187,9 +190,10 @@ func NewMergeTask(source Task) Task {
 		Status:         StatusQueued,
 		Perm:           PermFull,
 		RunMode:        RunModeBatch,
-		AgentID:        source.AgentID,
+		RoleID:         source.RoleID,
 		ProjectID:      source.ProjectID,
 		ProjectDir:     source.ProjectDir,
+		WorkflowRunID:  source.WorkflowRunID,
 		ParentID:       &sourceID,
 		MergeOf:        &sourceID,
 		DependencyMode: DependencyNone,
@@ -229,6 +233,7 @@ type Project struct {
 	Status      string `json:"status"` // active | archived
 	ProjectDir  string `json:"project_dir"`
 	IsGit       bool   `json:"is_git"` // git 仓库（列表时探测，非存储字段）
+	Revision    int64  `json:"revision"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }
@@ -245,7 +250,7 @@ type Skill struct {
 }
 
 // ---------------------------------------------------------------------------
-// 统计（维度二：任务管理 — 项目进度 + 在项目上工作的 agent 产出）
+// 统计（维度二：任务管理 — 项目进度 + 在项目上工作的 Role 产出）
 
 // StatusCount 某状态下任务数量。
 type StatusCount struct {
@@ -259,10 +264,10 @@ type DailyCount struct {
 	Count int    `json:"count"`
 }
 
-// AgentProjectStat 某 agent 在某个项目上的产出。
-type AgentProjectStat struct {
-	AgentID     int64   `json:"agent_id"`
-	AgentName   string  `json:"agent_name"`
+// RoleProjectStat 某个 Role 在某个项目上的产出。
+type RoleProjectStat struct {
+	RoleID      int64   `json:"role_id"`
+	RoleName    string  `json:"role_name"`
 	ProjectID   int64   `json:"project_id"`
 	ProjectName string  `json:"project_name"`
 	Total       int     `json:"total"`
@@ -273,37 +278,37 @@ type AgentProjectStat struct {
 	AvgDuration float64 `json:"avg_duration"` // 秒
 }
 
-// AgentStats 单个 agent 的全量统计（概览 + 分项目 + 每日）。
-type AgentStats struct {
-	AgentID      int64              `json:"agent_id"`
-	AgentName    string             `json:"agent_name"`
-	CLI          string             `json:"cli"`
-	Total        int                `json:"total"`
-	InFlight     int                `json:"in_flight"`
-	Succeeded    int                `json:"succeeded"`
-	Failed       int                `json:"failed"`
-	Cancelled    int                `json:"cancelled"`
-	Reviews      int                `json:"reviews"`
-	SuccessRate  float64            `json:"success_rate"`
-	AvgDuration  float64            `json:"avg_duration"`
-	StatusCounts []StatusCount      `json:"status_counts"`
-	Projects     []AgentProjectStat `json:"projects"`
-	Daily        []DailyCount       `json:"daily"`
+// RoleStats 单个 Role 的全量统计（概览 + 分项目 + 每日）。
+type RoleStats struct {
+	RoleID       int64             `json:"role_id"`
+	RoleName     string            `json:"role_name"`
+	RuntimeID    string            `json:"runtime_id"`
+	Total        int               `json:"total"`
+	InFlight     int               `json:"in_flight"`
+	Succeeded    int               `json:"succeeded"`
+	Failed       int               `json:"failed"`
+	Cancelled    int               `json:"cancelled"`
+	Reviews      int               `json:"reviews"`
+	SuccessRate  float64           `json:"success_rate"`
+	AvgDuration  float64           `json:"avg_duration"`
+	StatusCounts []StatusCount     `json:"status_counts"`
+	Projects     []RoleProjectStat `json:"projects"`
+	Daily        []DailyCount      `json:"daily"`
 }
 
-// ProjectStats 项目进度 + 在项目上工作的 agent 统计。
+// ProjectStats 项目进度 + 在项目上工作的 Role 统计。
 type ProjectStats struct {
-	ProjectID    int64              `json:"project_id"`
-	ProjectName  string             `json:"project_name"`
-	Total        int                `json:"total"`
-	InFlight     int                `json:"in_flight"`
-	Succeeded    int                `json:"succeeded"`
-	Failed       int                `json:"failed"`
-	Reviews      int                `json:"reviews"`
-	Progress     float64            `json:"progress"` // 0-100（完成占比）
-	StatusCounts []StatusCount      `json:"status_counts"`
-	Agents       []AgentProjectStat `json:"agents"`
-	Daily        []DailyCount       `json:"daily"`
+	ProjectID    int64             `json:"project_id"`
+	ProjectName  string            `json:"project_name"`
+	Total        int               `json:"total"`
+	InFlight     int               `json:"in_flight"`
+	Succeeded    int               `json:"succeeded"`
+	Failed       int               `json:"failed"`
+	Reviews      int               `json:"reviews"`
+	Progress     float64           `json:"progress"` // 0-100（完成占比）
+	StatusCounts []StatusCount     `json:"status_counts"`
+	Roles        []RoleProjectStat `json:"roles"`
+	Daily        []DailyCount      `json:"daily"`
 }
 
 // OverviewStats 全局总览（看板统计条）。
@@ -329,19 +334,31 @@ type TaskLog struct {
 	CreatedAt string `json:"created_at"`
 }
 
+// EventRecord is the authoritative append-only event envelope used for SSE
+// resume. Payload retains the versioned domain JSON exactly as published.
+type EventRecord struct {
+	Seq       int64  `json:"seq"`
+	Type      string `json:"type"`
+	TaskID    int64  `json:"task_id,omitempty"`
+	RoleID    int64  `json:"role_id,omitempty"`
+	Payload   []byte `json:"-"`
+	CreatedAt string `json:"created_at"`
+}
+
 type Schedule struct {
 	ID             int64   `json:"id"`
 	Name           string  `json:"name"`
 	Cron           string  `json:"cron"`
 	TitleTemplate  string  `json:"title_template"`
 	BodyTemplate   string  `json:"body_template"`
-	AgentID        int64   `json:"agent_id"`
-	AgentName      string  `json:"agent_name,omitempty"`
+	RoleID         int64   `json:"role_id"`
+	RoleName       string  `json:"role_name,omitempty"`
 	ProjectID      *int64  `json:"project_id"`
 	ProjectName    string  `json:"project_name,omitempty"`
 	Perm           string  `json:"perm"` // 每次触发时写入新建任务的权限模式
 	BlockOnFailure bool    `json:"block_on_failure"`
 	Enabled        bool    `json:"enabled"`
+	Revision       int64   `json:"revision"`
 	LastRunAt      *string `json:"last_run_at"`
 	NextRunAt      *string `json:"next_run_at"`
 	CreatedAt      string  `json:"created_at"`

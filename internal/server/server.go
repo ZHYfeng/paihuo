@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -22,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"paihuo/internal/application"
+	"paihuo/internal/artifact"
 	"paihuo/internal/events"
 	"paihuo/internal/exec"
 	"paihuo/internal/sched"
@@ -32,14 +35,18 @@ import (
 
 type Server struct {
 	st           *store.Store
-	hub          *events.Hub
+	hub          *events.EventStream
 	ex           *exec.Executor
 	sess         *session.Manager
 	sched        *sched.Scheduler
+	workflows    *application.WorkflowService
+	tasks        *application.TaskLifecycle
+	workspaces   *application.WorkspaceService
+	artifacts    artifact.Store
 	token        string
-	skillsDir    string                        // 技能库工作目录（<db目录>/skills，导入或扫描发现的技能复制到这里）
-	sessionsRoot string                        // 任务 worktree 根目录（<db目录>/sessions）
-	pages        map[string]*template.Template // 每页一个模板集（base + 页面，避免 content 冲突）
+	skillsDir    string // 技能库工作目录（<db目录>/skills，导入或扫描发现的技能复制到这里）
+	sessionsRoot string // 任务 worktree 根目录（<db目录>/sessions）
+	loginPage    *template.Template
 	mux          *http.ServeMux
 	secureCookie bool            // only set during startup for TLS-terminating reverse proxies
 	provMu       sync.Mutex      // 安装互斥锁
@@ -52,10 +59,9 @@ const (
 	maxJSONBody   = 1 << 20 // 1 MiB
 )
 
-// RecoverSessions 服务重启后把遗留 active 会话置为 suspended（进程已丢失）。
-// 在 Server 组装完成后、监听开始前调用。同时启动空闲自动挂起巡检
-// （pi-web 行为：空闲会话自动挂起，发消息自动恢复）。
-func (s *Server) RecoverSessions() {
+// Start reconciles persisted sessions and starts bounded background services.
+// It must be called once before serving requests.
+func (s *Server) Start(ctx context.Context) {
 	s.sess.Recover()
 	idle := 5 * time.Minute
 	if v := os.Getenv("PAIHUO_SESSION_IDLE"); v != "" {
@@ -65,6 +71,11 @@ func (s *Server) RecoverSessions() {
 	}
 	log.Printf("会话空闲自动挂起阈值: %v（发消息自动恢复）", idle)
 	s.sess.StartIdleMonitor(idle)
+	s.workflows.StartMonitor(ctx)
+	go func() {
+		<-ctx.Done()
+		s.sess.Stop()
+	}()
 }
 
 // sessionValue creates an opaque, stateless session token. The expiry and a
@@ -128,73 +139,56 @@ func (s *Server) validSession(r *http.Request) bool {
 	return subtle.ConstantTimeCompare(got, mac.Sum(nil)) == 1
 }
 
-func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Scheduler, token, skillsDir string) *Server {
+func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.Scheduler, token, skillsDir string) *Server {
+	runtimes := exec.NewDefaultRuntimeService()
+	if ex != nil {
+		runtimes = ex.RuntimeService()
+	}
 	s := &Server{
 		st:           st,
 		hub:          hub,
 		ex:           ex,
 		sess:         session.New(st, hub, ex, filepath.Join(filepath.Dir(skillsDir), "sessions"), filepath.Dir(skillsDir)),
 		sched:        sc,
+		workflows:    application.NewWorkflowService(st, runtimes, ex, hub),
+		tasks:        application.NewTaskLifecycle(st, runtimes, ex),
 		token:        token,
 		skillsDir:    skillsDir,
 		sessionsRoot: filepath.Join(filepath.Dir(skillsDir), "sessions"),
-		pages: map[string]*template.Template{
-			"index":      template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/index.html")),
-			"board":      template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/board.html")),
-			"history":    template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/history.html")),
-			"agents":     template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/agents.html")),
-			"roles":      template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/roles.html")),
-			"projects":   template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/projects.html")),
-			"autopilots": template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/autopilots.html")),
-			"skills":     template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/skills.html")),
-			"templates":  template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/templates.html")),
-			"sessions":   template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/sessions.html")),
-			"settings":   template.Must(template.ParseFS(web.FS, "templates/base.html", "templates/settings.html")),
-			"login":      template.Must(template.ParseFS(web.FS, "templates/login.html")),
-		},
-		mux:      http.NewServeMux(),
-		provBusy: map[string]bool{},
+		loginPage:    template.Must(template.ParseFS(web.FS, "templates/login.html")),
+		mux:          http.NewServeMux(),
+		provBusy:     map[string]bool{},
+	}
+	s.workspaces = application.NewWorkspaceService(st, s.sessionsRoot)
+	var artifactErr error
+	s.artifacts, artifactErr = artifact.NewLocalStore(filepath.Join(filepath.Dir(skillsDir), "artifacts"))
+	if artifactErr != nil {
+		log.Printf("ArtifactStore 初始化失败: %v", artifactErr)
 	}
 
 	m := s.mux
-	m.HandleFunc("GET /", s.pageIndex)
-	m.HandleFunc("GET /board", s.pageBoard)
-	m.HandleFunc("GET /history", s.pageHistory)
-	m.HandleFunc("GET /roles", s.pageRoles)
-	m.HandleFunc("GET /agents", s.pageAgents)
-	m.HandleFunc("GET /projects", s.pageProjects)
-	m.HandleFunc("GET /autopilots", s.pageAutopilots)
-	m.HandleFunc("GET /skills", s.pageSkills)
-	m.HandleFunc("GET /templates", s.pageTemplates)
-	m.HandleFunc("GET /sessions", s.pageSessions)
-	m.HandleFunc("GET /settings", s.pageSettings)
 	m.HandleFunc("GET /login", s.pageLogin)
 	m.HandleFunc("POST /login", s.login)
 	m.HandleFunc("POST /logout", s.logout)
 	m.Handle("GET /static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 内嵌资源随二进制更新：内容 hash 作 ETag，浏览器每次 revalidate。
-		// 二进制更新后 hash 变化，客户端必然拿到新版前端（旧实现无 ETag，
-		// 浏览器可能长期复用缓存的旧 app.js 导致页面脚本缺失）。
-		name := strings.TrimPrefix(r.URL.Path, "/")
+		name := "dist/" + strings.TrimPrefix(r.URL.Path, "/static/")
 		if !fs.ValidPath(name) {
 			http.NotFound(w, r)
 			return
 		}
-		f, err := web.FS.Open(name)
+		b, err := fs.ReadFile(web.FS, name)
 		if err != nil {
 			http.NotFound(w, r)
-			return
-		}
-		defer f.Close()
-		b, err := io.ReadAll(f)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		sum := sha256.Sum256(b)
 		etag := fmt.Sprintf(`"%x"`, sum[:8])
 		w.Header().Set("ETag", etag)
-		w.Header().Set("Cache-Control", "no-cache")
+		if strings.HasPrefix(name, "dist/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		if r.Header.Get("If-None-Match") == etag {
 			w.WriteHeader(http.StatusNotModified)
 			return
@@ -202,72 +196,79 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 		w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(r.URL.Path)))
 		w.Write(b)
 	}))
-	m.HandleFunc("GET /api/events", s.sse)
+	m.HandleFunc("GET /api/v1/events", s.sse)
 	s.sessionRoutes(m)
+	s.workflowRoutes(m)
 
-	m.HandleFunc("GET /api/tasks", s.listTasks)
-	m.HandleFunc("POST /api/tasks", s.createTask)
-	m.HandleFunc("GET /api/tasks/{id}", s.getTask)
-	m.HandleFunc("PATCH /api/tasks/{id}", s.patchTask)
-	m.HandleFunc("DELETE /api/tasks/{id}", s.deleteTask)
-	m.HandleFunc("POST /api/tasks/{id}/resume", s.resumeTask)
-	m.HandleFunc("POST /api/tasks/{id}/input", s.sendTaskInput)
-	m.HandleFunc("POST /api/tasks/{id}/resize", s.resizeTask)
-	m.HandleFunc("POST /api/tasks/{id}/end-session", s.endSession)
-	m.HandleFunc("GET /api/tasks/{id}/logs", s.getTaskLogs)
-	m.HandleFunc("GET /api/tasks/{id}/diff", s.taskDiff)
-	m.HandleFunc("GET /api/tasks/{id}/children", s.getTaskChildren)
-	m.HandleFunc("POST /api/tasks/cleanup", s.cleanupTasks)
+	m.HandleFunc("GET /api/v1/tasks", s.listTasks)
+	m.HandleFunc("POST /api/v1/tasks", s.createTask)
+	m.HandleFunc("GET /api/v1/tasks/{id}", s.getTask)
+	m.HandleFunc("PATCH /api/v1/tasks/{id}", s.patchTask)
+	m.HandleFunc("DELETE /api/v1/tasks/{id}", s.deleteTask)
+	m.HandleFunc("POST /api/v1/tasks/{id}/resume", s.resumeTask)
+	m.HandleFunc("POST /api/v1/tasks/{id}/input", s.sendTaskInput)
+	m.HandleFunc("POST /api/v1/tasks/{id}/resize", s.resizeTask)
+	m.HandleFunc("POST /api/v1/tasks/{id}/end-session", s.endSession)
+	m.HandleFunc("GET /api/v1/tasks/{id}/logs", s.getTaskLogs)
+	m.HandleFunc("GET /api/v1/tasks/{id}/diff", s.taskDiff)
+	m.HandleFunc("GET /api/v1/tasks/{id}/children", s.getTaskChildren)
+	m.HandleFunc("POST /api/v1/tasks/cleanup", s.cleanupTasks)
 
-	m.HandleFunc("GET /api/settings", s.getSettings)
-	m.HandleFunc("PUT /api/settings", s.putSettings)
+	m.HandleFunc("GET /api/v1/settings", s.getSettings)
+	m.HandleFunc("PUT /api/v1/settings", s.putSettings)
 
-	m.HandleFunc("GET /api/templates", s.listTemplates)
-	m.HandleFunc("POST /api/templates", s.createTemplate)
-	m.HandleFunc("PATCH /api/templates/{id}", s.patchTemplate)
-	m.HandleFunc("DELETE /api/templates/{id}", s.deleteTemplate)
+	m.HandleFunc("GET /api/v1/templates", s.listTemplates)
+	m.HandleFunc("POST /api/v1/templates", s.createTemplate)
+	m.HandleFunc("PATCH /api/v1/templates/{id}", s.patchTemplate)
+	m.HandleFunc("DELETE /api/v1/templates/{id}", s.deleteTemplate)
 
-	m.HandleFunc("GET /api/agents", s.listAgents)
-	m.HandleFunc("POST /api/agents", s.createAgent)
-	m.HandleFunc("PATCH /api/agents/{id}", s.patchAgent)
-	m.HandleFunc("DELETE /api/agents/{id}", s.deleteAgent)
-	m.HandleFunc("GET /api/agents/schema", s.listAgentSchemas)
-	m.HandleFunc("POST /api/agents/schema/refresh", s.refreshAgentSchemas)
-	m.HandleFunc("POST /api/role-studio/chat", s.roleStudioChat)
-	m.HandleFunc("POST /api/role-studio/test", s.roleStudioTest)
-	m.HandleFunc("POST /api/provision/install", s.provisionInstall)
-	m.HandleFunc("GET /api/provision", s.provisionStatus)
-	m.HandleFunc("GET /api/skills", s.listSkills)
-	m.HandleFunc("POST /api/skills", s.createSkill)
-	m.HandleFunc("DELETE /api/skills", s.deleteSkills)
-	m.HandleFunc("POST /api/skills/scan", s.scanSkills)
-	m.HandleFunc("GET /api/skills/{id}", s.getSkill)
-	m.HandleFunc("PATCH /api/skills/{id}", s.patchSkill)
-	m.HandleFunc("DELETE /api/skills/{id}", s.deleteSkill)
-	m.HandleFunc("GET /api/extensions", s.listExtensions)
-	m.HandleFunc("POST /api/extensions/install", s.installExtension)
-	m.HandleFunc("DELETE /api/extensions/{name}", s.removeExtension)
-	m.HandleFunc("GET /api/workspace/{id}", s.workspaceStatus)
-	m.HandleFunc("POST /api/workspace/{id}/discard", s.workspaceDiscard)
-	m.HandleFunc("POST /api/workspace/git-init", s.workspaceGitInit)
-	m.HandleFunc("GET /api/fs/dirs", s.fsDirs)
-	m.HandleFunc("POST /api/fs/mkdir", s.fsMkdir)
+	m.HandleFunc("GET /api/v1/roles", s.listRoles)
+	m.HandleFunc("POST /api/v1/roles", s.createRole)
+	m.HandleFunc("PATCH /api/v1/roles/{id}", s.patchRole)
+	m.HandleFunc("DELETE /api/v1/roles/{id}", s.deleteRole)
+	m.HandleFunc("GET /api/v1/runtimes", s.listRuntimes)
+	m.HandleFunc("POST /api/v1/runtimes/refresh", s.refreshRuntimes)
+	m.HandleFunc("POST /api/v1/role-studio/chat", s.roleStudioChat)
+	m.HandleFunc("POST /api/v1/role-studio/test", s.roleStudioTest)
+	m.HandleFunc("POST /api/v1/runtimes/install", s.provisionInstall)
+	m.HandleFunc("GET /api/v1/runtimes/provisioning", s.provisionStatus)
+	m.HandleFunc("GET /api/v1/skills", s.listSkills)
+	m.HandleFunc("POST /api/v1/skills", s.createSkill)
+	m.HandleFunc("DELETE /api/v1/skills", s.deleteSkills)
+	m.HandleFunc("POST /api/v1/skills/scan", s.scanSkills)
+	m.HandleFunc("GET /api/v1/skills/{id}", s.getSkill)
+	m.HandleFunc("PATCH /api/v1/skills/{id}", s.patchSkill)
+	m.HandleFunc("DELETE /api/v1/skills/{id}", s.deleteSkill)
+	m.HandleFunc("GET /api/v1/extensions", s.listExtensions)
+	m.HandleFunc("POST /api/v1/extensions/install", s.installExtension)
+	m.HandleFunc("DELETE /api/v1/extensions/{name}", s.removeExtension)
+	m.HandleFunc("GET /api/v1/workspace/{id}", s.workspaceStatus)
+	m.HandleFunc("POST /api/v1/workspace/{id}/discard", s.workspaceDiscard)
+	m.HandleFunc("POST /api/v1/workspace/git-init", s.workspaceGitInit)
+	m.HandleFunc("GET /api/v1/fs/dirs", s.fsDirs)
+	m.HandleFunc("POST /api/v1/fs/mkdir", s.fsMkdir)
 
-	m.HandleFunc("GET /api/projects", s.listProjects)
-	m.HandleFunc("POST /api/projects", s.createProject)
-	m.HandleFunc("PATCH /api/projects/{id}", s.patchProject)
-	m.HandleFunc("PUT /api/projects/{id}/tasks/order", s.reorderProjectTasks)
-	m.HandleFunc("PATCH /api/projects/{id}/tasks/order", s.reorderProjectTasks)
-	m.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
+	m.HandleFunc("GET /api/v1/projects", s.listProjects)
+	m.HandleFunc("POST /api/v1/projects", s.createProject)
+	m.HandleFunc("PATCH /api/v1/projects/{id}", s.patchProject)
+	m.HandleFunc("PUT /api/v1/projects/{id}/tasks/order", s.reorderProjectTasks)
+	m.HandleFunc("PATCH /api/v1/projects/{id}/tasks/order", s.reorderProjectTasks)
+	m.HandleFunc("DELETE /api/v1/projects/{id}", s.deleteProject)
 
-	m.HandleFunc("GET /api/stats/overview", s.overviewStats)
-	m.HandleFunc("GET /api/stats/agent/{id}", s.agentStats)
-	m.HandleFunc("GET /api/stats/project/{id}", s.projectStats)
+	m.HandleFunc("GET /api/v1/stats/overview", s.overviewStats)
+	m.HandleFunc("GET /api/v1/stats/roles/{id}", s.roleStats)
+	m.HandleFunc("GET /api/v1/stats/project/{id}", s.projectStats)
 
-	m.HandleFunc("GET /api/schedules", s.listSchedules)
-	m.HandleFunc("POST /api/schedules", s.createSchedule)
-	m.HandleFunc("PATCH /api/schedules/{id}", s.patchSchedule)
-	m.HandleFunc("DELETE /api/schedules/{id}", s.deleteSchedule)
+	m.HandleFunc("GET /api/v1/schedules", s.listSchedules)
+	m.HandleFunc("POST /api/v1/schedules", s.createSchedule)
+	m.HandleFunc("PATCH /api/v1/schedules/{id}", s.patchSchedule)
+	m.HandleFunc("DELETE /api/v1/schedules/{id}", s.deleteSchedule)
+	m.HandleFunc("GET /api/v1/openapi.yaml", s.openAPISpec)
+	s.artifactRoutes(m)
+
+	// All authenticated browser routes share one React root. More-specific API,
+	// login and static patterns above always win ServeMux routing.
+	m.HandleFunc("GET /", s.pageApp)
 
 	return s
 }
@@ -278,8 +279,9 @@ func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sc *sched.Schedule
 // 出现在 URL / 前端代码里。
 func (s *Server) Handler() http.Handler {
 	var next http.Handler
+	base := s.withIdempotency(s.mux)
 	if s.token == "" {
-		next = s.mux
+		next = base
 	} else {
 		next = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			p := r.URL.Path
@@ -288,7 +290,7 @@ func (s *Server) Handler() http.Handler {
 				return
 			}
 			if !s.validSession(r) {
-				if strings.HasPrefix(p, "/api/") {
+				if strings.HasPrefix(p, "/api/v1/") {
 					writeErr(w, http.StatusUnauthorized, "未登录")
 					return
 				}
@@ -298,16 +300,12 @@ func (s *Server) Handler() http.Handler {
 			if !s.setSessionCookie(w) {
 				return
 			}
-			s.mux.ServeHTTP(w, r)
+			base.ServeHTTP(w, r)
 		})
 	}
 	return securityHeaders(next)
 }
 
-// securityHeaders applies a conservative browser-security baseline. A strict
-// script-src CSP cannot be enabled yet because templates intentionally use
-// inline event handlers; the remaining directives still protect framing,
-// object embedding, referrers and cross-origin resource loading.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -316,7 +314,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 		w.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=(), payment=(), usb=()")
-		w.Header().Set("Content-Security-Policy", "base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'")
 		if !strings.HasPrefix(r.URL.Path, "/static/") {
 			w.Header().Set("Cache-Control", "no-store")
 		}
@@ -332,59 +330,29 @@ type pageData struct {
 	LoginError string
 }
 
-func (s *Server) pageIndex(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "index", pageData{Active: "dashboard"})
-}
-
-func (s *Server) pageBoard(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "board", pageData{Active: "board"})
-}
-
-func (s *Server) pageHistory(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "history", pageData{Active: "history"})
-}
-
-func (s *Server) pageAgents(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "agents", pageData{Active: "agents"})
-}
-
-func (s *Server) pageRoles(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "roles", pageData{Active: "roles"})
-}
-
-func (s *Server) pageProjects(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "projects", pageData{Active: "projects"})
-}
-
-func (s *Server) pageAutopilots(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "autopilots", pageData{Active: "autopilots"})
-}
-
-func (s *Server) pageSkills(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "skills", pageData{Active: "skills"})
-}
-
-func (s *Server) pageTemplates(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "templates", pageData{Active: "templates"})
-}
-
-func (s *Server) pageSessions(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "sessions", pageData{Active: "sessions"})
-}
-
-func (s *Server) pageSettings(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "settings", pageData{Active: "settings"})
+func (s *Server) pageApp(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		writeErr(w, http.StatusNotFound, "API endpoint 不存在")
+		return
+	}
+	b, err := fs.ReadFile(web.FS, "dist/index.html")
+	if err != nil {
+		http.Error(w, "前端资源未构建", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(b)
 }
 
 func (s *Server) pageLogin(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "login", pageData{})
+	s.renderLogin(w, pageData{})
 }
 
 // login 一次性验证令牌：正确则签发会话 cookie。
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	got := r.FormValue("token")
 	if !s.validToken(got) {
-		s.render(w, "login", pageData{LoginError: "令牌不正确"})
+		s.renderLogin(w, pageData{LoginError: "令牌不正确"})
 		return
 	}
 	if !s.setSessionCookie(w) {
@@ -411,9 +379,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
-func (s *Server) render(w http.ResponseWriter, page string, data pageData) {
+func (s *Server) renderLogin(w http.ResponseWriter, data pageData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.pages[page].ExecuteTemplate(w, "base", data); err != nil {
+	if err := s.loginPage.ExecuteTemplate(w, "base", data); err != nil {
 		log.Printf("模板渲染失败: %v", err)
 	}
 }
@@ -427,14 +395,34 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "SSE 不支持", http.StatusInternalServerError)
 		return
 	}
+	after := int64(0)
+	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
+		after, _ = strconv.ParseInt(raw, 10, 64)
+	}
+	if raw := r.URL.Query().Get("after"); raw != "" {
+		if value, err := strconv.ParseInt(raw, 10, 64); err == nil && value > after {
+			after = value
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-	fl.Flush()
-
 	ch := s.hub.Subscribe()
 	defer s.hub.Unsubscribe(ch)
+	w.WriteHeader(http.StatusOK)
+	backlog, err := s.hub.History(after, 1000)
+	if err != nil {
+		return
+	}
+	last := after
+	for _, event := range backlog {
+		if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", event.Seq, event.Type, event.Marshal()); err != nil {
+			return
+		}
+		last = event.Seq
+	}
+	fl.Flush()
 
 	tk := time.NewTicker(15 * time.Second)
 	defer tk.Stop()
@@ -443,9 +431,13 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case ev := <-ch:
-			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, ev.Marshal()); err != nil {
+			if ev.Seq <= last {
+				continue
+			}
+			if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", ev.Seq, ev.Type, ev.Marshal()); err != nil {
 				return // 客户端已断开，立即释放连接（写失败不等待下一个周期）
 			}
+			last = ev.Seq
 			fl.Flush()
 		case <-tk.C:
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
@@ -460,24 +452,63 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request) {
 // 工具
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
+	// Every transport path, including structured-session handlers, uses the
+	// same machine-readable error envelope.
+	if payload, ok := v.(map[string]any); ok {
+		if message, ok := payload["error"].(string); ok {
+			v = map[string]any{"error": map[string]any{"code": errorCode(code), "message": message}}
+		}
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
 }
 
 func writeErr(w http.ResponseWriter, code int, msg string) {
-	writeJSON(w, code, map[string]string{"error": msg})
+	writeJSON(w, code, map[string]any{"error": map[string]any{
+		"code": errorCode(code), "message": msg,
+	}})
+}
+
+func errorCode(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "bad_request"
+	case http.StatusUnauthorized:
+		return "unauthorized"
+	case http.StatusForbidden:
+		return "forbidden"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusConflict:
+		return "conflict"
+	case http.StatusPreconditionRequired:
+		return "revision_required"
+	case http.StatusUnprocessableEntity:
+		return "policy_rejected"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
+	default:
+		if status >= 500 {
+			return "internal_error"
+		}
+		return "request_failed"
+	}
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
+	return readJSONLimit(w, r, v, maxJSONBody)
+}
+
+func readJSONLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		var maxErr *http.MaxBytesError
 		switch {
 		case errors.As(err, &maxErr):
-			writeErr(w, http.StatusRequestEntityTooLarge, "请求体过大（最大 1 MiB）")
+			writeErr(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("请求体过大（最大 %d MiB）", limit/(1<<20)))
 		case errors.Is(err, io.EOF):
 			writeErr(w, http.StatusBadRequest, "请求体不能为空")
 		default:

@@ -16,15 +16,15 @@ const schema = `
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
-CREATE TABLE IF NOT EXISTS agents (
+CREATE TABLE IF NOT EXISTS roles (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   name          TEXT NOT NULL UNIQUE,
   description   TEXT NOT NULL DEFAULT '',
-  cli           TEXT NOT NULL,
+  runtime_id    TEXT NOT NULL,
   role_config   TEXT NOT NULL DEFAULT '{}',
-  project_dir   TEXT NOT NULL DEFAULT '',
   max_concurrency INTEGER NOT NULL DEFAULT 1 CHECK(max_concurrency >= 1),
   enabled       INTEGER NOT NULL DEFAULT 1,
+  revision      INTEGER NOT NULL DEFAULT 1,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS projects (
   description TEXT NOT NULL DEFAULT '',
   status      TEXT NOT NULL DEFAULT 'active', -- active | archived
   project_dir TEXT NOT NULL DEFAULT '',
+  revision    INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL
 );
@@ -47,7 +48,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   perm        TEXT NOT NULL DEFAULT 'full',
   run_mode    TEXT NOT NULL DEFAULT 'batch',
   concurrent  INTEGER NOT NULL DEFAULT 0, -- 1=允许并发（默认串行：同一项目同时只执行一个任务）
-  agent_id    INTEGER REFERENCES agents(id),
+  role_id    INTEGER REFERENCES roles(id),
   project_id  INTEGER REFERENCES projects(id),
   project_dir TEXT NOT NULL DEFAULT '',
   parent_id   INTEGER REFERENCES tasks(id),
@@ -65,13 +66,33 @@ CREATE TABLE IF NOT EXISTS tasks (
   resume_of     INTEGER REFERENCES tasks(id),
   merge_of      INTEGER,
   sort_order    INTEGER NOT NULL DEFAULT 0,
+  terminal_cols INTEGER NOT NULL DEFAULT 0,
+  terminal_rows INTEGER NOT NULL DEFAULT 0,
+  session_id    INTEGER REFERENCES sessions(id),
+  workflow_run_id INTEGER REFERENCES workflow_runs(id) ON DELETE CASCADE,
+  revision      INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL,
   started_at  TEXT,
   finished_at TEXT,
   updated_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(agent_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_role ON tasks(role_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_project_sort ON tasks(project_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_depends_on ON tasks(depends_on);
+CREATE INDEX IF NOT EXISTS idx_tasks_workflow_run ON tasks(workflow_run_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_merge_of_unique ON tasks(merge_of) WHERE merge_of IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS task_dependencies (
+  task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  depends_on INTEGER NOT NULL REFERENCES tasks(id) ON DELETE RESTRICT,
+	on_failure TEXT NOT NULL DEFAULT 'block',
+  PRIMARY KEY(task_id, depends_on),
+  CHECK(task_id <> depends_on)
+);
+CREATE INDEX IF NOT EXISTS idx_task_dependencies_source ON task_dependencies(depends_on);
 
 CREATE TABLE IF NOT EXISTS task_logs (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,11 +110,12 @@ CREATE TABLE IF NOT EXISTS schedules (
   cron           TEXT NOT NULL,
   title_template TEXT NOT NULL,
   body_template  TEXT NOT NULL DEFAULT '',
-  agent_id       INTEGER NOT NULL REFERENCES agents(id),
+  role_id       INTEGER NOT NULL REFERENCES roles(id),
   project_id     INTEGER REFERENCES projects(id) ON DELETE SET NULL,
   perm           TEXT NOT NULL DEFAULT 'full',
   block_on_failure INTEGER NOT NULL DEFAULT 0,
   enabled        INTEGER NOT NULL DEFAULT 1,
+  revision       INTEGER NOT NULL DEFAULT 1,
   last_run_at    TEXT,
   next_run_at    TEXT,
   created_at     TEXT NOT NULL
@@ -103,18 +125,14 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS idx_schedules_project ON schedules(project_id);
 
 CREATE TABLE IF NOT EXISTS templates (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   name       TEXT NOT NULL,
   body       TEXT NOT NULL DEFAULT '',
-  agent_id   INTEGER REFERENCES agents(id),
+  role_id   INTEGER REFERENCES roles(id),
   created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS data_migrations (
-  key        TEXT PRIMARY KEY,
-  applied_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS skills (
@@ -130,10 +148,10 @@ CREATE TABLE IF NOT EXISTS skills (
 CREATE TABLE IF NOT EXISTS sessions (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id  INTEGER REFERENCES projects(id),
-  agent_id    INTEGER NOT NULL REFERENCES agents(id),
+  role_id    INTEGER NOT NULL REFERENCES roles(id),
   title       TEXT NOT NULL,
   status      TEXT NOT NULL DEFAULT 'created', -- created|active|suspended|delivered|deleted
-  cli         TEXT NOT NULL DEFAULT '',
+  runtime_id  TEXT NOT NULL DEFAULT '',
   worktree_branch TEXT NOT NULL DEFAULT '',
   worktree_path   TEXT NOT NULL DEFAULT '',
   base_commit     TEXT NOT NULL DEFAULT '',
@@ -141,6 +159,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   task_id     INTEGER REFERENCES tasks(id),
   last_message_at TEXT NOT NULL DEFAULT '',
   message_count INTEGER NOT NULL DEFAULT 0,
+  revision    INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL,
   started_at  TEXT,
   suspended_at TEXT,
@@ -149,221 +168,81 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_role ON sessions(role_id);
+
+CREATE TABLE IF NOT EXISTS event_log (
+  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL,
+  task_id    INTEGER,
+  role_id    INTEGER,
+  payload    TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_event_log_created ON event_log(created_at);
+
+CREATE TABLE IF NOT EXISTS workflow_proposals (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  spec        TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'proposed',
+  violations  TEXT NOT NULL DEFAULT '[]',
+  revision    INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workflow_plans (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  version     INTEGER NOT NULL DEFAULT 1,
+  spec        TEXT NOT NULL,
+  spec_hash   TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'frozen',
+  proposal_id INTEGER REFERENCES workflow_proposals(id),
+  revision    INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workflow_runs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  plan_id     INTEGER NOT NULL REFERENCES workflow_plans(id),
+  status      TEXT NOT NULL DEFAULT 'created',
+  task_ids    TEXT NOT NULL DEFAULT '{}',
+  revision    INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL,
+  started_at  TEXT,
+  finished_at TEXT,
+  updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_plan ON workflow_runs(plan_id);
+
+CREATE TABLE IF NOT EXISTS idempotency_records (
+  key         TEXT NOT NULL,
+  method      TEXT NOT NULL,
+  path        TEXT NOT NULL,
+  status_code INTEGER NOT NULL,
+  body        BLOB NOT NULL,
+  created_at  TEXT NOT NULL,
+  PRIMARY KEY(key, method, path)
+);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id     INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+  run_id      INTEGER REFERENCES workflow_runs(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  media_type  TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  size        INTEGER NOT NULL CHECK(size >= 0),
+  locator     TEXT NOT NULL,
+  created_by  TEXT NOT NULL,
+  retention   TEXT NOT NULL DEFAULT 'default',
+  created_at  TEXT NOT NULL,
+  CHECK ((task_id IS NOT NULL) <> (run_id IS NOT NULL))
+);
+PRAGMA user_version=1;
 `
 
-// migrate 结构迁移：老库升级到新 schema（pre-1.0 阶段直接删旧结构）。
-func migrate(db *sql.DB) error {
-	// 移除已废弃的设备概念（SSH 通道不再需要：服务直接部署在执行机上）
-	// 注意顺序：先删引用列（agents.device_id / tasks.device_id），再删 devices 表
-	for _, stmt := range []string{
-		"ALTER TABLE agents DROP COLUMN device_id",
-		"ALTER TABLE tasks DROP COLUMN device_id",
-	} {
-		if _, err := db.Exec(stmt); err != nil {
-			// 列不存在则忽略（可能已删）
-			if !strings.Contains(err.Error(), "no such column") {
-				return err
-			}
-		}
-	}
-	if have, err := tableExists(db, "devices"); err != nil {
-		return err
-	} else if have {
-		if _, err := db.Exec("DROP TABLE devices"); err != nil {
-			return fmt.Errorf("删除 devices 表失败: %w", err)
-		}
-	}
-	for _, stmt := range []string{
-		"ALTER TABLE agents ADD COLUMN max_concurrency INTEGER NOT NULL DEFAULT 1",
-		"ALTER TABLE skills ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
-		"ALTER TABLE tasks ADD COLUMN review_rounds INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE tasks ADD COLUMN tmux_log_offset INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE tasks ADD COLUMN run_mode TEXT NOT NULL DEFAULT 'batch'",
-		"ALTER TABLE tasks ADD COLUMN concurrent INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE tasks ADD COLUMN project_id INTEGER REFERENCES projects(id)",
-		"ALTER TABLE projects ADD COLUMN project_dir TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE tasks ADD COLUMN worktree_branch TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE tasks ADD COLUMN base_commit TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE tasks ADD COLUMN resume_of INTEGER REFERENCES tasks(id)",
-		"ALTER TABLE tasks ADD COLUMN merge_of INTEGER",
-		"ALTER TABLE tasks ADD COLUMN depends_on INTEGER REFERENCES tasks(id)",
-		"ALTER TABLE tasks ADD COLUMN dependency_mode TEXT NOT NULL DEFAULT 'none'",
-		"ALTER TABLE tasks ADD COLUMN block_on_failure INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE tasks ADD COLUMN terminal_cols INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE tasks ADD COLUMN terminal_rows INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE tasks ADD COLUMN session_id INTEGER REFERENCES sessions(id)",
-		"ALTER TABLE sessions ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0",
-		"CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)",
-		"CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)",
-	} {
-		if _, err := db.Exec(stmt); err != nil {
-			// 列已存在则忽略
-			if !strings.Contains(err.Error(), "duplicate column name") {
-				return err
-			}
-		}
-	}
-	// 权限属于任务而非角色。旧版定时任务会从角色默认权限继承，这里把
-	// 旧值固化到定时任务模板，之后每次触发再写入对应 Task.perm。
-	if _, err := db.Exec("ALTER TABLE schedules ADD COLUMN perm TEXT NOT NULL DEFAULT 'full'"); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column name") {
-			return err
-		}
-	}
-	for _, stmt := range []string{
-		"ALTER TABLE schedules ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
-		"ALTER TABLE schedules ADD COLUMN block_on_failure INTEGER NOT NULL DEFAULT 0",
-		"CREATE INDEX IF NOT EXISTS idx_tasks_depends_on ON tasks(depends_on)",
-		"CREATE INDEX IF NOT EXISTS idx_schedules_project ON schedules(project_id)",
-	} {
-		if _, err := db.Exec(stmt); err != nil {
-			if !strings.Contains(err.Error(), "duplicate column name") {
-				return err
-			}
-		}
-	}
-	if have, err := columnExists(db, "agents", "default_perm"); err != nil {
-		return err
-	} else if have {
-		if _, err := db.Exec(`UPDATE schedules
-			SET perm = COALESCE((
-				SELECT CASE WHEN a.default_perm IN ('full', 'review') THEN a.default_perm ELSE 'full' END
-				FROM agents a WHERE a.id = schedules.agent_id
-			), 'full')`); err != nil {
-			return fmt.Errorf("迁移定时任务权限失败: %w", err)
-		}
-		if _, err := db.Exec("ALTER TABLE agents DROP COLUMN default_perm"); err != nil {
-			return fmt.Errorf("移除角色默认权限失败: %w", err)
-		}
-	}
-	// 索引在迁移阶段创建：老库先补列再建索引；新库 schema 建表时列已存在
-	for _, stmt := range []string{
-		"CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)",
-		"CREATE INDEX IF NOT EXISTS idx_tasks_project_sort ON tasks(project_id, sort_order)",
-		"CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)",
-		"CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_merge_of_unique ON tasks(merge_of) WHERE merge_of IS NOT NULL",
-	} {
-		if _, err := db.Exec(stmt); err != nil {
-			return err
-		}
-	}
-	// readonly 权限模式已移除：历史任务按完整权限继续执行
-	if _, err := db.Exec("UPDATE tasks SET perm='full' WHERE perm='readonly'"); err != nil {
-		return err
-	}
-	if err := backfillTaskSortOrder(db); err != nil {
-		return err
-	}
-	return nil
-}
-
-func columnExists(db *sql.DB, table, column string) (bool, error) {
-	rows, err := db.Query("PRAGMA table_info(" + table + ")")
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid, notNull, pk int
-		var name, typ string
-		var defaultValue sql.NullString
-		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
-			return false, err
-		}
-		if name == column {
-			return true, nil
-		}
-	}
-	return false, rows.Err()
-}
-
-// backfillTaskSortOrder upgrades project tasks from databases created before
-// the explicit order field existed.  Existing rows keep their current order
-// when possible; rows without an order fall back to creation time.
-func backfillTaskSortOrder(db *sql.DB) error {
-	type item struct {
-		id        int64
-		projectID int64
-		order     int64
-		createdAt string
-	}
-	rows, err := db.Query(`SELECT id, project_id, sort_order, created_at
-		FROM tasks
-		WHERE project_id IS NOT NULL AND merge_of IS NULL
-		ORDER BY project_id, created_at, id`)
-	if err != nil {
-		return err
-	}
-	items := make([]item, 0)
-	for rows.Next() {
-		var it item
-		if err := rows.Scan(&it.id, &it.projectID, &it.order, &it.createdAt); err != nil {
-			rows.Close()
-			return err
-		}
-		items = append(items, it)
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	groups := make(map[int64][]item)
-	for _, it := range items {
-		groups[it.projectID] = append(groups[it.projectID], it)
-	}
-
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for projectID, group := range groups {
-		hasMissing := false
-		for _, it := range group {
-			if it.order <= 0 {
-				hasMissing = true
-				break
-			}
-		}
-		if !hasMissing {
-			continue
-		}
-		sort.SliceStable(group, func(i, j int) bool {
-			left, right := group[i], group[j]
-			if left.order > 0 && right.order > 0 && left.order != right.order {
-				return left.order < right.order
-			}
-			if left.order > 0 && right.order <= 0 {
-				return true
-			}
-			if left.order <= 0 && right.order > 0 {
-				return false
-			}
-			if left.createdAt != right.createdAt {
-				return left.createdAt < right.createdAt
-			}
-			return left.id < right.id
-		})
-		for i, it := range group {
-			if _, err := tx.Exec("UPDATE tasks SET sort_order=? WHERE id=? AND project_id=? AND merge_of IS NULL", i+1, it.id, projectID); err != nil {
-				return err
-			}
-		}
-	}
-	return tx.Commit()
-}
-
-func tableExists(db *sql.DB, table string) (bool, error) {
-	var n int
-	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&n); err != nil {
-		return false, err
-	}
-	return n > 0, nil
-}
+// 当前 schema 是唯一受支持的数据库形态；不包含历史迁移路径。
 
 // Store 封装 SQLite 访问。SetMaxOpenConns(1) 保证读写顺序一致（WAL 下单写者足够）。
 type Store struct {
@@ -376,28 +255,79 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("打开数据库失败: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	fresh, err := databaseIsEmpty(db)
+	if err != nil {
 		db.Close()
-		return nil, fmt.Errorf("初始化数据库失败: %w", err)
+		return nil, fmt.Errorf("检查数据库失败: %w", err)
 	}
-	if err := migrate(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("迁移数据库失败: %w", err)
+	if fresh {
+		if _, err := db.Exec(schema); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("初始化数据库失败: %w", err)
+		}
+	} else {
+		// Unsupported databases are inspected before any schema statement runs.
+		// Rejection must not leave current-version tables or indexes behind.
+		if err := verifyCurrentSchema(db); err != nil {
+			db.Close()
+			return nil, err
+		}
+		if _, err := db.Exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;"); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("配置数据库连接失败: %w", err)
+		}
 	}
-	if err := seedDefaultTemplates(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("初始化默认模板失败: %w", err)
+	if fresh {
+		if err := seedDefaultTemplate(db); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("初始化默认模板失败: %w", err)
+		}
 	}
 	return &Store{db: db}, nil
 }
 
+func databaseIsEmpty(db *sql.DB) (bool, error) {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master
+		WHERE type='table' AND name NOT LIKE 'sqlite_%'`).Scan(&count)
+	return count == 0, err
+}
+
+func verifyCurrentSchema(db *sql.DB) error {
+	var version int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
+		return fmt.Errorf("数据库不是当前 schema；本版本不包含历史迁移，请使用全新数据库")
+	}
+	for _, query := range []string{
+		"SELECT revision, runtime_id FROM roles LIMIT 0",
+		"SELECT revision, project_dir FROM projects LIMIT 0",
+		"SELECT revision, role_id, project_id, terminal_cols, terminal_rows, session_id, workflow_run_id FROM tasks LIMIT 0",
+		"SELECT task_id, depends_on, on_failure FROM task_dependencies LIMIT 0",
+		"SELECT revision, role_id, project_id FROM schedules LIMIT 0",
+		"SELECT role_id FROM templates LIMIT 0",
+		"SELECT revision, role_id, runtime_id FROM sessions LIMIT 0",
+		"SELECT seq, event_type, role_id, payload FROM event_log LIMIT 0",
+		"SELECT revision, spec, violations FROM workflow_proposals LIMIT 0",
+		"SELECT revision, spec_hash, proposal_id FROM workflow_plans LIMIT 0",
+		"SELECT revision, plan_id, task_ids FROM workflow_runs LIMIT 0",
+		"SELECT key, method, path, status_code FROM idempotency_records LIMIT 0",
+		"SELECT task_id, run_id, content_hash, locator FROM artifacts LIMIT 0",
+	} {
+		if _, err := db.Exec(query); err != nil {
+			return fmt.Errorf("数据库不是当前 schema；本版本不包含历史迁移，请使用全新数据库: %w", err)
+		}
+	}
+	return nil
+}
+
+func seedDefaultTemplate(db *sql.DB) error {
+	_, err := db.Exec(`INSERT INTO templates (name, body, role_id, created_at) VALUES (?, ?, NULL, ?)`,
+		createTasksTemplateName, createTasksTemplateBody, Now())
+	return err
+}
+
 const (
-	// 内置模板迁移标记：每个 key 只执行一次；用户编辑/删除后不再覆盖或恢复。
-	createTasksTemplateSeedV1 = "default-template-create-tasks-v1"
-	createTasksTemplateSeedV2 = "default-template-create-tasks-v2"
-	createTasksTemplateName   = "根据对话创建任务"
-	// v1 原文：仅用于升级时识别「未被用户编辑」的默认模板（正文等于该值才升级）。
-	createTasksTemplateBodyV1 = "请根据当前对话的内容，在 paihuo 系统中的当前项目中创建合适的任务。"
+	createTasksTemplateName = "根据对话创建任务"
 	// 当前默认正文：写清「如何在本机实例调用接口创建任务、字段如何填写」，
 	// agent 收到模板即可照做。
 	createTasksTemplateBody = `请根据当前对话的内容，在本机部署的 PaiHuo（派活）实例中为当前项目创建一个任务。PaiHuo 即本系统，其 HTTP API 默认监听 http://127.0.0.1:8080（若连不上，请先向用户确认实例的实际地址与端口）。
@@ -409,19 +339,19 @@ const (
    任务进程环境通常已注入 PAIHUO_TOKEN；若环境里没有该变量，请向用户索要登录令牌再继续。
 
 2. 查询角色与项目，确定要填的 ID：
-   curl -s -b /tmp/paihuo.cookies http://127.0.0.1:8080/api/agents
-   curl -s -b /tmp/paihuo.cookies http://127.0.0.1:8080/api/projects
-   - agent_id：从 /api/agents 返回的数组里选合适的角色，取它的 id；
-   - project_id：从 /api/projects 里取与当前对话/工作目录对应的项目 id；没有对应项目就省略该字段（创建无项目任务）。
+   curl -s -b /tmp/paihuo.cookies http://127.0.0.1:8080/api/v1/roles
+   curl -s -b /tmp/paihuo.cookies http://127.0.0.1:8080/api/v1/projects
+   - role_id：从 /api/v1/roles 返回的数组里选合适的角色，取它的 id；
+   - project_id：从 /api/v1/projects 里取与当前对话/工作目录对应的项目 id；没有对应项目就省略该字段（创建无项目任务）。
 
-3. 创建任务（POST /api/tasks，请求体为 JSON）：
-   curl -s -b /tmp/paihuo.cookies -H "Content-Type: application/json" -d '{"title":"任务标题","body":"给执行 agent 的完整提示词（写清目标、上下文与验收标准）","agent_id":1,"project_id":2,"perm":"full","run_mode":"batch","concurrent":false,"dependency_mode":"none","depends_on":null,"block_on_failure":false}' http://127.0.0.1:8080/api/tasks
+3. 创建任务（POST /api/v1/tasks，请求体为 JSON）：
+   curl -s -b /tmp/paihuo.cookies -H "Content-Type: application/json" -H "Idempotency-Key: create-task-<唯一值>" -d '{"title":"任务标题","body":"给执行 agent 的完整提示词（写清目标、上下文与验收标准）","role_id":1,"project_id":2,"perm":"full","run_mode":"batch","concurrent":false,"dependency_mode":"none","depends_on":null,"block_on_failure":false}' http://127.0.0.1:8080/api/v1/tasks
 
 字段说明：
 - title：任务标题，必填；
 - body：任务提示词，需包含完整上下文、目标与验收标准；
-- agent_id：执行角色 ID，必填，取自 /api/agents；
-- project_id：所属项目 ID，取自 /api/projects；省略则不归属项目；
+- role_id：执行角色 ID，必填，取自 /api/v1/roles；
+- project_id：所属项目 ID，取自 /api/v1/projects；省略则不归属项目；
 - perm：权限模式，"full"=自动执行并在成功后自动派发代码合并任务，"review"=完成后人工审批；
 - run_mode："batch"=批处理（默认），"interactive"=交互式终端（仅 pi / omp 角色支持）；
 - concurrent：是否允许与同项目其他任务并行；false=项目内串行（默认）；
@@ -433,64 +363,46 @@ const (
 创建成功返回 HTTP 201 与任务对象（含 id），请向用户报告任务编号与标题；若返回 4xx，按响应里的 error 字段修正后重试，不要重复创建相同任务。`
 )
 
-// seedDefaultTemplates 为新库和已有库各添加一次内置模板。迁移标记与模板
-// 在同一个事务中写入；用户之后编辑或删除模板时，重启不会恢复默认值。
-func seedDefaultTemplates(db *sql.DB) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	// v1：首次提供「根据对话创建任务」默认模板。已有用户可能手工创建了
-	// 相同模板；升级时保留原记录，不制造重复项。
-	if _, err := seedOnce(tx, createTasksTemplateSeedV1, func() error {
-		_, err := tx.Exec(`INSERT INTO templates (name, body, agent_id, created_at)
-			SELECT ?, ?, NULL, ?
-			WHERE NOT EXISTS (SELECT 1 FROM templates WHERE name=? AND body=?)`,
-			createTasksTemplateName, createTasksTemplateBodyV1, Now(), createTasksTemplateName, createTasksTemplateBodyV1)
-		return err
-	}); err != nil {
-		return err
-	}
-
-	// v2：默认模板补全「如何调用接口、字段如何填写」的操作说明。仅当模板
-	// 仍是 v1 原文（用户未编辑过）时升级正文；编辑过或删除过的一律保留
-	// 原状，重启不覆盖不恢复。
-	if _, err := seedOnce(tx, createTasksTemplateSeedV2, func() error {
-		_, err := tx.Exec(`UPDATE templates SET body=? WHERE name=? AND body=?`,
-			createTasksTemplateBody, createTasksTemplateName, createTasksTemplateBodyV1)
-		return err
-	}); err != nil {
-		return err
-	}
-
-	return tx.Commit()
-}
-
-// seedOnce 执行一次内置模板迁移：data_migrations 标记与变更在同一事务内
-// 写入，返回本次是否首次执行（false 表示该迁移此前已应用过）。
-func seedOnce(tx *sql.Tx, key string, apply func() error) (bool, error) {
-	res, err := tx.Exec(`INSERT OR IGNORE INTO data_migrations (key, applied_at) VALUES (?, ?)`, key, Now())
-	if err != nil {
-		return false, err
-	}
-	inserted, err := res.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	if inserted == 0 {
-		return false, nil
-	}
-	if err := apply(); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 func (s *Store) Close() error { return s.db.Close() }
 
 func Now() string { return time.Now().UTC().Format(time.RFC3339) }
+
+// AppendEvent persists an event before it is offered to live subscribers.
+func (s *Store) AppendEvent(eventType string, taskID, roleID int64, payload []byte) (EventRecord, error) {
+	now := Now()
+	res, err := s.db.Exec(`INSERT INTO event_log(event_type, task_id, role_id, payload, created_at)
+		VALUES(?, NULLIF(?, 0), NULLIF(?, 0), ?, ?)`, eventType, taskID, roleID, string(payload), now)
+	if err != nil {
+		return EventRecord{}, err
+	}
+	seq, err := res.LastInsertId()
+	if err != nil {
+		return EventRecord{}, err
+	}
+	return EventRecord{Seq: seq, Type: eventType, TaskID: taskID, RoleID: roleID, Payload: payload, CreatedAt: now}, nil
+}
+
+// ListEventsAfter returns a forward-only page for reconnecting SSE clients.
+func (s *Store) ListEventsAfter(after int64, limit int) ([]EventRecord, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 500
+	}
+	rows, err := s.db.Query(`SELECT seq, event_type, COALESCE(task_id, 0), COALESCE(role_id, 0), payload, created_at
+		FROM event_log WHERE seq > ? ORDER BY seq LIMIT ?`, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]EventRecord, 0)
+	for rows.Next() {
+		var item EventRecord
+		if err := rows.Scan(&item.Seq, &item.Type, &item.TaskID, &item.RoleID, &item.Payload, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
 
 // ---------------------------------------------------------------------------
 // 通用更新
@@ -510,9 +422,86 @@ func updateOneExecer(execer sqlExecer, table string, id int64, set map[string]an
 		vals = append(vals, v)
 	}
 	vals = append(vals, Now(), id)
-	q := fmt.Sprintf("UPDATE %s SET %s, updated_at=? WHERE id=?", table, strings.Join(cols, ", "))
+	q := fmt.Sprintf("UPDATE %s SET %s, updated_at=?, revision=revision+1 WHERE id=?", table, strings.Join(cols, ", "))
 	_, err := execer.Exec(q, vals...)
 	return err
+}
+
+var ErrRevisionConflict = errors.New("资源已被其他操作修改")
+
+// UpdateAtRevision is the browser/application mutation seam. Internal state
+// machines may use their stronger status predicates; user edits must match the
+// resource revision they read and can never silently overwrite newer state.
+func (s *Store) UpdateAtRevision(resource string, id, expected int64, set map[string]any) error {
+	table, hasUpdatedAt := revisionTable(resource)
+	if table == "" || expected < 1 || len(set) == 0 {
+		return ErrRevisionConflict
+	}
+	if resource == "role" {
+		if config, ok := set["role_config"]; ok {
+			encoded, err := json.Marshal(config)
+			if err != nil {
+				return err
+			}
+			set["role_config"] = string(encoded)
+		}
+	}
+	cols := make([]string, 0, len(set))
+	vals := make([]any, 0, len(set)+3)
+	for key, value := range set {
+		cols = append(cols, key+"=?")
+		vals = append(vals, value)
+	}
+	if hasUpdatedAt {
+		cols = append(cols, "updated_at=?")
+		vals = append(vals, Now())
+	}
+	cols = append(cols, "revision=revision+1")
+	vals = append(vals, id, expected)
+	res, err := s.db.Exec(fmt.Sprintf("UPDATE %s SET %s WHERE id=? AND revision=?", table, strings.Join(cols, ", ")), vals...)
+	if err != nil {
+		return err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return ErrRevisionConflict
+	}
+	return nil
+}
+
+func (s *Store) AssertRevision(resource string, id, expected int64) error {
+	table, _ := revisionTable(resource)
+	if table == "" || expected < 1 {
+		return ErrRevisionConflict
+	}
+	var actual int64
+	if err := s.db.QueryRow("SELECT revision FROM "+table+" WHERE id=?", id).Scan(&actual); err != nil {
+		return err
+	}
+	if actual != expected {
+		return ErrRevisionConflict
+	}
+	return nil
+}
+
+func revisionTable(resource string) (string, bool) {
+	switch resource {
+	case "role":
+		return "roles", true
+	case "task":
+		return "tasks", true
+	case "project":
+		return "projects", true
+	case "session":
+		return "sessions", true
+	case "schedule":
+		return "schedules", false
+	default:
+		return "", false
+	}
 }
 
 func nullInt64(p *int64) any {
@@ -529,22 +518,22 @@ func strPtr(s sql.NullString) *string {
 	return &s.String
 }
 
-// scanner 兼容 *sql.Row 与 *sql.Rows
+// scanner 抽象 *sql.Row 与 *sql.Rows 的共同读取接口。
 type scanner interface {
 	Scan(dest ...any) error
 }
 
 // ---------------------------------------------------------------------------
-// 角色（agent）
+// Role
 
-const agentCols = `a.id, a.name, a.description, a.cli, a.role_config,
-	a.project_dir, a.max_concurrency, a.enabled, a.created_at, a.updated_at`
+const roleCols = `a.id, a.name, a.description, a.runtime_id, a.role_config,
+	a.max_concurrency, a.enabled, a.revision, a.created_at, a.updated_at`
 
-func scanAgent(rows scanner) (Agent, error) {
-	var a Agent
+func scanRole(rows scanner) (Role, error) {
+	var a Role
 	var rc string
-	err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.CLI, &rc,
-		&a.ProjectDir, &a.MaxConcurrency, &a.Enabled, &a.CreatedAt, &a.UpdatedAt)
+	err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.RuntimeID, &rc,
+		&a.MaxConcurrency, &a.Enabled, &a.Revision, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		return a, err
 	}
@@ -555,15 +544,15 @@ func scanAgent(rows scanner) (Agent, error) {
 	return a, nil
 }
 
-func (s *Store) ListAgents() ([]Agent, error) {
-	rows, err := s.db.Query("SELECT " + agentCols + " FROM agents a ORDER BY a.id")
+func (s *Store) ListRoles() ([]Role, error) {
+	rows, err := s.db.Query("SELECT " + roleCols + " FROM roles a ORDER BY a.id")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out = make([]Agent, 0)
+	var out = make([]Role, 0)
 	for rows.Next() {
-		a, err := scanAgent(rows)
+		a, err := scanRole(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -572,16 +561,16 @@ func (s *Store) ListAgents() ([]Agent, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) GetAgent(id int64) (*Agent, error) {
-	row := s.db.QueryRow("SELECT "+agentCols+" FROM agents a WHERE a.id=?", id)
-	a, err := scanAgent(row)
+func (s *Store) GetRole(id int64) (*Role, error) {
+	row := s.db.QueryRow("SELECT "+roleCols+" FROM roles a WHERE a.id=?", id)
+	a, err := scanRole(row)
 	if err != nil {
 		return nil, err
 	}
 	return &a, nil
 }
 
-func (s *Store) CreateAgent(a Agent) (int64, error) {
+func (s *Store) CreateRole(a Role) (int64, error) {
 	if a.CreatedAt == "" {
 		a.CreatedAt = Now()
 	}
@@ -593,16 +582,16 @@ func (s *Store) CreateAgent(a Agent) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := s.db.Exec(`INSERT INTO agents (name, description, cli, role_config, project_dir, max_concurrency, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.Name, a.Description, a.CLI, string(rc), a.ProjectDir, a.MaxConcurrency, a.Enabled, a.CreatedAt, a.UpdatedAt)
+	res, err := s.db.Exec(`INSERT INTO roles (name, description, runtime_id, role_config, max_concurrency, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Name, a.Description, a.RuntimeID, string(rc), a.MaxConcurrency, a.Enabled, a.CreatedAt, a.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-func (s *Store) UpdateAgent(id int64, set map[string]any) error {
+func (s *Store) UpdateRole(id int64, set map[string]any) error {
 	if rc, ok := set["role_config"]; ok {
 		b, err := json.Marshal(rc)
 		if err != nil {
@@ -610,12 +599,12 @@ func (s *Store) UpdateAgent(id int64, set map[string]any) error {
 		}
 		set["role_config"] = string(b)
 	}
-	return updateOne(s.db, "agents", id, set)
+	return updateOne(s.db, "roles", id, set)
 }
 
-func (s *Store) DeleteAgent(id int64) error {
+func (s *Store) DeleteRole(id int64) error {
 	var n int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM tasks WHERE agent_id=? AND status IN ('queued','claimed','running','awaiting_review')", id).Scan(&n); err != nil {
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM tasks WHERE role_id=? AND status IN ('queued','claimed','running','awaiting_review')", id).Scan(&n); err != nil {
 		return err
 	}
 	if n > 0 {
@@ -626,17 +615,17 @@ func (s *Store) DeleteAgent(id int64) error {
 		return err
 	}
 	defer tx.Rollback()
-	// 历史任务与模板解除指派（保留记录），定时任务随角色一并删除（agent_id NOT NULL）。
-	if _, err := tx.Exec("UPDATE tasks SET agent_id=NULL WHERE agent_id=?", id); err != nil {
+	// 历史任务与模板解除指派（保留记录），定时任务随角色一并删除（role_id NOT NULL）。
+	if _, err := tx.Exec("UPDATE tasks SET role_id=NULL, updated_at=?, revision=revision+1 WHERE role_id=?", Now(), id); err != nil {
 		return err
 	}
-	if _, err := tx.Exec("UPDATE templates SET agent_id=NULL WHERE agent_id=?", id); err != nil {
+	if _, err := tx.Exec("UPDATE templates SET role_id=NULL WHERE role_id=?", id); err != nil {
 		return err
 	}
-	if _, err := tx.Exec("DELETE FROM schedules WHERE agent_id=?", id); err != nil {
+	if _, err := tx.Exec("DELETE FROM schedules WHERE role_id=?", id); err != nil {
 		return err
 	}
-	if _, err := tx.Exec("DELETE FROM agents WHERE id=?", id); err != nil {
+	if _, err := tx.Exec("DELETE FROM roles WHERE id=?", id); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -646,26 +635,26 @@ func (s *Store) DeleteAgent(id int64) error {
 // 任务
 
 // taskCols 完整列（详情页用：含完整 body，驳回重做会追加修改意见）。
-const taskCols = `t.id, t.title, t.body, t.status, t.perm, t.run_mode, t.concurrent, t.agent_id, COALESCE(a.name, ''),
+const taskCols = `t.id, t.title, t.body, t.status, t.perm, t.run_mode, t.concurrent, t.role_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows`
+	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows, t.revision`
 
 // taskColsBrief 列表列（看板/历史/项目页用）：body 截断到 400 字符，
 // 避免大提示词把列表接口载荷撑爆。列序与 taskCols 完全一致（scanTask 共用）。
-const taskColsBrief = `t.id, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.run_mode, t.concurrent, t.agent_id, COALESCE(a.name, ''),
+const taskColsBrief = `t.id, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.run_mode, t.concurrent, t.role_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows`
+	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows, t.revision`
 
 func scanTask(rows scanner) (Task, error) {
 	var tk Task
-	var agentID, projectID, parentID, dependsOn, scheduleID, exitCode sql.NullInt64
-	var agentName, projectName string
+	var roleID, projectID, parentID, dependsOn, scheduleID, exitCode sql.NullInt64
+	var roleName, projectName string
 	var concurrent, blockOnFailure int64
 	var started, finished sql.NullString
-	var resumeOf, mergeOf, sessionID sql.NullInt64
-	err := rows.Scan(&tk.ID, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &tk.RunMode, &concurrent, &agentID, &agentName,
+	var resumeOf, mergeOf, sessionID, workflowRunID sql.NullInt64
+	err := rows.Scan(&tk.ID, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &tk.RunMode, &concurrent, &roleID, &roleName,
 		&projectID, &projectName, &tk.ProjectDir, &parentID, &dependsOn, &tk.DependencyMode, &blockOnFailure, &scheduleID, &tk.Error, &exitCode,
-		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &sessionID, &tk.SortOrder, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt, &tk.TerminalCols, &tk.TerminalRows)
+		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &sessionID, &workflowRunID, &tk.SortOrder, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt, &tk.TerminalCols, &tk.TerminalRows, &tk.Revision)
 	if err != nil {
 		return tk, err
 	}
@@ -677,10 +666,10 @@ func scanTask(rows scanner) (Task, error) {
 	}
 	tk.Concurrent = concurrent != 0
 	tk.BlockOnFailure = blockOnFailure != 0
-	if agentID.Valid {
-		tk.AgentID = &agentID.Int64
+	if roleID.Valid {
+		tk.RoleID = &roleID.Int64
 	}
-	tk.AgentName = agentName
+	tk.RoleName = roleName
 	if projectID.Valid {
 		tk.ProjectID = &projectID.Int64
 	}
@@ -692,6 +681,9 @@ func scanTask(rows scanner) (Task, error) {
 	}
 	if sessionID.Valid {
 		tk.SessionID = &sessionID.Int64
+	}
+	if workflowRunID.Valid {
+		tk.WorkflowRunID = &workflowRunID.Int64
 	}
 	tk.ProjectName = projectName
 	if parentID.Valid {
@@ -712,7 +704,7 @@ func scanTask(rows scanner) (Task, error) {
 	return tk, nil
 }
 
-const taskFrom = " FROM tasks t LEFT JOIN agents a ON a.id=t.agent_id LEFT JOIN projects p ON p.id=t.project_id"
+const taskFrom = " FROM tasks t LEFT JOIN roles a ON a.id=t.role_id LEFT JOIN projects p ON p.id=t.project_id"
 
 func (s *Store) ListTasks() ([]Task, error) {
 	return s.ListTasksFiltered(TaskFilter{})
@@ -720,7 +712,7 @@ func (s *Store) ListTasks() ([]Task, error) {
 
 // TaskFilter 任务列表筛选条件（全部可空 = 不过滤）。
 type TaskFilter struct {
-	AgentID   *int64
+	RoleID    *int64
 	ProjectID *int64
 	Status    string
 	Limit     int
@@ -729,9 +721,9 @@ type TaskFilter struct {
 func (s *Store) ListTasksFiltered(f TaskFilter) ([]Task, error) {
 	q := "SELECT " + taskColsBrief + taskFrom + " WHERE 1=1"
 	args := []any{}
-	if f.AgentID != nil {
-		q += " AND t.agent_id=?"
-		args = append(args, *f.AgentID)
+	if f.RoleID != nil {
+		q += " AND t.role_id=?"
+		args = append(args, *f.RoleID)
 	}
 	if f.ProjectID != nil {
 		q += " AND t.project_id=?"
@@ -773,7 +765,7 @@ func (s *Store) ListTasksFiltered(f TaskFilter) ([]Task, error) {
 func (s *Store) ListQueuedTasks() ([]Task, error) {
 	// 合并子任务属于其源任务的交付链，必须先于已排队的后续实现任务；否则
 	// 后项会从尚未写入源代码的主分支建立 worktree。
-	rows, err := s.db.Query("SELECT " + taskColsBrief + taskFrom + " WHERE t.status='queued' AND t.agent_id IS NOT NULL AND a.enabled=1 ORDER BY CASE WHEN t.merge_of IS NOT NULL THEN 0 ELSE 1 END, t.created_at, t.id")
+	rows, err := s.db.Query("SELECT " + taskColsBrief + taskFrom + " WHERE t.status='queued' AND t.role_id IS NOT NULL AND a.enabled=1 ORDER BY CASE WHEN t.merge_of IS NOT NULL THEN 0 ELSE 1 END, t.created_at, t.id")
 	if err != nil {
 		return nil, err
 	}
@@ -881,10 +873,10 @@ func prepareTaskForInsert(t *Task) {
 }
 
 func insertTask(execer sqlExecer, t Task) (int64, error) {
-	res, err := execer.Exec(`INSERT INTO tasks (title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, session_id, worktree_branch, base_commit, review_rounds, finished_at, exit_code, sort_order, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.Title, t.Body, t.Status, t.Perm, t.RunMode, boolInt(t.Concurrent), nullInt64(t.AgentID), nullInt64(t.ProjectID), t.ProjectDir,
-		nullInt64(t.ParentID), nullInt64(t.DependsOn), t.DependencyMode, boolInt(t.BlockOnFailure), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), nullInt64(t.SessionID), t.WorktreeBranch, t.BaseCommit,
+	res, err := execer.Exec(`INSERT INTO tasks (title, body, status, perm, run_mode, concurrent, role_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, session_id, workflow_run_id, worktree_branch, base_commit, review_rounds, finished_at, exit_code, sort_order, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.Title, t.Body, t.Status, t.Perm, t.RunMode, boolInt(t.Concurrent), nullInt64(t.RoleID), nullInt64(t.ProjectID), t.ProjectDir,
+		nullInt64(t.ParentID), nullInt64(t.DependsOn), t.DependencyMode, boolInt(t.BlockOnFailure), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), nullInt64(t.SessionID), nullInt64(t.WorkflowRunID), t.WorktreeBranch, t.BaseCommit,
 		t.ReviewRounds, nullStrPtr(t.FinishedAt), nullIntPtr(t.ExitCode), t.SortOrder, t.CreatedAt, t.UpdatedAt)
 	if err != nil {
 		return 0, err
@@ -940,7 +932,7 @@ func (s *Store) CreateTask(t Task) (int64, error) {
 func (s *Store) CreateTaskWithProjectDependency(t Task) (int64, error) {
 	// 此入口代表面向调度的“新普通任务”。调用方没有指定模式时，项目
 	// 任务必须默认进入创建时间弱依赖链；保留 CreateTask 的原始语义，
-	// 以便恢复、测试和历史导入能按需直接构造记录。
+	// 以便内部用例和测试按需直接构造记录。
 	if t.MergeOf == nil && t.ProjectID != nil && t.DependencyMode == "" && t.DependsOn == nil {
 		t.DependencyMode = DependencyWeak
 	}
@@ -1043,7 +1035,7 @@ func (s *Store) CompleteTaskAndCreateMerge(sourceID int64, merge Task) (int64, e
 
 	now := Now()
 	res, err := tx.Exec(`UPDATE tasks
-		SET status='succeeded', finished_at=?, exit_code=0, error='', updated_at=?
+		SET status='succeeded', finished_at=?, exit_code=0, error='', updated_at=?, revision=revision+1
 		WHERE id=? AND status IN ('claimed','running') AND perm='full' AND merge_of IS NULL`, now, now, sourceID)
 	if err != nil {
 		return 0, err
@@ -1079,7 +1071,7 @@ func (s *Store) DeliverTaskAndCreateMerge(sourceID int64, merge Task) (int64, er
 
 	now := Now()
 	res, err := tx.Exec(`UPDATE tasks
-		SET status='succeeded', finished_at=?, exit_code=0, error='', updated_at=?
+		SET status='succeeded', finished_at=?, exit_code=0, error='', updated_at=?, revision=revision+1
 		WHERE id=? AND status='queued' AND perm='full' AND merge_of IS NULL AND session_id IS NOT NULL`, now, now, sourceID)
 	if err != nil {
 		return 0, err
@@ -1100,66 +1092,6 @@ func (s *Store) DeliverTaskAndCreateMerge(sourceID int64, merge Task) (int64, er
 	return mergeID, nil
 }
 
-// RecoverLostTaskAndCreateMerge 是 CompleteTaskAndCreateMerge 的故障恢复变体。
-// 调用方必须已经从该任务自己的运行归档中验证 agent-exit-code=0；这里再以
-// failed/-1 条件更新和同一事务内的合并任务创建，确保重复扫描不会产生重复合并。
-func (s *Store) RecoverLostTaskAndCreateMerge(sourceID int64, merge Task) (int64, error) {
-	prepareMergeTask(sourceID, &merge)
-	tx, err := s.db.Begin()
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-
-	now := Now()
-	res, err := tx.Exec(`UPDATE tasks
-		SET status='succeeded', finished_at=COALESCE(finished_at, ?), exit_code=0, error='', updated_at=?
-		WHERE id=? AND status='failed' AND exit_code=-1 AND perm='full' AND merge_of IS NULL`, now, now, sourceID)
-	if err != nil {
-		return 0, err
-	}
-	if n, _ := res.RowsAffected(); n != 1 {
-		return 0, errors.New("任务不再是可恢复的 pane 丢失失败")
-	}
-	if err := inheritMergeFailurePolicy(tx, sourceID, &merge); err != nil {
-		return 0, err
-	}
-	mergeID, err := insertMergeTask(tx, merge)
-	if err != nil {
-		return 0, err
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	return mergeID, nil
-}
-
-// RecoverLostTask 恢复已从自身归档验证成功、但被旧执行器记为 failed/-1 的
-// 无需合并任务。target 只允许 succeeded 或 awaiting_review，避免它成为绕过
-// 正常状态机的通用失败任务修改入口。
-func (s *Store) RecoverLostTask(sourceID int64, target string) (bool, error) {
-	if target != StatusSucceeded && target != StatusAwaitingReview {
-		return false, errors.New("非法恢复目标状态")
-	}
-	now := Now()
-	query := `UPDATE tasks
-		SET status=?, finished_at=COALESCE(finished_at, ?), exit_code=0, error='', updated_at=?
-		WHERE id=? AND status='failed' AND exit_code=-1 AND merge_of IS NULL`
-	args := []any{target, now, now, sourceID}
-	if target == StatusAwaitingReview {
-		query = `UPDATE tasks
-			SET status=?, finished_at=COALESCE(finished_at, ?), exit_code=0, error='',
-				review_rounds=review_rounds+1, updated_at=?
-			WHERE id=? AND status='failed' AND exit_code=-1 AND perm='review' AND merge_of IS NULL`
-	}
-	res, err := s.db.Exec(query, args...)
-	if err != nil {
-		return false, err
-	}
-	n, err := res.RowsAffected()
-	return n == 1, err
-}
-
 // ApproveTaskAndCreateMerge 原子完成 review 审批并创建唯一的合并任务。
 // 条件更新保证重复点击或并发请求不会生成两个合并任务。
 func (s *Store) ApproveTaskAndCreateMerge(sourceID int64, merge Task) (int64, error) {
@@ -1171,7 +1103,7 @@ func (s *Store) ApproveTaskAndCreateMerge(sourceID int64, merge Task) (int64, er
 	defer tx.Rollback()
 	now := Now()
 	res, err := tx.Exec(`UPDATE tasks
-		SET status='succeeded', finished_at=COALESCE(finished_at, ?), exit_code=COALESCE(exit_code, 0), updated_at=?
+		SET status='succeeded', finished_at=COALESCE(finished_at, ?), exit_code=COALESCE(exit_code, 0), updated_at=?, revision=revision+1
 		WHERE id=? AND status='awaiting_review' AND perm='review'`, now, now, sourceID)
 	if err != nil {
 		return 0, err
@@ -1228,10 +1160,10 @@ func inheritMergeFailurePolicy(tx *sql.Tx, sourceID int64, merge *Task) error {
 
 func insertMergeTask(tx *sql.Tx, merge Task) (int64, error) {
 	res, err := tx.Exec(`INSERT INTO tasks
-		(title, body, status, perm, run_mode, concurrent, agent_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, session_id, sort_order, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		merge.Title, merge.Body, merge.Status, merge.Perm, merge.RunMode, boolInt(merge.Concurrent), nullInt64(merge.AgentID), nullInt64(merge.ProjectID), merge.ProjectDir,
-		nullInt64(merge.ParentID), nullInt64(merge.DependsOn), merge.DependencyMode, boolInt(merge.BlockOnFailure), nullInt64(merge.ScheduleID), nullInt64(merge.ResumeOf), nullInt64(merge.MergeOf), nullInt64(merge.SessionID), merge.SortOrder, merge.CreatedAt, merge.UpdatedAt)
+		(title, body, status, perm, run_mode, concurrent, role_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, session_id, workflow_run_id, sort_order, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		merge.Title, merge.Body, merge.Status, merge.Perm, merge.RunMode, boolInt(merge.Concurrent), nullInt64(merge.RoleID), nullInt64(merge.ProjectID), merge.ProjectDir,
+		nullInt64(merge.ParentID), nullInt64(merge.DependsOn), merge.DependencyMode, boolInt(merge.BlockOnFailure), nullInt64(merge.ScheduleID), nullInt64(merge.ResumeOf), nullInt64(merge.MergeOf), nullInt64(merge.SessionID), nullInt64(merge.WorkflowRunID), merge.SortOrder, merge.CreatedAt, merge.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -1375,7 +1307,7 @@ func (s *Store) ReorderProjectTasks(projectID int64, orderedIDs []int64) error {
 	}
 	now := Now()
 	for i, id := range orderedIDs {
-		if _, err := tx.Exec(`UPDATE tasks SET sort_order=?, updated_at=?
+		if _, err := tx.Exec(`UPDATE tasks SET sort_order=?, updated_at=?, revision=revision+1
 			WHERE id=? AND project_id=? AND merge_of IS NULL AND status=?`, positions[i], now, id, projectID, StatusQueued); err != nil {
 			return err
 		}
@@ -1414,7 +1346,7 @@ func rebuildQueuedWeakDependencies(tx *sql.Tx, projectID int64, now string) erro
 			if predecessor != nil {
 				dependsOn = *predecessor
 			}
-			if _, err := tx.Exec(`UPDATE tasks SET depends_on=?, updated_at=?
+			if _, err := tx.Exec(`UPDATE tasks SET depends_on=?, updated_at=?, revision=revision+1
 				WHERE id=? AND project_id=? AND merge_of IS NULL AND status=? AND dependency_mode=?`,
 				dependsOn, now, id, projectID, StatusQueued, DependencyWeak); err != nil {
 				return err
@@ -1478,7 +1410,7 @@ func (s *Store) ResumeTask(id int64) (bool, error) {
 	now := Now()
 	res, err := s.db.Exec(`UPDATE tasks
 		SET status='queued', started_at=NULL, finished_at=NULL, error='', exit_code=NULL,
-			tmux_log_offset=0, updated_at=?
+			tmux_log_offset=0, updated_at=?, revision=revision+1
 		WHERE id=? AND status IN ('succeeded','failed','cancelled')`, now, id)
 	if err != nil {
 		return false, err
@@ -1563,13 +1495,47 @@ const (
 type DependencyCheck struct {
 	Ready   bool
 	Skipped bool
+	Blocked bool
 	Reason  string
 }
 
 // CheckTaskDependency 判断任务的前置交付是否已经满足。强依赖只接受成功；
 // 弱依赖在前置失败且前置未勾选“失败时阻塞”时，把该交付视为已跳过。
 func (s *Store) CheckTaskDependency(t Task) (DependencyCheck, error) {
-	if t.MergeOf != nil || t.DependsOn == nil || t.DependencyMode == DependencyNone || t.DependencyMode == "" {
+	if t.MergeOf != nil {
+		return DependencyCheck{Ready: true}, nil
+	}
+	workflowDeps, err := s.workflowDependencies(t.ID)
+	if err != nil {
+		return DependencyCheck{}, err
+	}
+	if len(workflowDeps) > 0 {
+		skipped := false
+		for _, edge := range workflowDeps {
+			dependency, err := s.GetTask(edge.TaskID)
+			if err != nil {
+				return DependencyCheck{}, err
+			}
+			state, reason, err := s.deliveryStateOf(*dependency)
+			if err != nil {
+				return DependencyCheck{}, err
+			}
+			switch state {
+			case deliverySucceeded:
+				continue
+			case deliveryFailed:
+				if edge.OnFailure == "continue" {
+					skipped = true
+					continue
+				}
+				return DependencyCheck{Blocked: true, Reason: "Workflow 前置节点失败：" + reason}, nil
+			default:
+				return DependencyCheck{Reason: "等待 Workflow 前置节点：" + reason}, nil
+			}
+		}
+		return DependencyCheck{Ready: true, Skipped: skipped}, nil
+	}
+	if t.DependsOn == nil || t.DependencyMode == DependencyNone || t.DependencyMode == "" {
 		return DependencyCheck{Ready: true}, nil
 	}
 	if t.DependencyMode != DependencyWeak && t.DependencyMode != DependencyStrong {
@@ -1594,14 +1560,14 @@ func (s *Store) CheckTaskDependency(t Task) (DependencyCheck, error) {
 		if state == deliverySucceeded {
 			return DependencyCheck{Ready: true}, nil
 		}
-		return DependencyCheck{Reason: "明确依赖未完成：" + reason}, nil
+		return DependencyCheck{Blocked: state == deliveryFailed, Reason: "明确依赖未完成：" + reason}, nil
 	case DependencyWeak:
 		switch state {
 		case deliverySucceeded:
 			return DependencyCheck{Ready: true}, nil
 		case deliveryFailed:
 			if dependency.BlockOnFailure {
-				return DependencyCheck{Reason: "前序阻塞任务未完成：" + reason}, nil
+				return DependencyCheck{Blocked: true, Reason: "前序阻塞任务未完成：" + reason}, nil
 			}
 			return DependencyCheck{Ready: true, Skipped: true, Reason: "前序任务失败，已跳过：" + reason}, nil
 		default:
@@ -1609,6 +1575,27 @@ func (s *Store) CheckTaskDependency(t Task) (DependencyCheck, error) {
 		}
 	}
 	return DependencyCheck{Reason: "依赖模式非法"}, nil
+}
+
+// TaskDeliveryResult reports the delivery state used by dependency scheduling.
+// A Git task is not complete until its merge child has reached a terminal state.
+func (s *Store) TaskDeliveryResult(taskID int64) (terminal, succeeded bool, err error) {
+	task, err := s.GetTask(taskID)
+	if err != nil {
+		return false, false, err
+	}
+	state, _, err := s.deliveryStateOf(*task)
+	if err != nil {
+		return false, false, err
+	}
+	switch state {
+	case deliverySucceeded:
+		return true, true, nil
+	case deliveryFailed:
+		return true, false, nil
+	default:
+		return false, false, nil
+	}
 }
 
 func (s *Store) deliveryStateOf(source Task) (deliveryState, string, error) {
@@ -1741,7 +1728,7 @@ func (s *Store) MarkTaskSucceededAwaitingMerge(sourceID int64) (bool, error) {
 	now := Now()
 	res, err := s.db.Exec(`UPDATE tasks
 		SET status='succeeded', finished_at=COALESCE(finished_at, ?), exit_code=0,
-			error='', updated_at=?
+			error='', updated_at=?, revision=revision+1
 		WHERE id=? AND status IN ('claimed','running') AND perm='full'
 		  AND merge_of IS NULL AND worktree_branch<>''`, now, now, sourceID)
 	if err != nil {
@@ -1768,7 +1755,7 @@ func (s *Store) UpdateTerminalSize(id int64, cols, rows int) error {
 
 // ClaimTask 原子领取：queued -> claimed，返回是否领取成功。
 func (s *Store) ClaimTask(id int64) (bool, error) {
-	res, err := s.db.Exec("UPDATE tasks SET status='claimed', started_at=? WHERE id=? AND status='queued'", Now(), id)
+	res, err := s.db.Exec("UPDATE tasks SET status='claimed', started_at=?, updated_at=?, revision=revision+1 WHERE id=? AND status='queued'", Now(), Now(), id)
 	if err != nil {
 		return false, err
 	}
@@ -1779,7 +1766,7 @@ func (s *Store) ClaimTask(id int64) (bool, error) {
 // StartTask 原子开跑：claimed -> running。若返回 false 说明领取后任务已被
 // 取消/删除（与派发存在竞态），调用方应放弃执行而不是覆盖终态。
 func (s *Store) StartTask(id int64) (bool, error) {
-	res, err := s.db.Exec("UPDATE tasks SET status='running', started_at=? WHERE id=? AND status='claimed'", Now(), id)
+	res, err := s.db.Exec("UPDATE tasks SET status='running', started_at=?, updated_at=?, revision=revision+1 WHERE id=? AND status='claimed'", Now(), Now(), id)
 	if err != nil {
 		return false, err
 	}
@@ -1834,7 +1821,7 @@ func (s *Store) DetachTaskFromSessions(taskID int64) ([]int64, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	if _, err := s.db.Exec("UPDATE sessions SET task_id=NULL, updated_at=? WHERE task_id=?", Now(), taskID); err != nil {
+	if _, err := s.db.Exec("UPDATE sessions SET task_id=NULL, updated_at=?, revision=revision+1 WHERE task_id=?", Now(), taskID); err != nil {
 		return nil, err
 	}
 	return ids, nil
@@ -1955,7 +1942,7 @@ func unlinkTaskDependencies(tx *sql.Tx, deleting map[int64]bool) error {
 			if replacement != nil {
 				value = *replacement
 			}
-			if _, err := tx.Exec("UPDATE tasks SET depends_on=?, updated_at=? WHERE id=?", value, now, dependent.id); err != nil {
+			if _, err := tx.Exec("UPDATE tasks SET depends_on=?, updated_at=?, revision=revision+1 WHERE id=?", value, now, dependent.id); err != nil {
 				return err
 			}
 		}
@@ -1964,7 +1951,7 @@ func unlinkTaskDependencies(tx *sql.Tx, deleting map[int64]bool) error {
 }
 
 // ListTaskDeletionOrder 返回删除 root 时须一并清理的任务，按叶子到根的
-// 顺序排列。merge_of 也视为父子关系，兼容早期仅保存 merge_of 的数据。
+// 顺序排列。merge_of 是自动合并任务的显式父子关系，也参与级联清理。
 func (s *Store) ListTaskDeletionOrder(rootID int64) ([]Task, error) {
 	root, err := s.GetTask(rootID)
 	if err == sql.ErrNoRows {
@@ -2163,11 +2150,11 @@ func (s *Store) ListLogsPage(taskID, beforeSeq int64, limit int) (logs []TaskLog
 // ---------------------------------------------------------------------------
 // 定时任务
 
-const schedCols = `s.id, s.name, s.cron, s.title_template, s.body_template, s.agent_id, s.project_id,
-	s.perm, s.block_on_failure, s.enabled, s.last_run_at, s.next_run_at, s.created_at, a.name, COALESCE(p.name, '')`
+const schedCols = `s.id, s.name, s.cron, s.title_template, s.body_template, s.role_id, s.project_id,
+	s.perm, s.block_on_failure, s.enabled, s.last_run_at, s.next_run_at, s.created_at, s.revision, a.name, COALESCE(p.name, '')`
 
 func (s *Store) ListSchedules() ([]Schedule, error) {
-	rows, err := s.db.Query("SELECT " + schedCols + " FROM schedules s JOIN agents a ON a.id=s.agent_id LEFT JOIN projects p ON p.id=s.project_id ORDER BY s.id")
+	rows, err := s.db.Query("SELECT " + schedCols + " FROM schedules s JOIN roles a ON a.id=s.role_id LEFT JOIN projects p ON p.id=s.project_id ORDER BY s.id")
 	if err != nil {
 		return nil, err
 	}
@@ -2178,7 +2165,7 @@ func (s *Store) ListSchedules() ([]Schedule, error) {
 		var projectID sql.NullInt64
 		var lastRun, nextRun sql.NullString
 		if err := rows.Scan(&sc.ID, &sc.Name, &sc.Cron, &sc.TitleTemplate, &sc.BodyTemplate,
-			&sc.AgentID, &projectID, &sc.Perm, &sc.BlockOnFailure, &sc.Enabled, &lastRun, &nextRun, &sc.CreatedAt, &sc.AgentName, &sc.ProjectName); err != nil {
+			&sc.RoleID, &projectID, &sc.Perm, &sc.BlockOnFailure, &sc.Enabled, &lastRun, &nextRun, &sc.CreatedAt, &sc.Revision, &sc.RoleName, &sc.ProjectName); err != nil {
 			return nil, err
 		}
 		if projectID.Valid {
@@ -2192,12 +2179,12 @@ func (s *Store) ListSchedules() ([]Schedule, error) {
 }
 
 func (s *Store) GetSchedule(id int64) (*Schedule, error) {
-	row := s.db.QueryRow("SELECT "+schedCols+" FROM schedules s JOIN agents a ON a.id=s.agent_id LEFT JOIN projects p ON p.id=s.project_id WHERE s.id=?", id)
+	row := s.db.QueryRow("SELECT "+schedCols+" FROM schedules s JOIN roles a ON a.id=s.role_id LEFT JOIN projects p ON p.id=s.project_id WHERE s.id=?", id)
 	var sc Schedule
 	var projectID sql.NullInt64
 	var lastRun, nextRun sql.NullString
 	if err := row.Scan(&sc.ID, &sc.Name, &sc.Cron, &sc.TitleTemplate, &sc.BodyTemplate,
-		&sc.AgentID, &projectID, &sc.Perm, &sc.BlockOnFailure, &sc.Enabled, &lastRun, &nextRun, &sc.CreatedAt, &sc.AgentName, &sc.ProjectName); err != nil {
+		&sc.RoleID, &projectID, &sc.Perm, &sc.BlockOnFailure, &sc.Enabled, &lastRun, &nextRun, &sc.CreatedAt, &sc.Revision, &sc.RoleName, &sc.ProjectName); err != nil {
 		return nil, err
 	}
 	if projectID.Valid {
@@ -2215,9 +2202,9 @@ func (s *Store) CreateSchedule(sc Schedule) (int64, error) {
 	if sc.Perm == "" {
 		sc.Perm = PermFull
 	}
-	res, err := s.db.Exec(`INSERT INTO schedules (name, cron, title_template, body_template, agent_id, project_id, perm, block_on_failure, enabled, created_at)
+	res, err := s.db.Exec(`INSERT INTO schedules (name, cron, title_template, body_template, role_id, project_id, perm, block_on_failure, enabled, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sc.Name, sc.Cron, sc.TitleTemplate, sc.BodyTemplate, sc.AgentID, nullInt64(sc.ProjectID), sc.Perm, boolInt(sc.BlockOnFailure), sc.Enabled, sc.CreatedAt)
+		sc.Name, sc.Cron, sc.TitleTemplate, sc.BodyTemplate, sc.RoleID, nullInt64(sc.ProjectID), sc.Perm, boolInt(sc.BlockOnFailure), sc.Enabled, sc.CreatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -2235,7 +2222,7 @@ func (s *Store) UpdateSchedule(id int64, set map[string]any) error {
 		vals = append(vals, v)
 	}
 	vals = append(vals, id)
-	_, err := s.db.Exec(fmt.Sprintf("UPDATE schedules SET %s WHERE id=?", strings.Join(cols, ", ")), vals...)
+	_, err := s.db.Exec(fmt.Sprintf("UPDATE schedules SET %s, revision=revision+1 WHERE id=?", strings.Join(cols, ", ")), vals...)
 	return err
 }
 
@@ -2248,30 +2235,57 @@ func (s *Store) DeleteSchedule(id int64) error {
 // 历史清理
 
 // CleanupTasks 删除符合条件的任务（级联删除日志）。条件：
-//   - agentID 非空：仅该角色的任务
+//   - roleID 非空：仅该角色的任务
 //   - before 非空：仅早于该时间的任务
 //
 // 只删除终态任务（succeeded/failed/cancelled），进行中的任务不动。
-func (s *Store) CleanupTasks(agentID *int64, before string) (int64, error) {
+func (s *Store) CleanupTasks(roleID *int64, before string) (int64, []string, error) {
 	// 保留仍被后项引用的记录。否则 SQLite 会拒绝删除，且更重要的是，
 	// 清理不能把强依赖悄悄变成“无依赖即可执行”。下次清理会自然处理
 	// 已没有后项引用的终态记录。
-	q := "DELETE FROM tasks WHERE status IN ('succeeded','failed','cancelled') AND NOT EXISTS (SELECT 1 FROM tasks d WHERE d.depends_on=tasks.id)"
+	where := "status IN ('succeeded','failed','cancelled') AND NOT EXISTS (SELECT 1 FROM tasks d WHERE d.depends_on=tasks.id)"
 	args := []any{}
-	if agentID != nil {
-		q += " AND agent_id=?"
-		args = append(args, *agentID)
+	if roleID != nil {
+		where += " AND role_id=?"
+		args = append(args, *roleID)
 	}
 	if before != "" {
-		q += " AND created_at < ?"
+		where += " AND created_at < ?"
 		args = append(args, before)
 	}
-	res, err := s.db.Exec(q, args...)
+	tx, err := s.db.Begin()
 	if err != nil {
-		return 0, err
+		return 0, nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query("SELECT DISTINCT locator FROM artifacts WHERE task_id IN (SELECT tasks.id FROM tasks WHERE "+where+")", args...)
+	if err != nil {
+		return 0, nil, err
+	}
+	locators := make([]string, 0)
+	for rows.Next() {
+		var locator string
+		if err := rows.Scan(&locator); err != nil {
+			rows.Close()
+			return 0, nil, err
+		}
+		locators = append(locators, locator)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return 0, nil, err
+	}
+	res, err := tx.Exec("DELETE FROM tasks WHERE "+where, args...)
+	if err != nil {
+		return 0, nil, err
 	}
 	n, _ := res.RowsAffected()
-	return n, nil
+	if err := tx.Commit(); err != nil {
+		return 0, nil, err
+	}
+	return n, locators, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -2316,14 +2330,14 @@ type Template struct {
 	ID        int64  `json:"id"`
 	Name      string `json:"name"`
 	Body      string `json:"body"`
-	AgentID   *int64 `json:"agent_id"`
-	AgentName string `json:"agent_name,omitempty"`
+	RoleID    *int64 `json:"role_id"`
+	RoleName  string `json:"role_name,omitempty"`
 	CreatedAt string `json:"created_at"`
 }
 
 func (s *Store) ListTemplates() ([]Template, error) {
-	rows, err := s.db.Query(`SELECT t.id, t.name, t.body, t.agent_id, COALESCE(a.name,''), t.created_at
-		FROM templates t LEFT JOIN agents a ON a.id=t.agent_id ORDER BY t.id DESC`)
+	rows, err := s.db.Query(`SELECT t.id, t.name, t.body, t.role_id, COALESCE(a.name,''), t.created_at
+		FROM templates t LEFT JOIN roles a ON a.id=t.role_id ORDER BY t.id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -2332,11 +2346,11 @@ func (s *Store) ListTemplates() ([]Template, error) {
 	for rows.Next() {
 		var tpl Template
 		var aid sql.NullInt64
-		if err := rows.Scan(&tpl.ID, &tpl.Name, &tpl.Body, &aid, &tpl.AgentName, &tpl.CreatedAt); err != nil {
+		if err := rows.Scan(&tpl.ID, &tpl.Name, &tpl.Body, &aid, &tpl.RoleName, &tpl.CreatedAt); err != nil {
 			return nil, err
 		}
 		if aid.Valid {
-			tpl.AgentID = &aid.Int64
+			tpl.RoleID = &aid.Int64
 		}
 		out = append(out, tpl)
 	}
@@ -2347,8 +2361,8 @@ func (s *Store) CreateTemplate(tpl Template) (int64, error) {
 	if tpl.CreatedAt == "" {
 		tpl.CreatedAt = Now()
 	}
-	res, err := s.db.Exec("INSERT INTO templates (name, body, agent_id, created_at) VALUES (?, ?, ?, ?)",
-		tpl.Name, tpl.Body, nullInt64(tpl.AgentID), tpl.CreatedAt)
+	res, err := s.db.Exec("INSERT INTO templates (name, body, role_id, created_at) VALUES (?, ?, ?, ?)",
+		tpl.Name, tpl.Body, nullInt64(tpl.RoleID), tpl.CreatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -2356,15 +2370,15 @@ func (s *Store) CreateTemplate(tpl Template) (int64, error) {
 }
 
 func (s *Store) GetTemplate(id int64) (*Template, error) {
-	row := s.db.QueryRow(`SELECT t.id, t.name, t.body, t.agent_id, COALESCE(a.name,''), t.created_at
-		FROM templates t LEFT JOIN agents a ON a.id=t.agent_id WHERE t.id=?`, id)
+	row := s.db.QueryRow(`SELECT t.id, t.name, t.body, t.role_id, COALESCE(a.name,''), t.created_at
+		FROM templates t LEFT JOIN roles a ON a.id=t.role_id WHERE t.id=?`, id)
 	var tpl Template
 	var aid sql.NullInt64
-	if err := row.Scan(&tpl.ID, &tpl.Name, &tpl.Body, &aid, &tpl.AgentName, &tpl.CreatedAt); err != nil {
+	if err := row.Scan(&tpl.ID, &tpl.Name, &tpl.Body, &aid, &tpl.RoleName, &tpl.CreatedAt); err != nil {
 		return nil, err
 	}
 	if aid.Valid {
-		tpl.AgentID = &aid.Int64
+		tpl.RoleID = &aid.Int64
 	}
 	return &tpl, nil
 }
@@ -2392,11 +2406,11 @@ func (s *Store) DeleteTemplate(id int64) error {
 // ---------------------------------------------------------------------------
 // 项目（projects）
 
-const projectCols = "id, name, description, status, project_dir, created_at, updated_at"
+const projectCols = "id, name, description, status, project_dir, revision, created_at, updated_at"
 
 func scanProject(rows scanner) (Project, error) {
 	var p Project
-	err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Status, &p.ProjectDir, &p.CreatedAt, &p.UpdatedAt)
+	err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Status, &p.ProjectDir, &p.Revision, &p.CreatedAt, &p.UpdatedAt)
 	return p, err
 }
 
@@ -2450,7 +2464,7 @@ func (s *Store) UpdateProject(id int64, set map[string]any) error {
 
 // DeleteProject 删除项目；项目下任务改为「无项目」而非级联删除。
 func (s *Store) DeleteProject(id int64) error {
-	if _, err := s.db.Exec("UPDATE tasks SET project_id=NULL WHERE project_id=?", id); err != nil {
+	if _, err := s.db.Exec("UPDATE tasks SET project_id=NULL, updated_at=?, revision=revision+1 WHERE project_id=?", Now(), id); err != nil {
 		return err
 	}
 	_, err := s.db.Exec("DELETE FROM projects WHERE id=?", id)
@@ -2535,24 +2549,24 @@ func (s *Store) terminalSummary(where string, args ...any) (total, done, fail, r
 	return total, done, fail, reviews, rate, avgDur, nil
 }
 
-// AgentStatsOf 汇总某个 agent 的全部产出统计。
-func (s *Store) AgentStatsOf(agentID int64) (*AgentStats, error) {
-	st := &AgentStats{AgentID: agentID}
-	agent, err := s.GetAgent(agentID)
+// RoleStatsOf 汇总某个 agent 的全部产出统计。
+func (s *Store) RoleStatsOf(roleID int64) (*RoleStats, error) {
+	st := &RoleStats{RoleID: roleID}
+	agent, err := s.GetRole(roleID)
 	if err != nil {
 		return nil, err
 	}
-	st.AgentName = agent.Name
-	st.CLI = agent.CLI
+	st.RoleName = agent.Name
+	st.RuntimeID = agent.RuntimeID
 
-	total, done, fail, reviews, rate, avgDur, err := s.terminalSummary("t.agent_id=?", agentID)
+	total, done, fail, reviews, rate, avgDur, err := s.terminalSummary("t.role_id=?", roleID)
 	if err != nil {
 		return nil, err
 	}
 	st.Total, st.Succeeded, st.Failed, st.Reviews = total, done, fail, reviews
 	st.SuccessRate, st.AvgDuration = rate, avgDur
 
-	counts, _, err := s.statusCountsOf("t.agent_id=?", agentID)
+	counts, _, err := s.statusCountsOf("t.role_id=?", roleID)
 	if err != nil {
 		return nil, err
 	}
@@ -2564,30 +2578,30 @@ func (s *Store) AgentStatsOf(agentID int64) (*AgentStats, error) {
 		}
 	}
 
-	rows, err := s.db.Query(`SELECT t.agent_id, t.project_id, COALESCE(p.name,''), COUNT(*),
+	rows, err := s.db.Query(`SELECT t.role_id, t.project_id, COALESCE(p.name,''), COUNT(*),
 		COALESCE(SUM(CASE WHEN t.status='succeeded' THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN t.status='failed' THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(t.review_rounds),0),
 		COALESCE(SUM(CASE WHEN t.status IN ('succeeded','failed') THEN (julianday(t.finished_at)-julianday(t.started_at)) ELSE 0 END),0)
 		FROM tasks t LEFT JOIN projects p ON p.id=t.project_id
-		WHERE t.agent_id=? GROUP BY t.project_id, p.name ORDER BY COUNT(*) DESC`, agentID)
+		WHERE t.role_id=? GROUP BY t.project_id, p.name ORDER BY COUNT(*) DESC`, roleID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var ps AgentProjectStat
+		var ps RoleProjectStat
 		var dur float64
 		var n int
 		var aid, pid sql.NullInt64
 		if err := rows.Scan(&aid, &pid, &ps.ProjectName, &n, &ps.Succeeded, &ps.Failed, &ps.Reviews, &dur); err != nil {
 			return nil, err
 		}
-		ps.AgentID = agentID
+		ps.RoleID = roleID
 		if pid.Valid {
 			ps.ProjectID = pid.Int64
 		}
-		ps.AgentName = agent.Name
+		ps.RoleName = agent.Name
 		ps.Total = n
 		if n > 0 {
 			ps.SuccessRate = float64(ps.Succeeded) / float64(n) * 100
@@ -2601,7 +2615,7 @@ func (s *Store) AgentStatsOf(agentID int64) (*AgentStats, error) {
 		return nil, err
 	}
 
-	daily, err := s.dailySucceeded("t.agent_id=?", 14, agentID)
+	daily, err := s.dailySucceeded("t.role_id=?", 14, roleID)
 	if err != nil {
 		return nil, err
 	}
@@ -2610,7 +2624,7 @@ func (s *Store) AgentStatsOf(agentID int64) (*AgentStats, error) {
 		st.StatusCounts = []StatusCount{}
 	}
 	if st.Projects == nil {
-		st.Projects = []AgentProjectStat{}
+		st.Projects = []RoleProjectStat{}
 	}
 	if st.Daily == nil {
 		st.Daily = []DailyCount{}
@@ -2618,7 +2632,7 @@ func (s *Store) AgentStatsOf(agentID int64) (*AgentStats, error) {
 	return st, nil
 }
 
-// ProjectStatsOf 汇总项目进度 + 在该项目工作的 agent 产出。
+// ProjectStatsOf 汇总项目进度 + 在该项目工作的 Role 产出。
 func (s *Store) ProjectStatsOf(projectID int64) (*ProjectStats, error) {
 	ps := &ProjectStats{ProjectID: projectID}
 	proj, err := s.GetProject(projectID)
@@ -2645,27 +2659,27 @@ func (s *Store) ProjectStatsOf(projectID int64) (*ProjectStats, error) {
 	ps.StatusCounts = counts
 	ps.InFlight = inflightCount(counts)
 
-	rows, err := s.db.Query(`SELECT t.agent_id, t.project_id, COALESCE(a.name,''), COALESCE(p.name,''), COUNT(*),
+	rows, err := s.db.Query(`SELECT t.role_id, t.project_id, COALESCE(a.name,''), COALESCE(p.name,''), COUNT(*),
 		COALESCE(SUM(CASE WHEN t.status='succeeded' THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN t.status='failed' THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(t.review_rounds),0),
 		COALESCE(SUM(CASE WHEN t.status IN ('succeeded','failed') THEN (julianday(t.finished_at)-julianday(t.started_at)) ELSE 0 END),0)
-		FROM tasks t LEFT JOIN agents a ON a.id=t.agent_id LEFT JOIN projects p ON p.id=t.project_id
-		WHERE t.project_id=? GROUP BY t.agent_id, a.name ORDER BY COUNT(*) DESC`, projectID)
+		FROM tasks t LEFT JOIN roles a ON a.id=t.role_id LEFT JOIN projects p ON p.id=t.project_id
+		WHERE t.project_id=? GROUP BY t.role_id, a.name ORDER BY COUNT(*) DESC`, projectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var ag AgentProjectStat
+		var ag RoleProjectStat
 		var dur float64
 		var n int
 		var aid, pid sql.NullInt64
-		if err := rows.Scan(&aid, &pid, &ag.AgentName, &ag.ProjectName, &n, &ag.Succeeded, &ag.Failed, &ag.Reviews, &dur); err != nil {
+		if err := rows.Scan(&aid, &pid, &ag.RoleName, &ag.ProjectName, &n, &ag.Succeeded, &ag.Failed, &ag.Reviews, &dur); err != nil {
 			return nil, err
 		}
 		if aid.Valid {
-			ag.AgentID = aid.Int64
+			ag.RoleID = aid.Int64
 		}
 		ag.ProjectID = projectID
 		ag.Total = n
@@ -2675,7 +2689,7 @@ func (s *Store) ProjectStatsOf(projectID int64) (*ProjectStats, error) {
 		if denom := ag.Succeeded + ag.Failed; denom > 0 {
 			ag.AvgDuration = dur * 86400 / float64(denom)
 		}
-		ps.Agents = append(ps.Agents, ag)
+		ps.Roles = append(ps.Roles, ag)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -2689,8 +2703,8 @@ func (s *Store) ProjectStatsOf(projectID int64) (*ProjectStats, error) {
 	if ps.StatusCounts == nil {
 		ps.StatusCounts = []StatusCount{}
 	}
-	if ps.Agents == nil {
-		ps.Agents = []AgentProjectStat{}
+	if ps.Roles == nil {
+		ps.Roles = []RoleProjectStat{}
 	}
 	if ps.Daily == nil {
 		ps.Daily = []DailyCount{}
@@ -2886,18 +2900,18 @@ func (s *Store) ListTasksForCleanup() ([]Task, error) {
 // ---------------------------------------------------------------------------
 // 会话（Session）
 
-const sessionCols = `s.id, s.project_id, COALESCE(p.name, ''), s.agent_id, COALESCE(a.name, ''), a.cli,
+const sessionCols = `s.id, s.project_id, COALESCE(p.name, ''), s.role_id, COALESCE(a.name, ''), s.runtime_id,
 	s.title, s.status, s.worktree_branch, s.worktree_path, s.base_commit, s.session_dir, s.task_id, s.last_message_at, s.message_count,
-	s.created_at, s.started_at, s.suspended_at, s.delivered_at, s.updated_at`
-const sessionFrom = " FROM sessions s LEFT JOIN projects p ON p.id=s.project_id LEFT JOIN agents a ON a.id=s.agent_id"
+	s.revision, s.created_at, s.started_at, s.suspended_at, s.delivered_at, s.updated_at`
+const sessionFrom = " FROM sessions s LEFT JOIN projects p ON p.id=s.project_id LEFT JOIN roles a ON a.id=s.role_id"
 
 func scanSession(rows scanner) (Session, error) {
 	var ss Session
 	var projectID, taskID sql.NullInt64
 	var started, suspended, delivered sql.NullString
-	err := rows.Scan(&ss.ID, &projectID, &ss.ProjectName, &ss.AgentID, &ss.AgentName, &ss.CLI,
+	err := rows.Scan(&ss.ID, &projectID, &ss.ProjectName, &ss.RoleID, &ss.RoleName, &ss.RuntimeID,
 		&ss.Title, &ss.Status, &ss.WorktreeBranch, &ss.WorktreePath, &ss.BaseCommit, &ss.SessionDir, &taskID, &ss.LastMessageAt, &ss.MessageCount,
-		&ss.CreatedAt, &started, &suspended, &delivered, &ss.UpdatedAt)
+		&ss.Revision, &ss.CreatedAt, &started, &suspended, &delivered, &ss.UpdatedAt)
 	if err != nil {
 		return ss, err
 	}
@@ -2913,7 +2927,7 @@ func scanSession(rows scanner) (Session, error) {
 	return ss, nil
 }
 
-// CreateSession 创建会话记录。projectID 可为 nil（无项目）。agentID 必须存在。
+// CreateSession 创建会话记录。projectID 可为 nil（无项目）。roleID 必须存在。
 func (s *Store) CreateSession(ss Session) (int64, error) {
 	if ss.Status == "" {
 		ss.Status = SessionStatusCreated
@@ -2924,9 +2938,9 @@ func (s *Store) CreateSession(ss Session) (int64, error) {
 	if ss.UpdatedAt == "" {
 		ss.UpdatedAt = ss.CreatedAt
 	}
-	res, err := s.db.Exec(`INSERT INTO sessions (project_id, agent_id, title, status, cli, worktree_branch, worktree_path, base_commit, session_dir, task_id, last_message_at, created_at, started_at, suspended_at, delivered_at, updated_at)
+	res, err := s.db.Exec(`INSERT INTO sessions (project_id, role_id, title, status, runtime_id, worktree_branch, worktree_path, base_commit, session_dir, task_id, last_message_at, created_at, started_at, suspended_at, delivered_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		nullInt64(ss.ProjectID), ss.AgentID, ss.Title, ss.Status, ss.CLI, ss.WorktreeBranch, ss.WorktreePath, ss.BaseCommit, ss.SessionDir,
+		nullInt64(ss.ProjectID), ss.RoleID, ss.Title, ss.Status, ss.RuntimeID, ss.WorktreeBranch, ss.WorktreePath, ss.BaseCommit, ss.SessionDir,
 		nullInt64(ss.TaskID), ss.LastMessageAt, ss.CreatedAt, nullStrPtr(ss.StartedAt), nullStrPtr(ss.SuspendedAt), nullStrPtr(ss.DeliveredAt), ss.UpdatedAt)
 	if err != nil {
 		return 0, err
@@ -2969,9 +2983,9 @@ func (s *Store) ListSessions(f SessionFilter) ([]Session, error) {
 		q += " AND s.project_id=?"
 		args = append(args, *f.ProjectID)
 	}
-	if f.AgentID != nil {
-		q += " AND s.agent_id=?"
-		args = append(args, *f.AgentID)
+	if f.RoleID != nil {
+		q += " AND s.role_id=?"
+		args = append(args, *f.RoleID)
 	}
 	if f.Status != "" {
 		q += " AND s.status=?"

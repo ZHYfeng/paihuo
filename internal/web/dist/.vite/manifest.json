@@ -1,0 +1,113 @@
+{
+  "_api-CQc8nECC.js": {
+    "file": "assets/api-CQc8nECC.js",
+    "name": "api",
+    "imports": [
+      "index.html"
+    ]
+  },
+  "_markdown-CTB5Wqcl.js": {
+    "file": "assets/markdown-CTB5Wqcl.js",
+    "name": "markdown",
+    "imports": [
+      "index.html"
+    ]
+  },
+  "_pencil-CgnRKPyw.js": {
+    "file": "assets/pencil-CgnRKPyw.js",
+    "name": "pencil",
+    "imports": [
+      "index.html"
+    ]
+  },
+  "_play-zV0kM_oR.js": {
+    "file": "assets/play-zV0kM_oR.js",
+    "name": "play",
+    "imports": [
+      "index.html"
+    ]
+  },
+  "_trash-2-DyYQfe6b.js": {
+    "file": "assets/trash-2-DyYQfe6b.js",
+    "name": "trash-2",
+    "imports": [
+      "index.html"
+    ]
+  },
+  "index.html": {
+    "file": "assets/index-DPaRJR_I.js",
+    "name": "index",
+    "src": "index.html",
+    "isEntry": true,
+    "dynamicImports": [
+      "src/pages/tasks.tsx",
+      "src/pages/resources.tsx",
+      "src/pages/management.tsx",
+      "src/pages/sessions.tsx",
+      "src/pages/workflows.tsx"
+    ],
+    "css": [
+      "assets/index-aMNGRqms.css"
+    ]
+  },
+  "src/pages/management.tsx": {
+    "file": "assets/management-PnQuqv92.js",
+    "name": "management",
+    "src": "src/pages/management.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_api-CQc8nECC.js",
+      "_pencil-CgnRKPyw.js",
+      "_trash-2-DyYQfe6b.js",
+      "index.html",
+      "_markdown-CTB5Wqcl.js"
+    ]
+  },
+  "src/pages/resources.tsx": {
+    "file": "assets/resources-C2jmTckR.js",
+    "name": "resources",
+    "src": "src/pages/resources.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_api-CQc8nECC.js",
+      "_pencil-CgnRKPyw.js",
+      "_trash-2-DyYQfe6b.js",
+      "index.html"
+    ]
+  },
+  "src/pages/sessions.tsx": {
+    "file": "assets/sessions-pRSBLD_D.js",
+    "name": "sessions",
+    "src": "src/pages/sessions.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_api-CQc8nECC.js",
+      "_play-zV0kM_oR.js",
+      "_trash-2-DyYQfe6b.js",
+      "index.html",
+      "_markdown-CTB5Wqcl.js"
+    ]
+  },
+  "src/pages/tasks.tsx": {
+    "file": "assets/tasks-BxZtNYfp.js",
+    "name": "tasks",
+    "src": "src/pages/tasks.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_api-CQc8nECC.js",
+      "_play-zV0kM_oR.js",
+      "index.html"
+    ]
+  },
+  "src/pages/workflows.tsx": {
+    "file": "assets/workflows-D4EkLpS4.js",
+    "name": "workflows",
+    "src": "src/pages/workflows.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_api-CQc8nECC.js",
+      "_play-zV0kM_oR.js",
+      "index.html"
+    ]
+  }
+}

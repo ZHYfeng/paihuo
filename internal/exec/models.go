@@ -26,7 +26,7 @@ import (
 // modelsCacheTTL：模型候选缓存时长。探测要跑各 CLI 的命令（秒级），
 // 而模型列表变化极低频（装新 provider / 改配置才变），60s TTL 会让
 // 每次打开页面（距上次超过 1 分钟）都重复付一遍探测开销，直接拖慢
-// /api/agents/schema，进而卡住前端首屏。调成 1 小时。
+// /api/v1/runtimes，进而卡住前端首屏。调成 1 小时。
 const modelsCacheTTL = time.Hour
 
 // probeTimeout：模型列表命令的超时。这些命令（pi --list-models /
@@ -123,7 +123,7 @@ type modelCataloger interface {
 
 // ModelCatalog 返回一个适配器在本机发现的模型及已知能力。没有能力目录的 CLI
 // 仍返回模型列表；此时 ThinkingLevels 留空，前端不会虚构可用档位。
-func ModelCatalog(a Adapter) []ModelInfo {
+func ModelCatalog(a commandAdapter) []ModelInfo {
 	if c, ok := a.(modelCataloger); ok {
 		return c.ModelCatalog()
 	}
@@ -349,11 +349,11 @@ func RefreshModelCatalogs() {
 	modelsCache.Unlock()
 	modelsProbeGate.Unlock()
 
-	adapters := Adapters()
+	adapters := commandAdapters()
 	var wg sync.WaitGroup
 	for _, a := range adapters {
 		wg.Add(1)
-		go func(a Adapter) {
+		go func(a commandAdapter) {
 			defer wg.Done()
 			a.Models()
 		}(a)
@@ -944,8 +944,6 @@ var claudeSettingsModelKeys = []string{
 	"ANTHROPIC_DEFAULT_SONNET_MODEL",
 	"ANTHROPIC_DEFAULT_HAIKU_MODEL",
 	"CLAUDE_CODE_SUBAGENT_MODEL",
-	// 旧版 Claude Code 仍可能通过这个变量指定后台小模型。
-	"ANTHROPIC_SMALL_FAST_MODEL",
 }
 
 // claudeModelAliasesForEnv 表示 family default 环境变量同时改变了哪个
@@ -990,9 +988,7 @@ func claudeModelsProbeAt(home, cwd string) []string {
 		readClaudeSettings(path, add)
 	}
 
-	// 用户 settings 是所有项目的最后一级默认值。保留 settings*.json 的兼容
-	// 读取，因为旧版 Claude Code/用户可能仍在 ~/.claude/settings.local.json
-	// 保存过模型设置。
+	// 用户 settings 是所有项目的最后一级默认值。
 	for _, path := range claudeUserSettingsPaths(home) {
 		readClaudeSettings(path, add)
 	}
@@ -1039,10 +1035,8 @@ func claudeUserSettingsPaths(home string) []string {
 	return matches
 }
 
-// claudeProjectSettingsPaths 从当前目录向上查找项目 settings。Claude Code
-// 新版通常把 settings.local.json 放在仓库根目录，旧版也可能留在启动目录，
-// 所以沿父目录检查两种文件名；home 仅用于避免把用户目录下的同一文件重复
-// 当作项目设置。
+// claudeProjectSettingsPaths 从当前目录向上查找项目 settings。每层 local
+// 设置覆盖 project 设置；home 仅用于避免把用户配置重复当作项目设置。
 func claudeProjectSettingsPaths(cwd, home string) []string {
 	if cwd == "" {
 		return nil

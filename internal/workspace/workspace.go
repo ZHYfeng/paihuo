@@ -110,7 +110,7 @@ func EnsureSessionWorktree(projectDir, sessionsRoot, projectName string, session
 // copySkipDirs 复制会话目录时跳过的子目录（重/无用/危险）。
 var copySkipDirs = map[string]bool{
 	".git": true, "node_modules": true, ".venv": true, "venv": true,
-	"__pycache__": true, ".agent-sessions": true, ".cache": true, "dist": true,
+	"__pycache__": true, ".runtime-sessions": true, ".cache": true, "dist": true,
 }
 
 // copyDirExcluding 递归复制 src 到 dst（跳过 copySkipDirs 中的目录；

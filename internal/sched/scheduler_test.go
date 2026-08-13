@@ -16,10 +16,10 @@ func TestProjectScheduleCreatesWeakDependentTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewHub()
+	hub := events.NewEventStream()
 	executor := paiexec.New(st, hub, t.TempDir(), "schedule-dependency-test.db")
 	s := New(st, hub, executor)
-	agentID, err := st.CreateAgent(store.Agent{Name: "scheduled-agent", CLI: "pi", Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "scheduled-agent", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,15 +28,15 @@ func TestProjectScheduleCreatesWeakDependentTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstID, err := st.CreateTaskWithProjectDependency(store.Task{
-		Title: "existing", Status: store.StatusQueued, AgentID: &agentID, ProjectID: &projectID,
+		Title: "existing", Status: store.StatusQueued, RoleID: &agentID, ProjectID: &projectID,
 		DependencyMode: store.DependencyWeak,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	scheduleID, err := st.CreateSchedule(store.Schedule{
-		Name: "project cron", Cron: "0 * * * *", TitleTemplate: "generated", BodyTemplate: "body",
-		AgentID: agentID, ProjectID: &projectID, BlockOnFailure: true, Enabled: true,
+		Name: "project cron", Cron: "0 0 * * * *", TitleTemplate: "generated", BodyTemplate: "body",
+		RoleID: agentID, ProjectID: &projectID, BlockOnFailure: true, Enabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -66,32 +66,32 @@ func TestProjectScheduleCreatesWeakDependentTask(t *testing.T) {
 	}
 }
 
-func TestReloadAcceptsPickerAndLegacyCronRules(t *testing.T) {
+func TestReloadAcceptsOnlySixFieldCronRules(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewHub()
+	hub := events.NewEventStream()
 	executor := paiexec.New(st, hub, t.TempDir(), "schedule-parser-test.db")
 	s := New(st, hub, executor)
-	agentID, err := st.CreateAgent(store.Agent{Name: "parser-agent", CLI: "pi", Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "parser-agent", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, item := range []struct{ name, expression string }{
-		{name: "legacy", expression: "0 9 * * *"},
-		{name: "picker", expression: "0 30 14 * * 3"},
+		{name: "invalid-five-fields", expression: "0 9 * * *"},
+		{name: "valid-six-fields", expression: "0 30 14 * * 3"},
 	} {
 		if _, err := st.CreateSchedule(store.Schedule{
-			Name: item.name, Cron: item.expression, TitleTemplate: "title", AgentID: agentID, Enabled: true,
+			Name: item.name, Cron: item.expression, TitleTemplate: "title", RoleID: agentID, Enabled: true,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	s.Reload()
-	if got := len(s.cron.Entries()); got != 2 {
-		t.Fatalf("定时任务规则未全部加载：got %d, want 2", got)
+	if got := len(s.cron.Entries()); got != 1 {
+		t.Fatalf("只应加载六段 cron：got %d, want 1", got)
 	}
 }

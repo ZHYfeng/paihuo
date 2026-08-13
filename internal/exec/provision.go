@@ -49,7 +49,7 @@ var provisionCache struct {
 	info []ProvisionInfo
 }
 
-// ProvisionStatus 返回所有适配器 CLI 的安装/版本/登录状态。
+// ProvisionStatus 返回默认 Runtime 目录的安装/版本/登录状态。
 func ProvisionStatus() []ProvisionInfo {
 	provisionCache.Lock()
 	defer provisionCache.Unlock()
@@ -65,7 +65,7 @@ func ProvisionStatus() []ProvisionInfo {
 		"pi":       {filepath.Join(home, ".pi", "agent", "auth.json")},
 		"omp":      {filepath.Join(home, ".omp", "agent", "auth.json"), filepath.Join(home, ".pi", "agent", "auth.json")},
 	}
-	adapters := Adapters()
+	adapters := commandAdapters()
 	out := make([]ProvisionInfo, 0, len(adapters))
 	for _, a := range adapters {
 		info := ProvisionInfo{ID: a.ID(), Name: a.Name(), Docs: a.Docs(),
@@ -85,6 +85,16 @@ func ProvisionStatus() []ProvisionInfo {
 	provisionCache.info = out
 	provisionCache.at = time.Now()
 	return out
+}
+
+func inspectProvision(a commandAdapter) ProvisionInfo {
+	for _, info := range ProvisionStatus() {
+		if info.ID == a.ID() {
+			return info
+		}
+	}
+	return ProvisionInfo{ID: a.ID(), Name: a.Name(), Docs: a.Docs(),
+		InstallCmd: InstallCommands[a.ID()], LoginHint: LoginHints[a.ID()]}
 }
 
 // cliVersion 执行 <cli> --version（2s 超时），失败返回空串。

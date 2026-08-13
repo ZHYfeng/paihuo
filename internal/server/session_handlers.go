@@ -12,12 +12,11 @@ import (
 	"paihuo/internal/store"
 )
 
-// 会话 API（S-1）：CRUD + 状态机 + pi RPC 会话命令。
-// 设计：docs/design/03-session-backend.md §6
+// Session API：CRUD、状态机与结构化 Runtime 消息命令。
 
 type sessionIn struct {
 	ProjectID *int64 `json:"project_id"`
-	AgentID   int64  `json:"agent_id"`
+	RoleID    int64  `json:"role_id"`
 }
 
 type deliverIn struct {
@@ -71,11 +70,11 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "请求体非法: " + err.Error()})
 		return
 	}
-	if in.AgentID <= 0 {
+	if in.RoleID <= 0 {
 		writeJSON(w, 400, map[string]any{"error": "请选择角色"})
 		return
 	}
-	ss, err := s.sess.Create(in.ProjectID, in.AgentID)
+	ss, err := s.sess.Create(in.ProjectID, in.RoleID)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
@@ -343,21 +342,21 @@ func (s *Server) sessionTranscript(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sessionRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/sessions", s.listSessions)
-	mux.HandleFunc("POST /api/sessions", s.createSession)
-	mux.HandleFunc("GET /api/sessions/{id}", s.getSession)
-	mux.HandleFunc("POST /api/sessions/{id}/start", s.startSession)
-	mux.HandleFunc("POST /api/sessions/{id}/resume", s.resumeSession)
-	mux.HandleFunc("POST /api/sessions/{id}/suspend", s.suspendSession)
-	mux.HandleFunc("POST /api/sessions/{id}/deliver", s.deliverSession)
-	mux.HandleFunc("DELETE /api/sessions/{id}", s.deleteSession)
-	mux.HandleFunc("POST /api/sessions/{id}/prompt", s.sessionPrompt)
-	mux.HandleFunc("POST /api/sessions/{id}/ask", s.sessionAsk)
-	mux.HandleFunc("POST /api/sessions/{id}/abort", s.sessionAbort)
-	mux.HandleFunc("POST /api/sessions/{id}/command", s.sessionCommand)
-	mux.HandleFunc("GET /api/sessions/{id}/messages", s.sessionMessages)
-	mux.HandleFunc("GET /api/sessions/{id}/state", s.sessionState)
-	mux.HandleFunc("GET /api/sessions/{id}/transcript", s.sessionTranscript)
+	mux.HandleFunc("GET /api/v1/sessions", s.listSessions)
+	mux.HandleFunc("POST /api/v1/sessions", s.createSession)
+	mux.HandleFunc("GET /api/v1/sessions/{id}", s.getSession)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/start", s.startSession)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/resume", s.resumeSession)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/suspend", s.suspendSession)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/deliver", s.deliverSession)
+	mux.HandleFunc("DELETE /api/v1/sessions/{id}", s.deleteSession)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/prompt", s.sessionPrompt)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/ask", s.sessionAsk)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/abort", s.sessionAbort)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/command", s.sessionCommand)
+	mux.HandleFunc("GET /api/v1/sessions/{id}/messages", s.sessionMessages)
+	mux.HandleFunc("GET /api/v1/sessions/{id}/state", s.sessionState)
+	mux.HandleFunc("GET /api/v1/sessions/{id}/transcript", s.sessionTranscript)
 }
 
 func parseID(s string) (int64, error) {

@@ -1,0 +1,204 @@
+openapi: 3.1.0
+info:
+  title: PaiHuo API
+  version: 1.0.0
+  description: PaiHuo control-plane contract. Browser sessions use an HttpOnly cookie obtained from POST /login.
+servers:
+  - url: /api/v1
+tags:
+  - name: Tasks
+  - name: Resources
+  - name: Sessions
+  - name: Workflows
+  - name: Artifacts
+  - name: Management
+paths:
+  /openapi.yaml:
+    get: {summary: Read this contract, responses: {'200': {description: OpenAPI YAML}}}
+  /events:
+    get:
+      summary: Resume the persistent server-sent event stream
+      parameters:
+        - {name: Last-Event-ID, in: header, schema: {type: integer, format: int64}}
+        - {name: after, in: query, schema: {type: integer, format: int64}}
+      responses:
+        '200': {description: text/event-stream with stable event ids}
+  /tasks:
+    get: {tags: [Tasks], summary: List tasks, responses: {'200': {$ref: '#/components/responses/TaskList'}}}
+    post:
+      tags: [Tasks]
+      summary: Create and enqueue a task
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TaskInput'}}}}
+      responses: {'201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Task'}}}}, '400': {$ref: '#/components/responses/Error'}}
+  /tasks/{id}:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get: {tags: [Tasks], summary: Get a task, responses: {'200': {description: Task, content: {application/json: {schema: {$ref: '#/components/schemas/Task'}}}}, '404': {$ref: '#/components/responses/Error'}}}
+    patch:
+      tags: [Tasks]
+      summary: Mutate a task using optimistic concurrency
+      parameters: [{$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {'200': {description: Updated task}, '409': {$ref: '#/components/responses/Error'}, '428': {$ref: '#/components/responses/Error'}}
+    delete:
+      tags: [Tasks]
+      parameters: [{$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses: {'204': {description: Deleted}, '409': {$ref: '#/components/responses/Error'}}
+  /tasks/{id}/logs:
+    get: {tags: [Tasks], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Ordered task logs}}}
+  /tasks/{id}/diff:
+    get: {tags: [Tasks], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Workspace diff}}}
+  /projects:
+    get: {tags: [Resources], responses: {'200': {description: Projects}}}
+    post: {tags: [Resources], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Project created}}}
+  /projects/{id}:
+    patch: {tags: [Resources], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Project updated}, '409': {$ref: '#/components/responses/Error'}}}
+    delete: {tags: [Resources], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'204': {description: Project deleted}}}
+  /roles:
+    get: {tags: [Resources], responses: {'200': {description: Roles}}}
+    post: {tags: [Resources], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Role created}}}
+  /roles/{id}:
+    patch: {tags: [Resources], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Role updated}}}
+    delete: {tags: [Resources], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'204': {description: Role deleted}}}
+  /runtimes:
+    get: {tags: [Resources], summary: Runtime catalog and capabilities, responses: {'200': {description: Runtime descriptors}}}
+  /runtimes/refresh:
+    post: {tags: [Resources], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Refreshed catalog}}}
+  /runtimes/provisioning:
+    get: {tags: [Resources], responses: {'200': {description: Runtime installation state}}}
+  /runtimes/install:
+    post: {tags: [Resources], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'202': {description: Installation started}}}
+  /sessions:
+    get: {tags: [Sessions], responses: {'200': {description: Sessions}}}
+    post: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Session created}}}
+  /sessions/{id}:
+    get: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Session}}}
+    delete: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Session deleted}}}
+  /sessions/{id}/start:
+    post: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Started}}}
+  /sessions/{id}/resume:
+    post: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Resumed}}}
+  /sessions/{id}/suspend:
+    post: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Suspended}}}
+  /sessions/{id}/prompt:
+    post: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Prompt accepted}}}
+  /sessions/{id}/deliver:
+    post: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Delivered as task}}}
+  /sessions/{id}/transcript:
+    get: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Transcript page}}}
+  /workflow-proposals:
+    get: {tags: [Workflows], responses: {'200': {description: Proposals}}}
+    post: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Proposal created}}}
+  /workflow-proposals/{id}:
+    get: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Proposal}}}
+  /workflow-proposals/{id}/validate:
+    post: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Policy result}}}
+  /workflow-proposals/{id}/adopt:
+    post: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Frozen plan}}}
+  /workflows:
+    get: {tags: [Workflows], responses: {'200': {description: Frozen plans}}}
+  /workflows/{id}:
+    get: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Frozen plan}}}
+  /workflows/{id}/runs:
+    post: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Workflow run created atomically}}}
+  /workflow-runs/{id}:
+    get: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Workflow run}}}
+  /artifacts:
+    get:
+      tags: [Artifacts]
+      parameters:
+        - {name: task_id, in: query, schema: {type: integer, format: int64, minimum: 1}}
+        - {name: run_id, in: query, schema: {type: integer, format: int64, minimum: 1}}
+      responses: {'200': {description: Artifact metadata list, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Artifact'}}}}}}
+    post:
+      tags: [Artifacts]
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ArtifactInput'}}}}
+      responses: {'201': {description: Artifact stored, content: {application/json: {schema: {$ref: '#/components/schemas/Artifact'}}}}, '400': {$ref: '#/components/responses/Error'}}
+  /artifacts/{id}:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get: {tags: [Artifacts], responses: {'200': {description: Artifact metadata, content: {application/json: {schema: {$ref: '#/components/schemas/Artifact'}}}}, '404': {$ref: '#/components/responses/Error'}}}
+    delete: {tags: [Artifacts], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'204': {description: Artifact metadata and unreferenced content deleted}}}
+  /artifacts/{id}/content:
+    get: {tags: [Artifacts], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Artifact bytes}, '404': {$ref: '#/components/responses/Error'}}}
+  /skills:
+    get: {tags: [Management], responses: {'200': {description: Skills}}}
+    post: {tags: [Management], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Skill imported}}}
+    delete: {tags: [Management], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Skills deleted}}}
+  /templates:
+    get: {tags: [Management], responses: {'200': {description: Task templates}}}
+    post: {tags: [Management], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Template created}}}
+  /schedules:
+    get: {tags: [Management], responses: {'200': {description: Schedules}}}
+    post: {tags: [Management], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Schedule created}}}
+  /settings:
+    get: {tags: [Management], responses: {'200': {description: Settings}}}
+    put: {tags: [Management], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Settings saved}}}
+components:
+  parameters:
+    ID: {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+    Revision: {name: If-Match, in: header, required: true, description: Quoted revision returned in the resource body or ETag, schema: {type: string, example: '"3"'}}
+    IdempotencyKey: {name: Idempotency-Key, in: header, required: false, description: Replays the first completed response for the same method and path, schema: {type: string, maxLength: 200}}
+  responses:
+    Error: {description: Error envelope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    TaskList: {description: Tasks, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Task'}}}}}
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: object, required: [code, message], properties: {code: {type: string}, message: {type: string}}}
+    TaskInput:
+      type: object
+      required: [title, body, project_id, role_id]
+      properties:
+        title: {type: string}
+        body: {type: string}
+        project_id: {type: integer, format: int64}
+        role_id: {type: integer, format: int64}
+        perm: {type: string, enum: [full, review], default: full}
+        run_mode: {type: string, enum: [batch, interactive], default: batch}
+        concurrent: {type: boolean, default: false}
+    Task:
+      allOf:
+        - {$ref: '#/components/schemas/TaskInput'}
+        - type: object
+          required: [id, status, revision, created_at, updated_at]
+          properties:
+            id: {type: integer, format: int64}
+            status: {type: string, enum: [queued, claimed, running, awaiting_review, succeeded, failed, cancelled]}
+            role_name: {type: string}
+            project_name: {type: string}
+            workflow_run_id: {type: integer, format: int64}
+            revision: {type: integer, format: int64, minimum: 1}
+            created_at: {type: string, format: date-time}
+            updated_at: {type: string, format: date-time}
+    ArtifactInput:
+      type: object
+      required: [name, content]
+      oneOf:
+        - required: [task_id]
+        - required: [run_id]
+      properties:
+        task_id: {type: integer, format: int64, minimum: 1}
+        run_id: {type: integer, format: int64, minimum: 1}
+        name: {type: string, minLength: 1}
+        media_type: {type: string, default: application/octet-stream}
+        content: {type: string, contentEncoding: base64}
+        created_by: {type: string, default: operator}
+        retention: {type: string}
+    Artifact:
+      type: object
+      required: [id, name, media_type, content_hash, size, locator, created_by, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        task_id: {type: integer, format: int64}
+        run_id: {type: integer, format: int64}
+        name: {type: string}
+        media_type: {type: string}
+        content_hash: {type: string, pattern: '^[a-f0-9]{64}$'}
+        size: {type: integer, format: int64, minimum: 0}
+        locator: {type: string}
+        created_by: {type: string}
+        retention: {type: string}
+        created_at: {type: string, format: date-time}

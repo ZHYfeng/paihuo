@@ -44,9 +44,8 @@ func newTestEnv(t *testing.T) (*Manager, *store.Store, *execpkg.Executor, string
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	_, err = st.CreateAgent(store.Agent{
-		Name: "pi-role", CLI: "pi", Enabled: true,
-		ProjectDir:     projDir,
+	_, err = st.CreateRole(store.Role{
+		Name: "pi-role", RuntimeID: "pi", Enabled: true,
 		MaxConcurrency: 2,
 		RoleConfig:     store.RoleConfig{Model: ""},
 	})
@@ -54,7 +53,7 @@ func newTestEnv(t *testing.T) (*Manager, *store.Store, *execpkg.Executor, string
 		t.Fatalf("create agent: %v", err)
 	}
 	projID := pid
-	hub := events.NewHub()
+	hub := events.NewEventStream()
 	ex := execpkg.NewForTest(st, hub, filepath.Join(root, "sessions"), filepath.Join(root, "db"), "sess-test")
 	m := New(st, hub, ex, filepath.Join(root, "sessions"), filepath.Join(root, "db"))
 	_ = projID
@@ -111,7 +110,7 @@ func TestCreateWorktree(t *testing.T) {
 	if err != nil || len(proj) != 1 {
 		t.Fatalf("projects: %v %d", err, len(proj))
 	}
-	agents, _ := st.ListAgents()
+	agents, _ := st.ListRoles()
 	ss, err := m.Create(&proj[0].ID, agents[0].ID)
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -134,12 +133,11 @@ func TestCreateWorktree(t *testing.T) {
 	}
 }
 
-// 交互式会话只支持 pi / omp：opencode / claude / codex 角色创建会话应被拒绝
-// （validateCreate 在 worktree 创建前拦截），pi / omp 正常创建。
+// 只有声明结构化 Session capability 的 Runtime 可以创建会话。
 func TestCreateSessionRejectsNonPiOmpAgents(t *testing.T) {
 	m, st, _, _ := newTestEnv(t)
 	for _, cli := range []string{"pi", "omp", "opencode", "claude", "codex"} {
-		id, err := st.CreateAgent(store.Agent{Name: cli + "-sess", CLI: cli, Enabled: true})
+		id, err := st.CreateRole(store.Role{Name: cli + "-sess", RuntimeID: cli, Enabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -150,28 +148,27 @@ func TestCreateSessionRejectsNonPiOmpAgents(t *testing.T) {
 			}
 			continue
 		}
-		if err == nil || !strings.Contains(err.Error(), "只支持 pi / omp") {
-			t.Fatalf("%s 创建会话应被拒绝（只支持 pi / omp），得到: %v", cli, err)
+		if err == nil || !strings.Contains(err.Error(), "不提供结构化会话能力") {
+			t.Fatalf("%s 创建会话应被 capability 拒绝，得到: %v", cli, err)
 		}
 	}
 }
 
-// 遗留的非 pi/omp 会话（绕过创建校验直接落库）启动时应被拒绝——
-// S5 终端降级通道已移除，会话只支持 pi/omp 消息流。
+// 绕过创建校验落库的无 Session capability Runtime 也必须在启动时拒绝。
 func TestStartRejectsLegacyNonPiOmpSession(t *testing.T) {
 	m, st, _, _ := newTestEnv(t)
-	cxID, err := st.CreateAgent(store.Agent{Name: "codex-sess", CLI: "codex", Enabled: true})
+	cxID, err := st.CreateRole(store.Role{Name: "codex-sess", RuntimeID: "codex", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	id, err := st.CreateSession(store.Session{
-		AgentID: cxID, Title: "遗留", Status: store.SessionStatusCreated, CLI: "codex",
+		RoleID: cxID, Title: "遗留", Status: store.SessionStatusCreated, RuntimeID: "codex",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	err = m.Start(context.Background(), id)
-	if err == nil || !strings.Contains(err.Error(), "只支持 pi / omp") {
+	if err == nil || !strings.Contains(err.Error(), "不提供结构化会话能力") {
 		t.Fatalf("遗留 codex 会话启动应被拒绝: %v", err)
 	}
 	got, _ := m.Get(id)
@@ -187,7 +184,7 @@ func TestDeliverReusesWorktree(t *testing.T) {
 	}
 	m, st, _, _ := newTestEnv(t)
 	proj, _ := st.ListProjects()
-	agents, _ := st.ListAgents()
+	agents, _ := st.ListRoles()
 	ss, err := m.Create(&proj[0].ID, agents[0].ID)
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -249,7 +246,7 @@ func TestDeliverReusesWorktree(t *testing.T) {
 func TestDeliverReviewSkipsExecution(t *testing.T) {
 	m, st, _, _ := newTestEnv(t)
 	proj, _ := st.ListProjects()
-	agents, _ := st.ListAgents()
+	agents, _ := st.ListRoles()
 	ss, err := m.Create(&proj[0].ID, agents[0].ID)
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -297,7 +294,7 @@ func TestDeliverFullNonGitCompletesWithoutMerge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	agents, _ := st.ListAgents()
+	agents, _ := st.ListRoles()
 	ss, err := m.Create(&pid, agents[0].ID)
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -327,12 +324,15 @@ func TestDeliverFullNonGitCompletesWithoutMerge(t *testing.T) {
 // TestLifecycleWithRealPi 冒烟：真实 pi RPC 进程的 start → prompt → suspend →
 // resume（switch_session 恢复）→ deliver。需要本机安装 pi。
 func TestLifecycleWithRealPi(t *testing.T) {
+	if os.Getenv("PAIHUO_REAL_RUNTIME_TESTS") != "1" {
+		t.Skip("设置 PAIHUO_REAL_RUNTIME_TESTS=1 后运行真实 Pi 冒烟")
+	}
 	if !havePi() {
 		t.Skip("本机未安装 pi，跳过冒烟测试")
 	}
 	m, st, ex, _ := newTestEnv(t)
 	proj, _ := st.ListProjects()
-	agents, _ := st.ListAgents()
+	agents, _ := st.ListRoles()
 	ss, err := m.Create(&proj[0].ID, agents[0].ID)
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -442,8 +442,8 @@ func TestLifecycleWithRealPi(t *testing.T) {
 		}
 	}
 	// 槽位已释放（并发 2，两个会话都已挂起/交付 → 应可再启动）。
-	m.ex.ReleaseAgentSlot(agents[0].ID)
-	m.ex.ReleaseAgentSlot(agents[0].ID)
+	m.ex.ReleaseRoleSlot(agents[0].ID)
+	m.ex.ReleaseRoleSlot(agents[0].ID)
 	_ = ex
 }
 
@@ -470,7 +470,7 @@ func TestTranscriptPagination(t *testing.T) {
 		t.Fatal(err)
 	}
 	sid, err := st.CreateSession(store.Session{
-		AgentID: 1, Title: "pagination", Status: store.SessionStatusDelivered,
+		RoleID: 1, Title: "pagination", Status: store.SessionStatusDelivered,
 		SessionDir: dir, CreatedAt: store.Now(), UpdatedAt: store.Now(),
 	})
 	if err != nil {

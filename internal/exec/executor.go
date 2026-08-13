@@ -24,13 +24,15 @@ import (
 // 管理。弱依赖会按项目执行顺序串起任务（默认按创建时间），强依赖只在前置交付成功后放行。
 type Executor struct {
 	st           *store.Store
-	hub          *events.Hub
+	hub          *events.EventStream
 	sessionsRoot string // 任务工作空间根目录（<db目录>/sessions）
 	taskSessions *taskSessionStore
 	runner       *tmuxRunner
+	runtimes     *RuntimeService
 	mu           sync.Mutex
-	active       map[int64]int // 每个 agent 当前已占用的执行槽位数
-	activeProj   map[int64]int // 每个项目当前活跃的任务数（非并发任务的串行门禁）
+	active       map[int64]int // 每个 Role 当前已占用的执行槽位数
+	activeProj   map[int64]int // 每个 Project 当前活跃的任务数（非并发任务的串行门禁）
+	activeRuns   map[int64]int // 每个 Workflow Run 当前活跃的节点数
 	// cancels 是任务级取消句柄
 	cancels map[int64]context.CancelFunc
 	wake    chan struct{}
@@ -60,25 +62,35 @@ func (e tmuxWindowLostError) Is(target error) bool {
 
 // New 创建执行器。instanceID 必须稳定标识当前派活数据库，用于把 agent
 // CLI 的会话文件和同机其他 paihuo 实例隔离开。
-func New(st *store.Store, hub *events.Hub, sessionsRoot, instanceID string) *Executor {
+func New(st *store.Store, hub *events.EventStream, sessionsRoot, instanceID string) *Executor {
+	return NewWithRuntime(st, hub, sessionsRoot, instanceID, NewDefaultRuntimeService())
+}
+
+// NewWithRuntime injects the Runtime seam. Tests can use FakeRuntime without
+// registering a fake CLI globally, and production uses the five built-ins.
+func NewWithRuntime(st *store.Store, hub *events.EventStream, sessionsRoot, instanceID string, runtimes *RuntimeService) *Executor {
 	return &Executor{
 		st:                   st,
 		hub:                  hub,
 		sessionsRoot:         sessionsRoot,
 		taskSessions:         newTaskSessionStore(sessionsRoot, instanceID),
 		runner:               newTmuxRunner(sessionsRoot),
+		runtimes:             runtimes,
 		active:               make(map[int64]int),
 		activeProj:           make(map[int64]int),
+		activeRuns:           make(map[int64]int),
 		cancels:              make(map[int64]context.CancelFunc),
 		wake:                 make(chan struct{}, 1),
 		mergeReconcileErrors: make(map[int64]string),
 	}
 }
 
+func (e *Executor) RuntimeService() *RuntimeService { return e.runtimes }
+
 // NewForTest 与 New 相同，但 tmux runner 使用独立 socket，避免测试触碰
 // 生产 tmux 服务器（New 的 runner 固定使用 -L paihuo 与 session paihuo，
 // 与线上实例共用同一 tmux server）。socket 必须是合法的 tmux socket 名。
-func NewForTest(st *store.Store, hub *events.Hub, sessionsRoot, instanceID, socket string) *Executor {
+func NewForTest(st *store.Store, hub *events.EventStream, sessionsRoot, instanceID, socket string) *Executor {
 	e := New(st, hub, sessionsRoot, instanceID)
 	e.runner = newTmuxRunnerAt(sessionsRoot, socket)
 	return e
@@ -90,7 +102,6 @@ func (e *Executor) Start(ctx context.Context) {
 	if err := e.runner.ensureSession(); err != nil {
 		log.Printf("⚠ 专用 tmux 执行器未就绪: %v", err)
 	}
-	e.recoverLostCompletions()
 	e.reconcileMergeTasks()
 	e.recoverInterrupted(ctx)
 	e.reconcileRoleSkillDirs()
@@ -99,8 +110,8 @@ func (e *Executor) Start(ctx context.Context) {
 
 // reconcileMergeTasks 对账每一条已完成 Git 源任务的合并义务。正常路径通过
 // CompleteTaskAndCreateMerge / ApproveTaskAndCreateMerge 在一个事务中完成，
-// 这里覆盖的是进程中断、旧版本遗留记录，或保存源分支后创建子任务暂时失败的
-// 窄窗口。Store 的 merge_of 唯一索引保证重复扫描不会产生多个合并任务。
+// 这里覆盖保存源分支后创建子任务暂时失败的窄窗口。Store 的 merge_of
+// 唯一索引保证重复扫描不会产生多个合并任务。
 func (e *Executor) reconcileMergeTasks() {
 	e.mergeReconcileMu.Lock()
 	defer e.mergeReconcileMu.Unlock()
@@ -145,45 +156,42 @@ func (e *Executor) reconcileMergeTasks() {
 	}
 }
 
-// roleAgentDir 返回角色技能挂载目录（<sessionsRoot>/.role-agents/<agentID>）。
+// roleSkillsDir 返回角色技能挂载目录（<sessionsRoot>/.roles/<roleID>）。
 // 目录位于所有 worktree / 用户项目目录之外，技能副本/链接永远不会被提交。
-func (e *Executor) roleAgentDir(agentID int64) string {
-	return filepath.Join(e.sessionsRoot, ".role-agents", fmt.Sprintf("%d", agentID))
+func (e *Executor) roleSkillsDir(roleID int64) string {
+	return filepath.Join(e.sessionsRoot, ".roles", fmt.Sprintf("%d", roleID))
 }
 
 // EnsureRoleSkills 幂等对账某个角色的技能挂载目录（供执行器与 server 钩子调用）。
-func (e *Executor) EnsureRoleSkills(agentID int64, roleName string, selected []string) (*RoleSkillMount, error) {
-	return EnsureRoleSkills(agentID, roleName, selected, e.roleAgentDir(agentID))
+func (e *Executor) EnsureRoleSkills(roleID int64, roleName string, selected []string) (*RoleSkillMount, error) {
+	return EnsureRoleSkills(roleID, roleName, selected, e.roleSkillsDir(roleID))
 }
 
-// RemoveRoleSkills 删除角色的技能挂载目录：先移入 .stale 暂存区（7 天兜底），
-// 不直接删除，防止误删后无法恢复。
-func (e *Executor) RemoveRoleSkills(agentID int64) error {
-	return MoveRoleAgentDirToStale(e.roleAgentDir(agentID), filepath.Join(e.sessionsRoot, ".role-agents", ".stale"))
+// RemoveRoleSkills 删除角色的技能挂载目录。Role 删除后不保留历史副本。
+func (e *Executor) RemoveRoleSkills(roleID int64) error {
+	return os.RemoveAll(e.roleSkillsDir(roleID))
 }
 
 // reconcileRoleSkillDirs 服务启动时对账全部角色的技能挂载：
 //  1. 每个角色执行 EnsureRoleSkills（幂等，新增/删除/断裂自愈）；
-//  2. 清单存在但角色已删除的目录移入 .stale（保留 7 天再删）；
-//  3. 一次性清理旧每任务副本机制残留在 worktree 的 paihuo-* 目录。
+//  2. 删除清单存在但 Role 已删除的挂载目录。
 func (e *Executor) reconcileRoleSkillDirs() {
-	agents, err := e.st.ListAgents()
+	roles, err := e.st.ListRoles()
 	if err != nil {
 		log.Printf("⚠ 扫描角色技能目录失败: %v", err)
 		return
 	}
-	active := make(map[int64]bool, len(agents))
-	for _, a := range agents {
+	active := make(map[int64]bool, len(roles))
+	for _, a := range roles {
 		active[a.ID] = true
 		if _, err := e.EnsureRoleSkills(a.ID, a.Name, a.RoleConfig.Skills); err != nil {
 			log.Printf("⚠ 对账角色 %d 技能目录失败: %v", a.ID, err)
 		}
 	}
-	roleRoot := filepath.Join(e.sessionsRoot, ".role-agents")
-	staleRoot := filepath.Join(roleRoot, ".stale")
+	roleRoot := filepath.Join(e.sessionsRoot, ".roles")
 	if entries, err := os.ReadDir(roleRoot); err == nil {
 		for _, entry := range entries {
-			if !entry.IsDir() || entry.Name() == ".stale" {
+			if !entry.IsDir() {
 				continue
 			}
 			dir := filepath.Join(roleRoot, entry.Name())
@@ -191,21 +199,13 @@ func (e *Executor) reconcileRoleSkillDirs() {
 			if err != nil || !exists {
 				continue // 无清单无法确认归属，交给 EnsureRoleSkills 处理
 			}
-			if active[manifest.AgentID] {
+			if active[manifest.RoleID] {
 				continue
 			}
-			if err := MoveRoleAgentDirToStale(dir, staleRoot); err != nil {
-				log.Printf("⚠ 归档已删除角色的技能目录 %s 失败: %v", dir, err)
-			} else {
-				log.Printf("↻ 已归档已删除角色的技能目录 %s（7 天后自动清理）", dir)
+			if err := os.RemoveAll(dir); err != nil {
+				log.Printf("⚠ 删除无主角色技能目录 %s 失败: %v", dir, err)
 			}
 		}
-	}
-	if err := ReapStaleRoleDirs(staleRoot, 7*24*time.Hour); err != nil {
-		log.Printf("⚠ 清理角色技能暂存区失败: %v", err)
-	}
-	if err := CleanupLegacyTaskSkillCopies(e.sessionsRoot); err != nil {
-		log.Printf("⚠ 清理旧任务技能副本残留失败: %v", err)
 	}
 }
 
@@ -215,85 +215,6 @@ func (e *Executor) logMergeReconcileProblem(taskID int64, msg string) {
 	}
 	e.mergeReconcileErrors[taskID] = msg
 	e.log(taskID, "sys", "⚠ 自动合并对账："+msg)
-}
-
-// recoverLostCompletions 修复旧执行器留下的一个非常窄的收尾竞态：pane 已
-// 消失，agent wrapper 稍后才写入成功退出码，任务却已被记为 failed/-1。只接受
-// 任务自身 failure-* 归档中的 agent-exit-code=0，绝不根据模型最终文本或猜测
-// 反推成功；恢复 Git 任务时仍通过原子方法创建唯一的合并子任务。
-func (e *Executor) recoverLostCompletions() {
-	tasks, err := e.st.ListTasksFiltered(store.TaskFilter{Status: store.StatusFailed})
-	if err != nil {
-		log.Printf("⚠ 扫描可恢复 tmux 任务失败: %v", err)
-		return
-	}
-	for _, tk := range tasks {
-		if !isRecoverablePaneLoss(tk) {
-			continue
-		}
-		code, found, err := e.runner.archivedAgentExitCode(tk.ID)
-		if err != nil {
-			e.log(tk.ID, "sys", "⚠ 读取故障归档退出码失败: "+err.Error())
-			continue
-		}
-		if !found || code != 0 {
-			continue
-		}
-		_ = cleanupRoleSkills(e.runner.skillManifestPath(tk.ID))
-
-		if tk.Perm == store.PermReview {
-			changed, err := e.st.RecoverLostTask(tk.ID, store.StatusAwaitingReview)
-			if err != nil || !changed {
-				msg := "状态已变化"
-				if err != nil {
-					msg = err.Error()
-				}
-				e.log(tk.ID, "sys", "⚠ 恢复待审批任务失败: "+msg)
-				continue
-			}
-			e.log(tk.ID, "sys", "↻ 已从归档确认 agent 成功退出，恢复为待审批")
-			e.publishTask(tk.ID)
-			continue
-		}
-
-		if tk.WorktreeBranch == "" {
-			changed, err := e.st.RecoverLostTask(tk.ID, store.StatusSucceeded)
-			if err != nil || !changed {
-				msg := "状态已变化"
-				if err != nil {
-					msg = err.Error()
-				}
-				e.log(tk.ID, "sys", "⚠ 恢复任务失败: "+msg)
-				continue
-			}
-			e.log(tk.ID, "sys", "↻ 已从归档确认 agent 成功退出，恢复为完成")
-			e.publishTask(tk.ID)
-			continue
-		}
-
-		if _, err := workspace.Snapshot(tk, e.sessionsRoot); err != nil {
-			e.log(tk.ID, "sys", "⚠ 恢复前保存任务工作区失败: "+err.Error())
-			continue
-		}
-		mergeID, err := e.st.RecoverLostTaskAndCreateMerge(tk.ID, store.NewMergeTask(tk))
-		if err != nil {
-			e.log(tk.ID, "sys", "⚠ 恢复任务并创建代码合并任务失败: "+err.Error())
-			continue
-		}
-		e.log(tk.ID, "sys", fmt.Sprintf("↻ 已从归档确认 agent 成功退出，恢复任务并创建代码合并任务 #%d", mergeID))
-		e.log(mergeID, "sys", fmt.Sprintf("⇄ 由恢复的任务 #%d 自动创建，等待整合代码", tk.ID))
-		e.publishTask(tk.ID)
-		e.publishTask(mergeID)
-		e.Wake()
-	}
-}
-
-func isRecoverablePaneLoss(tk store.Task) bool {
-	if tk.Status != store.StatusFailed || tk.ExitCode == nil || *tk.ExitCode != -1 {
-		return false
-	}
-	return strings.HasPrefix(tk.Error, "专用 tmux window task-") &&
-		strings.HasSuffix(tk.Error, "已消失，且未留下退出码")
 }
 
 // recoverInterrupted 服务重启时重新接管仍存在的专用 tmux window；只有找不到
@@ -322,12 +243,13 @@ func (e *Executor) recoverInterrupted(ctx context.Context) {
 			e.markInterrupted(tk, "服务重启，未找到可恢复的 tmux window")
 			continue
 		}
-		if tk.AgentID == nil {
+		if tk.RoleID == nil {
 			e.markInterrupted(tk, "服务重启，任务未指派角色")
 			continue
 		}
-		e.restoreAgentSlot(*tk.AgentID)
+		e.restoreRoleSlot(*tk.RoleID)
 		e.restoreProjectSlot(tk)
+		e.restoreWorkflowSlot(tk)
 		e.log(tk.ID, "sys", "↻ 服务恢复：重新接管专用 tmux window")
 		go e.monitorRecovered(ctx, tk)
 	}
@@ -408,8 +330,9 @@ func (e *Executor) dispatch(ctx context.Context) {
 		return
 	}
 	limits := make(map[int64]int)
+	runLimits := make(map[int64]int)
 	for _, tk := range tasks {
-		if tk.AgentID == nil {
+		if tk.RoleID == nil {
 			continue
 		}
 		// 先在持久化状态机中判断前置交付，避免源任务刚结束、合并子任务尚未
@@ -419,65 +342,83 @@ func (e *Executor) dispatch(ctx context.Context) {
 		if err != nil || !dependency.Ready {
 			continue
 		}
-		agentID := *tk.AgentID
-		limit, ok := limits[agentID]
+		if tk.WorkflowRunID != nil {
+			runID := *tk.WorkflowRunID
+			limit, ok := runLimits[runID]
+			if !ok {
+				limit, err = e.st.WorkflowRunConcurrencyLimit(runID)
+				if err != nil {
+					continue
+				}
+				runLimits[runID] = limit
+			}
+			if !e.reserveWorkflowSlot(tk, limit) {
+				continue
+			}
+		}
+		roleID := *tk.RoleID
+		limit, ok := limits[roleID]
 		if !ok {
-			agent, err := e.st.GetAgent(agentID)
+			agent, err := e.st.GetRole(roleID)
 			if err != nil || !agent.Enabled {
+				e.releaseWorkflowSlot(tk)
 				continue
 			}
 			limit = agent.ConcurrencyLimit()
-			limits[agentID] = limit
+			limits[roleID] = limit
 		}
-		if !e.reserveAgentSlot(agentID, limit) {
+		if !e.reserveRoleSlot(roleID, limit) {
+			e.releaseWorkflowSlot(tk)
 			continue
 		}
 		// 项目级串行门禁：非并发任务要求项目当前没有任何活跃任务。
 		// 先占槽再领取，领取失败要回滚两个槽位。
 		if !e.reserveProjectSlot(tk) {
-			e.releaseAgentSlot(agentID)
+			e.releaseRoleSlot(roleID)
+			e.releaseWorkflowSlot(tk)
 			continue
 		}
 		claimed, err := e.st.ClaimTask(tk.ID)
 		if err != nil || !claimed {
-			e.releaseAgentSlot(agentID)
+			e.releaseRoleSlot(roleID)
 			e.releaseProjectSlot(tk)
+			e.releaseWorkflowSlot(tk)
 			continue
 		}
 		go e.runTask(ctx, tk)
 	}
 }
 
-// reserveAgentSlot 原子地尝试占用一个角色槽位。角色上限在调度时读取，
+// reserveRoleSlot 原子地尝试占用一个角色槽位。角色上限在调度时读取，
 // 因此提高上限会在下一次 Wake/轮询立即生效；下调上限不会中断已有任务，
 // 只会阻止新的任务继续进入直到占用数回落。
-func (e *Executor) reserveAgentSlot(agentID int64, limit int) bool {
+func (e *Executor) reserveRoleSlot(roleID int64, limit int) bool {
 	if limit < 1 {
 		limit = 1
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.active[agentID] >= limit {
+	if e.active[roleID] >= limit {
 		return false
 	}
-	e.active[agentID]++
+	e.active[roleID]++
 	return true
 }
 
-// restoreAgentSlot 在服务重启后接管尚存 tmux window 时恢复其槽位。即使
+// restoreRoleSlot 在服务重启后接管尚存 tmux window 时恢复其槽位。即使
 // 配置已被下调，也必须先接管所有存量任务；它们结束后新上限自然生效。
-func (e *Executor) restoreAgentSlot(agentID int64) {
+func (e *Executor) restoreRoleSlot(roleID int64) {
 	e.mu.Lock()
-	e.active[agentID]++
+	e.active[roleID]++
 	e.mu.Unlock()
 }
 
-func (e *Executor) releaseAgentSlot(agentID int64) {
+func (e *Executor) releaseRoleSlot(roleID int64) {
 	e.mu.Lock()
-	if e.active[agentID] <= 1 {
-		delete(e.active, agentID)
+	if e.active[roleID] <= 1 {
+		delete(e.active, roleID)
 	} else {
-		e.active[agentID]--
+		e.active[roleID]--
 	}
 	e.mu.Unlock()
 }
@@ -527,11 +468,53 @@ func (e *Executor) restoreProjectSlot(tk store.Task) {
 	e.mu.Unlock()
 }
 
+// reserveWorkflowSlot enforces the frozen Plan's cross-Role concurrency cap.
+func (e *Executor) reserveWorkflowSlot(tk store.Task, limit int) bool {
+	if tk.WorkflowRunID == nil {
+		return true
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	runID := *tk.WorkflowRunID
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.activeRuns[runID] >= limit {
+		return false
+	}
+	e.activeRuns[runID]++
+	return true
+}
+
+func (e *Executor) releaseWorkflowSlot(tk store.Task) {
+	if tk.WorkflowRunID == nil {
+		return
+	}
+	runID := *tk.WorkflowRunID
+	e.mu.Lock()
+	if e.activeRuns[runID] <= 1 {
+		delete(e.activeRuns, runID)
+	} else {
+		e.activeRuns[runID]--
+	}
+	e.mu.Unlock()
+}
+
+func (e *Executor) restoreWorkflowSlot(tk store.Task) {
+	if tk.WorkflowRunID == nil {
+		return
+	}
+	e.mu.Lock()
+	e.activeRuns[*tk.WorkflowRunID]++
+	e.mu.Unlock()
+}
+
 func (e *Executor) runTask(ctx context.Context, tk store.Task) {
-	agentID := *tk.AgentID
+	roleID := *tk.RoleID
 	defer func() {
-		e.releaseAgentSlot(agentID)
+		e.releaseRoleSlot(roleID)
 		e.releaseProjectSlot(tk)
+		e.releaseWorkflowSlot(tk)
 		e.Wake()
 	}()
 
@@ -567,18 +550,13 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		return
 	}
 
-	agent, err := e.st.GetAgent(agentID)
+	agent, err := e.st.GetRole(roleID)
 	if err != nil {
 		fail("角色不存在: " + err.Error())
 		return
 	}
-	adapter, ok := GetAdapter(agent.CLI)
-	if !ok {
-		fail("未知 CLI 适配器: " + agent.CLI)
-		return
-	}
-	if _, err := adapter.Detect(); err != nil {
-		fail(err.Error())
+	if !e.runtimes.Has(agent.RuntimeID) {
+		fail("未知 Runtime: " + agent.RuntimeID)
 		return
 	}
 
@@ -587,7 +565,7 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	rctx, release := e.taskContext(tk.ID)
 	defer release()
 
-	e.log(tk.ID, "sys", fmt.Sprintf("▶ 开始执行：角色=%s CLI=%s 权限=%s", agent.Name, agent.CLI, tk.Perm))
+	e.log(tk.ID, "sys", fmt.Sprintf("▶ 开始执行：角色=%s CLI=%s 权限=%s", agent.Name, agent.RuntimeID, tk.Perm))
 	// 任务隔离工作空间：git worktree（独立分支+目录）；非 git 项目直接执行
 	isGitProject := workspace.IsGitRepo(tk.ProjectDir)
 	dir, branch, baseCommit, werr := workspace.Ensure(tk, e.sessionsRoot)
@@ -631,7 +609,7 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		}
 	}
 
-	preparedSkills, err := e.EnsureRoleSkills(agentID, agent.Name, agent.RoleConfig.Skills)
+	preparedSkills, err := e.EnsureRoleSkills(roleID, agent.Name, agent.RoleConfig.Skills)
 	if err != nil {
 		fail("加载角色技能失败: " + err.Error())
 		return
@@ -649,13 +627,13 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	// codex 只能从 $HOME/.agents/skills（USER scope）加载外部技能：任务级
 	// symlink 挂载（唯一名 paihuo-<taskID>-...），清单在 tmux 运行目录，
 	// 结算时由 cleanupRoleSkills 按清单删除。
-	if agent.CLI == "codex" && len(preparedSkills.SkillPaths) > 0 {
+	if agent.RuntimeID == "codex" && len(preparedSkills.SkillPaths) > 0 {
 		if err := MountCodexSkills(tk.ID, preparedSkills, e.runner.skillManifestPath(tk.ID)); err != nil {
 			fail("挂载 codex 角色技能失败: " + err.Error())
 			return
 		}
 	}
-	ro := RunOptions{
+	ro := ExecutionRequest{
 		Dir:        dir,
 		Prompt:     taskPrompt(tk),
 		Role:       agent.RoleConfig,
@@ -666,7 +644,7 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	// 非 git 项目 + codex（safe 模式）：codex 拒绝在非 git 目录执行，
 	// 但 --skip-git-repo-check 可单独使用（不依赖 yolo），本次调用注入，
 	// 不动角色配置、不 git init 用户目录。
-	if !isGitProject && agent.CLI == "codex" && agent.RoleConfig.Custom["execution_mode"] != "yolo" {
+	if !isGitProject && agent.RuntimeID == "codex" && agent.RoleConfig.Custom["execution_mode"] != "yolo" {
 		ro.SkipGitCheck = true
 	}
 	// 技能上下文属于角色 system prompt，不混入用户任务指令。
@@ -689,16 +667,15 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	} else {
 		e.log(tk.ID, "sys", "⚠ 会话目录创建失败，任务会话可能互相干扰: "+sessErr.Error())
 	}
-	for _, w := range adapter.Warnings(ro) {
-		e.log(tk.ID, "sys", "⚠ "+w)
-	}
-
-	bin, args, env, err := adapter.Build(ro)
+	spec, err := e.runtimes.Prepare(agent.RuntimeID, ro)
 	if err != nil {
 		fail(err.Error())
 		return
 	}
-	e.log(tk.ID, "sys", "$ "+shellJoin(append([]string{bin}, args...)))
+	for _, warning := range spec.Warnings {
+		e.log(tk.ID, "sys", "⚠ "+warning)
+	}
+	e.log(tk.ID, "sys", "$ "+shellJoin(append([]string{spec.Bin}, spec.Args...)))
 	if err := e.st.UpdateTmuxLogOffset(tk.ID, 0); err != nil {
 		fail("重置 tmux 日志位置失败: " + err.Error())
 		return
@@ -708,14 +685,14 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 	batch := tk.RunMode != store.RunModeInteractive
 	options := tmuxStartOptions{
 		IsolateProcessGroup: batch,
-		DetachTerminal:      batch && agent.CLI == "codex",
-		IsolateCgroup:       batch && agent.CLI == "codex",
+		DetachTerminal:      batch && agent.RuntimeID == "codex",
+		IsolateCgroup:       batch && agent.RuntimeID == "codex",
 	}
 	if !batch {
 		options.TerminalColumns = interactiveTerminalColumns
 		options.TerminalRows = interactiveTerminalRows
 	}
-	if err := e.runner.Start(tk.ID, dir, bin, args, env, options); err != nil {
+	if err := e.runner.Start(tk.ID, dir, spec.Bin, spec.Args, spec.Env, options); err != nil {
 		fail(err.Error())
 		return
 	}
@@ -728,11 +705,11 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 }
 
 func (e *Executor) monitorRecovered(ctx context.Context, tk store.Task) {
-	if tk.AgentID == nil {
+	if tk.RoleID == nil {
 		return
 	}
 	defer func() {
-		e.releaseAgentSlot(*tk.AgentID)
+		e.releaseRoleSlot(*tk.RoleID)
 		e.releaseProjectSlot(tk)
 		e.Wake()
 	}()
@@ -768,10 +745,10 @@ func (e *Executor) validateInteractiveInputTarget(taskID int64) error {
 	if tk.RunMode != store.RunModeInteractive {
 		return fmt.Errorf("任务不是交互式会话")
 	}
-	if tk.AgentID == nil {
+	if tk.RoleID == nil {
 		return fmt.Errorf("任务未指派角色")
 	}
-	if _, err := e.st.GetAgent(*tk.AgentID); err != nil {
+	if _, err := e.st.GetRole(*tk.RoleID); err != nil {
 		return fmt.Errorf("读取角色失败: %w", err)
 	}
 	return nil
@@ -807,15 +784,15 @@ func (e *Executor) EndSession(taskID int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	agent, err := e.st.GetAgent(*tk.AgentID)
+	agent, err := e.st.GetRole(*tk.RoleID)
 	if err != nil {
 		return "", fmt.Errorf("读取角色失败: %w", err)
 	}
-	adapter, ok := GetAdapter(agent.CLI)
+	driver, ok := e.runtimes.Session(agent.RuntimeID)
 	if !ok {
-		return "", fmt.Errorf("未知 CLI: %s", agent.CLI)
+		return "", fmt.Errorf("Runtime %s 不支持交互会话", agent.RuntimeID)
 	}
-	cmd := adapter.ExitCommand()
+	cmd := driver.ExitCommand()
 	if err := e.runner.SendText(taskID, cmd); err != nil {
 		return "", err
 	}

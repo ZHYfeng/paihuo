@@ -17,20 +17,20 @@ import (
 
 type Scheduler struct {
 	st   *store.Store
-	hub  *events.Hub
+	hub  *events.EventStream
 	ex   *exec.Executor
 	cron *cron.Cron
 	mu   chan struct{} // 串行化重载
 }
 
-func New(st *store.Store, hub *events.Hub, ex *exec.Executor) *Scheduler {
+func New(st *store.Store, hub *events.EventStream, ex *exec.Executor) *Scheduler {
 	return &Scheduler{
 		st:  st,
 		hub: hub,
 		ex:  ex,
-		// 新面板生成六段 cron；保留五段表达式兼容旧版已保存的任务。
+		// 平台统一使用包含秒字段的六段 cron 表达式。
 		cron: cron.New(cron.WithParser(cron.NewParser(
-			cron.SecondOptional|cron.Minute|cron.Hour|cron.Dom|cron.Month|cron.Dow|cron.Descriptor,
+			cron.Second|cron.Minute|cron.Hour|cron.Dom|cron.Month|cron.Dow|cron.Descriptor,
 		)), cron.WithLocation(time.Local)),
 		mu: make(chan struct{}, 1),
 	}
@@ -103,7 +103,7 @@ func (j *scheduleJob) Run() {
 	if err != nil {
 		body = sc.BodyTemplate
 	}
-	agent, err := j.s.st.GetAgent(sc.AgentID)
+	agent, err := j.s.st.GetRole(sc.RoleID)
 	if err != nil {
 		log.Printf("定时任务 %s 的角色不存在，跳过", sc.Name)
 		return
@@ -111,7 +111,7 @@ func (j *scheduleJob) Run() {
 	now := store.Now()
 	tk := store.Task{
 		Title: title, Body: body, Status: store.StatusQueued,
-		Perm: sc.Perm, RunMode: store.RunModeBatch, AgentID: &agent.ID, ProjectDir: agent.ProjectDir,
+		Perm: sc.Perm, RunMode: store.RunModeBatch, RoleID: &agent.ID,
 		ProjectID: sc.ProjectID, DependencyMode: store.DependencyNone, BlockOnFailure: sc.BlockOnFailure,
 		ScheduleID: &sc.ID, CreatedAt: now, UpdatedAt: now,
 	}
@@ -124,9 +124,6 @@ func (j *scheduleJob) Run() {
 			return
 		}
 		tk.ProjectDir = project.ProjectDir
-		if tk.ProjectDir == "" {
-			tk.ProjectDir = agent.ProjectDir // 与手工创建任务保持兼容回退
-		}
 		// 项目定时任务只是“按时创建新的普通任务”；真正的执行仍按该项目
 		// 的项目执行顺序弱依赖链排队，且完成后必须先走自己的合并子任务。
 		tk.DependencyMode = store.DependencyWeak

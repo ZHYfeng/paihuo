@@ -25,11 +25,11 @@ func openStore(t *testing.T) *store.Store {
 func TestDeliveredTaskCountsInProjectStats(t *testing.T) {
 	m, st, _, _ := newTestEnv(t)
 	proj, _ := st.ListProjects()
-	agents, _ := st.ListAgents()
+	agents, _ := st.ListRoles()
 	pid, aid := proj[0].ID, agents[0].ID
 
 	// 对照：普通批处理任务（queued）。
-	if _, err := st.CreateTask(store.Task{Title: "普通任务", Status: store.StatusQueued, Perm: store.PermFull, RunMode: store.RunModeBatch, AgentID: &aid, ProjectID: &pid, ProjectDir: proj[0].ProjectDir}); err != nil {
+	if _, err := st.CreateTask(store.Task{Title: "普通任务", Status: store.StatusQueued, Perm: store.PermFull, RunMode: store.RunModeBatch, RoleID: &aid, ProjectID: &pid, ProjectDir: proj[0].ProjectDir}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -88,7 +88,7 @@ func TestDeliveredTaskCountsInProjectStats(t *testing.T) {
 func TestDeliveredSessionDiscardableNotReusable(t *testing.T) {
 	m, st, _, _ := newTestEnv(t)
 	proj, _ := st.ListProjects()
-	agents, _ := st.ListAgents()
+	agents, _ := st.ListRoles()
 	ss, err := m.Create(&proj[0].ID, agents[0].ID)
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func TestDeliveredSessionDiscardableNotReusable(t *testing.T) {
 // 回归：全局总览 in_flight 同样只统计进行中状态，而不是全部任务数。
 func TestOverviewInFlightCountsOnlyActive(t *testing.T) {
 	st := openStore(t)
-	agentID, err := st.CreateAgent(store.Agent{Name: "a", CLI: "pi", Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "a", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestOverviewInFlightCountsOnlyActive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sid, err := st.CreateSession(store.Session{Title: "s", AgentID: agentID, Status: store.SessionStatusDelivered})
+	sid, err := st.CreateSession(store.Session{Title: "s", RoleID: agentID, Status: store.SessionStatusDelivered})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,9 +146,9 @@ func TestOverviewInFlightCountsOnlyActive(t *testing.T) {
 		}
 		return id
 	}
-	must(store.Task{Title: "queued", Status: store.StatusQueued, Perm: store.PermFull, AgentID: &agentID})
-	must(store.Task{Title: "delivered", Status: store.StatusSucceeded, Perm: store.PermFull, RunMode: store.RunModeBatch, AgentID: &agentID, ProjectID: &pid, ProjectDir: t.TempDir(), SessionID: &sid})
-	must(store.Task{Title: "merge", Status: store.StatusQueued, Perm: store.PermFull, AgentID: &agentID, ProjectID: &pid, ProjectDir: t.TempDir()})
+	must(store.Task{Title: "queued", Status: store.StatusQueued, Perm: store.PermFull, RoleID: &agentID})
+	must(store.Task{Title: "delivered", Status: store.StatusSucceeded, Perm: store.PermFull, RunMode: store.RunModeBatch, RoleID: &agentID, ProjectID: &pid, ProjectDir: t.TempDir(), SessionID: &sid})
+	must(store.Task{Title: "merge", Status: store.StatusQueued, Perm: store.PermFull, RoleID: &agentID, ProjectID: &pid, ProjectDir: t.TempDir()})
 
 	ov, err := st.OverviewStatsOf()
 	if err != nil {

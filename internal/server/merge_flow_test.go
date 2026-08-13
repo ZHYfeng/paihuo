@@ -47,11 +47,11 @@ func TestApproveReviewTaskSnapshotsChangesAndQueuesMergeAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewHub()
+	hub := events.NewEventStream()
 	sessionsRoot := filepath.Join(base, "sessions")
 	executor := paiexec.NewForTest(st, hub, sessionsRoot, "review-merge-test.db", "review-merge-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", filepath.Join(base, "skills"))
-	agentID, err := st.CreateAgent(store.Agent{Name: "pi", CLI: "pi", Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "pi", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestApproveReviewTaskSnapshotsChangesAndQueuesMergeAgent(t *testing.T) {
 	}
 	taskID, err := st.CreateTask(store.Task{
 		Title: "reviewed feature", Status: store.StatusAwaitingReview, Perm: store.PermReview,
-		RunMode: store.RunModeBatch, AgentID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
+		RunMode: store.RunModeBatch, RoleID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -81,8 +81,9 @@ func TestApproveReviewTaskSnapshotsChangesAndQueuesMergeAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(taskID), strings.NewReader(`{"status":"succeeded"}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(taskID), strings.NewReader(`{"status":"succeeded"}`))
 	req.SetPathValue("id", itoa(taskID))
+	setTaskRevision(t, st, taskID, req)
 	resp := httptest.NewRecorder()
 	s.patchTask(resp, req)
 	if resp.Code != http.StatusOK {
@@ -100,7 +101,7 @@ func TestApproveReviewTaskSnapshotsChangesAndQueuesMergeAgent(t *testing.T) {
 		t.Fatalf("审批后应创建一个合并任务: %+v err=%v", children, err)
 	}
 	merge := children[0]
-	if merge.MergeOf == nil || *merge.MergeOf != taskID || merge.Perm != store.PermFull || merge.AgentID == nil || *merge.AgentID != agentID {
+	if merge.MergeOf == nil || *merge.MergeOf != taskID || merge.Perm != store.PermFull || merge.RoleID == nil || *merge.RoleID != agentID {
 		t.Fatalf("合并任务配置错误: %+v", merge)
 	}
 	if out, err := runGit(dir, "status", "--porcelain"); err != nil || strings.TrimSpace(out) != "" {
@@ -130,11 +131,11 @@ func TestDeleteTaskRemovesTaskTreeWorktrees(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewHub()
+	hub := events.NewEventStream()
 	sessionsRoot := filepath.Join(base, "sessions")
 	executor := paiexec.NewForTest(st, hub, sessionsRoot, "delete-worktree-test.db", "delete-worktree-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", filepath.Join(base, "skills"))
-	agentID, err := st.CreateAgent(store.Agent{Name: "pi", CLI: "pi", Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "pi", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +145,7 @@ func TestDeleteTaskRemovesTaskTreeWorktrees(t *testing.T) {
 	}
 	sourceID, err := st.CreateTask(store.Task{
 		Title: "source", Status: store.StatusSucceeded, Perm: store.PermFull,
-		AgentID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
+		RoleID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -177,8 +178,9 @@ func TestDeleteTaskRemovesTaskTreeWorktrees(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/tasks/"+itoa(sourceID), nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tasks/"+itoa(sourceID), nil)
 	req.SetPathValue("id", itoa(sourceID))
+	setTaskRevision(t, st, sourceID, req)
 	resp := httptest.NewRecorder()
 	s.deleteTask(resp, req)
 	if resp.Code != http.StatusNoContent {
@@ -209,7 +211,7 @@ func TestWorkspaceMergeGuards(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewHub()
+	hub := events.NewEventStream()
 	executor := paiexec.NewForTest(st, hub, t.TempDir(), "workspace-merge-guard-test.db", "workspace-merge-guard-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
 	taskID, err := st.CreateTask(store.Task{Title: "ordinary", Status: store.StatusSucceeded, Perm: store.PermFull})
@@ -220,8 +222,9 @@ func TestWorkspaceMergeGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/workspace/"+itoa(taskID)+"/discard", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspace/"+itoa(taskID)+"/discard", nil)
 	req.SetPathValue("id", itoa(taskID))
+	setTaskRevision(t, st, taskID, req)
 	resp := httptest.NewRecorder()
 	s.workspaceDiscard(resp, req)
 	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "代码合并任务尚未成功") {
@@ -231,14 +234,15 @@ func TestWorkspaceMergeGuards(t *testing.T) {
 	if err != nil || len(children) != 1 {
 		t.Fatalf("读取代码合并任务失败: children=%+v err=%v", children, err)
 	}
-	req = httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(taskID), strings.NewReader(`{"status":"queued"}`))
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(taskID), strings.NewReader(`{"status":"queued"}`))
 	req.SetPathValue("id", itoa(taskID))
+	setTaskRevision(t, st, taskID, req)
 	resp = httptest.NewRecorder()
 	s.patchTask(resp, req)
 	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "源任务代码已完成") {
 		t.Fatalf("源任务不应绕过既有合并任务直接重试: code=%d body=%s", resp.Code, resp.Body.String())
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/workspace/"+itoa(children[0].ID)+"/discard", nil)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/workspace/"+itoa(children[0].ID)+"/discard", nil)
 	req.SetPathValue("id", itoa(children[0].ID))
 	resp = httptest.NewRecorder()
 	s.workspaceDiscard(resp, req)
@@ -250,15 +254,17 @@ func TestWorkspaceMergeGuards(t *testing.T) {
 	if err := st.UpdateTask(mergeID, map[string]any{"status": store.StatusSucceeded}); err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(mergeID), strings.NewReader(`{"status":"queued"}`))
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(mergeID), strings.NewReader(`{"status":"queued"}`))
 	req.SetPathValue("id", itoa(mergeID))
+	setTaskRevision(t, st, mergeID, req)
 	resp = httptest.NewRecorder()
 	s.patchTask(resp, req)
 	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "代码合并任务已成功") {
 		t.Fatalf("成功的代码合并任务不能重试: code=%d body=%s", resp.Code, resp.Body.String())
 	}
-	req = httptest.NewRequest(http.MethodDelete, "/api/tasks/"+itoa(mergeID), nil)
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/tasks/"+itoa(mergeID), nil)
 	req.SetPathValue("id", itoa(mergeID))
+	setTaskRevision(t, st, mergeID, req)
 	resp = httptest.NewRecorder()
 	s.deleteTask(resp, req)
 	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "代码合并任务不能单独删除") {

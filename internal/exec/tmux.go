@@ -117,7 +117,7 @@ func (r *tmuxRunner) target(taskID int64) string {
 }
 
 func (r *tmuxRunner) taskDir(taskID int64) string {
-	// 运行目录保持 task-<ID>：与历史任务目录/归档兼容（删除任务时按此清理）。
+	// 任务运行目录使用稳定、可定位的 task-<ID> 命名。
 	return filepath.Join(r.root, fmt.Sprintf("task-%d", taskID))
 }
 
@@ -721,37 +721,6 @@ func readExitCode(path string) (int, bool, error) {
 		return 0, false, fmt.Errorf("tmux 退出码非法: %w", err)
 	}
 	return code, true, nil
-}
-
-// archivedAgentExitCode 读取最新一次 pane 丢失归档中的持久 agent 退出码。
-// 它只用于恢复已经被旧版本误判为 failed/-1 的终态任务；正常运行仍由
-// exitCode 读取当前运行目录，避免把旧一轮结果带入续跑。
-func (r *tmuxRunner) archivedAgentExitCode(taskID int64) (int, bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	entries, err := os.ReadDir(r.taskDir(taskID))
-	if errors.Is(err, os.ErrNotExist) {
-		return 0, false, nil
-	}
-	if err != nil {
-		return 0, false, fmt.Errorf("读取 tmux 故障归档失败: %w", err)
-	}
-	// ReadDir 按文件名字典序返回；failure-<UTC timestamp> 因而末尾是最新归档。
-	for i := len(entries) - 1; i >= 0; i-- {
-		entry := entries[i]
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "failure-") {
-			continue
-		}
-		code, found, err := readExitCode(filepath.Join(r.taskDir(taskID), entry.Name(), "agent-exit-code"))
-		if err != nil {
-			return 0, false, fmt.Errorf("读取 tmux 故障归档 %s 失败: %w", entry.Name(), err)
-		}
-		if found {
-			return code, true, nil
-		}
-	}
-	return 0, false, nil
 }
 
 // hasDetachedAgent 以 agent 原始输出文件作为一次 Codex cgroup 启动的可靠

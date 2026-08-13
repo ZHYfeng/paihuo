@@ -27,18 +27,18 @@ func (tmuxExecutorTestAdapter) Name() string { return "tmux executor test" }
 func (tmuxExecutorTestAdapter) Detect() (string, error) {
 	return osexec.LookPath("sh")
 }
-func (tmuxExecutorTestAdapter) Build(RunOptions) (string, []string, []string, error) {
+func (tmuxExecutorTestAdapter) Build(ExecutionRequest) (string, []string, []string, error) {
 	sh, err := osexec.LookPath("sh")
 	if err != nil {
 		return "", nil, nil, err
 	}
 	return sh, []string{"-c", "printf 'before\\n'; sleep 1; printf 'after\\n'"}, os.Environ(), nil
 }
-func (tmuxExecutorTestAdapter) Warnings(RunOptions) []string { return nil }
-func (tmuxExecutorTestAdapter) Schema() []Field              { return nil }
-func (tmuxExecutorTestAdapter) Models() []string             { return nil }
-func (tmuxExecutorTestAdapter) Docs() string                 { return "" }
-func (tmuxExecutorTestAdapter) ExitCommand() string          { return "/exit" }
+func (tmuxExecutorTestAdapter) Warnings(ExecutionRequest) []string { return nil }
+func (tmuxExecutorTestAdapter) Schema() []Field                    { return nil }
+func (tmuxExecutorTestAdapter) Models() []string                   { return nil }
+func (tmuxExecutorTestAdapter) Docs() string                       { return "" }
+func (tmuxExecutorTestAdapter) ExitCommand() string                { return "/exit" }
 
 // 长时间运行的适配器让测试可以稳定观测同一角色的多个并发 task window。
 type tmuxConcurrencyTestAdapter struct{}
@@ -48,18 +48,18 @@ func (tmuxConcurrencyTestAdapter) Name() string { return "tmux concurrency test"
 func (tmuxConcurrencyTestAdapter) Detect() (string, error) {
 	return osexec.LookPath("sh")
 }
-func (tmuxConcurrencyTestAdapter) Build(RunOptions) (string, []string, []string, error) {
+func (tmuxConcurrencyTestAdapter) Build(ExecutionRequest) (string, []string, []string, error) {
 	sh, err := osexec.LookPath("sh")
 	if err != nil {
 		return "", nil, nil, err
 	}
 	return sh, []string{"-c", "sleep 20"}, os.Environ(), nil
 }
-func (tmuxConcurrencyTestAdapter) Warnings(RunOptions) []string { return nil }
-func (tmuxConcurrencyTestAdapter) Schema() []Field              { return nil }
-func (tmuxConcurrencyTestAdapter) Models() []string             { return nil }
-func (tmuxConcurrencyTestAdapter) Docs() string                 { return "" }
-func (tmuxConcurrencyTestAdapter) ExitCommand() string          { return "/exit" }
+func (tmuxConcurrencyTestAdapter) Warnings(ExecutionRequest) []string { return nil }
+func (tmuxConcurrencyTestAdapter) Schema() []Field                    { return nil }
+func (tmuxConcurrencyTestAdapter) Models() []string                   { return nil }
+func (tmuxConcurrencyTestAdapter) Docs() string                       { return "" }
+func (tmuxConcurrencyTestAdapter) ExitCommand() string                { return "/exit" }
 
 type tmuxAutoMergeTestAdapter struct{}
 
@@ -69,17 +69,17 @@ func (tmuxAutoMergeTestAdapter) ExitCommand() string { return "/exit" }
 func (tmuxAutoMergeTestAdapter) Detect() (string, error) {
 	return osexec.LookPath("sh")
 }
-func (tmuxAutoMergeTestAdapter) Build(RunOptions) (string, []string, []string, error) {
+func (tmuxAutoMergeTestAdapter) Build(ExecutionRequest) (string, []string, []string, error) {
 	sh, err := osexec.LookPath("sh")
 	if err != nil {
 		return "", nil, nil, err
 	}
 	return sh, []string{"-c", "printf 'merged\\n' > auto-merged.txt"}, os.Environ(), nil
 }
-func (tmuxAutoMergeTestAdapter) Warnings(RunOptions) []string { return nil }
-func (tmuxAutoMergeTestAdapter) Schema() []Field              { return nil }
-func (tmuxAutoMergeTestAdapter) Models() []string             { return nil }
-func (tmuxAutoMergeTestAdapter) Docs() string                 { return "" }
+func (tmuxAutoMergeTestAdapter) Warnings(ExecutionRequest) []string { return nil }
+func (tmuxAutoMergeTestAdapter) Schema() []Field                    { return nil }
+func (tmuxAutoMergeTestAdapter) Models() []string                   { return nil }
+func (tmuxAutoMergeTestAdapter) Docs() string                       { return "" }
 
 type tmuxReviewMergeTestAdapter struct{}
 
@@ -89,17 +89,17 @@ func (tmuxReviewMergeTestAdapter) ExitCommand() string { return "/exit" }
 func (tmuxReviewMergeTestAdapter) Detect() (string, error) {
 	return osexec.LookPath("sh")
 }
-func (tmuxReviewMergeTestAdapter) Build(RunOptions) (string, []string, []string, error) {
+func (tmuxReviewMergeTestAdapter) Build(ExecutionRequest) (string, []string, []string, error) {
 	sh, err := osexec.LookPath("sh")
 	if err != nil {
 		return "", nil, nil, err
 	}
 	return sh, []string{"-c", "test \"$(cat approved.txt)\" = approved && printf 'verified\\n' > merge-verified.txt"}, os.Environ(), nil
 }
-func (tmuxReviewMergeTestAdapter) Warnings(RunOptions) []string { return nil }
-func (tmuxReviewMergeTestAdapter) Schema() []Field              { return nil }
-func (tmuxReviewMergeTestAdapter) Models() []string             { return nil }
-func (tmuxReviewMergeTestAdapter) Docs() string                 { return "" }
+func (tmuxReviewMergeTestAdapter) Warnings(ExecutionRequest) []string { return nil }
+func (tmuxReviewMergeTestAdapter) Schema() []Field                    { return nil }
+func (tmuxReviewMergeTestAdapter) Models() []string                   { return nil }
+func (tmuxReviewMergeTestAdapter) Docs() string                       { return "" }
 
 func TestExecutorQueuesMergeTaskAfterSuccessfulFullTask(t *testing.T) {
 	requireTmuxIntegration(t)
@@ -134,7 +134,7 @@ func TestExecutorQueuesMergeTaskAfterSuccessfulFullTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	agentID, err := st.CreateAgent(store.Agent{Name: "auto", CLI: tmuxAutoMergeTestCLI, Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "auto", RuntimeID: tmuxAutoMergeTestCLI, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestExecutorQueuesMergeTaskAfterSuccessfulFullTask(t *testing.T) {
 	}
 	taskID, err := st.CreateTask(store.Task{
 		Title: "auto merge", Status: store.StatusQueued, Perm: store.PermFull,
-		AgentID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
+		RoleID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +152,7 @@ func TestExecutorQueuesMergeTaskAfterSuccessfulFullTask(t *testing.T) {
 
 	sessionsRoot := t.TempDir()
 	socket := fmt.Sprintf("paihuo-auto-merge-test-%d", os.Getpid())
-	e := New(st, events.NewHub(), sessionsRoot, "auto-merge-test.db")
+	e := New(st, events.NewEventStream(), sessionsRoot, "auto-merge-test.db")
 	e.runner = newTmuxRunnerAt(sessionsRoot, socket)
 	cleanupRunner := newTmuxRunnerAt(sessionsRoot, socket)
 	t.Cleanup(func() { stopTmuxServerAndClean(t, cleanupRunner, sessionsRoot) })
@@ -187,7 +187,7 @@ func TestExecutorReconcilesCompletedGitTaskWithoutMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	agentID, err := st.CreateAgent(store.Agent{Name: "reconciler", CLI: tmuxAutoMergeTestCLI, Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "reconciler", RuntimeID: tmuxAutoMergeTestCLI, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestExecutorReconcilesCompletedGitTaskWithoutMerge(t *testing.T) {
 	}
 	sourceID, err := st.CreateTask(store.Task{
 		Title: "completed before merge handoff", Status: store.StatusSucceeded, Perm: store.PermFull,
-		AgentID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
+		RoleID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -218,7 +218,7 @@ func TestExecutorReconcilesCompletedGitTaskWithoutMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := NewForTest(st, events.NewHub(), sessionsRoot, "reconcile-merge-test.db", fmt.Sprintf("paihuo-reconcile-test-%d", os.Getpid()))
+	e := NewForTest(st, events.NewEventStream(), sessionsRoot, "reconcile-merge-test.db", fmt.Sprintf("paihuo-reconcile-test-%d", os.Getpid()))
 	e.reconcileMergeTasks()
 	children, err := st.ListChildren(sourceID)
 	if err != nil || len(children) != 1 {
@@ -248,7 +248,7 @@ func TestExecutorKeepsCompletedSourceWhenMergeChildAlreadyExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	agentID, err := st.CreateAgent(store.Agent{Name: "handoff", CLI: tmuxAutoMergeTestCLI, Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "handoff", RuntimeID: tmuxAutoMergeTestCLI, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestExecutorKeepsCompletedSourceWhenMergeChildAlreadyExists(t *testing.T) {
 	}
 	sourceID, err := st.CreateTask(store.Task{
 		Title: "already handed off", Status: store.StatusRunning, Perm: store.PermFull,
-		AgentID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
+		RoleID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -288,7 +288,7 @@ func TestExecutorKeepsCompletedSourceWhenMergeChildAlreadyExists(t *testing.T) {
 
 	// finishRun 会在收尾时清理 task window。测试必须使用独立 socket，不能让
 	// 内存数据库里的 task ID 触碰正在运行的生产 paihuo tmux server。
-	e := NewForTest(st, events.NewHub(), sessionsRoot, "handoff-merge-test.db", fmt.Sprintf("paihuo-handoff-test-%d", os.Getpid()))
+	e := NewForTest(st, events.NewEventStream(), sessionsRoot, "handoff-merge-test.db", fmt.Sprintf("paihuo-handoff-test-%d", os.Getpid()))
 	e.finishRun(*source, 0, nil, false)
 	completed, err := st.GetTask(sourceID)
 	if err != nil || completed.Status != store.StatusSucceeded {
@@ -315,7 +315,7 @@ func TestExecutorWaitsForDelayedDetachedExitCodeAfterConfirmedAgentEnd(t *testin
 	}
 
 	sessionsRoot := t.TempDir()
-	e := New(st, events.NewHub(), sessionsRoot, "late-detached-result-test.db")
+	e := New(st, events.NewEventStream(), sessionsRoot, "late-detached-result-test.db")
 	r := newTmuxRunnerAt(sessionsRoot, fmt.Sprintf("paihuo-missing-pane-%d", os.Getpid()))
 	e.runner = r
 	if err := os.MkdirAll(r.taskDir(taskID), 0o700); err != nil {
@@ -369,7 +369,7 @@ func TestExecutorKeepsWatchingUnknownDetachedAgentWithOutputHeartbeat(t *testing
 	}
 
 	sessionsRoot := t.TempDir()
-	e := New(st, events.NewHub(), sessionsRoot, "unknown-detached-result-test.db")
+	e := New(st, events.NewEventStream(), sessionsRoot, "unknown-detached-result-test.db")
 	r := newTmuxRunnerAt(sessionsRoot, fmt.Sprintf("paihuo-unknown-pane-%d", os.Getpid()))
 	e.runner = r
 	if err := os.MkdirAll(r.taskDir(taskID), 0o700); err != nil {
@@ -454,76 +454,6 @@ func writeTestAgentExitCode(path string, code int) error {
 	return os.Rename(tmp, path)
 }
 
-func TestExecutorRecoversArchivedSuccessfulLostTaskIntoMerge(t *testing.T) {
-	projectDir := initExecutorGitProject(t)
-	st, err := store.Open(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	agentID, err := st.CreateAgent(store.Agent{Name: "recovery", CLI: tmuxAutoMergeTestCLI, Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	projectID, err := st.CreateProject(store.Project{Name: "proj", ProjectDir: projectDir, Status: "active"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sourceID, err := st.CreateTask(store.Task{
-		Title: "archived successful task", Status: store.StatusFailed, Perm: store.PermFull,
-		AgentID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	source, err := st.GetTask(sourceID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sessionsRoot := t.TempDir()
-	sourceDir, branch, base, err := workspace.Ensure(*source, sessionsRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sourceDir, "recovered.txt"), []byte("recovered\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.UpdateTask(sourceID, map[string]any{
-		"worktree_branch": branch,
-		"base_commit":     base,
-		"exit_code":       -1,
-		"error":           tmuxWindowLostError{taskID: sourceID}.Error(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	e := NewForTest(st, events.NewHub(), sessionsRoot, "recover-lost-result-test.db", fmt.Sprintf("paihuo-recover-lost-test-%d", os.Getpid()))
-	archive := filepath.Join(e.runner.taskDir(sourceID), "failure-20260806T000000.000000000Z")
-	if err := os.MkdirAll(archive, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(archive, "agent-exit-code"), []byte("0\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	e.recoverLostCompletions()
-
-	recovered, err := st.GetTask(sourceID)
-	if err != nil || recovered.Status != store.StatusSucceeded || recovered.ExitCode == nil || *recovered.ExitCode != 0 || recovered.Error != "" {
-		t.Fatalf("归档成功结果应恢复源任务: %+v err=%v", recovered, err)
-	}
-	children, err := st.ListChildren(sourceID)
-	if err != nil || len(children) != 1 {
-		t.Fatalf("恢复后应创建唯一合并任务: %+v err=%v", children, err)
-	}
-	if children[0].MergeOf == nil || *children[0].MergeOf != sourceID || children[0].Status != store.StatusQueued {
-		t.Fatalf("恢复创建的合并任务不正确: %+v", children[0])
-	}
-	if _, err := os.Stat(filepath.Join(sourceDir, "recovered.txt")); err != nil {
-		t.Fatalf("恢复不应丢失源任务工作区: %v", err)
-	}
-}
-
 func TestExecutorPreparesAndAutoMergesReviewMergeTask(t *testing.T) {
 	requireTmuxIntegration(t)
 	registry[tmuxReviewMergeTestCLI] = tmuxReviewMergeTestAdapter{}
@@ -534,7 +464,7 @@ func TestExecutorPreparesAndAutoMergesReviewMergeTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	agentID, err := st.CreateAgent(store.Agent{Name: "merge-agent", CLI: tmuxReviewMergeTestCLI, Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "merge-agent", RuntimeID: tmuxReviewMergeTestCLI, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -545,7 +475,7 @@ func TestExecutorPreparesAndAutoMergesReviewMergeTask(t *testing.T) {
 	sessionsRoot := t.TempDir()
 	sourceID, err := st.CreateTask(store.Task{
 		Title: "approved source", Status: store.StatusSucceeded, Perm: store.PermReview,
-		AgentID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
+		RoleID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -570,7 +500,7 @@ func TestExecutorPreparesAndAutoMergesReviewMergeTask(t *testing.T) {
 	}
 	mergeID, err := st.CreateTask(store.Task{
 		Title: "merge approved source", Status: store.StatusQueued, Perm: store.PermFull,
-		AgentID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
+		RoleID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
 		ParentID: &sourceID, MergeOf: &sourceID,
 	})
 	if err != nil {
@@ -578,7 +508,7 @@ func TestExecutorPreparesAndAutoMergesReviewMergeTask(t *testing.T) {
 	}
 
 	socket := fmt.Sprintf("paihuo-review-merge-test-%d", os.Getpid())
-	e := New(st, events.NewHub(), sessionsRoot, "review-merge-test.db")
+	e := New(st, events.NewEventStream(), sessionsRoot, "review-merge-test.db")
 	e.runner = newTmuxRunnerAt(sessionsRoot, socket)
 	cleanupRunner := newTmuxRunnerAt(sessionsRoot, socket)
 	t.Cleanup(func() { stopTmuxServerAndClean(t, cleanupRunner, sessionsRoot) })
@@ -634,13 +564,13 @@ func TestExecutorRecoversRunningTmuxTaskAfterServiceRestart(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	workDir := t.TempDir()
-	agentID, err := st.CreateAgent(store.Agent{Name: "runner", CLI: tmuxExecutorTestCLI, Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "runner", RuntimeID: tmuxExecutorTestCLI, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	taskID, err := st.CreateTask(store.Task{
 		Title: "tmux recovery", Status: store.StatusQueued, Perm: store.PermFull,
-		AgentID: &agentID, ProjectDir: workDir,
+		RoleID: &agentID, ProjectDir: workDir,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -649,7 +579,7 @@ func TestExecutorRecoversRunningTmuxTaskAfterServiceRestart(t *testing.T) {
 	sessionsRoot := t.TempDir()
 	socket := fmt.Sprintf("paihuo-executor-test-%d", os.Getpid())
 	newExecutor := func() *Executor {
-		e := New(st, events.NewHub(), sessionsRoot, "test.db")
+		e := New(st, events.NewEventStream(), sessionsRoot, "test.db")
 		e.runner = newTmuxRunnerAt(sessionsRoot, socket)
 		return e
 	}
@@ -707,8 +637,8 @@ func TestExecutorDispatchesSameRoleUpToConfiguredConcurrency(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	workDir := t.TempDir()
-	agentID, err := st.CreateAgent(store.Agent{
-		Name: "parallel runner", CLI: tmuxConcurrencyTestCLI, Enabled: true, MaxConcurrency: 2,
+	agentID, err := st.CreateRole(store.Role{
+		Name: "parallel runner", RuntimeID: tmuxConcurrencyTestCLI, Enabled: true, MaxConcurrency: 2,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -717,7 +647,7 @@ func TestExecutorDispatchesSameRoleUpToConfiguredConcurrency(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		id, err := st.CreateTask(store.Task{
 			Title: fmt.Sprintf("parallel %d", i), Status: store.StatusQueued, Perm: store.PermFull,
-			AgentID: &agentID, ProjectDir: workDir,
+			RoleID: &agentID, ProjectDir: workDir,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -727,7 +657,7 @@ func TestExecutorDispatchesSameRoleUpToConfiguredConcurrency(t *testing.T) {
 
 	sessionsRoot := t.TempDir()
 	socket := fmt.Sprintf("paihuo-concurrency-test-%d", os.Getpid())
-	e := New(st, events.NewHub(), sessionsRoot, "concurrency-test.db")
+	e := New(st, events.NewEventStream(), sessionsRoot, "concurrency-test.db")
 	e.runner = newTmuxRunnerAt(sessionsRoot, socket)
 	cleanupRunner := newTmuxRunnerAt(sessionsRoot, socket)
 	t.Cleanup(func() { stopTmuxServerAndClean(t, cleanupRunner, sessionsRoot) })
@@ -829,7 +759,7 @@ func waitWindowGone(t *testing.T, r *tmuxRunner, taskID int64, timeout time.Dura
 	t.Fatalf("任务结算后应清理 tmux window task-%d", taskID)
 }
 
-// tmuxCodexTestAdapter 记录 RunOptions 并验证 codex 任务级技能挂载在运行期间可见。
+// tmuxCodexTestAdapter 记录 ExecutionRequest 并验证 codex 任务级技能挂载在运行期间可见。
 type tmuxCodexTestAdapter struct {
 	recordPath string
 }
@@ -840,7 +770,7 @@ func (a *tmuxCodexTestAdapter) ExitCommand() string { return "/exit" }
 func (a *tmuxCodexTestAdapter) Detect() (string, error) {
 	return osexec.LookPath("sh")
 }
-func (a *tmuxCodexTestAdapter) Build(o RunOptions) (string, []string, []string, error) {
+func (a *tmuxCodexTestAdapter) Build(o ExecutionRequest) (string, []string, []string, error) {
 	skills := 0
 	if o.SkillMount != nil {
 		skills = len(o.SkillMount.SkillPaths)
@@ -854,10 +784,10 @@ func (a *tmuxCodexTestAdapter) Build(o RunOptions) (string, []string, []string, 
 	cmd := `if ls "$HOME"/.agents/skills/paihuo-* >/dev/null 2>&1; then printf mounted > mounted.txt; fi`
 	return sh, []string{"-c", cmd}, os.Environ(), nil
 }
-func (tmuxCodexTestAdapter) Warnings(RunOptions) []string { return nil }
-func (tmuxCodexTestAdapter) Schema() []Field              { return nil }
-func (tmuxCodexTestAdapter) Models() []string             { return nil }
-func (tmuxCodexTestAdapter) Docs() string                 { return "" }
+func (tmuxCodexTestAdapter) Warnings(ExecutionRequest) []string { return nil }
+func (tmuxCodexTestAdapter) Schema() []Field                    { return nil }
+func (tmuxCodexTestAdapter) Models() []string                   { return nil }
+func (tmuxCodexTestAdapter) Docs() string                       { return "" }
 
 // 非 git 项目 + codex safe 模式：注入 --skip-git-repo-check 且任务成功；
 // codex 任务级技能挂载（$HOME/.agents/skills/paihuo-*）运行期可见、结算后清理。
@@ -889,8 +819,8 @@ func TestExecutorCodexNonGitProjectSkipGitCheckAndSkillMountLifecycle(t *testing
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	agentID, err := st.CreateAgent(store.Agent{
-		Name: "codex-safe", CLI: "codex", Enabled: true,
+	agentID, err := st.CreateRole(store.Role{
+		Name: "codex-safe", RuntimeID: "codex", Enabled: true,
 		RoleConfig: store.RoleConfig{Skills: []string{src}},
 	})
 	if err != nil {
@@ -902,7 +832,7 @@ func TestExecutorCodexNonGitProjectSkipGitCheckAndSkillMountLifecycle(t *testing
 	}
 	taskID, err := st.CreateTask(store.Task{
 		Title: "codex non-git", Status: store.StatusQueued, Perm: store.PermFull,
-		AgentID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
+		RoleID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -910,7 +840,7 @@ func TestExecutorCodexNonGitProjectSkipGitCheckAndSkillMountLifecycle(t *testing
 
 	sessionsRoot := t.TempDir()
 	socket := fmt.Sprintf("paihuo-codex-test-%d", os.Getpid())
-	e := New(st, events.NewHub(), sessionsRoot, "codex-test.db")
+	e := New(st, events.NewEventStream(), sessionsRoot, "codex-test.db")
 	e.runner = newTmuxRunnerAt(sessionsRoot, socket)
 	cleanupRunner := newTmuxRunnerAt(sessionsRoot, socket)
 	t.Cleanup(func() { stopTmuxServerAndClean(t, cleanupRunner, sessionsRoot) })
@@ -944,7 +874,7 @@ func TestExecutorCodexNonGitProjectSkipGitCheckAndSkillMountLifecycle(t *testing
 		}
 	}
 	// 角色目录常驻（sessionsRoot 内，不在 worktree/项目目录）
-	roleLink := filepath.Join(sessionsRoot, ".role-agents", fmt.Sprintf("%d", agentID), ".agents", "skills", "alpha")
+	roleLink := filepath.Join(sessionsRoot, ".roles", fmt.Sprintf("%d", agentID), ".agents", "skills", "alpha")
 	if fi, err := os.Lstat(roleLink); err != nil || fi.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("角色级技能目录应常驻: %v %v", fi, err)
 	}

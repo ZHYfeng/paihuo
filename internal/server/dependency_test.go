@@ -20,10 +20,10 @@ func TestCreateTaskDefaultsToWeakProjectDependencyAndProtectsReferencedDelete(t 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewHub()
+	hub := events.NewEventStream()
 	executor := exec.NewForTest(st, hub, t.TempDir(), "server-dependency-test.db", "server-dependency-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
-	agentID, err := st.CreateAgent(store.Agent{Name: "agent", CLI: "pi", Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "agent", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestCreateTaskDefaultsToWeakProjectDependencyAndProtectsReferencedDelete(t 
 
 	create := func(body string) (int, store.Task, string) {
 		t.Helper()
-		req := httptest.NewRequest(http.MethodPost, "/api/tasks", strings.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body))
 		resp := httptest.NewRecorder()
 		s.createTask(resp, req)
 		var task store.Task
@@ -45,7 +45,7 @@ func TestCreateTaskDefaultsToWeakProjectDependencyAndProtectsReferencedDelete(t 
 		}
 		return resp.Code, task, resp.Body.String()
 	}
-	base := fmt.Sprintf(`{"agent_id":%d,"project_id":%d}`, agentID, projectID)
+	base := fmt.Sprintf(`{"role_id":%d,"project_id":%d}`, agentID, projectID)
 	code, first, body := create(`{"title":"first",` + base[1:])
 	if code != http.StatusCreated {
 		t.Fatalf("创建第一项失败: code=%d body=%s", code, body)
@@ -61,7 +61,7 @@ func TestCreateTaskDefaultsToWeakProjectDependencyAndProtectsReferencedDelete(t 
 		t.Fatalf("第二项应默认依赖第一项，得到 %+v", second)
 	}
 
-	strongBody := fmt.Sprintf(`{"title":"strong","agent_id":%d,"project_id":%d,"dependency_mode":"strong","depends_on":%d,"block_on_failure":true}`, agentID, projectID, first.ID)
+	strongBody := fmt.Sprintf(`{"title":"strong","role_id":%d,"project_id":%d,"dependency_mode":"strong","depends_on":%d,"block_on_failure":true}`, agentID, projectID, first.ID)
 	code, strong, body := create(strongBody)
 	if code != http.StatusCreated {
 		t.Fatalf("创建强依赖失败: code=%d body=%s", code, body)
@@ -70,16 +70,18 @@ func TestCreateTaskDefaultsToWeakProjectDependencyAndProtectsReferencedDelete(t 
 		t.Fatalf("明确前置/失败阻塞字段未保存: %+v", strong)
 	}
 
-	moveReq := httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(first.ID), strings.NewReader(`{"project_id":null}`))
+	moveReq := httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(first.ID), strings.NewReader(`{"project_id":null}`))
 	moveReq.SetPathValue("id", itoa(first.ID))
+	setTaskRevision(t, st, first.ID, moveReq)
 	moveResp := httptest.NewRecorder()
 	s.patchTask(moveResp, moveReq)
 	if moveResp.Code != http.StatusConflict || !strings.Contains(moveResp.Body.String(), "前置") {
 		t.Fatalf("被后项依赖的任务不应修改项目: code=%d body=%s", moveResp.Code, moveResp.Body.String())
 	}
 
-	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/tasks/"+itoa(first.ID), nil)
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/tasks/"+itoa(first.ID), nil)
 	deleteReq.SetPathValue("id", itoa(first.ID))
+	setTaskRevision(t, st, first.ID, deleteReq)
 	deleteResp := httptest.NewRecorder()
 	s.deleteTask(deleteResp, deleteReq)
 	if deleteResp.Code != http.StatusConflict || !strings.Contains(deleteResp.Body.String(), "依赖") {
@@ -91,16 +93,18 @@ func TestCreateTaskDefaultsToWeakProjectDependencyAndProtectsReferencedDelete(t 
 	}
 
 	// 删除明确依赖后，自动生成的弱依赖不应继续阻止源任务删除。
-	deleteStrongReq := httptest.NewRequest(http.MethodDelete, "/api/tasks/"+itoa(strong.ID), nil)
+	deleteStrongReq := httptest.NewRequest(http.MethodDelete, "/api/v1/tasks/"+itoa(strong.ID), nil)
 	deleteStrongReq.SetPathValue("id", itoa(strong.ID))
+	setTaskRevision(t, st, strong.ID, deleteStrongReq)
 	deleteStrongResp := httptest.NewRecorder()
 	s.deleteTask(deleteStrongResp, deleteStrongReq)
 	if deleteStrongResp.Code != http.StatusNoContent {
 		t.Fatalf("删除强依赖后项失败: code=%d body=%s", deleteStrongResp.Code, deleteStrongResp.Body.String())
 	}
 
-	deleteFirstReq := httptest.NewRequest(http.MethodDelete, "/api/tasks/"+itoa(first.ID), nil)
+	deleteFirstReq := httptest.NewRequest(http.MethodDelete, "/api/v1/tasks/"+itoa(first.ID), nil)
 	deleteFirstReq.SetPathValue("id", itoa(first.ID))
+	setTaskRevision(t, st, first.ID, deleteFirstReq)
 	deleteFirstResp := httptest.NewRecorder()
 	s.deleteTask(deleteFirstResp, deleteFirstReq)
 	if deleteFirstResp.Code != http.StatusNoContent {
@@ -118,10 +122,10 @@ func TestReorderProjectTasksEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewHub()
+	hub := events.NewEventStream()
 	executor := exec.NewForTest(st, hub, t.TempDir(), "server-reorder-test.db", "server-reorder-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
-	agentID, err := st.CreateAgent(store.Agent{Name: "order-agent", CLI: "pi", Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "order-agent", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,8 +135,8 @@ func TestReorderProjectTasksEndpoint(t *testing.T) {
 	}
 	create := func(title string) store.Task {
 		t.Helper()
-		body := fmt.Sprintf(`{"title":%q,"agent_id":%d,"project_id":%d}`, title, agentID, projectID)
-		req := httptest.NewRequest(http.MethodPost, "/api/tasks", strings.NewReader(body))
+		body := fmt.Sprintf(`{"title":%q,"role_id":%d,"project_id":%d}`, title, agentID, projectID)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body))
 		resp := httptest.NewRecorder()
 		s.createTask(resp, req)
 		if resp.Code != http.StatusCreated {
@@ -147,7 +151,7 @@ func TestReorderProjectTasksEndpoint(t *testing.T) {
 	first, second, third := create("first"), create("second"), create("third")
 
 	orderBody := fmt.Sprintf(`{"task_ids":[%d,%d,%d]}`, third.ID, first.ID, second.ID)
-	req := httptest.NewRequest(http.MethodPut, "/api/projects/"+itoa(projectID)+"/tasks/order", strings.NewReader(orderBody))
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/projects/"+itoa(projectID)+"/tasks/order", strings.NewReader(orderBody))
 	req.SetPathValue("id", itoa(projectID))
 	resp := httptest.NewRecorder()
 	s.reorderProjectTasks(resp, req)

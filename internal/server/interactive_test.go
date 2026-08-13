@@ -22,13 +22,13 @@ func TestCreateInteractiveTaskOnlySupportsPiAndOmpAgents(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewHub()
+	hub := events.NewEventStream()
 	executor := exec.NewForTest(st, hub, t.TempDir(), "server-input-test.db", "server-input-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
 
 	agentIDs := make(map[string]int64)
 	for _, cli := range []string{"omp", "opencode", "pi", "claude", "codex"} {
-		id, err := st.CreateAgent(store.Agent{Name: cli, CLI: cli, Enabled: true})
+		id, err := st.CreateRole(store.Role{Name: cli, RuntimeID: cli, Enabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -37,7 +37,7 @@ func TestCreateInteractiveTaskOnlySupportsPiAndOmpAgents(t *testing.T) {
 
 	var piTask store.Task
 	for _, cli := range []string{"omp", "opencode", "pi", "claude", "codex"} {
-		req := httptest.NewRequest(http.MethodPost, "/api/tasks", strings.NewReader(`{"title":"interactive `+cli+`","agent_id":`+itoa(agentIDs[cli])+`,"run_mode":"interactive"}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(`{"title":"interactive `+cli+`","role_id":`+itoa(agentIDs[cli])+`,"run_mode":"interactive"}`))
 		resp := httptest.NewRecorder()
 		s.createTask(resp, req)
 		if cli == "pi" || cli == "omp" {
@@ -55,7 +55,7 @@ func TestCreateInteractiveTaskOnlySupportsPiAndOmpAgents(t *testing.T) {
 				piTask = tk
 			}
 		} else {
-			if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "只支持 pi / omp") {
+			if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "不支持交互式") {
 				t.Fatalf("%s 交互任务应被拒绝（只支持 pi / omp）: code=%d body=%s", cli, resp.Code, resp.Body.String())
 			}
 		}
@@ -63,7 +63,7 @@ func TestCreateInteractiveTaskOnlySupportsPiAndOmpAgents(t *testing.T) {
 
 	// 批处理对所有 CLI 开放，不受交互式限制影响。
 	for _, cli := range []string{"omp", "opencode", "pi", "claude", "codex"} {
-		req := httptest.NewRequest(http.MethodPost, "/api/tasks", strings.NewReader(`{"title":"batch `+cli+`","agent_id":`+itoa(agentIDs[cli])+`}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(`{"title":"batch `+cli+`","role_id":`+itoa(agentIDs[cli])+`}`))
 		resp := httptest.NewRecorder()
 		s.createTask(resp, req)
 		if resp.Code != http.StatusCreated {
@@ -72,38 +72,41 @@ func TestCreateInteractiveTaskOnlySupportsPiAndOmpAgents(t *testing.T) {
 	}
 
 	// 交互式任务只能改派到 pi / omp 角色；不能改派到其他 CLI，也不能清空角色。
-	req := httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(piTask.ID), strings.NewReader(`{"agent_id":`+itoa(agentIDs["codex"])+`}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(piTask.ID), strings.NewReader(`{"role_id":`+itoa(agentIDs["codex"])+`}`))
 	req.SetPathValue("id", itoa(piTask.ID))
+	setTaskRevision(t, st, piTask.ID, req)
 	resp := httptest.NewRecorder()
 	s.patchTask(resp, req)
 	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "只支持 pi / omp") {
 		t.Fatalf("交互式任务不应允许改派到 codex: code=%d body=%s", resp.Code, resp.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(piTask.ID), strings.NewReader(`{"agent_id":`+itoa(agentIDs["omp"])+`}`))
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(piTask.ID), strings.NewReader(`{"role_id":`+itoa(agentIDs["omp"])+`}`))
 	req.SetPathValue("id", itoa(piTask.ID))
+	setTaskRevision(t, st, piTask.ID, req)
 	resp = httptest.NewRecorder()
 	s.patchTask(resp, req)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("交互式任务改派到 omp 失败: code=%d body=%s", resp.Code, resp.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(piTask.ID), strings.NewReader(`{"agent_id":null}`))
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(piTask.ID), strings.NewReader(`{"role_id":null}`))
 	req.SetPathValue("id", itoa(piTask.ID))
+	setTaskRevision(t, st, piTask.ID, req)
 	resp = httptest.NewRecorder()
 	s.patchTask(resp, req)
 	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "必须指派角色") {
 		t.Fatalf("交互式任务不应允许清空角色: code=%d body=%s", resp.Code, resp.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks", strings.NewReader(`{"title":"missing agent","run_mode":"interactive"}`))
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(`{"title":"missing agent","run_mode":"interactive"}`))
 	resp = httptest.NewRecorder()
 	s.createTask(resp, req)
 	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "必须指派角色") {
 		t.Fatalf("无角色交互任务应被拒绝: code=%d body=%s", resp.Code, resp.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks", strings.NewReader(`{"title":"batch","agent_id":`+itoa(agentIDs["pi"])+`}`))
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(`{"title":"batch","role_id":`+itoa(agentIDs["pi"])+`}`))
 	resp = httptest.NewRecorder()
 	s.createTask(resp, req)
 	if resp.Code != http.StatusCreated {
@@ -124,22 +127,22 @@ func TestInteractiveInputRequiresExactlyOnePayloadMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewHub()
+	hub := events.NewEventStream()
 	executor := exec.NewForTest(st, hub, t.TempDir(), "server-input-payload-test.db", "server-input-payload-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
-	agentID, err := st.CreateAgent(store.Agent{Name: "pi", CLI: "pi", Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "pi", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	taskID, err := st.CreateTask(store.Task{
-		Title: "interactive", Status: store.StatusRunning, RunMode: store.RunModeInteractive, AgentID: &agentID,
+		Title: "interactive", Status: store.StatusRunning, RunMode: store.RunModeInteractive, RoleID: &agentID,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	for _, body := range []string{`{}`, `{"message":"hello","keys":"h"}`} {
-		req := httptest.NewRequest(http.MethodPost, "/api/tasks/"+itoa(taskID)+"/input", strings.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+itoa(taskID)+"/input", strings.NewReader(body))
 		req.SetPathValue("id", itoa(taskID))
 		resp := httptest.NewRecorder()
 		s.sendTaskInput(resp, req)
@@ -157,28 +160,29 @@ func TestPatchTaskChangesAssignedAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewHub()
+	hub := events.NewEventStream()
 	executor := exec.NewForTest(st, hub, t.TempDir(), "server-task-agent-patch-test.db", "server-task-agent-patch-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
 
-	fromID, err := st.CreateAgent(store.Agent{Name: "from", CLI: "pi", Enabled: true, ProjectDir: "/from"})
+	fromID, err := st.CreateRole(store.Role{Name: "from", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	toID, err := st.CreateAgent(store.Agent{Name: "to", CLI: "codex", Enabled: true, ProjectDir: "/to"})
+	toID, err := st.CreateRole(store.Role{Name: "to", RuntimeID: "codex", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	taskID, err := st.CreateTask(store.Task{
 		Title: "reassignable", Status: store.StatusQueued, RunMode: store.RunModeBatch,
-		AgentID: &fromID, ProjectDir: "/from",
+		RoleID: &fromID, ProjectDir: "/from",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(taskID), strings.NewReader(`{"agent_id":`+itoa(toID)+`}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(taskID), strings.NewReader(`{"role_id":`+itoa(toID)+`}`))
 	req.SetPathValue("id", itoa(taskID))
+	setTaskRevision(t, st, taskID, req)
 	resp := httptest.NewRecorder()
 	s.patchTask(resp, req)
 	if resp.Code != http.StatusOK {
@@ -188,7 +192,7 @@ func TestPatchTaskChangesAssignedAgent(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &patched); err != nil {
 		t.Fatal(err)
 	}
-	if patched.AgentID == nil || *patched.AgentID != toID || patched.AgentName != "to" || patched.ProjectDir != "/to" {
+	if patched.RoleID == nil || *patched.RoleID != toID || patched.RoleName != "to" || patched.ProjectDir != "/from" {
 		t.Fatalf("改派响应错误: %+v", patched)
 	}
 
@@ -196,24 +200,25 @@ func TestPatchTaskChangesAssignedAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.AgentID == nil || *persisted.AgentID != toID {
+	if persisted.RoleID == nil || *persisted.RoleID != toID {
 		t.Fatalf("改派未持久化: %+v", persisted)
 	}
 
-	req = httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(taskID), strings.NewReader(`{"agent_id":null}`))
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(taskID), strings.NewReader(`{"role_id":null}`))
 	req.SetPathValue("id", itoa(taskID))
+	setTaskRevision(t, st, taskID, req)
 	resp = httptest.NewRecorder()
 	s.patchTask(resp, req)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("取消指派失败: code=%d body=%s", resp.Code, resp.Body.String())
 	}
-	// agent_name 在未指派时会因 omitempty 缺席；复用上一次的接收对象会把
-	// 旧角色名误当成接口返回值，必须清零后再解码。
+	// role_name 在未指派时会因 omitempty 缺席；复用上一次的接收对象会保留
+	// 上一次值，因此清零后再解码。
 	patched = store.Task{}
 	if err := json.Unmarshal(resp.Body.Bytes(), &patched); err != nil {
 		t.Fatal(err)
 	}
-	if patched.AgentID != nil || patched.AgentName != "" || patched.ProjectDir != "" {
+	if patched.RoleID != nil || patched.RoleName != "" || patched.ProjectDir != "/from" {
 		t.Fatalf("取消指派响应错误: %+v", patched)
 	}
 
@@ -223,13 +228,14 @@ func TestPatchTaskChangesAssignedAgent(t *testing.T) {
 	}
 	projectTaskID, err := st.CreateTask(store.Task{
 		Title: "project task", Status: store.StatusQueued, RunMode: store.RunModeBatch,
-		AgentID: &fromID, ProjectID: &projectID, ProjectDir: "/project",
+		RoleID: &fromID, ProjectID: &projectID, ProjectDir: "/project",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPatch, "/api/tasks/"+itoa(projectTaskID), strings.NewReader(`{"agent_id":`+itoa(toID)+`}`))
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(projectTaskID), strings.NewReader(`{"role_id":`+itoa(toID)+`}`))
 	req.SetPathValue("id", itoa(projectTaskID))
+	setTaskRevision(t, st, projectTaskID, req)
 	resp = httptest.NewRecorder()
 	s.patchTask(resp, req)
 	if resp.Code != http.StatusOK {
@@ -239,7 +245,7 @@ func TestPatchTaskChangesAssignedAgent(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &patched); err != nil {
 		t.Fatal(err)
 	}
-	if patched.AgentID == nil || *patched.AgentID != toID || patched.ProjectDir != "/project" {
+	if patched.RoleID == nil || *patched.RoleID != toID || patched.ProjectDir != "/project" {
 		t.Fatalf("改派不应覆盖项目目录: %+v", patched)
 	}
 }
@@ -250,11 +256,11 @@ func TestResumeTaskRequeuesOriginalTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewHub()
+	hub := events.NewEventStream()
 	executor := exec.NewForTest(st, hub, t.TempDir(), "server-resume-test.db", "server-resume-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
 
-	agentID, err := st.CreateAgent(store.Agent{Name: "pi", CLI: "pi", Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "pi", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +268,7 @@ func TestResumeTaskRequeuesOriginalTask(t *testing.T) {
 	const body = "保留原提示词，不创建续跑子任务"
 	id, err := st.CreateTask(store.Task{
 		Title: title, Body: body, Status: store.StatusFailed, Perm: store.PermFull,
-		RunMode: store.RunModeBatch, AgentID: &agentID,
+		RunMode: store.RunModeBatch, RoleID: &agentID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -276,7 +282,7 @@ func TestResumeTaskRequeuesOriginalTask(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/"+itoa(id)+"/resume", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+itoa(id)+"/resume", nil)
 	req.SetPathValue("id", itoa(id))
 	resp := httptest.NewRecorder()
 	s.resumeTask(resp, req)
@@ -306,7 +312,7 @@ func TestResumeTaskRequeuesOriginalTask(t *testing.T) {
 	}
 
 	// 同一任务已重新排队，重复请求不得覆盖回 queued 或再写一条续跑记录。
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks/"+itoa(id)+"/resume", nil)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+itoa(id)+"/resume", nil)
 	req.SetPathValue("id", itoa(id))
 	resp = httptest.NewRecorder()
 	s.resumeTask(resp, req)
@@ -321,16 +327,16 @@ func TestResumeTaskDoesNotBypassExistingMergeTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewHub()
+	hub := events.NewEventStream()
 	executor := exec.NewForTest(st, hub, t.TempDir(), "server-resume-merge-test.db", "server-resume-merge-test")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
-	agentID, err := st.CreateAgent(store.Agent{Name: "pi", CLI: "pi", Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "pi", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sourceID, err := st.CreateTask(store.Task{
 		Title: "已完成源任务", Status: store.StatusSucceeded, Perm: store.PermFull,
-		RunMode: store.RunModeBatch, AgentID: &agentID,
+		RunMode: store.RunModeBatch, RoleID: &agentID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -343,7 +349,7 @@ func TestResumeTaskDoesNotBypassExistingMergeTask(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/"+itoa(sourceID)+"/resume", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+itoa(sourceID)+"/resume", nil)
 	req.SetPathValue("id", itoa(sourceID))
 	resp := httptest.NewRecorder()
 	s.resumeTask(resp, req)

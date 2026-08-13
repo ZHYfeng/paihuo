@@ -26,11 +26,12 @@ import (
 //   - RPC 事件 → SSE 广播 + last_message_at 落库
 //   - 崩溃检测：进程退出且状态 active → 自动置 suspended（transcript 不丢）
 type Manager struct {
-	st            *store.Store
-	hub           *events.Hub
-	ex            *exec.Executor
-	sessionsRoot  string
-	agentSessions string // <sessionsRoot>/.agent-sessions（与任务会话平级，session- 前缀）
+	st              *store.Store
+	hub             *events.EventStream
+	ex              *exec.Executor
+	runtimes        *exec.RuntimeService
+	sessionsRoot    string
+	runtimeSessions string // <sessionsRoot>/.runtime-sessions（与任务会话平级，session- 前缀）
 
 	mu    sync.Mutex
 	procs map[int64]*rpcProc // pi/omp 会话进程（RPC 通道）
@@ -40,23 +41,28 @@ type Manager struct {
 }
 
 // New 创建会话管理器。ex 用于共享角色并发槽位；instanceID 用于隔离
-// .agent-sessions 命名空间（与 Executor 同源）。
-func New(st *store.Store, hub *events.Hub, ex *exec.Executor, sessionsRoot, instanceID string) *Manager {
+// .runtime-sessions 命名空间（与 Executor 同源）。
+func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sessionsRoot, instanceID string) *Manager {
 	_ = instanceID // 会话目录用 session-<id> 前缀天然隔离，不参与实例命名空间
+	runtimes := exec.NewDefaultRuntimeService()
+	if ex != nil {
+		runtimes = ex.RuntimeService()
+	}
 	return &Manager{
-		st:            st,
-		hub:           hub,
-		ex:            ex,
-		sessionsRoot:  sessionsRoot,
-		agentSessions: filepath.Join(sessionsRoot, ".agent-sessions"),
-		procs:         make(map[int64]*rpcProc),
-		stopIdle:      make(chan struct{}),
+		st:              st,
+		hub:             hub,
+		ex:              ex,
+		runtimes:        runtimes,
+		sessionsRoot:    sessionsRoot,
+		runtimeSessions: filepath.Join(sessionsRoot, ".runtime-sessions"),
+		procs:           make(map[int64]*rpcProc),
+		stopIdle:        make(chan struct{}),
 	}
 }
 
 // sessionDirOf 返回会话的 pi 会话文件目录。
 func (m *Manager) sessionDirOf(id int64) string {
-	return filepath.Join(m.agentSessions, fmt.Sprintf("session-%d", id))
+	return filepath.Join(m.runtimeSessions, fmt.Sprintf("session-%d", id))
 }
 
 // stderrPathOf 返回会话进程的 stderr 日志路径。
@@ -70,13 +76,13 @@ func (m *Manager) stderrPathOf(id int64) string {
 // Create 创建会话，标题自动使用对应角色名称：git 项目建隔离 worktree
 // （sessions/<project>/session-<id>），非 git 项目复制到专属会话目录，无项目时使用独立空目录
 // （sessions/session-<id>，不关联任何项目）。
-func (m *Manager) Create(projectID *int64, agentID int64) (*store.Session, error) {
-	agent, err := m.st.GetAgent(agentID)
+func (m *Manager) Create(projectID *int64, roleID int64) (*store.Session, error) {
+	agent, err := m.st.GetRole(roleID)
 	if err != nil {
 		return nil, err
 	}
 	if agent == nil {
-		return nil, fmt.Errorf("角色不存在: %d", agentID)
+		return nil, fmt.Errorf("角色不存在: %d", roleID)
 	}
 	var project *store.Project
 	if projectID != nil {
@@ -94,10 +100,10 @@ func (m *Manager) Create(projectID *int64, agentID int64) (*store.Session, error
 	// 先建记录拿 id，再建 worktree（路径含 session id）。
 	ss := store.Session{
 		ProjectID: projectID,
-		AgentID:   agentID,
+		RoleID:    roleID,
 		Title:     agent.Name,
 		Status:    store.SessionStatusCreated,
-		CLI:       agent.CLI,
+		RuntimeID: agent.RuntimeID,
 	}
 	id, err := m.st.CreateSession(ss)
 	if err != nil {
@@ -161,17 +167,17 @@ func (m *Manager) Start(ctx context.Context, id int64) error {
 		log.Printf("⚠ DEBUG start(%d): status=%q", id, ss.Status)
 		return transitionErr(ss.Status, store.SessionStatusActive)
 	}
-	agent, err := m.st.GetAgent(ss.AgentID)
+	agent, err := m.st.GetRole(ss.RoleID)
 	if err != nil {
 		return err
 	}
 	if agent == nil {
-		return fmt.Errorf("角色不存在: %d", ss.AgentID)
+		return fmt.Errorf("角色不存在: %d", ss.RoleID)
 	}
 	if !agent.Enabled {
 		return fmt.Errorf("角色「%s」已停用", agent.Name)
 	}
-	if !m.ex.ReserveAgentSlot(agent.ID, agent.ConcurrencyLimit()) {
+	if !m.ex.ReserveRoleSlot(agent.ID, agent.ConcurrencyLimit()) {
 		return fmt.Errorf("角色「%s」并发已满（上限 %d），请挂起部分会话或等任务完成", agent.Name, agent.ConcurrencyLimit())
 	}
 
@@ -181,12 +187,12 @@ func (m *Manager) Start(ctx context.Context, id int64) error {
 	}
 	// 交互式会话只支持 pi / omp（RPC 消息流通道）；其余 CLI 无结构化
 	// 消息通道，S5 终端降级通道已移除，无法启动。
-	if !exec.SupportsInteractiveMode(agent.CLI) {
-		m.ex.ReleaseAgentSlot(agent.ID)
-		return fmt.Errorf("交互式会话只支持 pi / omp 角色（%s 不支持），该会话无法启动", agent.CLI)
+	if _, ok := m.runtimes.Session(agent.RuntimeID); !ok {
+		m.ex.ReleaseRoleSlot(agent.ID)
+		return fmt.Errorf("Runtime %s 不提供结构化会话能力", agent.RuntimeID)
 	}
 	if err := m.startRPC(ss, *agent, dir); err != nil {
-		m.ex.ReleaseAgentSlot(agent.ID)
+		m.ex.ReleaseRoleSlot(agent.ID)
 		return err
 	}
 
@@ -201,7 +207,7 @@ func (m *Manager) Start(ctx context.Context, id int64) error {
 }
 
 // startRPC 启动 pi/omp RPC 会话进程（恢复时 switch_session 接续）。
-func (m *Manager) startRPC(ss *store.Session, agent store.Agent, dir string) error {
+func (m *Manager) startRPC(ss *store.Session, agent store.Role, dir string) error {
 	proc, err := m.spawn(ss, agent, dir)
 	if err != nil {
 		return err
@@ -227,38 +233,26 @@ func (m *Manager) stopChannel(id int64) {
 }
 
 // spawn 启动 pi/omp RPC 进程并注入事件/退出回调。
-func (m *Manager) spawn(ss *store.Session, agent store.Agent, cwd string) (*rpcProc, error) {
-	adapter, ok := exec.GetAdapter(agent.CLI)
+func (m *Manager) spawn(ss *store.Session, agent store.Role, cwd string) (*rpcProc, error) {
+	driver, ok := m.runtimes.Session(agent.RuntimeID)
 	if !ok {
-		return nil, fmt.Errorf("CLI 适配器缺失: %s", agent.CLI)
-	}
-	bin, err := adapter.Detect()
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Runtime %s 不提供结构化会话能力", agent.RuntimeID)
 	}
 	// 角色技能挂载（与批处理任务同机制）。
 	var mount *exec.RoleSkillMount
 	if mnt, err := exec.EnsureRoleSkills(agent.ID, agent.Name, agent.RoleConfig.Skills,
-		filepath.Join(m.sessionsRoot, ".role-agents", fmt.Sprintf("%d", agent.ID))); err == nil {
+		filepath.Join(m.sessionsRoot, ".roles", fmt.Sprintf("%d", agent.ID))); err == nil {
 		mount = mnt
 	} else {
 		log.Printf("⚠ 会话 %d 技能挂载失败: %v", ss.ID, err)
 	}
-	var args []string
-	if agent.CLI == "omp" {
-		args, err = exec.BuildOmpRPCSessionArgs(agent.RoleConfig, mount, ss.SessionDir)
-	} else {
-		var skillPaths []string
-		if mount != nil {
-			skillPaths = mount.SkillPaths
-		}
-		args, err = exec.BuildPiRPCSessionArgs(agent.RoleConfig, skillPaths, ss.SessionDir)
-	}
+	spec, err := driver.PrepareSession(exec.SessionRequest{
+		Role: agent.RoleConfig, SkillMount: mount, SessionDir: ss.SessionDir,
+	})
 	if err != nil {
 		return nil, err
 	}
-	env := exec.MergeEnv(agent.RoleConfig.Env)
-	proc, err := newRPCProc(ss.ID, bin, args, env, cwd, ss.SessionDir, m.stderrPathOf(ss.ID))
+	proc, err := newRPCProc(ss.ID, spec.Bin, spec.Args, spec.Env, cwd, ss.SessionDir, m.stderrPathOf(ss.ID))
 	if err != nil {
 		return nil, err
 	}
@@ -290,8 +284,8 @@ func (m *Manager) Suspend(ctx context.Context, id int64) error {
 		return transitionErr(ss.Status, store.SessionStatusSuspended)
 	}
 	m.stopChannel(id)
-	if agent, err := m.st.GetAgent(ss.AgentID); err == nil && agent != nil {
-		m.ex.ReleaseAgentSlot(agent.ID)
+	if agent, err := m.st.GetRole(ss.RoleID); err == nil && agent != nil {
+		m.ex.ReleaseRoleSlot(agent.ID)
 	}
 	now := store.Now()
 	if err := m.st.UpdateSession(id, map[string]any{
@@ -321,12 +315,12 @@ func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, pe
 	if !CanTransition(ss.Status, store.SessionStatusDelivered) {
 		return nil, transitionErr(ss.Status, store.SessionStatusDelivered)
 	}
-	agent, err := m.st.GetAgent(ss.AgentID)
+	agent, err := m.st.GetRole(ss.RoleID)
 	if err != nil {
 		return nil, err
 	}
 	if agent == nil {
-		return nil, fmt.Errorf("角色不存在: %d", ss.AgentID)
+		return nil, fmt.Errorf("角色不存在: %d", ss.RoleID)
 	}
 	if perm == "" {
 		perm = store.PermFull
@@ -340,7 +334,7 @@ func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, pe
 
 	// 终止执行通道（若活跃）并释放槽位。
 	m.stopChannel(id)
-	m.ex.ReleaseAgentSlot(agent.ID)
+	m.ex.ReleaseRoleSlot(agent.ID)
 
 	if taskBody == "" {
 		taskBody = deliverBody(ss, agent, m.projectName(ss))
@@ -352,7 +346,7 @@ func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, pe
 		Status:         store.StatusQueued,
 		Perm:           perm,
 		RunMode:        store.RunModeBatch,
-		AgentID:        &agent.ID,
+		RoleID:         &agent.ID,
 		ProjectID:      ss.ProjectID,
 		ProjectDir:     m.projectDir(ss),
 		SessionID:      &ss.ID,
@@ -424,10 +418,10 @@ func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, pe
 }
 
 // deliverBody 生成交付任务的默认正文：会话摘要（调用方未提供说明时使用）。
-func deliverBody(ss *store.Session, agent *store.Agent, projectName string) string {
+func deliverBody(ss *store.Session, agent *store.Role, projectName string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "会话 #%d「%s」的交付成果，已转为任务进入审批/合并流程。\n\n", ss.ID, ss.Title)
-	fmt.Fprintf(&b, "- 角色：%s（%s）\n", agent.Name, agent.CLI)
+	fmt.Fprintf(&b, "- 角色：%s（%s）\n", agent.Name, agent.RuntimeID)
 	if projectName != "" {
 		fmt.Fprintf(&b, "- 项目：%s\n", projectName)
 	}
@@ -456,8 +450,8 @@ func (m *Manager) Delete(ctx context.Context, id int64) error {
 		return transitionErr(ss.Status, store.SessionStatusDeleted)
 	}
 	m.stopChannel(id)
-	if agent, err := m.st.GetAgent(ss.AgentID); err == nil && agent != nil {
-		m.ex.ReleaseAgentSlot(agent.ID)
+	if agent, err := m.st.GetRole(ss.RoleID); err == nil && agent != nil {
+		m.ex.ReleaseRoleSlot(agent.ID)
 	}
 	// 清理 worktree（非 git 或已丢失时静默）。
 	if err := workspace.DiscardSessionWorktree(m.projectDir(ss), m.sessionsRoot, m.projectName(ss), id); err != nil {
@@ -724,8 +718,8 @@ func (m *Manager) handleExit(id int64) {
 		log.Printf("⚠ 会话 %d 崩溃状态更新失败: %v", id, err)
 		return
 	}
-	if agent, err := m.st.GetAgent(ss.AgentID); err == nil && agent != nil {
-		m.ex.ReleaseAgentSlot(agent.ID)
+	if agent, err := m.st.GetRole(ss.RoleID); err == nil && agent != nil {
+		m.ex.ReleaseRoleSlot(agent.ID)
 	}
 	m.publishUpdated(*ss)
 }

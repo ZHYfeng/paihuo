@@ -1,7 +1,7 @@
-// Package web 内嵌前端资源（模板 + 静态文件），保证单二进制分发。
+// Package web embeds the built React application and the standalone login page.
 package web
 
 import "embed"
 
-//go:embed templates static/app.css static/app.bundle.js static/vendor
+//go:embed templates/login.html dist
 var FS embed.FS

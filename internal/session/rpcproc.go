@@ -331,7 +331,7 @@ func cmdID() string {
 func (p *rpcProc) setEventHandler(fn func(ev rpcEvent)) { p.onEvent = fn }
 
 // broadcastEvent 把事件转发到 Hub（session.message / session.updated）。
-func broadcastEvent(hub *events.Hub, typ string, payload any) {
+func broadcastEvent(hub *events.EventStream, typ string, payload any) {
 	hub.Publish(events.Event{Type: typ, Payload: payload})
 }
 

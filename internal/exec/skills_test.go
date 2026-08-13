@@ -130,7 +130,7 @@ func writeSkill(t *testing.T, name string, desc string) string {
 
 func TestEnsureRoleSkillsBuildsSymlinkMountAndIsIdempotent(t *testing.T) {
 	src := writeSkill(t, "design", "design workflow")
-	roleDir := filepath.Join(t.TempDir(), ".role-agents", "7")
+	roleDir := filepath.Join(t.TempDir(), ".roles", "7")
 
 	mount, err := EnsureRoleSkills(7, "设计师", []string{src}, roleDir)
 	if err != nil {
@@ -194,7 +194,7 @@ func TestEnsureRoleSkillsFallbackCopyForNonCompliantFrontmatter(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(src, "SKILL.md"), []byte("---\nname: other-name\ndescription: x\n---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	roleDir := filepath.Join(t.TempDir(), ".role-agents", "8")
+	roleDir := filepath.Join(t.TempDir(), ".roles", "8")
 	mount, err := EnsureRoleSkills(8, "角色", []string{src}, roleDir)
 	if err != nil {
 		t.Fatal(err)
@@ -226,7 +226,7 @@ func TestEnsureRoleSkillsFallbackCopyForNonCompliantFrontmatter(t *testing.T) {
 func TestEnsureRoleSkillsRemovesUnselectedAndRepairs(t *testing.T) {
 	src := writeSkill(t, "alpha", "a")
 	src2 := writeSkill(t, "beta", "b")
-	roleDir := filepath.Join(t.TempDir(), ".role-agents", "9")
+	roleDir := filepath.Join(t.TempDir(), ".roles", "9")
 
 	mount, err := EnsureRoleSkills(9, "角色", []string{src, src2}, roleDir)
 	if err != nil {
@@ -285,7 +285,7 @@ func TestEnsureRoleSkillsRemovesUnselectedAndRepairs(t *testing.T) {
 
 func TestEnsureRoleSkillsRebuildsMissingLinkAndClearsBrokenFlag(t *testing.T) {
 	src := writeSkill(t, "gamma", "g")
-	roleDir := filepath.Join(t.TempDir(), ".role-agents", "12")
+	roleDir := filepath.Join(t.TempDir(), ".roles", "12")
 	if _, err := EnsureRoleSkills(12, "角色", []string{src}, roleDir); err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestEnsureRoleSkillsSlugConflictAndInvalidSource(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(srcB, "SKILL.md"), []byte("---\nname: design\ndescription: b\n---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	roleDir := filepath.Join(t.TempDir(), ".role-agents", "10")
+	roleDir := filepath.Join(t.TempDir(), ".roles", "10")
 	mount, err := EnsureRoleSkills(10, "角色", []string{srcA, srcB}, roleDir)
 	if err != nil {
 		t.Fatal(err)
@@ -370,7 +370,7 @@ func TestMountCodexSkillsAndCleanup(t *testing.T) {
 	}()
 
 	src := writeSkill(t, "alpha", "a")
-	roleDir := filepath.Join(t.TempDir(), ".role-agents", "11")
+	roleDir := filepath.Join(t.TempDir(), ".roles", "11")
 	mount, err := EnsureRoleSkills(11, "角色", []string{src}, roleDir)
 	if err != nil {
 		t.Fatal(err)
@@ -498,78 +498,5 @@ func TestPrepareRoleSkillsStandalone(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestCleanupLegacyTaskSkillCopies(t *testing.T) {
-	root := t.TempDir()
-	wt := filepath.Join(root, "proj", "task-1")
-	legacy := filepath.Join(wt, ".agents", "skills", "paihuo-1-1-alpha")
-	if err := os.MkdirAll(legacy, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	claude := filepath.Join(wt, ".claude", "skills", "paihuo-1-2-beta")
-	if err := os.MkdirAll(claude, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	user := filepath.Join(wt, ".claude", "skills", "my-skill")
-	if err := os.MkdirAll(user, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// 角色目录不应被扫描
-	role := filepath.Join(root, ".role-agents", "3", ".agents", "skills", "keep")
-	if err := os.MkdirAll(role, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := CleanupLegacyTaskSkillCopies(root); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-		t.Fatalf("旧副本应被清理: %v", err)
-	}
-	if _, err := os.Stat(claude); !os.IsNotExist(err) {
-		t.Fatalf("claude 旧副本应被清理: %v", err)
-	}
-	if _, err := os.Stat(user); err != nil {
-		t.Fatalf("用户技能不能被误删: %v", err)
-	}
-	if _, err := os.Stat(role); err != nil {
-		t.Fatalf("角色目录不能被扫描清理: %v", err)
-	}
-	// .agents 全空 → 回收；.claude/skills 还有用户技能 → 保留
-	if _, err := os.Stat(filepath.Join(wt, ".agents")); !os.IsNotExist(err) {
-		t.Fatal("空的 .agents 应被回收")
-	}
-	if _, err := os.Stat(filepath.Join(wt, ".claude", "skills")); err != nil {
-		t.Fatalf("含用户技能的目录不能被回收: %v", err)
-	}
-}
-
-func TestMoveRoleAgentDirToStale(t *testing.T) {
-	roleRoot := t.TempDir()
-	roleDir := filepath.Join(roleRoot, "5")
-	if err := os.MkdirAll(filepath.Join(roleDir, ".agents", "skills"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	stale := filepath.Join(roleRoot, ".stale")
-	if err := MoveRoleAgentDirToStale(roleDir, stale); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(roleDir); !os.IsNotExist(err) {
-		t.Fatal("原目录应被移走")
-	}
-	entries, err := os.ReadDir(stale)
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("暂存区应有一份: %v %v", entries, err)
-	}
-	if err := MoveRoleAgentDirToStale(roleDir, stale); err != nil {
-		t.Fatalf("重复移动应视为成功: %v", err)
-	}
-	if err := ReapStaleRoleDirs(stale, 0); err != nil {
-		t.Fatal(err)
-	}
-	if entries, _ := os.ReadDir(stale); len(entries) != 0 {
-		t.Fatalf("retention=0 应全部清理: %v", entries)
 	}
 }

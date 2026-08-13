@@ -623,9 +623,6 @@ func TestTmuxRunnerArchivesFailureArtifacts(t *testing.T) {
 	if _, err := os.Stat(r.logPath(taskID)); !os.IsNotExist(err) {
 		t.Fatalf("归档后当前 terminal.log 应不存在，err=%v", err)
 	}
-	if code, found, err := r.archivedAgentExitCode(taskID); err != nil || !found || code != 137 {
-		t.Fatalf("归档 agent 退出码 = (%d, %v, %v), want (137, true, nil)", code, found, err)
-	}
 	r.Cleanup(taskID)
 	if _, err := os.Stat(r.taskDir(taskID)); !os.IsNotExist(err) {
 		t.Fatalf("清理任务后归档也应删除，err=%v", err)

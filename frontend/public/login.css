@@ -1,0 +1,24 @@
+:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #0a101b; color: #e8edf5; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+.login-body { background: radial-gradient(circle at 20% 20%, #173766 0, transparent 35%), #0a101b; }
+.login-stage { display: grid; min-height: 100vh; grid-template-columns: minmax(0, 1.3fr) minmax(22rem, .7fr); }
+.login-hero { position: relative; display: flex; flex-direction: column; overflow: hidden; padding: clamp(2rem, 5vw, 5rem); border-right: 1px solid #26354a; }
+.login-hero-brand { display: flex; align-items: center; gap: .8rem; }
+.logo-mark { display: grid; width: 2.75rem; height: 2.75rem; place-items: center; border-radius: .8rem; background: #527df0; font-weight: 800; }
+.login-hero-brand b, .login-hero-brand small { display: block; }.login-hero-brand small { margin-top: .2rem; color: #758197; font-size: .65rem; letter-spacing: .16em; }
+.login-hero-copy { position: relative; z-index: 2; margin: auto 0; max-width: 44rem; }
+.login-eyebrow, .login-kicker { color: #91adff; font-size: .7rem; font-weight: 700; letter-spacing: .16em; }
+.login-hero h1 { margin: 1.5rem 0; font-size: clamp(2.8rem, 7vw, 6.5rem); line-height: .98; letter-spacing: -.055em; }.login-hero h1 em { color: #91adff; font-style: normal; }
+.login-hero-copy p { max-width: 34rem; color: #a3afc0; font-size: 1.05rem; line-height: 1.8; }
+.login-proof { display: flex; flex-wrap: wrap; gap: 1.5rem; margin-top: 2rem; color: #a3afc0; font-size: .8rem; }.login-proof i, .runtime-dot { display: inline-block; width: .45rem; height: .45rem; margin-right: .5rem; border-radius: 50%; background: #54d1a4; }
+.login-flow { position: absolute; right: -5rem; bottom: -7rem; width: 32rem; height: 32rem; opacity: .2; border: 1px solid #527df0; border-radius: 50%; }.flow-core { position: absolute; inset: 35%; display: grid; place-items: center; border: 1px solid #91adff; border-radius: 50%; }.flow-core span { font-size: 3rem; }.flow-core small { font-size: .55rem; }
+.login-hero-foot { color: #758197; font-size: .65rem; letter-spacing: .16em; }.login-hero-foot span { color: #91adff; }
+.login-card { align-self: center; width: min(30rem, calc(100% - 2rem)); margin: 1rem auto; padding: clamp(2rem, 5vw, 3.5rem); border: 1px solid #26354a; border-radius: 1.5rem; background: #101827; box-shadow: 0 25px 70px #02061766; }
+.login-card-head { display: flex; align-items: center; gap: .5rem; color: #a3afc0; font-size: .8rem; }.login-card-head small { margin-left: auto; color: #758197; }.login-card-mark { width: .6rem; height: .6rem; border-radius: 50%; background: #527df0; }
+.login-kicker { margin-top: 3.5rem; }.login-card h2 { margin: .7rem 0; font-size: 2.2rem; }.login-sub { margin: 0 0 2rem; color: #a3afc0; line-height: 1.6; }.login-error { margin-bottom: 1rem; border: 1px solid #ff819366; border-radius: .7rem; padding: .8rem; color: #ff8193; }
+.field { display: block; margin-bottom: .5rem; font-size: .82rem; font-weight: 650; }.login-card input { width: 100%; min-height: 3rem; border: 1px solid #26354a; border-radius: .75rem; background: #162132; padding: 0 1rem; color: #e8edf5; outline: none; }.login-card input:focus { border-color: #527df0; box-shadow: 0 0 0 3px #527df033; }
+.btn { display: inline-flex; min-height: 3rem; align-items: center; justify-content: center; border: 0; border-radius: .75rem; padding: 0 1rem; font-weight: 700; cursor: pointer; }.btn.primary { background: #527df0; color: white; }.login-btn { width: 100%; margin-top: 1rem; }.login-btn span { margin-left: auto; }
+.login-foot { display: flex; align-items: center; margin-top: 2rem; color: #a3afc0; font-size: .7rem; }.login-foot small { margin-left: auto; color: #758197; }
+@media (max-width: 800px) { .login-stage { grid-template-columns: 1fr; }.login-hero { min-height: 42vh; border-right: 0; border-bottom: 1px solid #26354a; }.login-hero-copy { margin: 4rem 0; }.login-hero h1 { font-size: clamp(2.6rem, 13vw, 4.5rem); }.login-flow { display: none; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }

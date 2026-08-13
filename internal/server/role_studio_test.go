@@ -6,12 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	paiexec "paihuo/internal/exec"
 	"paihuo/internal/store"
 )
 
 func TestSplitRoleStudioPatch(t *testing.T) {
 	output := "已根据测试结果调整。\n<PAIHUO_ROLE_DRAFT>\n" +
-		`{"name":"前端审查员","description":"检查 UI","cli":"codex","max_concurrency":2,"role_config":{"instructions":"先审查再修改"}}` +
+		`{"name":"前端审查员","description":"检查 UI","runtime_id":"codex","max_concurrency":2,"role_config":{"instructions":"先审查再修改"}}` +
 		"\n</PAIHUO_ROLE_DRAFT>\n"
 	message, draft := splitRoleStudioPatch(output)
 	if draft == nil || draft.Name != "前端审查员" || draft.MaxConcurrency != 2 {
@@ -33,7 +34,7 @@ func TestSplitRoleStudioPatchInvalidJSON(t *testing.T) {
 }
 
 func TestRoleStudioDraftJSONRedactsEnvironment(t *testing.T) {
-	draft := roleStudioDraft{CLI: "codex", RoleConfig: store.RoleConfig{Env: map[string]string{"API_KEY": "secret"}}}
+	draft := roleStudioDraft{RuntimeID: "codex", RoleConfig: store.RoleConfig{Env: map[string]string{"API_KEY": "secret"}}}
 	text := roleStudioDraftJSON(draft)
 	if strings.Contains(text, "secret") || !strings.Contains(text, `"env": null`) {
 		t.Fatalf("角色助手上下文不应包含环境变量值: %s", text)
@@ -41,14 +42,15 @@ func TestRoleStudioDraftJSONRedactsEnvironment(t *testing.T) {
 }
 
 func TestNormalizeRoleStudioDraft(t *testing.T) {
-	draft, err := normalizeRoleStudioDraft(roleStudioDraft{CLI: "codex"}, false)
+	runtimes := paiexec.NewDefaultRuntimeService()
+	draft, err := normalizeRoleStudioDraft(runtimes, roleStudioDraft{RuntimeID: "codex"}, false)
 	if err != nil || draft.MaxConcurrency != 1 {
 		t.Fatalf("应将并发零值归一化为 1: %#v, %v", draft, err)
 	}
-	if _, err := normalizeRoleStudioDraft(roleStudioDraft{CLI: "missing"}, false); err == nil {
+	if _, err := normalizeRoleStudioDraft(runtimes, roleStudioDraft{RuntimeID: "missing"}, false); err == nil {
 		t.Fatal("未知 CLI 应被拒绝")
 	}
-	if _, err := normalizeRoleStudioDraft(roleStudioDraft{CLI: "codex"}, true); err == nil {
+	if _, err := normalizeRoleStudioDraft(runtimes, roleStudioDraft{RuntimeID: "codex"}, true); err == nil {
 		t.Fatal("要求名称时应拒绝空名称")
 	}
 }

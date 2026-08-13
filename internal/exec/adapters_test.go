@@ -37,7 +37,7 @@ func TestMergeEnvOverridesInPlace(t *testing.T) {
 // 全权→--auto-approve、自定义字段→--tools/--max-time/--profile/--provider。
 func TestOmpAdapterBuild(t *testing.T) {
 	a := &ompAdapter{baseAdapter{id: "omp", name: "omp", bin: "omp"}}
-	o := RunOptions{
+	o := ExecutionRequest{
 		Prompt:     "hi",
 		SessionDir: "/s/x",
 		Perm:       "full",
@@ -45,7 +45,6 @@ func TestOmpAdapterBuild(t *testing.T) {
 			Model:        "claude/claude-sonnet-4",
 			SystemPrompt: "sys",
 			Thinking:     "high",
-			Skills:       []string{"/sk/a", "/sk/b"},
 			Plugins:      []string{"/p.toml"},
 			ExtraArgs:    []string{"--no-lsp"},
 			Custom: map[string]string{
@@ -55,7 +54,7 @@ func TestOmpAdapterBuild(t *testing.T) {
 				"provider": "claude",
 			},
 		},
-		SkillNames: []string{"skill-a", "skill-b"},
+		SkillMount: &RoleSkillMount{OmpOverlay: "/runtime/omp-overlay.yml"},
 	}
 	bin, args, _, err := a.Build(o)
 	if err != nil {
@@ -67,7 +66,7 @@ func TestOmpAdapterBuild(t *testing.T) {
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"-p hi", "--no-pty", "--session-dir /s/x", "--model claude/claude-sonnet-4",
-		"--append-system-prompt sys", "--thinking high", "--skills skill-a,skill-b",
+		"--append-system-prompt sys", "--thinking high", "--config /runtime/omp-overlay.yml",
 		"--config /p.toml", "--tools read,edit,bash", "--max-time 30m",
 		"--profile work", "--provider claude", "--auto-approve", "--no-lsp",
 	} {
@@ -106,7 +105,7 @@ func TestOmpSchemaAndPerm(t *testing.T) {
 	if got := a.Docs(); got != "https://omp.sh/docs" {
 		t.Fatalf("Docs=%q", got)
 	}
-	_, args, _, err := a.Build(RunOptions{Prompt: "p", Perm: "review", Role: store.RoleConfig{}})
+	_, args, _, err := a.Build(ExecutionRequest{Prompt: "p", Perm: "review", Role: store.RoleConfig{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,31 +151,28 @@ func TestBuildOmpRPCSessionArgs(t *testing.T) {
 	if strings.Contains(joined, "-p ") || strings.Contains(joined, " --no-pty") {
 		t.Fatalf("RPC 会话不应带 -p/位置参数或 --no-pty: %s", joined)
 	}
-	// 无 overlay：退化为 --skills basename 过滤。
+	// 无挂载时不允许命令翻译层直接读取 Role 中的技能源目录。
 	args2, err := BuildOmpRPCSessionArgs(role, nil, "/s/x")
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined2 := strings.Join(args2, " ")
-	for _, want := range []string{"--skills a,b", "--mode rpc"} {
-		if !strings.Contains(joined2, want) {
-			t.Fatalf("缺少参数 %q（完整: %s）", want, joined2)
-		}
+	if strings.Contains(joined2, "--skills") || !strings.Contains(joined2, "--mode rpc") {
+		t.Fatalf("无挂载时不应从源目录生成技能参数: %s", joined2)
 	}
 }
 
 // pi（pi.dev 官方文档 0.83+）：thinking→--thinking、skills→--skill 逐目录、
 // provider/tools/exclude_tools/models_cycle→官方参数。
 func TestPiAdapterBuild(t *testing.T) {
-	a := &piAdapter{baseAdapter{id: "pi", name: "Pi Agent", bin: "pi"}}
-	o := RunOptions{
+	a := &piAdapter{baseAdapter{id: "pi", name: "Pi Role", bin: "pi"}}
+	o := ExecutionRequest{
 		Prompt:     "hi",
 		SessionDir: "/s/x",
 		Role: store.RoleConfig{
 			Model:        "anthropic/claude-sonnet-4",
 			SystemPrompt: "sys",
 			Thinking:     "high",
-			Skills:       []string{"/sk/a", "/sk/b"},
 			ExtraArgs:    []string{"--offline"},
 			Custom: map[string]string{
 				"provider":      "anthropic",
@@ -186,7 +182,7 @@ func TestPiAdapterBuild(t *testing.T) {
 				"extensions":    "npm:pi-web-access, git:github.com/acme/pi-ext, npm:pi-web-access",
 			},
 		},
-		SkillDirs: []string{"/task/.agents/skills/skill-a", "/task/.agents/skills/skill-b"},
+		SkillMount: &RoleSkillMount{SkillPaths: []string{"/task/.agents/skills/skill-a", "/task/.agents/skills/skill-b"}},
 	}
 	_, args, _, err := a.Build(o)
 	if err != nil {
@@ -212,7 +208,7 @@ func TestPiAdapterBuild(t *testing.T) {
 // pi schema：模型目录没有逐模型思考档位时保留完整通用选项；skills 和
 // 角色级 extensions 保留、plugins 移除，并保留 Pi 官方参数字段。
 func TestPiSchema(t *testing.T) {
-	a := &piAdapter{baseAdapter{id: "pi", name: "Pi Agent", bin: "pi"}}
+	a := &piAdapter{baseAdapter{id: "pi", name: "Pi Role", bin: "pi"}}
 	fs := a.Schema()
 	keys := map[string]*Field{}
 	for i := range fs {
@@ -237,26 +233,26 @@ func TestPiSchema(t *testing.T) {
 		t.Fatalf("Docs=%q", got)
 	}
 	// Warnings：skills/thinking 不再告警（已支持），plugins 仍告警
-	if ws := a.Warnings(RunOptions{Role: store.RoleConfig{Skills: []string{"/s"}}}); len(ws) != 0 {
+	if ws := a.Warnings(ExecutionRequest{Role: store.RoleConfig{Skills: []string{"/s"}}}); len(ws) != 0 {
 		t.Fatalf("skills 应受支持，不应有警告: %v", ws)
 	}
-	if ws := a.Warnings(RunOptions{Role: store.RoleConfig{Plugins: []string{"/p"}}}); len(ws) != 1 {
+	if ws := a.Warnings(ExecutionRequest{Role: store.RoleConfig{Plugins: []string{"/p"}}}); len(ws) != 1 {
 		t.Fatalf("plugins 应有一条警告，得到 %v", ws)
 	}
 }
 
-func TestPiExtensionSelectionCompatibilityAndRPC(t *testing.T) {
-	a := &piAdapter{baseAdapter{id: "pi", name: "Pi Agent", bin: "pi"}}
-	_, legacyArgs, _, err := a.Build(RunOptions{Prompt: "p", Role: store.RoleConfig{}})
+func TestPiExtensionSelectionAndRPC(t *testing.T) {
+	a := &piAdapter{baseAdapter{id: "pi", name: "Pi Role", bin: "pi"}}
+	_, defaultArgs, _, err := a.Build(ExecutionRequest{Prompt: "p", Role: store.RoleConfig{}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(strings.Join(legacyArgs, " "), "--no-extensions") {
-		t.Fatalf("未配置扩展字段的旧角色应继续使用全局自动发现: %v", legacyArgs)
+	if strings.Contains(strings.Join(defaultArgs, " "), "--no-extensions") {
+		t.Fatalf("未声明扩展集合时应采用 Runtime 默认发现: %v", defaultArgs)
 	}
 
 	disabled := store.RoleConfig{Custom: map[string]string{"extensions": ""}}
-	_, disabledArgs, _, err := a.Build(RunOptions{Prompt: "p", Role: disabled})
+	_, disabledArgs, _, err := a.Build(ExecutionRequest{Prompt: "p", Role: disabled})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +286,7 @@ func TestSkillMountWiringAcrossAdapters(t *testing.T) {
 
 	t.Run("omp", func(t *testing.T) {
 		a := &ompAdapter{baseAdapter{id: "omp", name: "omp", bin: "omp"}}
-		_, args, _, err := a.Build(RunOptions{
+		_, args, _, err := a.Build(ExecutionRequest{
 			Prompt: "p", Role: store.RoleConfig{Skills: []string{"/sk/a"}}, SkillMount: mount,
 		})
 		if err != nil {
@@ -307,8 +303,8 @@ func TestSkillMountWiringAcrossAdapters(t *testing.T) {
 
 	t.Run("opencode", func(t *testing.T) {
 		a := &openCodeAdapter{baseAdapter{id: "opencode", name: "opencode", bin: "opencode"}}
-		_, args, env, err := a.Build(RunOptions{
-			Dir: "/repo", Prompt: "p", Role: store.RoleConfig{Custom: map[string]string{"config": "/x.json"}},
+		_, args, env, err := a.Build(ExecutionRequest{
+			Dir: "/repo", Prompt: "p", Role: store.RoleConfig{},
 			SkillMount: mount,
 		})
 		if err != nil {
@@ -320,14 +316,11 @@ func TestSkillMountWiringAcrossAdapters(t *testing.T) {
 		if !envHas(env, "OPENCODE_CONFIG_CONTENT", mount.OpencodeConfig) {
 			t.Fatalf("opencode env 应含 OPENCODE_CONFIG_CONTENT: %v", env)
 		}
-		if ws := a.Warnings(RunOptions{Role: store.RoleConfig{Custom: map[string]string{"config": "/x.json"}}}); len(ws) == 0 {
-			t.Fatal("opencode config 字段应给出已弃用告警")
-		}
 	})
 
 	t.Run("claude", func(t *testing.T) {
 		a := &claudeAdapter{baseAdapter{id: "claude", name: "claude", bin: "claude"}}
-		_, args, _, err := a.Build(RunOptions{Prompt: "p", Role: store.RoleConfig{}, SkillMount: mount})
+		_, args, _, err := a.Build(ExecutionRequest{Prompt: "p", Role: store.RoleConfig{}, SkillMount: mount})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -337,8 +330,8 @@ func TestSkillMountWiringAcrossAdapters(t *testing.T) {
 	})
 
 	t.Run("pi", func(t *testing.T) {
-		a := &piAdapter{baseAdapter{id: "pi", name: "Pi Agent", bin: "pi"}}
-		_, args, _, err := a.Build(RunOptions{Prompt: "p", Role: store.RoleConfig{}, SkillMount: mount})
+		a := &piAdapter{baseAdapter{id: "pi", name: "Pi Role", bin: "pi"}}
+		_, args, _, err := a.Build(ExecutionRequest{Prompt: "p", Role: store.RoleConfig{}, SkillMount: mount})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -354,7 +347,7 @@ func TestSkillMountWiringAcrossAdapters(t *testing.T) {
 // codex：非 git 项目 safe 模式注入 --skip-git-repo-check；交互 TUI 不注入。
 func TestCodexSkipGitRepoCheck(t *testing.T) {
 	a := &codexAdapter{baseAdapter{id: "codex", name: "codex", bin: "codex"}}
-	_, args, _, err := a.Build(RunOptions{
+	_, args, _, err := a.Build(ExecutionRequest{
 		Prompt: "p", RunMode: store.RunModeBatch, SkipGitCheck: true, Role: store.RoleConfig{},
 	})
 	if err != nil {
@@ -363,7 +356,7 @@ func TestCodexSkipGitRepoCheck(t *testing.T) {
 	if !strings.Contains(strings.Join(args, " "), "--skip-git-repo-check") {
 		t.Fatalf("safe 模式非 git 项目应注入 --skip-git-repo-check: %v", args)
 	}
-	_, args, _, err = a.Build(RunOptions{
+	_, args, _, err = a.Build(ExecutionRequest{
 		Prompt: "p", RunMode: store.RunModeInteractive, SkipGitCheck: true, Role: store.RoleConfig{},
 	})
 	if err != nil {
@@ -385,7 +378,7 @@ func envHas(env []string, key, want string) bool {
 
 func TestOpenCodeAdapterPassesVariantNameDirectly(t *testing.T) {
 	a := &openCodeAdapter{baseAdapter{id: "opencode", name: "opencode", bin: "opencode"}}
-	_, args, _, err := a.Build(RunOptions{
+	_, args, _, err := a.Build(ExecutionRequest{
 		Dir:    "/repo",
 		Prompt: "hi",
 		Role:   store.RoleConfig{Model: "opencode/deepseek-v4-flash-free", Thinking: "max"},
@@ -404,14 +397,14 @@ func TestOpenCodeAdapterPassesVariantNameDirectly(t *testing.T) {
 
 func TestNativeSkillAdaptersDoNotTreatSkillsAsUnsupported(t *testing.T) {
 	claude := &claudeAdapter{baseAdapter{id: "claude", name: "claude", bin: "claude"}}
-	_, args, _, err := claude.Build(RunOptions{Prompt: "p", Role: store.RoleConfig{Skills: []string{"/skill"}}})
+	_, args, _, err := claude.Build(ExecutionRequest{Prompt: "p", Role: store.RoleConfig{Skills: []string{"/skill"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(strings.Join(args, " "), "--add-dir") {
 		t.Fatalf("claude skills must use native .claude/skills discovery, got %v", args)
 	}
-	if ws := (&codexAdapter{baseAdapter{id: "codex", name: "codex", bin: "codex"}}).Warnings(RunOptions{Role: store.RoleConfig{Skills: []string{"/skill"}}}); len(ws) != 0 {
+	if ws := (&codexAdapter{baseAdapter{id: "codex", name: "codex", bin: "codex"}}).Warnings(ExecutionRequest{Role: store.RoleConfig{Skills: []string{"/skill"}}}); len(ws) != 0 {
 		t.Fatalf("codex skills should be supported through native discovery, got %v", ws)
 	}
 	keys := map[string]bool{}
@@ -464,7 +457,7 @@ func TestAdapterExitCommands(t *testing.T) {
 		"claude":   "/exit",
 		"codex":    "/exit",
 	}
-	for _, a := range Adapters() {
+	for _, a := range commandAdapters() {
 		if got := a.ExitCommand(); got != want[a.ID()] {
 			t.Fatalf("CLI %s 退出命令为 %q，期望 %q", a.ID(), got, want[a.ID()])
 		}

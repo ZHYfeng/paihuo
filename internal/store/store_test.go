@@ -1,10 +1,43 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestOpenRejectsUnsupportedSchemaWithoutMutatingIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "unsupported.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("CREATE TABLE agents (id INTEGER PRIMARY KEY, cli TEXT); PRAGMA user_version=0;"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if opened, err := Open(path); err == nil {
+		_ = opened.Close()
+		t.Fatal("unsupported schema must be rejected")
+	}
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='roles'").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("schema rejection must not create current tables in an unsupported database")
+	}
+}
 
 func openTest(t *testing.T) *Store {
 	t.Helper()
@@ -16,18 +49,18 @@ func openTest(t *testing.T) *Store {
 	return s
 }
 
-func mustAgent(t *testing.T, s *Store, name string, enabled bool) int64 {
+func mustRole(t *testing.T, s *Store, name string, enabled bool) int64 {
 	t.Helper()
-	id, err := s.CreateAgent(Agent{Name: name, CLI: "pi", Enabled: enabled})
+	id, err := s.CreateRole(Role{Name: name, RuntimeID: "pi", Enabled: enabled})
 	if err != nil {
-		t.Fatalf("CreateAgent(%s): %v", name, err)
+		t.Fatalf("CreateRole(%s): %v", name, err)
 	}
 	return id
 }
 
 func mustTask(t *testing.T, s *Store, title string, agentID *int64, status string, body string) int64 {
 	t.Helper()
-	id, err := s.CreateTask(Task{Title: title, Body: body, Status: status, AgentID: agentID})
+	id, err := s.CreateTask(Task{Title: title, Body: body, Status: status, RoleID: agentID})
 	if err != nil {
 		t.Fatalf("CreateTask(%s): %v", title, err)
 	}
@@ -46,12 +79,12 @@ func TestOpenSeedsCreateTasksTemplate(t *testing.T) {
 		t.Fatalf("默认模板数量 = %d, want 1: %+v", len(templates), templates)
 	}
 	got := templates[0]
-	if got.Name != createTasksTemplateName || got.Body != createTasksTemplateBody || got.AgentID != nil {
+	if got.Name != createTasksTemplateName || got.Body != createTasksTemplateBody || got.RoleID != nil {
 		t.Fatalf("默认模板 = %+v, want name=%q body=%q 且不绑定角色", got, createTasksTemplateName, createTasksTemplateBody)
 	}
 }
 
-// 默认数据只迁移一次：重启不会重复插入，用户主动删除后也不会被恢复。
+// 默认数据只初始化一次：重启不会重复插入，用户主动删除后也不会被恢复。
 func TestDefaultTemplateSeedRunsOnce(t *testing.T) {
 	path := t.TempDir() + "/seed.db"
 
@@ -103,63 +136,12 @@ func TestDefaultTemplateSeedRunsOnce(t *testing.T) {
 	}
 }
 
-// v2 迁移：老库中「未被用户编辑」的默认模板（正文仍等于 v1 原文）升级为
-// 完整操作说明；用户编辑过的模板保持原状，重启不覆盖不恢复。
-func TestTemplateSeedV2UpgradeBehavior(t *testing.T) {
-	path := t.TempDir() + "/seed-v2.db"
-	open := func() *Store {
-		s, err := Open(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return s
-	}
-	// 撤掉 v2 迁移标记（模拟「该迁移尚未应用」的老库），正文按各场景自行设定。
-	dropV2Marker := func(s *Store) {
-		t.Helper()
-		if _, err := s.db.Exec(`DELETE FROM data_migrations WHERE key=?`, createTasksTemplateSeedV2); err != nil {
-			t.Fatal(err)
-		}
-		s.Close()
-	}
-
-	// 场景 1：默认模板未被编辑（正文仍是 v1 原文）→ 重新打开后升级为完整正文。
-	s := open()
-	if _, err := s.db.Exec(`UPDATE templates SET body=?`, createTasksTemplateBodyV1); err != nil {
-		t.Fatal(err)
-	}
-	dropV2Marker(s)
-	s = open()
-	templates, err := s.ListTemplates()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(templates) != 1 || templates[0].Body != createTasksTemplateBody {
-		t.Fatalf("未编辑的默认模板应升级为完整正文, got %+v", templates)
-	}
-
-	// 场景 2：用户已编辑（正文不等于 v1 原文）→ 升级不覆盖。
-	if _, err := s.db.Exec(`UPDATE templates SET body='用户自定义内容'`); err != nil {
-		t.Fatal(err)
-	}
-	dropV2Marker(s)
-	s = open()
-	t.Cleanup(func() { s.Close() })
-	templates, err = s.ListTemplates()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(templates) != 1 || templates[0].Body != "用户自定义内容" {
-		t.Fatalf("用户编辑过的模板不应被 v2 覆盖, got %+v", templates)
-	}
-}
-
-// 任务模板：创建 → 读取 → 更新 → 删除 全链路，agent 关联随更新迁移。
+// 任务模板：创建 → 读取 → 更新 → 删除全链路，Role 关联随更新变化。
 func TestTemplateCRUDRoundTrip(t *testing.T) {
 	s := openTest(t)
-	aid := mustAgent(t, s, "tpl-agent", true)
+	aid := mustRole(t, s, "tpl-agent", true)
 
-	id, err := s.CreateTemplate(Template{Name: "发布检查", Body: "检查发布清单", AgentID: &aid})
+	id, err := s.CreateTemplate(Template{Name: "发布检查", Body: "检查发布清单", RoleID: &aid})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,23 +150,23 @@ func TestTemplateCRUDRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "发布检查" || got.Body != "检查发布清单" || got.AgentID == nil || *got.AgentID != aid {
+	if got.Name != "发布检查" || got.Body != "检查发布清单" || got.RoleID == nil || *got.RoleID != aid {
 		t.Fatalf("GetTemplate = %+v, want 完整字段", got)
 	}
 
 	// 更新名称与内容；agent 置空应落库为 NULL
-	if err := s.UpdateTemplate(id, map[string]any{"name": "发布检查 v2", "body": "更新后的提示词", "agent_id": nil}); err != nil {
+	if err := s.UpdateTemplate(id, map[string]any{"name": "发布检查 v2", "body": "更新后的提示词", "role_id": nil}); err != nil {
 		t.Fatal(err)
 	}
 	got, err = s.GetTemplate(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "发布检查 v2" || got.Body != "更新后的提示词" || got.AgentID != nil {
-		t.Fatalf("UpdateTemplate 后 GetTemplate = %+v, want 新值且 agent_id NULL", got)
+	if got.Name != "发布检查 v2" || got.Body != "更新后的提示词" || got.RoleID != nil {
+		t.Fatalf("UpdateTemplate 后 GetTemplate = %+v, want 新值且 role_id NULL", got)
 	}
-	if got.AgentName != "" {
-		t.Fatalf("agent 置空后 AgentName = %q, want 空", got.AgentName)
+	if got.RoleName != "" {
+		t.Fatalf("agent 置空后 RoleName = %q, want 空", got.RoleName)
 	}
 
 	if err := s.DeleteTemplate(id); err != nil {
@@ -196,10 +178,10 @@ func TestTemplateCRUDRoundTrip(t *testing.T) {
 }
 
 // 停用的角色不应出现在可派发队列里。
-func TestListQueuedTasksSkipsDisabledAgents(t *testing.T) {
+func TestListQueuedTasksSkipsDisabledRoles(t *testing.T) {
 	s := openTest(t)
-	on := mustAgent(t, s, "on", true)
-	off := mustAgent(t, s, "off", false)
+	on := mustRole(t, s, "on", true)
+	off := mustRole(t, s, "off", false)
 	mustTask(t, s, "t1", &on, StatusQueued, "")
 	mustTask(t, s, "t2", &off, StatusQueued, "")
 
@@ -212,11 +194,11 @@ func TestListQueuedTasksSkipsDisabledAgents(t *testing.T) {
 	}
 }
 
-// 角色是执行池而非单一会话：未配置时维持兼容的单并发，显式配置则完整保存。
-func TestAgentMaxConcurrencyDefaultsAndRoundTrips(t *testing.T) {
+// 角色是执行池而非单一会话：并发零值收敛为 1，显式配置则完整保存。
+func TestRoleMaxConcurrencyDefaultsAndRoundTrips(t *testing.T) {
 	s := openTest(t)
-	defaultID := mustAgent(t, s, "default-pool", true)
-	defaultAgent, err := s.GetAgent(defaultID)
+	defaultID := mustRole(t, s, "default-pool", true)
+	defaultAgent, err := s.GetRole(defaultID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,14 +206,14 @@ func TestAgentMaxConcurrencyDefaultsAndRoundTrips(t *testing.T) {
 		t.Fatalf("未配置角色应默认单并发，得到 %+v", defaultAgent)
 	}
 
-	id, err := s.CreateAgent(Agent{Name: "parallel-pool", CLI: "pi", Enabled: true, MaxConcurrency: 3})
+	id, err := s.CreateRole(Role{Name: "parallel-pool", RuntimeID: "pi", Enabled: true, MaxConcurrency: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateAgent(id, map[string]any{"max_concurrency": 5}); err != nil {
+	if err := s.UpdateRole(id, map[string]any{"max_concurrency": 5}); err != nil {
 		t.Fatal(err)
 	}
-	a, err := s.GetAgent(id)
+	a, err := s.GetRole(id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +225,7 @@ func TestAgentMaxConcurrencyDefaultsAndRoundTrips(t *testing.T) {
 // 重启重置只应命中 running/claimed，awaiting_review（执行已完成、等审批）要保留。
 func TestListRunningTasksExcludesAwaitingReview(t *testing.T) {
 	s := openTest(t)
-	a := mustAgent(t, s, "a", true)
+	a := mustRole(t, s, "a", true)
 	mustTask(t, s, "run", &a, StatusRunning, "")
 	mustTask(t, s, "claim", &a, StatusClaimed, "")
 	mustTask(t, s, "review", &a, StatusAwaitingReview, "")
@@ -261,7 +243,7 @@ func TestListRunningTasksExcludesAwaitingReview(t *testing.T) {
 // ClaimTask/StartTask 是原子状态机：领取后取消的任务不能被 StartTask 覆盖回 running。
 func TestStartTaskAtomic(t *testing.T) {
 	s := openTest(t)
-	a := mustAgent(t, s, "a", true)
+	a := mustRole(t, s, "a", true)
 	id := mustTask(t, s, "t", &a, StatusQueued, "")
 
 	ok, err := s.ClaimTask(id)
@@ -297,7 +279,7 @@ func TestStartTaskAtomic(t *testing.T) {
 // 列表接口 body 截断到 400 字符，详情接口保持完整。
 func TestListBodyTruncatedDetailFull(t *testing.T) {
 	s := openTest(t)
-	a := mustAgent(t, s, "a", true)
+	a := mustRole(t, s, "a", true)
 	body := strings.Repeat("长提示词", 200) // 800 个字符
 	id := mustTask(t, s, "t", &a, StatusQueued, body)
 
@@ -337,8 +319,7 @@ func TestListLogsPageLoadsNewestWindowAndOlderWindows(t *testing.T) {
 	}
 }
 
-// 旧任务和未显式选择执行方式的新任务都必须保持批处理，避免升级后意外进入
-// 永不自动退出的交互会话；手工选择的交互式方式则需完整往返保存。
+// 未显式选择执行方式的任务使用批处理；手工选择的交互式方式完整往返保存。
 func TestTaskRunModeDefaultsBatchAndRoundTripsInteractive(t *testing.T) {
 	s := openTest(t)
 	batchID, err := s.CreateTask(Task{Title: "batch", Status: StatusQueued})
@@ -365,6 +346,34 @@ func TestTaskRunModeDefaultsBatchAndRoundTripsInteractive(t *testing.T) {
 	}
 	if interactive.RunMode != RunModeInteractive {
 		t.Fatalf("交互式执行方式未保存，得到 %q", interactive.RunMode)
+	}
+}
+
+func TestTaskDeliveryResultWaitsForMergeChild(t *testing.T) {
+	s := openTest(t)
+	sourceID, err := s.CreateTask(Task{Title: "source", Status: StatusSucceeded, Perm: PermFull, WorktreeBranch: "paihuo/task-source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if terminal, succeeded, err := s.TaskDeliveryResult(sourceID); err != nil || terminal || succeeded {
+		t.Fatalf("source without merge=(%v,%v,%v), want pending", terminal, succeeded, err)
+	}
+	source, err := s.GetTask(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mergeID, err := s.CreateTask(NewMergeTask(*source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if terminal, succeeded, err := s.TaskDeliveryResult(sourceID); err != nil || terminal || succeeded {
+		t.Fatalf("source with queued merge=(%v,%v,%v), want pending", terminal, succeeded, err)
+	}
+	if err := s.UpdateTask(mergeID, map[string]any{"status": StatusSucceeded, "finished_at": Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if terminal, succeeded, err := s.TaskDeliveryResult(sourceID); err != nil || !terminal || !succeeded {
+		t.Fatalf("source with completed merge=(%v,%v,%v), want succeeded", terminal, succeeded, err)
 	}
 }
 
@@ -400,21 +409,21 @@ func TestTaskTerminalSizePersistsAndRoundTrips(t *testing.T) {
 
 func TestApproveReviewTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 	s := openTest(t)
-	a := mustAgent(t, s, "reviewer", true)
+	a := mustRole(t, s, "reviewer", true)
 	projectID, err := s.CreateProject(Project{Name: "proj", ProjectDir: t.TempDir(), Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sourceID, err := s.CreateTask(Task{
 		Title: "review me", Status: StatusAwaitingReview, Perm: PermReview,
-		AgentID: &a, ProjectID: &projectID, ProjectDir: t.TempDir(),
+		RoleID: &a, ProjectID: &projectID, ProjectDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	merge := Task{
 		Title: "merge reviewed task", Body: "integrate", Status: StatusQueued,
-		Perm: PermFull, RunMode: RunModeBatch, AgentID: &a, ProjectID: &projectID,
+		Perm: PermFull, RunMode: RunModeBatch, RoleID: &a, ProjectID: &projectID,
 		ProjectDir: t.TempDir(), ParentID: &sourceID, MergeOf: &sourceID,
 	}
 	mergeID, err := s.ApproveTaskAndCreateMerge(sourceID, merge)
@@ -432,7 +441,7 @@ func TestApproveReviewTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 	if created.MergeOf == nil || *created.MergeOf != sourceID || created.ParentID == nil || *created.ParentID != sourceID {
 		t.Fatalf("合并任务来源关系未保存: %+v", created)
 	}
-	if created.Perm != PermFull || created.Status != StatusQueued || created.AgentID == nil || *created.AgentID != a {
+	if created.Perm != PermFull || created.Status != StatusQueued || created.RoleID == nil || *created.RoleID != a {
 		t.Fatalf("合并任务执行配置异常: %+v", created)
 	}
 	if _, err := s.ApproveTaskAndCreateMerge(sourceID, merge); err == nil {
@@ -446,14 +455,14 @@ func TestApproveReviewTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 
 func TestCompleteTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 	s := openTest(t)
-	agentID := mustAgent(t, s, "merger", true)
+	agentID := mustRole(t, s, "merger", true)
 	projectID, err := s.CreateProject(Project{Name: "proj", ProjectDir: t.TempDir(), Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sourceID, err := s.CreateTask(Task{
 		Title: "finish me", Status: StatusRunning, Perm: PermFull,
-		AgentID: &agentID, ProjectID: &projectID, ProjectDir: t.TempDir(), BlockOnFailure: true,
+		RoleID: &agentID, ProjectID: &projectID, ProjectDir: t.TempDir(), BlockOnFailure: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -496,14 +505,14 @@ func TestCompleteTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 
 func TestMergeReconciliationCreatesExactlyOneChildForCompletedGitTask(t *testing.T) {
 	s := openTest(t)
-	agentID := mustAgent(t, s, "reconciler", true)
+	agentID := mustRole(t, s, "reconciler", true)
 	projectID, err := s.CreateProject(Project{Name: "proj", ProjectDir: t.TempDir(), Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sourceID, err := s.CreateTask(Task{
 		Title: "finish despite handoff failure", Status: StatusRunning, Perm: PermFull,
-		AgentID: &agentID, ProjectID: &projectID, ProjectDir: t.TempDir(),
+		RoleID: &agentID, ProjectID: &projectID, ProjectDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -541,59 +550,21 @@ func TestMergeReconciliationCreatesExactlyOneChildForCompletedGitTask(t *testing
 	}
 }
 
-func TestRecoverLostTaskCreatesOneMergeTaskAtomically(t *testing.T) {
-	s := openTest(t)
-	agentID := mustAgent(t, s, "recovery", true)
-	projectID, err := s.CreateProject(Project{Name: "proj", ProjectDir: t.TempDir(), Status: "active"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sourceID, err := s.CreateTask(Task{
-		Title: "lost pane", Status: StatusFailed, Perm: PermFull,
-		AgentID: &agentID, ProjectID: &projectID, ProjectDir: t.TempDir(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.UpdateTask(sourceID, map[string]any{"exit_code": -1, "error": "专用 tmux window task-1 已消失，且未留下退出码"}); err != nil {
-		t.Fatal(err)
-	}
-	source, err := s.GetTask(sourceID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mergeID, err := s.RecoverLostTaskAndCreateMerge(sourceID, NewMergeTask(*source))
-	if err != nil {
-		t.Fatal(err)
-	}
-	recovered, err := s.GetTask(sourceID)
-	if err != nil || recovered.Status != StatusSucceeded || recovered.ExitCode == nil || *recovered.ExitCode != 0 || recovered.Error != "" {
-		t.Fatalf("恢复后源任务状态异常: %+v err=%v", recovered, err)
-	}
-	merge, err := s.GetTask(mergeID)
-	if err != nil || merge.MergeOf == nil || *merge.MergeOf != sourceID {
-		t.Fatalf("恢复创建的合并任务异常: %+v err=%v", merge, err)
-	}
-	if _, err := s.RecoverLostTaskAndCreateMerge(sourceID, NewMergeTask(*source)); err == nil {
-		t.Fatal("重复恢复不应创建第二个合并任务")
-	}
-}
-
 // 会话交付任务的收编路径：queued → succeeded + 唯一合并子任务（原子）。
 func TestDeliverTaskAndCreateMerge(t *testing.T) {
 	s := openTest(t)
-	agentID := mustAgent(t, s, "deliver", true)
+	agentID := mustRole(t, s, "deliver", true)
 	projectID, err := s.CreateProject(Project{Name: "proj", ProjectDir: t.TempDir(), Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sid, err := s.CreateSession(Session{Title: "s", AgentID: agentID, Status: SessionStatusDelivered})
+	sid, err := s.CreateSession(Session{Title: "s", RoleID: agentID, Status: SessionStatusDelivered})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sourceID, err := s.CreateTask(Task{
 		Title: "delivered", Status: StatusQueued, Perm: PermFull, RunMode: RunModeBatch,
-		AgentID: &agentID, ProjectID: &projectID, ProjectDir: t.TempDir(),
+		RoleID: &agentID, ProjectID: &projectID, ProjectDir: t.TempDir(),
 		SessionID: &sid, WorktreeBranch: "paihuo/session-1",
 	})
 	if err != nil {
@@ -624,10 +595,10 @@ func TestDeliverTaskAndCreateMerge(t *testing.T) {
 // 非会话任务不能走交付收编路径（session_id 守卫）。
 func TestDeliverTaskAndCreateMergeRejectsNonSessionTask(t *testing.T) {
 	s := openTest(t)
-	agentID := mustAgent(t, s, "deliver2", true)
+	agentID := mustRole(t, s, "deliver2", true)
 	sourceID, err := s.CreateTask(Task{
 		Title: "plain", Status: StatusQueued, Perm: PermFull,
-		AgentID: &agentID,
+		RoleID: &agentID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -767,7 +738,7 @@ func TestCreateProjectTaskDependencies(t *testing.T) {
 // 任务不参与项目排序，并且在全局队列中仍然优先于实现任务。
 func TestReorderProjectQueuedTasks(t *testing.T) {
 	s := openTest(t)
-	agentID := mustAgent(t, s, "order-agent", true)
+	agentID := mustRole(t, s, "order-agent", true)
 	projectID, err := s.CreateProject(Project{Name: "order-project", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
@@ -775,7 +746,7 @@ func TestReorderProjectQueuedTasks(t *testing.T) {
 	create := func(title string) int64 {
 		t.Helper()
 		id, err := s.CreateTaskWithProjectDependency(Task{
-			Title: title, Status: StatusQueued, AgentID: &agentID, ProjectID: &projectID,
+			Title: title, Status: StatusQueued, RoleID: &agentID, ProjectID: &projectID,
 			DependencyMode: DependencyWeak,
 		})
 		if err != nil {
@@ -922,26 +893,26 @@ func TestDeleteTaskRewiresWeakDependents(t *testing.T) {
 // task_id 清空、只影响引用该任务的会话、引用其他任务的会话不动。
 func TestDetachTaskFromSessions(t *testing.T) {
 	s := openTest(t)
-	agentID := mustAgent(t, s, "detach-agent", true)
-	taskID, err := s.CreateTask(Task{Title: "delivered", AgentID: &agentID})
+	agentID := mustRole(t, s, "detach-agent", true)
+	taskID, err := s.CreateTask(Task{Title: "delivered", RoleID: &agentID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherID, err := s.CreateTask(Task{Title: "other", AgentID: &agentID})
+	otherID, err := s.CreateTask(Task{Title: "other", RoleID: &agentID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	tid := taskID
-	sid1, err := s.CreateSession(Session{Title: "s1", AgentID: agentID, Status: SessionStatusDelivered, TaskID: &tid})
+	sid1, err := s.CreateSession(Session{Title: "s1", RoleID: agentID, Status: SessionStatusDelivered, TaskID: &tid})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sid2, err := s.CreateSession(Session{Title: "s2", AgentID: agentID, Status: SessionStatusDelivered, TaskID: &tid})
+	sid2, err := s.CreateSession(Session{Title: "s2", RoleID: agentID, Status: SessionStatusDelivered, TaskID: &tid})
 	if err != nil {
 		t.Fatal(err)
 	}
 	oid := otherID
-	if _, err := s.CreateSession(Session{Title: "s3", AgentID: agentID, Status: SessionStatusDelivered, TaskID: &oid}); err != nil {
+	if _, err := s.CreateSession(Session{Title: "s3", RoleID: agentID, Status: SessionStatusDelivered, TaskID: &oid}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -972,25 +943,25 @@ func TestDetachTaskFromSessions(t *testing.T) {
 // 它专属的代码合并任务。该测试同时覆盖“合并任务优先于后续实现任务”的队列顺序。
 func TestTaskDependencyFailureAndMergeDelivery(t *testing.T) {
 	s := openTest(t)
-	agentID := mustAgent(t, s, "dependency-agent", true)
+	agentID := mustRole(t, s, "dependency-agent", true)
 	projectID, err := s.CreateProject(Project{Name: "dependency-project", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sourceID, err := s.CreateTask(Task{
-		Title: "source", Status: StatusFailed, AgentID: &agentID, ProjectID: &projectID, BlockOnFailure: false,
+		Title: "source", Status: StatusFailed, RoleID: &agentID, ProjectID: &projectID, BlockOnFailure: false,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	weakID, err := s.CreateTaskWithProjectDependency(Task{
-		Title: "weak", Status: StatusQueued, AgentID: &agentID, ProjectID: &projectID, DependencyMode: DependencyWeak,
+		Title: "weak", Status: StatusQueued, RoleID: &agentID, ProjectID: &projectID, DependencyMode: DependencyWeak,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	strongID, err := s.CreateTaskWithProjectDependency(Task{
-		Title: "strong", Status: StatusQueued, AgentID: &agentID, ProjectID: &projectID, DependencyMode: DependencyStrong, DependsOn: &sourceID,
+		Title: "strong", Status: StatusQueued, RoleID: &agentID, ProjectID: &projectID, DependencyMode: DependencyStrong, DependsOn: &sourceID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1065,13 +1036,13 @@ func TestTaskDependencyFailureAndMergeDelivery(t *testing.T) {
 
 func TestScheduleProjectAndFailurePolicyRoundTrip(t *testing.T) {
 	s := openTest(t)
-	agentID := mustAgent(t, s, "schedule-agent", true)
+	roleID := mustRole(t, s, "schedule-role", true)
 	projectID, err := s.CreateProject(Project{Name: "schedule-project", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	id, err := s.CreateSchedule(Schedule{
-		Name: "project schedule", Cron: "0 * * * *", TitleTemplate: "tick", AgentID: agentID,
+		Name: "project schedule", Cron: "0 0 * * * *", TitleTemplate: "tick", RoleID: roleID,
 		ProjectID: &projectID, BlockOnFailure: true, Enabled: true,
 	})
 	if err != nil {
@@ -1089,17 +1060,20 @@ func TestScheduleProjectAndFailurePolicyRoundTrip(t *testing.T) {
 // CleanupTasks 只删终态任务。
 func TestCleanupTasksOnlyTerminal(t *testing.T) {
 	s := openTest(t)
-	a := mustAgent(t, s, "a", true)
+	a := mustRole(t, s, "a", true)
 	mustTask(t, s, "done", &a, StatusSucceeded, "")
 	mustTask(t, s, "run", &a, StatusRunning, "")
 	mustTask(t, s, "queued", &a, StatusQueued, "")
 
-	n, err := s.CleanupTasks(nil, "")
+	n, locators, err := s.CleanupTasks(nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
 		t.Fatalf("应只删除 1 条终态任务，得到 %d", n)
+	}
+	if len(locators) != 0 {
+		t.Fatalf("无 Artifact 的任务不应返回 locator: %v", locators)
 	}
 }
 
@@ -1128,167 +1102,4 @@ func TestSkillTagsRoundTripAndNormalize(t *testing.T) {
 	if len(sk.Tags) != 2 || sk.Tags[0] != "审查" || sk.Tags[1] != "文档" {
 		t.Fatalf("技能标签更新未持久化: %+v", sk.Tags)
 	}
-}
-
-// 迁移完整性：模拟老库（缺新列）→ 重新 Open 后 migrate 应补齐所有新列。
-func TestMigrateAddsNewColumns(t *testing.T) {
-	path := t.TempDir() + "/mig.db"
-	s, err := Open(path)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	// 模拟老库：删掉新列后再打开，migrate 应补齐
-	if _, err := s.db.Exec("DROP INDEX IF EXISTS idx_tasks_merge_of_unique"); err != nil {
-		s.Close()
-		t.Fatalf("drop merge index: %v", err)
-	}
-	for _, index := range []string{"idx_tasks_depends_on", "idx_tasks_project_sort", "idx_schedules_project"} {
-		if _, err := s.db.Exec("DROP INDEX IF EXISTS " + index); err != nil {
-			s.Close()
-			t.Fatalf("drop %s: %v", index, err)
-		}
-	}
-	for _, col := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "tmux_log_offset", "run_mode", "concurrent", "depends_on", "dependency_mode", "block_on_failure", "sort_order"} {
-		if _, err := s.db.Exec("ALTER TABLE tasks DROP COLUMN " + col); err != nil {
-			s.Close()
-			t.Fatalf("drop %s: %v", col, err)
-		}
-	}
-	for _, col := range []string{"project_id", "block_on_failure"} {
-		if _, err := s.db.Exec("ALTER TABLE schedules DROP COLUMN " + col); err != nil {
-			s.Close()
-			t.Fatalf("drop schedules.%s: %v", col, err)
-		}
-	}
-	if _, err := s.db.Exec("ALTER TABLE skills DROP COLUMN tags"); err != nil {
-		s.Close()
-		t.Fatalf("drop skills.tags: %v", err)
-	}
-	if _, err := s.db.Exec("ALTER TABLE agents DROP COLUMN max_concurrency"); err != nil {
-		s.Close()
-		t.Fatalf("drop agents.max_concurrency: %v", err)
-	}
-	s.Close()
-
-	s2, err := Open(path) // 触发 migrate
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
-	defer s2.Close()
-	cols := map[string]bool{}
-	for _, r := range mustRows(t, s2, "PRAGMA table_info(tasks)") {
-		cols[r[1]] = true
-	}
-	for _, want := range []string{"resume_of", "merge_of", "worktree_branch", "base_commit", "project_dir", "tmux_log_offset", "run_mode", "concurrent", "depends_on", "dependency_mode", "block_on_failure", "sort_order"} {
-		if !cols[want] {
-			t.Fatalf("迁移后缺少列 %s（现有列: %v）", want, cols)
-		}
-	}
-	agentCols := map[string]bool{}
-	for _, r := range mustRows(t, s2, "PRAGMA table_info(agents)") {
-		agentCols[r[1]] = true
-	}
-	if !agentCols["max_concurrency"] {
-		t.Fatalf("迁移后 agents 缺少 max_concurrency（现有列: %v）", agentCols)
-	}
-	scheduleCols := map[string]bool{}
-	for _, r := range mustRows(t, s2, "PRAGMA table_info(schedules)") {
-		scheduleCols[r[1]] = true
-	}
-	for _, want := range []string{"project_id", "block_on_failure"} {
-		if !scheduleCols[want] {
-			t.Fatalf("迁移后 schedules 缺少列 %s（现有列: %v）", want, scheduleCols)
-		}
-	}
-	skillCols := map[string]bool{}
-	for _, r := range mustRows(t, s2, "PRAGMA table_info(skills)") {
-		skillCols[r[1]] = true
-	}
-	if !skillCols["tags"] {
-		t.Fatalf("迁移后 skills 缺少 tags 列（现有列: %v）", skillCols)
-	}
-	// 迁移后应能正常读写
-	id, err := s2.CreateTask(Task{Title: "t", Status: StatusQueued})
-	if err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	if _, err := s2.GetTask(id); err != nil {
-		t.Fatalf("GetTask: %v", err)
-	}
-}
-
-// 旧版把默认权限挂在角色上；迁移后应固化到定时任务模板，角色表不再保留该字段。
-func TestMigrateMovesRoleDefaultPermToSchedule(t *testing.T) {
-	path := t.TempDir() + "/perm-mig.db"
-	s, err := Open(path)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	aid := mustAgent(t, s, "a", true)
-	sid, err := s.CreateSchedule(Schedule{
-		Name: "daily", Cron: "0 9 * * *", TitleTemplate: "daily", AgentID: aid, Enabled: true,
-	})
-	if err != nil {
-		s.Close()
-		t.Fatalf("CreateSchedule: %v", err)
-	}
-	// 模拟旧版数据库：权限列仍在 agents，schedules 尚未拥有自己的权限列。
-	if _, err := s.db.Exec("ALTER TABLE agents ADD COLUMN default_perm TEXT NOT NULL DEFAULT 'full'"); err != nil {
-		s.Close()
-		t.Fatal(err)
-	}
-	if _, err := s.db.Exec("UPDATE agents SET default_perm='review' WHERE id=?", aid); err != nil {
-		s.Close()
-		t.Fatal(err)
-	}
-	if _, err := s.db.Exec("ALTER TABLE schedules DROP COLUMN perm"); err != nil {
-		s.Close()
-		t.Fatal(err)
-	}
-	s.Close()
-
-	s2, err := Open(path)
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
-	defer s2.Close()
-	sc, err := s2.GetSchedule(sid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sc.Perm != PermReview {
-		t.Fatalf("迁移后定时任务权限应为 review，得到 %q", sc.Perm)
-	}
-	for _, r := range mustRows(t, s2, "PRAGMA table_info(agents)") {
-		if r[1] == "default_perm" {
-			t.Fatal("迁移后 agents 不应保留 default_perm")
-		}
-	}
-}
-
-func mustRows(t *testing.T, s *Store, q string) [][]string {
-	t.Helper()
-	rows, err := s.db.Query(q)
-	if err != nil {
-		t.Fatalf("query %s: %v", q, err)
-	}
-	defer rows.Close()
-	var out [][]string
-	cols, _ := rows.Columns()
-	for rows.Next() {
-		vals := make([]any, len(cols))
-		ptrs := make([]any, len(cols))
-		for i := range vals {
-			ptrs[i] = &vals[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
-			t.Fatal(err)
-		}
-		row := make([]string, len(cols))
-		for i, v := range vals {
-			row[i] = fmt.Sprint(v)
-		}
-		out = append(out, row)
-	}
-	return out
 }

@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"paihuo/internal/artifact"
 	"paihuo/internal/events"
 	"paihuo/internal/exec"
 	"paihuo/internal/sched"
@@ -58,7 +59,7 @@ func main() {
 	}
 	defer st.Close()
 
-	hub := events.NewHub()
+	hub := events.NewEventStream(st)
 	sessionsRoot := filepath.Join(filepath.Dir(db), "sessions")
 	ex := exec.New(st, hub, sessionsRoot, db)
 	sc := sched.New(st, hub, ex)
@@ -71,7 +72,7 @@ func main() {
 
 	srv := server.New(st, hub, ex, sc, token, filepath.Join(filepath.Dir(db), "skills"))
 	srv.SetSecureCookies(secureCookie)
-	srv.RecoverSessions()
+	srv.Start(ctx)
 	// 不设置 WriteTimeout：SSE 是长连接，写超时会中断正常的实时日志流。
 	httpSrv := &http.Server{
 		Addr:              addr,
@@ -132,12 +133,12 @@ func validateListenSecurity(addr, token string) error {
 }
 
 // refreshModelCatalogs 在启动和固定周期从本机各 CLI 探测模型/能力。手动刷新
-// 由 POST /api/agents/schema/refresh 使用同一个 exec.RefreshModelCatalogs 流程。
+// 由 POST /api/v1/runtimes/refresh 使用同一个 exec.RefreshModelCatalogs 流程。
 func refreshModelCatalogs(ctx context.Context) {
 	run := func(reason string) {
 		started := time.Now()
 		exec.RefreshModelCatalogs()
-		log.Printf("已从 Linux 主机刷新 agent 模型/能力目录（%s，耗时 %s）", reason, time.Since(started).Round(time.Millisecond))
+		log.Printf("已从 Linux 主机刷新 Runtime 模型/能力目录（%s，耗时 %s）", reason, time.Since(started).Round(time.Millisecond))
 	}
 	run("服务启动")
 
@@ -153,8 +154,13 @@ func refreshModelCatalogs(ctx context.Context) {
 	}
 }
 
-// autoCleanup 每小时执行：清理超期历史、孤儿会话、过期任务 worktree。
+// autoCleanup 每小时执行：清理超期任务、无引用 Artifact、孤儿 Runtime 会话
+// 和过期任务 worktree。
 func autoCleanup(ctx context.Context, st *store.Store, ex *exec.Executor, sessionsRoot string) {
+	artifactStore, artifactErr := artifact.NewLocalStore(filepath.Join(filepath.Dir(sessionsRoot), "artifacts"))
+	if artifactErr != nil {
+		log.Printf("自动清理：ArtifactStore 不可用: %v", artifactErr)
+	}
 	run := func() {
 		days := "0"
 		if v, err := st.GetSetting("retention_days"); err == nil && v != "" {
@@ -162,8 +168,17 @@ func autoCleanup(ctx context.Context, st *store.Store, ex *exec.Executor, sessio
 		}
 		if n, err := strconv.Atoi(days); err == nil && n > 0 {
 			before := time.Now().Add(-time.Duration(n) * 24 * time.Hour).UTC().Format(time.RFC3339)
-			if deleted, err := st.CleanupTasks(nil, before); err == nil && deleted > 0 {
-				log.Printf("自动清理：删除 %d 条超过 %d 天的历史任务", deleted, n)
+			if deleted, locators, err := st.CleanupTasks(nil, before); err == nil {
+				if deleted > 0 {
+					log.Printf("自动清理：删除 %d 条超过 %d 天的任务", deleted, n)
+				}
+				if artifactStore != nil {
+					for _, locator := range locators {
+						if count, countErr := st.CountArtifactsByLocator(locator); countErr == nil && count == 0 {
+							_ = artifactStore.Delete(ctx, locator)
+						}
+					}
+				}
 			}
 		}
 		// worktree 保留天数（默认 7 天）
@@ -179,7 +194,7 @@ func autoCleanup(ctx context.Context, st *store.Store, ex *exec.Executor, sessio
 			}
 		}
 		if n, err := ex.CleanupOrphanTaskSessions(); err == nil && n > 0 {
-			log.Printf("自动清理：移除 %d 个孤儿 agent 会话", n)
+			log.Printf("自动清理：移除 %d 个孤儿 Runtime 会话", n)
 		}
 	}
 	run()

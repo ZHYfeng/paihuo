@@ -32,8 +32,8 @@ func TestGetSkillReturnsMarkdownDetail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(st, events.NewHub(), nil, nil, "", filepath.Join(t.TempDir(), "managed-skills"))
-	req := httptest.NewRequest(http.MethodGet, "/api/skills/"+strconv.FormatInt(id, 10), nil)
+	s := New(st, events.NewEventStream(), nil, nil, "", filepath.Join(t.TempDir(), "managed-skills"))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/skills/"+strconv.FormatInt(id, 10), nil)
 	resp := httptest.NewRecorder()
 	s.Handler().ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK {
@@ -63,13 +63,13 @@ func TestSkillImportReadsTagsAndPatchUpdatesThem(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	s := New(st, events.NewHub(), nil, nil, "", filepath.Join(root, "managed-skills"))
+	s := New(st, events.NewEventStream(), nil, nil, "", filepath.Join(root, "managed-skills"))
 
 	body, err := json.Marshal(map[string]any{"source_path": source, "tags": []string{"team-a", "coding"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/skills", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/skills", bytes.NewReader(body))
 	resp := httptest.NewRecorder()
 	s.Handler().ServeHTTP(resp, req)
 	if resp.Code != http.StatusCreated {
@@ -87,7 +87,7 @@ func TestSkillImportReadsTagsAndPatchUpdatesThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = httptest.NewRequest(http.MethodPatch, "/api/skills/"+strconv.FormatInt(imported.ID, 10), bytes.NewReader(body))
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/skills/"+strconv.FormatInt(imported.ID, 10), bytes.NewReader(body))
 	resp = httptest.NewRecorder()
 	s.Handler().ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK {
@@ -117,7 +117,7 @@ func TestScanSkillsDiscoversRootAndNestedSkillsWithoutReimportingManagedCopies(t
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	managedDir := filepath.Join(root, "paihuo-managed-skills")
-	s := New(st, events.NewHub(), nil, nil, "", managedDir)
+	s := New(st, events.NewEventStream(), nil, nil, "", managedDir)
 
 	scan := func() (*httptest.ResponseRecorder, skillScanResult) {
 		t.Helper()
@@ -125,7 +125,7 @@ func TestScanSkillsDiscoversRootAndNestedSkillsWithoutReimportingManagedCopies(t
 		if err != nil {
 			t.Fatal(err)
 		}
-		req := httptest.NewRequest(http.MethodPost, "/api/skills/scan", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/skills/scan", bytes.NewReader(body))
 		resp := httptest.NewRecorder()
 		s.Handler().ServeHTTP(resp, req)
 		var result skillScanResult
@@ -189,13 +189,13 @@ func TestScanSkillsRejectsDirectoryWithoutSkillFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	s := New(st, events.NewHub(), nil, nil, "", filepath.Join(t.TempDir(), "managed-skills"))
+	s := New(st, events.NewEventStream(), nil, nil, "", filepath.Join(t.TempDir(), "managed-skills"))
 
 	body, err := json.Marshal(map[string]string{"source_path": root})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/skills/scan", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/skills/scan", bytes.NewReader(body))
 	resp := httptest.NewRecorder()
 	s.Handler().ServeHTTP(resp, req)
 	if resp.Code != http.StatusBadRequest {
@@ -228,12 +228,12 @@ func TestDeleteSkillsBatchDeletesRecordsAndCopies(t *testing.T) {
 		}
 	}
 
-	s := New(st, events.NewHub(), nil, nil, "", filepath.Join(root, "managed-skills"))
+	s := New(st, events.NewEventStream(), nil, nil, "", filepath.Join(root, "managed-skills"))
 	body, err := json.Marshal(map[string]any{"ids": ids})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodDelete, "/api/skills", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/skills", bytes.NewReader(body))
 	resp := httptest.NewRecorder()
 	s.Handler().ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK {
@@ -274,12 +274,12 @@ func TestDeleteSkillsBatchMissingIDDoesNotPartiallyDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(st, events.NewHub(), nil, nil, "", filepath.Join(root, "managed-skills"))
+	s := New(st, events.NewEventStream(), nil, nil, "", filepath.Join(root, "managed-skills"))
 	body, err := json.Marshal(map[string]any{"ids": []int64{id, id + 999}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodDelete, "/api/skills", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/skills", bytes.NewReader(body))
 	resp := httptest.NewRecorder()
 	s.Handler().ServeHTTP(resp, req)
 	if resp.Code != http.StatusNotFound {

@@ -14,7 +14,7 @@ import (
 )
 
 func TestAdaptersBuildNativeInteractiveCommands(t *testing.T) {
-	type buildFunc func(RunOptions) (string, []string, []string, error)
+	type buildFunc func(ExecutionRequest) (string, []string, []string, error)
 	tests := []struct {
 		name                 string
 		build                buildFunc
@@ -36,7 +36,7 @@ func TestAdaptersBuildNativeInteractiveCommands(t *testing.T) {
 			batchForbidden:      []string{"--interactive"},
 		},
 		{
-			name: "pi", build: (&piAdapter{baseAdapter{id: "pi", name: "Pi Agent", bin: "pi"}}).Build,
+			name: "pi", build: (&piAdapter{baseAdapter{id: "pi", name: "Pi Role", bin: "pi"}}).Build,
 			interactiveForbidden: []string{"-p"},
 			batchRequired:        []string{"-p"},
 		},
@@ -58,7 +58,7 @@ func TestAdaptersBuildNativeInteractiveCommands(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			const prompt = "从这里开始交互"
-			_, args, _, err := tt.build(RunOptions{
+			_, args, _, err := tt.build(ExecutionRequest{
 				Dir: "/tmp/project", Prompt: prompt, SessionDir: "/tmp/agent-session",
 				RunMode: store.RunModeInteractive, Role: tt.role,
 			})
@@ -79,7 +79,7 @@ func TestAdaptersBuildNativeInteractiveCommands(t *testing.T) {
 				}
 			}
 
-			_, batchArgs, _, err := tt.build(RunOptions{
+			_, batchArgs, _, err := tt.build(ExecutionRequest{
 				Dir: "/tmp/project", Prompt: "批处理", SessionDir: "/tmp/agent-session", Role: tt.role,
 			})
 			if err != nil {
@@ -116,12 +116,12 @@ func TestExecutorSendsLiteralInputToInteractiveTask(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	// 使用非 Pi 角色覆盖通用交互输入校验；pane 本身由下面的测试 shell 提供。
-	agentID, err := st.CreateAgent(store.Agent{Name: "codex", CLI: "codex", Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "codex", RuntimeID: "codex", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	taskID, err := st.CreateTask(store.Task{
-		Title: "interactive", Status: store.StatusRunning, RunMode: store.RunModeInteractive, AgentID: &agentID,
+		Title: "interactive", Status: store.StatusRunning, RunMode: store.RunModeInteractive, RoleID: &agentID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestExecutorSendsLiteralInputToInteractiveTask(t *testing.T) {
 
 	sessionsRoot := t.TempDir()
 	socket := fmt.Sprintf("paihuo-input-test-%d", os.Getpid())
-	e := New(st, events.NewHub(), sessionsRoot, "input-test.db")
+	e := New(st, events.NewEventStream(), sessionsRoot, "input-test.db")
 	e.runner = newTmuxRunnerAt(sessionsRoot, socket)
 	_ = e.runner.command("kill-server")
 	t.Cleanup(func() { stopTmuxServerAndClean(t, e.runner, sessionsRoot) })
@@ -177,12 +177,12 @@ func TestExecutorSendsRawKeystrokesToInteractiveTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	agentID, err := st.CreateAgent(store.Agent{Name: "pi", CLI: "pi", Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "pi", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	taskID, err := st.CreateTask(store.Task{
-		Title: "interactive raw keys", Status: store.StatusRunning, RunMode: store.RunModeInteractive, AgentID: &agentID,
+		Title: "interactive raw keys", Status: store.StatusRunning, RunMode: store.RunModeInteractive, RoleID: &agentID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -190,7 +190,7 @@ func TestExecutorSendsRawKeystrokesToInteractiveTask(t *testing.T) {
 
 	sessionsRoot := t.TempDir()
 	socket := fmt.Sprintf("paihuo-raw-input-test-%d", os.Getpid())
-	e := New(st, events.NewHub(), sessionsRoot, "raw-input-test.db")
+	e := New(st, events.NewEventStream(), sessionsRoot, "raw-input-test.db")
 	e.runner = newTmuxRunnerAt(sessionsRoot, socket)
 	_ = e.runner.command("kill-server")
 	t.Cleanup(func() { stopTmuxServerAndClean(t, e.runner, sessionsRoot) })
@@ -330,13 +330,13 @@ func TestExecutorResizeAcceptsObserved4KBrowserGeometry(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	agentID, err := st.CreateAgent(store.Agent{Name: "4k-terminal", CLI: "pi", Enabled: true})
+	agentID, err := st.CreateRole(store.Role{Name: "4k-terminal", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	taskID, err := st.CreateTask(store.Task{
 		Title: "4k interactive", Status: store.StatusRunning,
-		RunMode: store.RunModeInteractive, AgentID: &agentID,
+		RunMode: store.RunModeInteractive, RoleID: &agentID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -344,7 +344,7 @@ func TestExecutorResizeAcceptsObserved4KBrowserGeometry(t *testing.T) {
 
 	sessionsRoot := t.TempDir()
 	socket := fmt.Sprintf("paihuo-4k-resize-test-%d", os.Getpid())
-	e := NewForTest(st, events.NewHub(), sessionsRoot, "4k-resize-test.db", socket)
+	e := NewForTest(st, events.NewEventStream(), sessionsRoot, "4k-resize-test.db", socket)
 	_ = e.runner.command("kill-server")
 	t.Cleanup(func() { stopTmuxServerAndClean(t, e.runner, sessionsRoot) })
 	if err := e.runner.Start(taskID, sessionsRoot, "/bin/sh", []string{"-c", "sleep 5"}, nil, tmuxStartOptions{
@@ -385,7 +385,7 @@ func TestExecutorSyncInteractiveOutputUsesRawTerminalStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := NewForTest(st, events.NewHub(), t.TempDir(), "raw-terminal-stream.db", "raw-terminal-stream-test")
+	e := NewForTest(st, events.NewEventStream(), t.TempDir(), "raw-terminal-stream.db", "raw-terminal-stream-test")
 	if err := e.syncTmuxOutput(tk, tmuxObservation{
 		Lines: []string{"prompt>", "typed"}, Offset: 12, Alive: true,
 	}); err != nil {

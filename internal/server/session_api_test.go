@@ -16,19 +16,19 @@ import (
 	"paihuo/internal/store"
 )
 
-func TestCreateSessionUsesAgentNameAsTitle(t *testing.T) {
+func TestCreateSessionUsesRoleNameAsTitle(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	aid, err := st.CreateAgent(store.Agent{Name: "会话角色", CLI: "pi", Enabled: true})
+	aid, err := st.CreateRole(store.Role{Name: "会话角色", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(st, events.NewHub(), nil, nil, "", filepath.Join(t.TempDir(), "skills"))
-	req := httptest.NewRequest("POST", "/api/sessions", strings.NewReader(`{"agent_id":`+itoa(aid)+`}`))
+	s := New(st, events.NewEventStream(), nil, nil, "", filepath.Join(t.TempDir(), "skills"))
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"role_id":`+itoa(aid)+`}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
 	s.Handler().ServeHTTP(resp, req)
@@ -46,6 +46,9 @@ func TestCreateSessionUsesAgentNameAsTitle(t *testing.T) {
 
 // TestSessionAPI 会话 API 全流程（状态机 + 交付桥接，真实 pi 进程冒烟）。
 func TestSessionAPI(t *testing.T) {
+	if os.Getenv("PAIHUO_REAL_RUNTIME_TESTS") != "1" {
+		t.Skip("设置 PAIHUO_REAL_RUNTIME_TESTS=1 后运行真实 Pi 冒烟")
+	}
 	if _, err := os.Stat("/usr/local/bin/pi"); err != nil {
 		if _, err2 := osexec.LookPath("pi"); err2 != nil {
 			t.Skip("本机未安装 pi，跳过会话 API 冒烟")
@@ -76,12 +79,12 @@ func TestSessionAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aid, err := st.CreateAgent(store.Agent{Name: "pi-role", CLI: "pi", Enabled: true, ProjectDir: projDir, MaxConcurrency: 2})
+	aid, err := st.CreateRole(store.Role{Name: "pi-role", RuntimeID: "pi", Enabled: true, MaxConcurrency: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	hub := events.NewHub()
+	hub := events.NewEventStream()
 	sessionsRoot := filepath.Join(root, "sessions")
 	executor := execpkg.NewForTest(st, hub, sessionsRoot, filepath.Join(root, "db"), "sess-api")
 	s := New(st, hub, executor, sched.New(st, hub, executor), "", filepath.Join(root, "skills"))
@@ -96,6 +99,13 @@ func TestSessionAPI(t *testing.T) {
 		}
 		req := httptest.NewRequest(method, path, r)
 		req.Header.Set("Content-Type", "application/json")
+		if method == "DELETE" && strings.HasPrefix(path, "/api/v1/tasks/") {
+			id, err := parseID(strings.TrimPrefix(path, "/api/v1/tasks/"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			setTaskRevision(t, st, id, req)
+		}
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, req)
 		var out map[string]any
@@ -104,7 +114,7 @@ func TestSessionAPI(t *testing.T) {
 	}
 
 	// 创建（created + worktree）
-	code, out := do("POST", "/api/sessions", `{"project_id":`+itoa(pid)+`,"agent_id":`+itoa(aid)+`}`)
+	code, out := do("POST", "/api/v1/sessions", `{"project_id":`+itoa(pid)+`,"role_id":`+itoa(aid)+`}`)
 	if code != 201 {
 		t.Fatalf("create: %d %v", code, out)
 	}
@@ -120,32 +130,32 @@ func TestSessionAPI(t *testing.T) {
 	}
 
 	// 启动（spawn pi RPC 进程）
-	code, out = do("POST", "/api/sessions/"+itoa(sid)+"/start", "")
+	code, out = do("POST", "/api/v1/sessions/"+itoa(sid)+"/start", "")
 	if code != 200 {
 		t.Fatalf("start: %d %v", code, out)
 	}
-	code, out = do("GET", "/api/sessions/"+itoa(sid), "")
+	code, out = do("GET", "/api/v1/sessions/"+itoa(sid), "")
 	if code != 200 || out["status"] != store.SessionStatusActive {
 		t.Fatalf("get: %d %v", code, out)
 	}
 
 	// prompt → 消息可读
-	code, out = do("POST", "/api/sessions/"+itoa(sid)+"/prompt", `{"message":"只回复 OK"}`)
+	code, out = do("POST", "/api/v1/sessions/"+itoa(sid)+"/prompt", `{"message":"只回复 OK"}`)
 	if code != 200 {
-		b, _ := os.ReadFile(filepath.Join(sessionsRoot, ".agent-sessions", "session-"+itoa(sid), "stderr.log"))
+		b, _ := os.ReadFile(filepath.Join(sessionsRoot, ".runtime-sessions", "session-"+itoa(sid), "stderr.log"))
 		t.Logf("stderr.log: %s", string(b))
 	}
 	if code != 200 || out["accepted"] != true {
 		t.Fatalf("prompt: %d %v", code, out)
 	}
-	code, out = do("GET", "/api/sessions/"+itoa(sid)+"/state", "")
+	code, out = do("GET", "/api/v1/sessions/"+itoa(sid)+"/state", "")
 	if code != 200 {
 		t.Fatalf("state: %d", code)
 	}
 	// 等 agent 完成（transcript 需消息落盘）
 	deadline := time.Now().Add(150 * time.Second)
 	for {
-		code, st := do("GET", "/api/sessions/"+itoa(sid)+"/state", "")
+		code, st := do("GET", "/api/v1/sessions/"+itoa(sid)+"/state", "")
 		if code == 200 {
 			if d, ok := st["data"].(map[string]any); ok {
 				if streaming, _ := d["isStreaming"].(bool); !streaming {
@@ -160,7 +170,7 @@ func TestSessionAPI(t *testing.T) {
 	}
 	// transcript 全量（含 header entry）
 	// transcript 全量（数组；直接读 body）
-	req := httptest.NewRequest("GET", "/api/sessions/"+itoa(sid)+"/transcript", strings.NewReader(""))
+	req := httptest.NewRequest("GET", "/api/v1/sessions/"+itoa(sid)+"/transcript", strings.NewReader(""))
 	w2 := httptest.NewRecorder()
 	mux.ServeHTTP(w2, req)
 	if w2.Code != 200 {
@@ -175,17 +185,17 @@ func TestSessionAPI(t *testing.T) {
 	}
 
 	// 挂起 → 恢复
-	code, out = do("POST", "/api/sessions/"+itoa(sid)+"/suspend", "")
+	code, out = do("POST", "/api/v1/sessions/"+itoa(sid)+"/suspend", "")
 	if code != 200 {
 		t.Fatalf("suspend: %d %v", code, out)
 	}
-	code, out = do("POST", "/api/sessions/"+itoa(sid)+"/resume", "")
+	code, out = do("POST", "/api/v1/sessions/"+itoa(sid)+"/resume", "")
 	if code != 200 {
 		t.Fatalf("resume: %d %v", code, out)
 	}
 
 	// 交付 → 任务直接收编（跳过 agent 执行）：full + git → 已完成 + 自动创建合并任务
-	code, out = do("POST", "/api/sessions/"+itoa(sid)+"/deliver", `{"perm":"full"}`)
+	code, out = do("POST", "/api/v1/sessions/"+itoa(sid)+"/deliver", `{"perm":"full"}`)
 	if code != 200 {
 		t.Fatalf("deliver: %d %v", code, out)
 	}
@@ -203,7 +213,7 @@ func TestSessionAPI(t *testing.T) {
 		t.Fatalf("交付任务 body 应预填会话摘要: %v", out["body"])
 	}
 	// 代码合并任务已自动创建（整合会话分支）
-	req = httptest.NewRequest("GET", "/api/tasks/"+itoa(tkID)+"/children", strings.NewReader(""))
+	req = httptest.NewRequest("GET", "/api/v1/tasks/"+itoa(tkID)+"/children", strings.NewReader(""))
 	w2 = httptest.NewRecorder()
 	mux.ServeHTTP(w2, req)
 	if w2.Code != 200 {
@@ -218,38 +228,38 @@ func TestSessionAPI(t *testing.T) {
 	}
 
 	// 会话冻结；重复交付拒绝
-	code, out = do("POST", "/api/sessions/"+itoa(sid)+"/deliver", `{"perm":"full"}`)
+	code, out = do("POST", "/api/v1/sessions/"+itoa(sid)+"/deliver", `{"perm":"full"}`)
 	if code != 409 {
 		t.Fatalf("重复交付应 409: %d %v", code, out)
 	}
 
 	// 列表
-	code, out = do("GET", "/api/sessions", "")
+	code, out = do("GET", "/api/v1/sessions", "")
 	if code != 200 {
 		t.Fatalf("list: %d", code)
 	}
 
 	// 交付即终态：删除交付任务 → 会话联动清理（不再解冻可反复交付）
-	code, out = do("DELETE", "/api/tasks/"+itoa(tkID), "")
+	code, out = do("DELETE", "/api/v1/tasks/"+itoa(tkID), "")
 	if code != 204 {
 		t.Fatalf("删除交付任务应 204: %d %v", code, out)
 	}
-	code, out = do("GET", "/api/sessions/"+itoa(sid), "")
+	code, out = do("GET", "/api/v1/sessions/"+itoa(sid), "")
 	if code != 200 || out["status"] != store.SessionStatusDeleted {
 		t.Fatalf("任务删除后会话应联动清理，status=%v", out["status"])
 	}
 
 	// 第二会话：created 直接删除
-	code, out = do("POST", "/api/sessions", `{"project_id":`+itoa(pid)+`,"agent_id":`+itoa(aid)+`}`)
+	code, out = do("POST", "/api/v1/sessions", `{"project_id":`+itoa(pid)+`,"role_id":`+itoa(aid)+`}`)
 	if code != 201 {
 		t.Fatalf("create2: %d %v", code, out)
 	}
 	sid2 := int64(out["id"].(float64))
-	code, out = do("DELETE", "/api/sessions/"+itoa(sid2), "")
+	code, out = do("DELETE", "/api/v1/sessions/"+itoa(sid2), "")
 	if code != 200 {
 		t.Fatalf("delete: %d %v", code, out)
 	}
-	code, out = do("GET", "/api/sessions/"+itoa(sid2), "")
+	code, out = do("GET", "/api/v1/sessions/"+itoa(sid2), "")
 	if code != 200 || out["status"] != store.SessionStatusDeleted {
 		t.Fatalf("删除后 status=%v", out["status"])
 	}

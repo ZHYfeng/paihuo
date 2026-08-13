@@ -87,9 +87,8 @@ func Enrich(fs []Field) []Field {
 			f.Suggestions = listFiles(f.Pattern)
 		} else if f.Source == "extensions" {
 			f.Suggestions = piExtensionSources()
-			// 旧 Pi 角色没有 custom.extensions，运行时仍会自动发现全部
-			// 全局扩展。表单默认全选当前安装项，避免仅打开并保存角色就
-			// 把既有行为意外改成“禁用全部”。
+			// 未声明 extensions 时 Runtime 自动发现全局扩展，因此表单把
+			// 当前安装项作为同义的显式默认集合。
 			f.Default = strings.Join(f.Suggestions, ",")
 		}
 	}
@@ -184,7 +183,7 @@ func resolvePiSettingsSource(agentDir, source string, forcePath bool) string {
 }
 
 // Schema 返回该 CLI 支持的配置字段定义；Docs 返回官方文档链接。
-// 两者由 Adapter 接口暴露，前端 /api/agents/schema 一次性拉取。
+// 两者由 Runtime 目录统一暴露给 /api/v1/runtimes。
 func (a *baseAdapter) Schema() []Field { return commonFields() }
 func (a *baseAdapter) Docs() string    { return "" }
 
@@ -206,7 +205,7 @@ func commonFields() []Field {
 			Help:    "low 更快更省、high 深度推理；medium 为默认"},
 		{Key: "skills", Label: "技能", Type: "list", Group: "技能", Source: "skills",
 			Placeholder: "勾选已注册到 paihuo 工作目录的技能",
-			Help:        "执行器会把角色选择的技能安全复制到本次任务的 CLI 原生技能目录"},
+			Help:        "执行器把角色选择的技能对账为只读挂载视图，再按 Runtime 原生方式加载"},
 		{Key: "plugins", Label: "插件 / 配置叠加", Type: "list", Group: "技能",
 			Placeholder: "/path/to/plugin, /path/to/config.toml",
 			Help:        "逗号分隔的插件或配置叠加文件（--config）"},

@@ -2,7 +2,7 @@ package exec
 
 // 本文件把角色配置中的技能目录变成一次任务真正可见的技能。
 //
-// 新机制（角色级常驻挂载）：每个角色在 <sessionsRoot>/.role-agents/<agentID>/ 下
+// 每个角色在 <sessionsRoot>/.roles/<roleID>/ 下
 // 拥有一个只读技能视图：.agents/skills/<name> 默认是到技能库目录的 symlink
 // （frontmatter 不合规的技能回退为副本+改写 name），claude 用 skills/ 镜像 +
 // .claude-plugin/plugin.json，omp 用 overlay.yml，opencode 用 OPENCODE_CONFIG_CONTENT。
@@ -13,8 +13,7 @@ package exec
 // 把 <roleDir>/.agents/skills/<name> 以 symlink 挂到 $HOME/.agents/skills/paihuo-*，
 // 清单放在任务 tmux 运行目录，任务结算时删除（与旧副本机制同一套 manifest）。
 //
-// 旧机制 prepareRoleSkills（每任务复制到 worktree）保留为兼容包装，仅供
-// 测试与旧调用方使用，执行器已不再调用。
+// 角色工作台使用隔离的临时 workspace；正式任务统一使用角色级挂载视图。
 
 import (
 	"encoding/json"
@@ -24,7 +23,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 )
 
@@ -39,7 +37,7 @@ const roleMountManifestName = "manifest.json"
 // 原生挂载方式（pi --skill 逐目录 / omp overlay / opencode env / claude
 // plugin-dir / codex $HOME 任务级 symlink）。
 type RoleSkillMount struct {
-	RoleDir        string             // <sessionsRoot>/.role-agents/<agentID>
+	RoleDir        string             // <sessionsRoot>/.roles/<roleID>
 	SkillNames     []string           // 挂载的技能名（即目录名）
 	SkillPaths     []string           // .agents/skills/<name> 完整路径（pi --skill 用）
 	SkillsRoot     string             // .agents/skills 目录（omp/opencode 用）
@@ -61,7 +59,7 @@ type roleMountEntry struct {
 // roleMountManifest 记录角色目录当前挂载的技能集合，供幂等对账。
 type roleMountManifest struct {
 	Version int              `json:"version"`
-	AgentID int64            `json:"agent_id"`
+	RoleID  int64            `json:"role_id"`
 	Entries []roleMountEntry `json:"entries"`
 }
 
@@ -219,7 +217,7 @@ func hasSymlinkComponent(path, workspaceDir string) bool {
 func nativeSkillRoot(cli string) (string, bool) {
 	switch cli {
 	case "omp", "codex", "pi":
-		// .agents/skills 是 Agent Skills/Codex/OMP 共同支持的项目根目录。
+		// .agents/skills 是 Role Skills/Codex/OMP 共同支持的项目根目录。
 		return ".agents/skills", true
 	case "claude":
 		return ".claude/skills", true
@@ -386,9 +384,9 @@ func cleanupRoleSkillsManifest(manifestPath string, manifest roleSkillsManifest)
 // EnsureRoleSkills 幂等地构建/对账一个角色的技能挂载目录。selected 是角色
 // 配置中的源技能目录绝对路径列表（RoleConfig.Skills）。返回的 RoleSkillMount
 // 供适配器使用；损坏/失效的技能会被剔除并在 Warnings 中说明，不阻断任务。
-// 角色目录位于 <roleDir>（sessionsRoot/.role-agents/<agentID>），永远不在
+// 角色目录位于 <roleDir>（sessionsRoot/.roles/<roleID>），永远不在
 // git worktree 或用户项目目录内。
-func EnsureRoleSkills(agentID int64, roleName string, selected []string, roleDir string) (*RoleSkillMount, error) {
+func EnsureRoleSkills(roleID int64, roleName string, selected []string, roleDir string) (*RoleSkillMount, error) {
 	mount := &RoleSkillMount{RoleDir: roleDir}
 	if roleDir == "" {
 		return nil, fmt.Errorf("角色技能目录为空")
@@ -396,7 +394,7 @@ func EnsureRoleSkills(agentID int64, roleName string, selected []string, roleDir
 	selected = uniqueNonEmpty(selected)
 	if len(selected) == 0 {
 		// 角色没有技能：只清理历史残留，不创建目录结构，不写空 overlay。
-		if err := reconcileRoleMountEntries(agentID, roleDir, nil, mount); err != nil {
+		if err := reconcileRoleMountEntries(roleID, roleDir, nil, mount); err != nil {
 			return nil, err
 		}
 		return mount, nil
@@ -410,7 +408,7 @@ func EnsureRoleSkills(agentID int64, roleName string, selected []string, roleDir
 		}
 	}
 
-	if err := reconcileRoleMountEntries(agentID, roleDir, selected, mount); err != nil {
+	if err := reconcileRoleMountEntries(roleID, roleDir, selected, mount); err != nil {
 		return nil, err
 	}
 	if len(mount.SkillPaths) == 0 {
@@ -434,7 +432,7 @@ func EnsureRoleSkills(agentID int64, roleName string, selected []string, roleDir
 	mount.OpencodeConfig = cfg
 
 	pluginPath := filepath.Join(pluginDir, "plugin.json")
-	if err := writeClaudePluginJSON(pluginPath, fmt.Sprintf("paihuo-role-%d", agentID), roleName); err != nil {
+	if err := writeClaudePluginJSON(pluginPath, fmt.Sprintf("paihuo-role-%d", roleID), roleName); err != nil {
 		return nil, fmt.Errorf("生成 claude 插件清单失败: %w", err)
 	}
 	mount.ClaudePlugin = roleDir
@@ -446,7 +444,7 @@ func EnsureRoleSkills(agentID int64, roleName string, selected []string, roleDir
 // 新增 → 挂 symlink（或回退副本）；移除 → 删除条目与 claude 镜像；
 // 已存在且目标一致 → 跳过（保留 mtime）；symlink 目标失效 → 标记 broken
 // 并从挂载集合剔除（源恢复后自动重新挂载）。
-func reconcileRoleMountEntries(agentID int64, roleDir string, selected []string, mount *RoleSkillMount) error {
+func reconcileRoleMountEntries(roleID int64, roleDir string, selected []string, mount *RoleSkillMount) error {
 	roleSkills := filepath.Join(roleDir, ".agents", "skills")
 	manifestPath := filepath.Join(roleDir, roleMountManifestName)
 	manifest, manifestExists, err := loadRoleMountManifest(manifestPath)
@@ -544,7 +542,7 @@ func reconcileRoleMountEntries(agentID int64, roleDir string, selected []string,
 	}
 
 	if changed {
-		manifest = roleMountManifest{Version: roleMountManifestVersion, AgentID: agentID, Entries: make([]roleMountEntry, 0, len(desired))}
+		manifest = roleMountManifest{Version: roleMountManifestVersion, RoleID: roleID, Entries: make([]roleMountEntry, 0, len(desired))}
 		for _, d := range desired {
 			entry := d
 			if prev, ok := existing[d.Name]; ok {
@@ -914,84 +912,6 @@ func PrepareRoleSkillsStandalone(workdir, cli string, selected []string) (*RoleS
 	return mount, cleanup, nil
 }
 
-// MoveRoleAgentDirToStale 把已删除角色的技能目录移入 .stale 暂存区（保留
-// 7 天兜底，防止误删后无法恢复），而不是直接删除。
-func MoveRoleAgentDirToStale(roleDir, staleRoot string) error {
-	if _, err := os.Stat(roleDir); os.IsNotExist(err) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(staleRoot, 0o700); err != nil {
-		return err
-	}
-	dst := filepath.Join(staleRoot, fmt.Sprintf("%s-%d", filepath.Base(roleDir), time.Now().Unix()))
-	return os.Rename(roleDir, dst)
-}
-
-// ReapStaleRoleDirs 删除 .stale 中超过 retention 的暂存目录。
-func ReapStaleRoleDirs(staleRoot string, retention time.Duration) error {
-	entries, err := os.ReadDir(staleRoot)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	cutoff := time.Now().Add(-retention)
-	for _, e := range entries {
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().Before(cutoff) {
-			_ = os.RemoveAll(filepath.Join(staleRoot, e.Name()))
-		}
-	}
-	return nil
-}
-
-// CleanupLegacyTaskSkillCopies 一次性迁移清理：扫描 sessionsRoot 下各 worktree
-// 的 .agents/skills、.claude/skills、.opencode/skills 中 paihuo-* 前缀目录
-// （旧每任务副本机制的残留），并回收空目录。只删 paihuo-* 前缀，绝不碰用户技能。
-func CleanupLegacyTaskSkillCopies(sessionsRoot string) error {
-	return filepath.WalkDir(sessionsRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil // 跳过不可读目录，不阻断扫描
-		}
-		if !d.IsDir() {
-			return nil
-		}
-		switch d.Name() {
-		case ".role-agents", ".stale", ".tmux", ".role-studio":
-			return filepath.SkipDir
-		}
-		base := d.Name()
-		parent := filepath.Base(filepath.Dir(path))
-		if base != "skills" || (parent != ".agents" && parent != ".claude" && parent != ".opencode") {
-			return nil
-		}
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return nil
-		}
-		for _, e := range entries {
-			if strings.HasPrefix(e.Name(), "paihuo-") {
-				_ = os.RemoveAll(filepath.Join(path, e.Name()))
-			}
-		}
-		if rest, err := os.ReadDir(path); err == nil && len(rest) == 0 {
-			_ = os.Remove(path)
-			if p := filepath.Dir(path); p != sessionsRoot {
-				if pe, err := os.ReadDir(p); err == nil && len(pe) == 0 {
-					_ = os.Remove(p)
-				}
-			}
-		}
-		return filepath.SkipDir
-	})
-}
-
 func buildRoleSkillsPrompt(bindings []roleSkillBinding) string {
 	if len(bindings) == 0 {
 		return ""
@@ -1160,7 +1080,7 @@ func slugSkillName(raw string) string {
 			continue
 		}
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			// Native Agent Skills names are ASCII kebab-case. Non-ASCII names
+			// Native Role Skills names are ASCII kebab-case. Non-ASCII names
 			// use a stable generic slug rather than producing invalid metadata.
 			if !lastDash && b.Len() > 0 {
 				b.WriteByte('-')

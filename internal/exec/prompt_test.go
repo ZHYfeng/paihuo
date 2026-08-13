@@ -42,7 +42,7 @@ func TestTaskPromptUsesTitleWhenBodyBlank(t *testing.T) {
 
 func TestCodexYoloAdapterBuild(t *testing.T) {
 	a := &codexAdapter{baseAdapter{id: "codex", name: "Codex", bin: "codex"}}
-	_, args, _, err := a.Build(RunOptions{
+	_, args, _, err := a.Build(ExecutionRequest{
 		Prompt: "完成任务",
 		Role:   store.RoleConfig{Custom: map[string]string{"execution_mode": "yolo"}},
 	})
@@ -59,7 +59,7 @@ func TestCodexYoloAdapterBuild(t *testing.T) {
 		t.Fatalf("Codex YOLO 不应关闭已安装的 code-mode host: %s", joined)
 	}
 
-	_, safeArgs, _, err := a.Build(RunOptions{Prompt: "完成任务"})
+	_, safeArgs, _, err := a.Build(ExecutionRequest{Prompt: "完成任务"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestCodexSchemaExposesYoloMode(t *testing.T) {
 
 func TestCodexBuildPassesDiscoveredThinkingLevelDirectly(t *testing.T) {
 	a := &codexAdapter{baseAdapter{id: "codex", name: "Codex", bin: "codex"}}
-	_, args, _, err := a.Build(RunOptions{
+	_, args, _, err := a.Build(ExecutionRequest{
 		Prompt: "完成任务",
 		Role:   store.RoleConfig{Thinking: "xhigh"},
 	})
