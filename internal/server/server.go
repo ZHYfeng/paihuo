@@ -430,6 +430,8 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-s.hub.Closed():
+			return // 服务停机：断开长连接，让 http.Server.Shutdown 立即完成
 		case ev := <-ch:
 			if ev.Seq <= last {
 				continue

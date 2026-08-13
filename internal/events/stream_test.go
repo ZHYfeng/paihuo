@@ -42,3 +42,15 @@ func TestEventStreamDoesNotBroadcastUnpersistedEvents(t *testing.T) {
 	default:
 	}
 }
+
+func TestEventStreamCloseSignalsSubscribersAndKeepsPublishSafe(t *testing.T) {
+	stream := NewEventStream()
+	stream.Close()
+	select {
+	case <-stream.Closed():
+	default:
+		t.Fatal("Close 后 Closed 通道应已广播")
+	}
+	// 停机信号已发出后 Publish 仍不得 panic 或阻塞。
+	stream.Publish(Event{Type: "task", TaskID: 1, Payload: map[string]any{"status": "running"}})
+}

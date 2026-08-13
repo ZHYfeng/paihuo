@@ -33,11 +33,13 @@ func (e Event) Marshal() []byte {
 // EventStream persists before broadcasting. A slow live subscriber can miss
 // notifications and then recover with History using the last observed seq.
 type EventStream struct {
-	mu      sync.Mutex
-	store   *store.Store
-	subs    map[chan Event]struct{}
-	memory  []Event
-	nextSeq int64
+	mu        sync.Mutex
+	store     *store.Store
+	subs      map[chan Event]struct{}
+	memory    []Event
+	nextSeq   int64
+	closed    chan struct{}
+	closeOnce sync.Once
 }
 
 // NewEventStream accepts nil for isolated tests; production passes Store so
@@ -47,7 +49,19 @@ func NewEventStream(st ...*store.Store) *EventStream {
 	if len(st) > 0 {
 		persistence = st[0]
 	}
-	return &EventStream{store: persistence, subs: make(map[chan Event]struct{})}
+	return &EventStream{store: persistence, subs: make(map[chan Event]struct{}), closed: make(chan struct{})}
+}
+
+// Close 广播停机信号：订阅者应立即结束，不能继续持有连接（服务停机排水用）。
+// 不关闭订阅通道，Publish 在停机期间仍安全。
+func (s *EventStream) Close() { s.closeOnce.Do(func() { close(s.closed) }) }
+
+// Closed 返回停机信号通道；nil 安全（未初始化的 EventStream 永不广播）。
+func (s *EventStream) Closed() <-chan struct{} {
+	if s.closed == nil {
+		return make(chan struct{})
+	}
+	return s.closed
 }
 
 func (s *EventStream) Subscribe() chan Event {

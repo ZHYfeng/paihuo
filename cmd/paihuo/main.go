@@ -103,6 +103,8 @@ func main() {
 		stop()
 	}
 	log.Println("正在关闭...")
+	// 先广播停机信号断开 SSE 长连接，否则 Shutdown 会一直等到超时强退。
+	hub.Close()
 	// 带超时关闭：SSE 等长连接不会自己结束，超时后强制退出
 	shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

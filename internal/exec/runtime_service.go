@@ -46,6 +46,9 @@ type CommandSpec struct {
 // CommandRuntime is the seam used by RuntimeService. Production runtimes and
 // FakeRuntime both satisfy it, so Task execution does not know any CLI flags.
 type CommandRuntime interface {
+	// ID 是轻量标识，构造/注册时安全调用，绝不触发模型探测
+	// （各 CLI 的 models 命令是秒级子进程，不能进同步启动路径）。
+	ID() string
 	Descriptor() RuntimeDescriptor
 	Prepare(ExecutionRequest) (CommandSpec, error)
 }
@@ -114,12 +117,11 @@ func NewDefaultRuntimeService() *RuntimeService {
 }
 
 func (s *RuntimeService) Register(runtime CommandRuntime) {
-	d := runtime.Descriptor()
-	if d.ID == "" {
+	if runtime.ID() == "" {
 		panic("runtime id must not be empty")
 	}
 	s.mu.Lock()
-	s.commands[d.ID] = runtime
+	s.commands[runtime.ID()] = runtime
 	s.mu.Unlock()
 }
 
@@ -223,6 +225,8 @@ func (s *RuntimeService) InstallCommand(id string) (string, bool) {
 
 type builtinCommandRuntime struct{ adapter commandAdapter }
 
+func (r builtinCommandRuntime) ID() string { return r.adapter.ID() }
+
 func (r builtinCommandRuntime) Descriptor() RuntimeDescriptor {
 	d := RuntimeDescriptor{
 		ID: r.adapter.ID(), Name: r.adapter.Name(), Docs: r.adapter.Docs(),
@@ -300,6 +304,7 @@ type FakeRuntime struct {
 	Err               error
 }
 
+func (f *FakeRuntime) ID() string                    { return f.RuntimeDescriptor.ID }
 func (f *FakeRuntime) Descriptor() RuntimeDescriptor { return f.RuntimeDescriptor }
 func (f *FakeRuntime) Prepare(ExecutionRequest) (CommandSpec, error) {
 	return f.Command, f.Err
