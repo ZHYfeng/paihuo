@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, CirclePlus, Copy, GitBranch, ListFilter, ListTree, Play, RotateCcw, Save, TerminalSquare, Trash2, X } from "lucide-react";
+import { CalendarClock, Check, CirclePlus, Copy, GitBranch, ListFilter, ListTree, MessagesSquare, Play, RotateCcw, Save, TerminalSquare, Trash2, Workflow, X } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { PageHeader } from "../components/shell";
@@ -145,11 +145,11 @@ export function DashboardPage() {
   const visible = ranked.slice(0, 4);
   const installed = provisioning.data?.filter(p => p.installed) || [];
   return <>
-    <PageHeader kicker="Operations overview" title="工作台" copy="从审批、执行和项目进展开始，所有状态都由持久事件流同步。" actions={<Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={17} />新建任务</Button>} />
+    <PageHeader kicker="Operations overview" title="工作台" copy="一条路：创建任务（单任务 / 复合任务 / 自由探索 / 定时）→ 执行 → 审批；所有状态由持久事件流同步。" actions={<><Button variant="ghost" onClick={() => navigate("/sessions")}><MessagesSquare size={16} />自由探索</Button><Button variant="ghost" onClick={() => navigate("/workflows")}><Workflow size={16} />复合任务</Button><Button variant="ghost" onClick={() => navigate("/schedules")}><CalendarClock size={16} />定时</Button><Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={17} />单任务</Button></>} />
     <StatsStrip dashboard />
     <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(18rem,.75fr)]">
       <div className="grid gap-6">
-        <Card><div className="mb-4 flex items-center"><div><h2 className="font-semibold">待审批</h2><p className="mt-1 text-sm text-muted">需要人工确认的交付会集中出现在这里</p></div><Link to="/board" className="ml-auto text-sm text-brand-soft hover:underline">完整任务板 →</Link></div>
+        <Card><div className="mb-4 flex items-center"><div><h2 className="font-semibold">待审批</h2><p className="mt-1 text-sm text-muted">需要人工确认的交付与采纳会集中出现在这里</p></div><Link to="/approvals" className="ml-auto text-sm text-brand-soft hover:underline">审批工作台 →</Link></div>
           {tasks.isLoading ? <Spinner /> : review.length ? <div className="grid gap-2">{review.map(task => <DashCard key={task.id} task={task} onOpen={() => openTask(task.id)} actions={<>
             <Button size="sm" variant="primary" disabled={mutateStatus.isPending} onClick={() => mutateStatus.mutate({ id: task.id, status: "succeeded" })}><Check size={14} />通过并合并</Button>
             <Button size="sm" onClick={() => openTask(task.id)}>驳回</Button>

@@ -2,6 +2,11 @@
 
 本表定义后端、前端和 Runtime 共同使用的产品术语；实现规则见代码和 `docs/TECHNOLOGY_EVOLUTION.md`。
 
+系统只有一条主线：**项目 → 创建任务 → 执行 → 审批**。Task 是唯一实体，
+四种形态（单任务/复合任务/自由探索任务/定时任务）只是创建方式的差异；
+审批是主线上的一道闸口，不是另一种任务。端到端流程见
+`docs/design/workflow.md`。
+
 ### Project
 
 一个受 PaiHuo 管理的工作目标边界，绑定明确的工作目录和任务历史。
@@ -11,8 +16,14 @@
 ### Task
 
 一次有目标、Role、Project、权限、输入快照和终态的可审计工作分配。
+系统唯一的执行实体，四种形态：
 
-避免：Prompt、tmux window。
+- 单任务：一次 batch 执行（日常主力）；
+- 复合任务（Workflow）：带编排 spec（节点 + 依赖边），实例化为子任务树，状态聚合；
+- 自由探索任务（Session）：持久多轮协作，可挂起/恢复，产出后交付为 Task；
+- 定时任务（Schedule）：cron 触发，渲染模板生成单任务。
+
+避免：Prompt、tmux window、Workflow（Workflow 是复合任务，不是另一类实体）。
 
 ### Role
 
@@ -46,9 +57,11 @@ Session 产生的、准备进入任务审批与整合流程的版本化工作成
 
 ### Approval
 
-对 Task 成果是否可以进入后续整合步骤的显式裁决；它不等于 Agent 成功退出。
+主线上的一道闸口：对 Task 成果（或冻结的 Workflow Plan）是否可以进入后续
+整合步骤的显式裁决；它不等于 Agent 成功退出。所有待审批点聚合在同一
+“待审批”面。
 
-避免：Success、merge。
+避免：Success、merge、独立的任务类型。
 
 ### Workflow Plan
 

@@ -1,4 +1,4 @@
-import { Activity, Boxes, CalendarClock, ChevronRight, CircleUserRound, FileText, FolderKanban, Gauge, History, Menu, MessagesSquare, Moon, PackageOpen, PanelTop, Settings, Sun, Workflow, X } from "lucide-react";
+import { Activity, Boxes, CalendarClock, ChevronRight, CircleUserRound, ClipboardCheck, FileText, FolderKanban, Gauge, History, Menu, MessagesSquare, Moon, PackageOpen, PanelTop, Settings, Sun, Workflow, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { useEventStream } from "../lib/events";
@@ -6,10 +6,10 @@ import { cn } from "./ui";
 
 const groups = [
   { label: "工作区", items: [
-    ["/", "工作台", Gauge], ["/board", "任务", PanelTop], ["/sessions", "会话", MessagesSquare], ["/workflows", "工作流", Workflow], ["/history", "历史", History]
+    ["/", "工作台", Gauge], ["/board", "任务", PanelTop], ["/sessions", "会话", MessagesSquare], ["/workflows", "工作流", Workflow], ["/schedules", "定时", CalendarClock], ["/approvals", "审批", ClipboardCheck], ["/history", "历史", History]
   ]},
   { label: "资源", items: [
-    ["/projects", "项目", FolderKanban], ["/roles", "角色", CircleUserRound], ["/runtimes", "Runtime", Boxes], ["/skills", "技能", PackageOpen], ["/templates", "模板", FileText], ["/schedules", "定时", CalendarClock]
+    ["/projects", "项目", FolderKanban], ["/roles", "角色", CircleUserRound], ["/runtimes", "Runtime", Boxes], ["/skills", "技能", PackageOpen], ["/templates", "模板", FileText]
   ]},
   { label: "系统", items: [["/settings", "设置", Settings]] }
 ] as const;

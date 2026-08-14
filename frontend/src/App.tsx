@@ -5,6 +5,7 @@ import { AppShell } from "./components/shell";
 import { Button, Card, Spinner, ToastProvider } from "./components/ui";
 
 const DashboardPage = route(() => import("./pages/tasks"), "DashboardPage");
+const ApprovalsPage = route(() => import("./pages/approvals"), "ApprovalsPage");
 const BoardPage = route(() => import("./pages/tasks"), "BoardPage");
 const HistoryPage = route(() => import("./pages/tasks"), "HistoryPage");
 const TaskDetailPage = route(() => import("./pages/tasks"), "TaskDetailPage");
@@ -28,6 +29,7 @@ const router = createBrowserRouter([{
   errorElement: <RouteError />,
   children: [
     { index: true, element: <DashboardPage /> },
+    { path: "approvals", element: <ApprovalsPage /> },
     { path: "board", element: <BoardPage /> },
     { path: "history", element: <HistoryPage /> },
     { path: "tasks/:id", element: <TaskDetailPage /> },

@@ -55,16 +55,26 @@ journalctl --user -u paihuo.service -f
 本项目不维护数据库迁移链。schema 或领域模型变化时使用全新数据库，只保留
 `token.env` 和独立的 `skills/`；具体替换命令见部署指南。
 
-## 使用路径
 
-1. 在 Runtime 页检查或安装执行提供者。
-2. 创建 Role，选择 Runtime、模型、指令、Skills 和并发数。
-3. 创建 Project 并绑定主机代码目录。
-4. 创建 Task，选择权限、执行方式和依赖；在任务板观察执行与审批。
-5. 复杂问题可先建立结构化 Session，产生成果后交付为 Task。
-6. 多节点目标使用 Workflow Proposal；策略通过后采纳为冻结 Plan 并启动 Run。
 
 Git Project 中每个 Task 使用 `<db-dir>/sessions/<project>/task-<id>` worktree。Runtime 在专用 `tmux -L paihuo` server 中执行；PaiHuo 重启后会重新接管存活窗口。
+
+## 使用路径
+
+系统只有一条主线：**项目 → 创建任务 → 执行 → 审批**。
+
+1. **准备（管理面）**：在 Runtime 页检查或安装执行提供者；创建 Role
+   （选择 Runtime、模型、指令、Skills 和并发数）；创建 Project 并绑定主机代码目录。
+2. **创建任务（四种形态）**：
+   - 单任务：创建 Task，选择权限、执行方式和依赖；
+   - 复合任务：多节点协作用 Workflow Proposal，策略校验通过后采纳为冻结 Plan 并启动 Run；
+   - 自由探索任务：复杂问题先建立结构化 Session，产生成果后交付为 Task；
+   - 定时任务：创建 Schedule，到点自动生成普通任务。
+3. **执行**：在任务板观察执行；Runtime 在专用 `tmux -L paihuo` server 中执行，
+   Git Project 中每个 Task 使用 `<db-dir>/sessions/<project>/task-<id>` worktree。
+4. **审批**：待审批交付集中出现在工作台，批准后进入代码整合，或拒绝/打回。
+
+端到端流程详见 [docs/design/workflow.md](docs/design/workflow.md)。
 
 ## API
 
