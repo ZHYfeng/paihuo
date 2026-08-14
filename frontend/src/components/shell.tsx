@@ -6,10 +6,10 @@ import { cn } from "./ui";
 
 const groups = [
   { label: "工作区", items: [
-    ["/", "工作台", Gauge], ["/board", "任务", PanelTop], ["/sessions", "会话", MessagesSquare], ["/workflows", "工作流", Workflow], ["/schedules", "定时", CalendarClock], ["/approvals", "审批", ClipboardCheck], ["/history", "历史", History]
+    ["/", "工作台", Gauge], ["/projects", "项目", FolderKanban], ["/board", "任务", PanelTop], ["/sessions", "会话", MessagesSquare], ["/workflows", "工作流", Workflow], ["/schedules", "定时", CalendarClock], ["/approvals", "审批", ClipboardCheck], ["/history", "历史", History]
   ]},
   { label: "资源", items: [
-    ["/projects", "项目", FolderKanban], ["/roles", "角色", CircleUserRound], ["/runtimes", "Runtime", Boxes], ["/skills", "技能", PackageOpen], ["/templates", "模板", FileText]
+    ["/roles", "角色", CircleUserRound], ["/runtimes", "Runtime", Boxes], ["/skills", "技能", PackageOpen], ["/templates", "模板", FileText]
   ]},
   { label: "系统", items: [["/settings", "设置", Settings]] }
 ] as const;
