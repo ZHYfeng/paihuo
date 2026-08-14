@@ -448,6 +448,12 @@ func Discard(tk store.Task, sessionsRoot string) error {
 	mutationMu.Lock()
 	defer mutationMu.Unlock()
 
+	// 无项目目录的任务从未创建 worktree/分支，也没有可清理的 git 资源；
+	// 继续执行会让 git 命令回退到进程 cwd（可能误删当前仓库的分支）。
+	if tk.ProjectDir == "" {
+		return nil
+	}
+
 	wt := WorktreePath(sessionsRoot, tk.ProjectName, tk.ID)
 	if fi, err := os.Stat(wt); err == nil && fi.IsDir() {
 		if !isGitRepo(tk.ProjectDir) {

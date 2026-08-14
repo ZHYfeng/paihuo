@@ -149,7 +149,7 @@ export function DashboardPage() {
     <StatsStrip dashboard />
     <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(18rem,.75fr)]">
       <div className="grid gap-4">
-        <Card><div className="mb-3 flex items-center"><div><h2 className="font-semibold">待审批</h2><p className="mt-1 text-sm text-muted">需要人工确认的交付与采纳会集中出现在这里</p></div><Link to="/approvals" className="ml-auto text-sm text-brand-soft hover:underline">审批工作台 →</Link></div>
+        <Card><div className="mb-3 flex items-center"><div><h2 className="font-semibold">待审批</h2><p className="mt-1 text-sm text-muted">需要人工确认的交付与采纳会集中出现在这里</p></div><Link to="/approvals" className="ml-auto shrink-0 whitespace-nowrap text-sm text-brand-soft hover:underline">审批工作台 →</Link></div>
           {tasks.isLoading ? <Spinner /> : review.length ? <div className="grid gap-2">{review.map(task => <DashCard key={task.id} task={task} onOpen={() => openTask(task.id)} actions={<>
             <Button size="sm" variant="primary" disabled={mutateStatus.isPending} onClick={() => mutateStatus.mutate({ id: task.id, status: "succeeded" })}><Check size={14} />通过并合并</Button>
             <Button size="sm" onClick={() => openTask(task.id)}>驳回</Button>
