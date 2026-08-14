@@ -9,7 +9,7 @@ const groups = [
     ["/", "工作台", Gauge], ["/projects", "项目", FolderKanban], ["/board", "任务", PanelTop], ["/sessions", "会话", MessagesSquare], ["/workflows", "工作流", Workflow], ["/schedules", "定时", CalendarClock], ["/approvals", "审批", ClipboardCheck], ["/history", "历史", History]
   ]},
   { label: "资源", items: [
-    ["/runtimes", "Runtime", Boxes], ["/roles", "角色", CircleUserRound], ["/skills", "技能", PackageOpen], ["/templates", "模板", FileText]
+    ["/runtimes", "智能体", Boxes], ["/roles", "角色", CircleUserRound], ["/skills", "技能", PackageOpen], ["/templates", "模板", FileText]
   ]},
   { label: "系统", items: [["/settings", "设置", Settings]] }
 ] as const;

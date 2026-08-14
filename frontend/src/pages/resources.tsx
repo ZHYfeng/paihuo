@@ -289,7 +289,7 @@ export function RolesPage() {
     <Card className="mb-5 flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
       <span className="flex items-center gap-2 px-2 text-sm text-muted"><Search size={16} />搜索</span>
       <input className={inputClass + " sm:w-64"} placeholder="搜索角色…" value={search} onChange={e => setSearch(e.target.value)} aria-label="搜索角色" />
-      <select className={inputClass + " sm:w-44"} value={sort} onChange={e => setSort(e.target.value)} aria-label="角色排序"><option value="name">名称 A-Z</option><option value="created">最近创建</option><option value="concurrency">并发：高到低</option><option value="runtime">Runtime</option></select>
+      <select className={inputClass + " sm:w-44"} value={sort} onChange={e => setSort(e.target.value)} aria-label="角色排序"><option value="name">名称 A-Z</option><option value="created">最近创建</option><option value="concurrency">并发：高到低</option><option value="runtime">智能体</option></select>
       <span className="text-sm text-muted sm:ml-auto">{visible.length} 个角色</span>
       <div className="flex rounded-xl border border-line bg-elevated p-0.5" role="tablist" aria-label="视图切换">
         <button role="tab" aria-selected={view === "grid"} className={`rounded-[10px] px-3 py-1.5 text-sm ${view === "grid" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("grid")}>卡片</button>
@@ -305,7 +305,7 @@ export function RolesPage() {
       <div className="mt-4 flex flex-wrap gap-2"><Button size="sm" variant="ghost" onClick={() => setDetail(role)}>详情</Button><Button size="sm" variant="ghost" onClick={() => setStudio({ role, draft: { name: role.name, description: role.description, runtime_id: role.runtime_id, max_concurrency: role.max_concurrency, role_config: role.role_config || {} } })}>助手</Button><Button size="sm" variant="ghost" onClick={() => duplicate.mutate(role)}><Copy size={14} />复制</Button><Button size="sm" variant="ghost" onClick={() => toggle.mutate(role)}>{role.enabled ? "停用" : "启用"}</Button><Button size="sm" variant="danger" className="ml-auto" onClick={() => confirm(`删除角色“${role.name}”？`) && remove.mutate(role)}><Trash2 size={14} />删除</Button></div>
     </Card>;
   })}</div> : <Card className="overflow-hidden p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
-    <th className="px-4 py-2.5 font-medium">角色</th><th className="px-4 py-2.5 font-medium">Runtime</th><th className="px-4 py-2.5 font-medium">模型</th><th className="px-4 py-2.5 font-medium">最大并发</th><th className="px-4 py-2.5 font-medium">任务</th><th className="px-4 py-2.5 font-medium">进行中</th><th className="px-4 py-2.5 font-medium">待审批</th><th className="px-4 py-2.5 font-medium">状态</th><th className="px-4 py-2.5 font-medium">操作</th>
+    <th className="px-4 py-2.5 font-medium">角色</th><th className="px-4 py-2.5 font-medium">智能体</th><th className="px-4 py-2.5 font-medium">模型</th><th className="px-4 py-2.5 font-medium">最大并发</th><th className="px-4 py-2.5 font-medium">任务</th><th className="px-4 py-2.5 font-medium">进行中</th><th className="px-4 py-2.5 font-medium">待审批</th><th className="px-4 py-2.5 font-medium">状态</th><th className="px-4 py-2.5 font-medium">操作</th>
   </tr></thead><tbody className="divide-y divide-line">{visible.map(role => { const stat = roleStats.get(role.id) || { total: 0, inFlight: 0, review: 0 }; return <tr key={role.id} className="hover:bg-hover">
     <td className="px-4 py-2.5"><button className="text-left font-medium hover:text-brand-soft" onClick={() => setDetail(role)}>{role.name}</button><div className="mt-0.5 max-w-72 truncate text-xs text-faint">{role.description || "未设置描述"}</div></td>
     <td className="px-4 py-2.5"><Badge tone="info">{role.runtime_id}</Badge></td>
@@ -442,7 +442,7 @@ function RuntimeFieldInput({ field, value, onChange }: { field: RuntimeField; va
     else if (field.type === "env") onChange(Object.fromEntries(e.target.value.split("\n").map(line => line.split("=", 2)).filter(parts => parts[0]).map(([key, item = ""]) => [key.trim(), item])));
     else onChange(e.target.value);
   }} /></Field>;
-  if (field.type === "select") return <Field label={field.label} hint={field.help}><select className={inputClass} value={text} onChange={e => onChange(e.target.value)}><option value="">使用 Runtime 默认值</option>{field.options?.map(option => <option key={option}>{option}</option>)}</select></Field>;
+  if (field.type === "select") return <Field label={field.label} hint={field.help}><select className={inputClass} value={text} onChange={e => onChange(e.target.value)}><option value="">使用智能体默认值</option>{field.options?.map(option => <option key={option}>{option}</option>)}</select></Field>;
   return <Field label={field.label} hint={field.help}><input className={inputClass} list={`runtime-${field.key}`} placeholder={field.placeholder} value={text} onChange={e => onChange(e.target.value)} />{field.suggestions?.length ? <datalist id={`runtime-${field.key}`}>{field.suggestions.map(option => <option key={option} value={option} />)}</datalist> : null}</Field>;
 }
 
@@ -481,7 +481,7 @@ export function RuntimesPage() {
     }
   };
   return <>
-    <PageHeader kicker="Execution providers" title="Runtime" copy="Runtime 目录统一声明批处理、结构化会话、技能与安装能力。" actions={<Button onClick={() => refresh.mutate()} disabled={refresh.isPending}><RefreshCcw size={16} />刷新模型与健康状态</Button>} />
+    <PageHeader kicker="Execution providers" title="智能体" copy="智能体目录统一声明批处理、结构化会话、技能与安装能力。" actions={<Button onClick={() => refresh.mutate()} disabled={refresh.isPending}><RefreshCcw size={16} />刷新模型与健康状态</Button>} />
     <div className="mb-4 text-sm text-muted">已安装 {provisioning.data?.filter(p => p.installed).length || 0}/{provisioning.data?.length || 0}</div>
     {runtimes.isLoading ? <Spinner /> : <div className="grid gap-4 lg:grid-cols-2">{runtimes.data?.map(runtime => { const provision = byID.get(runtime.id); return <Card key={runtime.id}>
       <div className="flex items-start gap-3"><div><div className="flex items-center gap-2"><h2 className="font-semibold">{runtime.name}</h2><Badge tone={runtime.healthy ? "good" : "bad"}>{runtime.healthy ? "可用" : "不可用"}</Badge></div><a className="mt-1 block text-xs text-brand-soft hover:underline" href={runtime.docs} target="_blank" rel="noreferrer">官方文档 ↗</a></div>{provision?.version ? <span className="ml-auto text-sm text-faint">{provision.version}</span> : null}</div>
