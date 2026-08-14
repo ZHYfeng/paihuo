@@ -141,7 +141,7 @@ a {
 }
 
 .terminal-shell {
-  min-height: 22rem;
+  min-height: 20rem;
   overflow: hidden;
   border-radius: .75rem;
   border: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
@@ -330,10 +330,10 @@ a {
   border: 1px solid var(--line);
   background: var(--elevated);
   color: var(--muted);
-  padding: 1px 9px;
-  font-size: 11.5px;
+  padding: 0 7px;
+  font-size: 11px;
   font-weight: 550;
-  line-height: 1.5;
+  line-height: 1.55;
   white-space: nowrap;
   box-shadow: inset 0 1px 0 rgb(255 255 255 / .5);
 }
@@ -398,19 +398,19 @@ a {
 /* 统计条（工作台/看板顶部） */
 .stat-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 10px;
 }
 
 .stat-chip {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  border-radius: 12px;
+  gap: 8px;
+  border-radius: 10px;
   border: 1px solid var(--line);
   background: var(--surface);
-  padding: 10px 12px;
+  padding: 7px 10px;
   box-shadow: var(--shadow-card);
   transition: border-color .15s ease;
 }
@@ -424,7 +424,7 @@ a {
 }
 
 .stat-chip b {
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 700;
   line-height: 1;
   letter-spacing: -.02em;
@@ -432,7 +432,7 @@ a {
 }
 
 .stat-chip .sc-label {
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--muted);
 }
 
@@ -620,8 +620,8 @@ a {
   display: flex;
   align-items: flex-end;
   gap: 4px;
-  height: 90px;
-  padding: 8px 4px 0;
+  height: 76px;
+  padding: 6px 4px 0;
 }
 
 .bc-col {
@@ -811,7 +811,7 @@ a {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
-  padding: 10px 12px;
+  padding: 8px 10px;
   box-shadow: var(--shadow-card);
 }
 
@@ -834,8 +834,8 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  min-height: 22px;
-  margin-bottom: 8px;
+  min-height: 20px;
+  margin-bottom: 6px;
   font-size: 12px;
 }
 
@@ -921,7 +921,7 @@ a {
   text-align: center;
   font-size: 11.5px;
   color: var(--faint);
-  padding: 10px 0;
+  padding: 7px 0;
 }
 
 .ask-card {
@@ -1024,7 +1024,7 @@ a {
 
 /* 任务详情（自旧 app.css 移植） */
 .task-hero {
-  padding-bottom: 14px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1084,7 +1084,7 @@ a {
 }
 
 .task-section {
-  margin-top: 13px;
+  margin-top: 10px;
 }
 
 .task-section>summary {
@@ -1167,8 +1167,8 @@ a {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  margin-top: 14px;
-  padding: 10px 13px;
+  margin-top: 10px;
+  padding: 8px 11px;
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
@@ -1213,9 +1213,9 @@ a {
 .log-lines {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
-  line-height: 18px;
-  padding: 8px 10px;
-  max-height: 26rem;
+  line-height: 17px;
+  padding: 6px 8px;
+  max-height: 24rem;
   overflow-y: auto;
   overscroll-behavior: contain;
   overflow-anchor: none;
@@ -1270,12 +1270,12 @@ a {
 
 /* 子任务 */
 .task-subtask-list {
-  padding-top: 7px;
+  padding-top: 5px;
 }
 
 .task-subtask {
-  padding: 6px 9px;
-  margin-bottom: 6px;
+  padding: 5px 8px;
+  margin-bottom: 4px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
@@ -1310,7 +1310,7 @@ a {
   grid-template-columns: 84px 1fr;
   align-items: center;
   gap: 8px;
-  min-height: 32px;
+  min-height: 28px;
   padding: 0 6px;
   border-radius: 6px;
 }
@@ -1343,9 +1343,9 @@ a {
 }
 
 .side-collapse {
-  margin-top: 10px;
+  margin-top: 8px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
   overflow: hidden;
 }
 
@@ -1370,12 +1370,12 @@ a {
 }
 
 .side-collapse-body {
-  padding: 4px 7px 8px;
+  padding: 3px 6px 6px;
   border-top: 1px solid var(--line);
 }
 
 .side-collapse-body .prop-row {
-  min-height: 29px;
+  min-height: 26px;
   grid-template-columns: 62px 1fr;
 }
 
@@ -1385,7 +1385,7 @@ a {
 }
 
 .side-actions {
-  margin-top: 18px;
+  margin-top: 14px;
 }
 
 .side-heading {
@@ -1435,8 +1435,8 @@ a {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 30px;
-  padding: 3px 6px;
+  min-height: 26px;
+  padding: 2px 6px;
   border-radius: 6px;
 }
 
@@ -1487,7 +1487,7 @@ a {
 /* 驳回意见时间线 */
 .review-round {
   margin-top: 6px;
-  padding: 9px 11px;
+  padding: 7px 9px;
   border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
   border-radius: 10px;
   background: color-mix(in srgb, var(--warning) 6%, var(--surface));
@@ -1522,7 +1522,7 @@ a {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 2px 6px;
+  padding: 8px 2px 5px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1552,15 +1552,15 @@ a {
 
 .board-section-lanes {
   display: flex;
-  gap: 10px;
-  padding: 10px 2px;
+  gap: 8px;
+  padding: 8px 2px;
   overflow-x: auto;
   align-items: stretch;
 }
 
 .board-section-empty {
   width: 100%;
-  padding: 17px 12px;
+  padding: 12px;
   color: var(--faint);
   font-size: 12px;
   text-align: center;
@@ -1569,12 +1569,12 @@ a {
 /* 看板列（详情尺寸） */
 .board-col {
   --st-color: var(--muted);
-  width: 296px;
-  min-width: 236px;
-  height: min(330px, 40vh);
-  min-height: 190px;
+  width: 284px;
+  min-width: 224px;
+  height: min(296px, 38vh);
+  min-height: 176px;
   flex-shrink: 0;
-  border-radius: 12px;
+  border-radius: 10px;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--line);
@@ -1587,8 +1587,8 @@ a {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 12px 7px;
-  font-size: 12.5px;
+  padding: 7px 10px 6px;
+  font-size: 12px;
   font-weight: 650;
 }
 
@@ -1611,18 +1611,18 @@ a {
 }
 
 .board-col-body {
-  padding: 2px 8px 10px;
+  padding: 2px 7px 8px;
   overflow-y: auto;
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 6px;
 }
 
 .board-col-body .empty {
-  padding: 14px 10px;
+  padding: 10px 8px;
   border: 1px dashed var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
   color: var(--faint);
   font-size: 11.5px;
   text-align: center;
@@ -1631,9 +1631,9 @@ a {
 /* 项目进展卡（工作台） */
 .dash-proj {
   display: block;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--surface);
   transition: border-color .12s ease, background .12s ease;
 }
@@ -1674,7 +1674,7 @@ a {
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  padding: 22px 14px;
+  padding: 16px 12px;
   text-align: center;
 }
 

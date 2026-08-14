@@ -101,7 +101,7 @@ function DashCard({ task, actions, onOpen }: { task: Task; actions?: React.React
       <span className="c-time">{formatTime(task.created_at)}</span>
       {task.perm === "review" ? <span className="chip review">审批</span> : null}</div>
     <Link to={`/tasks/${task.id}`} onClick={e => e.stopPropagation()} className="c-title mt-1 block truncate text-sm group-hover:text-brand-soft">{task.title}</Link>
-    <div className="c-meta mt-1.5">
+    <div className="c-meta mt-1">
       {task.project_name ? <span className="chip">{task.project_name}</span> : null}
       <span className="ml-auto flex items-center gap-1 text-xs text-muted">
         {task.role_name ? <span className="flex items-center gap-1"><span className="grid size-5 place-items-center rounded-full bg-brand/10 text-[10px] font-semibold text-brand-soft">{avatarInitial(task.role_name)}</span>{task.role_name}</span> : <span className="text-faint">未指派</span>}
@@ -147,26 +147,26 @@ export function DashboardPage() {
   return <>
     <PageHeader title="工作台" copy="一条路：创建任务（单任务 / 复合任务 / 自由探索 / 定时）→ 执行 → 审批；所有状态由持久事件流同步。" actions={<><Button variant="ghost" onClick={() => navigate("/sessions")}><MessagesSquare size={16} />自由探索</Button><Button variant="ghost" onClick={() => navigate("/workflows")}><Workflow size={16} />复合任务</Button><Button variant="ghost" onClick={() => navigate("/schedules")}><CalendarClock size={16} />定时</Button><Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={17} />单任务</Button></>} />
     <StatsStrip dashboard />
-    <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(18rem,.75fr)]">
-      <div className="grid gap-5">
-        <Card><div className="mb-4 flex items-center"><div><h2 className="font-semibold">待审批</h2><p className="mt-1 text-sm text-muted">需要人工确认的交付与采纳会集中出现在这里</p></div><Link to="/approvals" className="ml-auto text-sm text-brand-soft hover:underline">审批工作台 →</Link></div>
+    <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(18rem,.75fr)]">
+      <div className="grid gap-4">
+        <Card><div className="mb-3 flex items-center"><div><h2 className="font-semibold">待审批</h2><p className="mt-1 text-sm text-muted">需要人工确认的交付与采纳会集中出现在这里</p></div><Link to="/approvals" className="ml-auto text-sm text-brand-soft hover:underline">审批工作台 →</Link></div>
           {tasks.isLoading ? <Spinner /> : review.length ? <div className="grid gap-2">{review.map(task => <DashCard key={task.id} task={task} onOpen={() => openTask(task.id)} actions={<>
             <Button size="sm" variant="primary" disabled={mutateStatus.isPending} onClick={() => mutateStatus.mutate({ id: task.id, status: "succeeded" })}><Check size={14} />通过并合并</Button>
             <Button size="sm" onClick={() => openTask(task.id)}>驳回</Button>
             <Button size="sm" variant="ghost" onClick={() => openTask(task.id)}>查看详情</Button>
           </>} />)}</div> : <Empty title="当前无需审批" copy="需要人工确认的交付会集中出现在这里。" />}
         </Card>
-        <Card><div className="mb-4 flex items-center"><div><h2 className="font-semibold">执行队列</h2><p className="mt-1 text-sm text-muted">创建任务后，进度会在这里实时更新</p></div><span className="ml-auto text-sm text-faint">{running.length} 个进行中</span></div>
+        <Card><div className="mb-3 flex items-center"><div><h2 className="font-semibold">执行队列</h2><p className="mt-1 text-sm text-muted">创建任务后，进度会在这里实时更新</p></div><span className="ml-auto text-sm text-faint">{running.length} 个进行中</span></div>
           {tasks.isLoading ? <Spinner /> : running.length ? <div className="grid gap-2">{running.map(task => <DashCard key={task.id} task={task} onOpen={() => openTask(task.id)} />)}</div> : <Empty title="执行队列已清空" copy="创建任务后，进度会在这里实时更新。" action={<Button size="sm" onClick={() => setCreateOpen(true)}>派发任务</Button>} />}
         </Card>
       </div>
-      <div className="grid content-start gap-5">
+      <div className="grid content-start gap-3">
         <Card><h2 className="font-semibold">项目进展</h2>
           {projects.isLoading ? <Spinner /> : !activeProjects.length ? <div className="dash-onboard mt-3"><div className="ob-title">开始第一次交付</div>
             <Link className="ob-step" to="/roles"><b>01</b><span>创建任务角色</span></Link>
             <Link className="ob-step" to="/projects"><b>02</b><span>建立项目工作区</span></Link>
             <Link className="ob-step" to="/board"><b>03</b><span>派发首个任务</span></Link>
-          </div> : <div className="mt-3 grid gap-2">{visible.map(({ p, pct, inflight }) => <Link key={p.id} className="dash-proj" to={`/projects/${p.id}`}>
+          </div> : <div className="mt-2 grid gap-2">{visible.map(({ p, pct, inflight }) => <Link key={p.id} className="dash-proj" to={`/projects/${p.id}`}>
             <div className="dp-top"><b title={p.name}>{p.name}</b>{inflight ? <span className="badge running inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-[11px] text-brand-soft"><span className="st-dot" style={{ background: "var(--brand)" }} />{inflight} 活跃</span> : <span className="badge inline-flex items-center rounded-full border border-line bg-elevated px-2 py-0.5 text-[11px] text-muted">{all.filter(t => t.project_id === p.id).length} 任务</span>}</div>
             <div className="pc-progress"><div className="pp-bar"><div style={{ width: `${pct}%` }} /></div><span className="pc-pct">{pct}%</span></div>
           </Link>)}
@@ -191,8 +191,8 @@ function TaskCard({ task, tasks, roles }: { task: Task; tasks: Task[]; roles: Ro
     <div className="flex items-center gap-1.5 text-[11px] text-faint"><span className="st-dot" style={{ background: ST_COLOR[task.status] }} /><span className="font-bold text-muted">#{task.id}</span><time className="text-faint">{formatTime(task.created_at)}</time></div>
     <div className="mt-1 text-[13px] font-semibold leading-5 text-ink">{task.title}</div>
     {task.body ? <div className="mt-1 line-clamp-2 text-xs leading-4 text-muted">{task.body}</div> : null}
-    <div className="mt-2 flex flex-wrap items-center gap-1">{taskChips(task, tasks, roles)}</div>
-    <div className="c-meta mt-2 flex items-center gap-1.5 text-xs text-muted">
+    <div className="mt-1.5 flex flex-wrap items-center gap-1">{taskChips(task, tasks, roles)}</div>
+    <div className="c-meta mt-1.5 flex items-center gap-1.5 text-xs text-muted">
       {task.project_id && task.project_name ? <Link to={`/projects/${task.project_id}`} className="chip chip-link hover:text-brand-soft" onClick={e => e.stopPropagation()} title="打开项目页">{task.project_name}</Link> : null}
       <span className="ml-auto flex items-center gap-1">{task.role_name ? <span className="flex items-center gap-1"><span className="grid size-5 place-items-center rounded-full bg-brand/10 text-[10px] font-semibold text-brand-soft">{avatarInitial(task.role_name)}</span><span className="c-agent-name">{task.role_name}</span></span> : <span className="text-faint">未指派</span>}
         {task.error ? <span className="text-danger">✗</span> : null}</span>
@@ -248,35 +248,35 @@ export function BoardPage() {
   return <>
     <PageHeader title="任务" copy="任务状态机、依赖交付、审批和代码整合保持确定性。" actions={<Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={17} />新建任务</Button>} />
     <StatsStrip />
-    <Card className="mb-5 mt-4 flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
+    <Card className="mb-4 mt-3 flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
       <span className="flex items-center gap-2 px-2 text-sm text-muted"><ListFilter size={16} />筛选</span>
       <select className={inputClass + " sm:w-40"} value={roleID} onChange={event => setRoleID(event.target.value)} aria-label="按角色筛选"><option value="">全部角色</option>{roles.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
       <select className={inputClass + " sm:w-44"} value={project} onChange={event => setProject(event.target.value)} aria-label="按项目筛选"><option value="">全部项目</option>{projects.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
       <select className={inputClass + " sm:w-36"} value={status} onChange={event => setStatus(event.target.value)} aria-label="按状态筛选"><option value="">全部状态</option>{Object.entries(STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       <span className="text-sm text-muted sm:ml-auto">{sourceTasks.length} 个实现 · {mergeTasks.length} 个合并</span>
       <div className="flex rounded-xl border border-line bg-elevated p-0.5" role="tablist" aria-label="视图切换">
-        <button role="tab" aria-selected={view === "board"} className={`rounded-[10px] px-3 py-1.5 text-sm ${view === "board" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("board")}>看板</button>
-        <button role="tab" aria-selected={view === "list"} className={`rounded-[10px] px-3 py-1.5 text-sm ${view === "list" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("list")}>列表</button>
+        <button role="tab" aria-selected={view === "board"} className={`rounded-[10px] px-2.5 py-1 text-[13px] ${view === "board" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("board")}>看板</button>
+        <button role="tab" aria-selected={view === "list"} className={`rounded-[10px] px-2.5 py-1 text-[13px] ${view === "list" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("list")}>列表</button>
       </div>
     </Card>
-    {tasks.isLoading ? <Spinner /> : view === "board" ? <div className="grid grid-cols-1 gap-6">
+    {tasks.isLoading ? <Spinner /> : view === "board" ? <div className="grid grid-cols-1 gap-4">
       <section className="board-section"><div className="board-section-head"><div><h2>实现任务</h2><p>项目任务默认按创建时间顺序交付，也可在项目页调整；每项完成后会先处理自己的代码合并。</p></div><div className="board-section-counts"><span>{sourceTasks.length} 个</span></div></div>
         <div className="board-section-lanes">{sourceTasks.length ? <BoardColumnsHTML tasks={sourceTasks} roles={roles.data || []} mergeSection={false} /> : <div className="board-section-empty">没有符合条件的实现任务。</div>}</div></section>
       <section className="board-section merge-section"><div className="board-section-head"><div><h2>代码合并</h2><p>使用新的独立 worktree 验证、解决冲突并自动写入主分支。</p></div><div className="board-section-counts"><span>{mergeTasks.length} 个</span>{mergeTasks.filter(t => mergeBlockReason(t, roles.data || [])).length ? <span className="chip merge-blocked">{mergeTasks.filter(t => mergeBlockReason(t, roles.data || [])).length} 个角色不可用</span> : null}</div></div>
         <div className="board-section-lanes">{mergeTasks.length ? <BoardColumnsHTML tasks={mergeTasks} roles={roles.data || []} mergeSection={true} /> : <div className="board-section-empty">还没有代码合并任务；实现任务完成后会自动出现在这里。</div>}</div></section>
     </div> : <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
-      <th className="px-4 py-2.5 font-medium">ID</th><th className="px-4 py-2.5 font-medium">标题</th><th className="px-4 py-2.5 font-medium">类型</th><th className="px-4 py-2.5 font-medium">角色</th><th className="px-4 py-2.5 font-medium">项目</th><th className="px-4 py-2.5 font-medium">状态</th><th className="px-4 py-2.5 font-medium">轮次</th><th className="px-4 py-2.5 font-medium">创建</th><th className="px-4 py-2.5 font-medium">结束</th><th className="px-4 py-2.5 font-medium">操作</th>
+      <th className="px-3 py-2 font-medium">ID</th><th className="px-3 py-2 font-medium">标题</th><th className="px-3 py-2 font-medium">类型</th><th className="px-3 py-2 font-medium">角色</th><th className="px-3 py-2 font-medium">项目</th><th className="px-3 py-2 font-medium">状态</th><th className="px-3 py-2 font-medium">轮次</th><th className="px-3 py-2 font-medium">创建</th><th className="px-3 py-2 font-medium">结束</th><th className="px-3 py-2 font-medium">操作</th>
     </tr></thead><tbody className="divide-y divide-line">{filtered.map(task => <tr key={task.id} className="list-row hover:bg-hover" onClick={() => navigate(`/tasks/${task.id}`)}>
-      <td className="px-4 py-2.5 text-faint">#{task.id}</td>
-      <td className="t-title px-4 py-2.5"><Link to={`/tasks/${task.id}`} onClick={e => e.stopPropagation()} className="hover:text-brand-soft">{task.title}</Link>{isMergeTask(task) ? <span className="chip merge ml-1">合并 #{task.merge_of}</span> : null}</td>
-      <td className="px-4 py-2.5"><span className="task-list-chips">{taskChips(task, all, roles.data || [])}</span></td>
-      <td className="px-4 py-2.5 text-muted">{task.role_name || "-"}</td>
-      <td className="px-4 py-2.5 text-muted">{task.project_name || "-"}</td>
-      <td className="px-4 py-2.5"><TaskStatus status={task.status} /></td>
-      <td className="px-4 py-2.5 text-faint">{task.review_rounds || "—"}</td>
-      <td className="px-4 py-2.5 text-faint">{formatTime(task.created_at)}</td>
-      <td className="px-4 py-2.5 text-faint">{formatTime(task.finished_at)}</td>
-      <td className="px-4 py-2.5"><span className="ops inline-flex gap-1.5">
+      <td className="px-3 py-2 text-faint">#{task.id}</td>
+      <td className="t-title px-3 py-2"><Link to={`/tasks/${task.id}`} onClick={e => e.stopPropagation()} className="hover:text-brand-soft">{task.title}</Link>{isMergeTask(task) ? <span className="chip merge ml-1">合并 #{task.merge_of}</span> : null}</td>
+      <td className="px-3 py-2"><span className="task-list-chips">{taskChips(task, all, roles.data || [])}</span></td>
+      <td className="px-3 py-2 text-muted">{task.role_name || "-"}</td>
+      <td className="px-3 py-2 text-muted">{task.project_name || "-"}</td>
+      <td className="px-3 py-2"><TaskStatus status={task.status} /></td>
+      <td className="px-3 py-2 text-faint">{task.review_rounds || "—"}</td>
+      <td className="px-3 py-2 text-faint">{formatTime(task.created_at)}</td>
+      <td className="px-3 py-2 text-faint">{formatTime(task.finished_at)}</td>
+      <td className="px-3 py-2"><span className="ops inline-flex gap-1.5">
         {canRetryTask(task, all) ? <Button size="sm" variant="ghost" title={retryTaskLabel(task)} onClick={e => { e.stopPropagation(); mutateStatus.mutate({ id: task.id, status: "queued" }); }}><RotateCcw size={13} /><span className="hidden sm:inline">{retryTaskLabel(task)}</span></Button> : null}
         {canDeleteTask(task) ? <Button size="sm" variant="danger" title="删除任务" onClick={e => { e.stopPropagation(); if (confirm(`删除任务 #${task.id}？执行日志、worktree、任务分支及其合并子任务将一并删除。`)) removeTask.mutate(task.id); }}><Trash2 size={13} /><span className="hidden sm:inline">删除</span></Button> : null}
       </span></td>
@@ -349,7 +349,7 @@ export function HistoryPage() {
   });
   return <>
     <PageHeader title="历史" copy="已结算任务及其退出原因、审批轮次和时间。" />
-    <Card className="mb-5 flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
+    <Card className="mb-4 flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
       <span className="flex items-center gap-2 px-2 text-sm text-muted"><ListFilter size={16} />筛选</span>
       <select className={inputClass + " sm:w-40"} value={roleID} onChange={event => setRoleID(event.target.value)} aria-label="按角色筛选"><option value="">全部角色</option>{roles.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
       <select className={inputClass + " sm:w-36"} value={status} onChange={event => setStatus(event.target.value)} aria-label="按状态筛选"><option value="">全部状态</option>{Object.entries(STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
@@ -362,20 +362,20 @@ export function HistoryPage() {
       </div>
     </Card>
     {tasks.isLoading ? <Spinner /> : filtered.length ? <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
-      <th className="px-4 py-2.5 font-medium"><input type="checkbox" aria-label="全选非合并任务" checked={filtered.filter(t => !t.merge_of).every(t => selected.has(t.id)) && filtered.some(t => !t.merge_of)} onChange={toggleAll} className="size-4 accent-[var(--brand)]" /></th>
-      <th className="px-4 py-2.5 font-medium">ID</th><th className="px-4 py-2.5 font-medium">标题</th><th className="px-4 py-2.5 font-medium">角色</th><th className="px-4 py-2.5 font-medium">项目</th><th className="px-4 py-2.5 font-medium">权限</th><th className="px-4 py-2.5 font-medium">状态</th><th className="px-4 py-2.5 font-medium">轮次</th><th className="px-4 py-2.5 font-medium">创建</th><th className="px-4 py-2.5 font-medium">结束</th><th className="px-4 py-2.5 font-medium">操作</th>
+      <th className="px-3 py-2 font-medium"><input type="checkbox" aria-label="全选非合并任务" checked={filtered.filter(t => !t.merge_of).every(t => selected.has(t.id)) && filtered.some(t => !t.merge_of)} onChange={toggleAll} className="size-4 accent-[var(--brand)]" /></th>
+      <th className="px-3 py-2 font-medium">ID</th><th className="px-3 py-2 font-medium">标题</th><th className="px-3 py-2 font-medium">角色</th><th className="px-3 py-2 font-medium">项目</th><th className="px-3 py-2 font-medium">权限</th><th className="px-3 py-2 font-medium">状态</th><th className="px-3 py-2 font-medium">轮次</th><th className="px-3 py-2 font-medium">创建</th><th className="px-3 py-2 font-medium">结束</th><th className="px-3 py-2 font-medium">操作</th>
     </tr></thead><tbody className="divide-y divide-line">{filtered.map(task => <tr key={task.id} className="history-row hover:bg-hover">
-      <td className="px-4 py-2.5"><input type="checkbox" aria-label={`选择任务 ${task.title}`} checked={selected.has(task.id)} onChange={() => toggle(task.id)} className="size-4 accent-[var(--brand)]" /></td>
-      <td className="px-4 py-2.5 text-faint">#{task.id}</td>
-      <td className="px-4 py-2.5 font-medium"><Link to={`/tasks/${task.id}`} className="hover:text-brand-soft">{task.title}</Link>{task.merge_of ? <span className="chip merge ml-1">合并 #{task.merge_of}</span> : null}</td>
-      <td className="px-4 py-2.5 text-muted">{task.role_name || "-"}</td>
-      <td className="px-4 py-2.5 text-muted">{task.project_name || "-"}</td>
-      <td className="px-4 py-2.5 text-muted">{PERM_LABEL[task.perm] || task.perm}</td>
-      <td className="px-4 py-2.5"><TaskStatus status={task.status} /></td>
-      <td className="px-4 py-2.5 text-faint">{task.review_rounds || ""}</td>
-      <td className="px-4 py-2.5 text-faint">{formatTime(task.created_at)}</td>
-      <td className="px-4 py-2.5 text-faint">{formatTime(task.finished_at)}</td>
-      <td className="px-4 py-2.5"><span className="ops inline-flex gap-1.5">
+      <td className="px-3 py-2"><input type="checkbox" aria-label={`选择任务 ${task.title}`} checked={selected.has(task.id)} onChange={() => toggle(task.id)} className="size-4 accent-[var(--brand)]" /></td>
+      <td className="px-3 py-2 text-faint">#{task.id}</td>
+      <td className="px-3 py-2 font-medium"><Link to={`/tasks/${task.id}`} className="hover:text-brand-soft">{task.title}</Link>{task.merge_of ? <span className="chip merge ml-1">合并 #{task.merge_of}</span> : null}</td>
+      <td className="px-3 py-2 text-muted">{task.role_name || "-"}</td>
+      <td className="px-3 py-2 text-muted">{task.project_name || "-"}</td>
+      <td className="px-3 py-2 text-muted">{PERM_LABEL[task.perm] || task.perm}</td>
+      <td className="px-3 py-2"><TaskStatus status={task.status} /></td>
+      <td className="px-3 py-2 text-faint">{task.review_rounds || ""}</td>
+      <td className="px-3 py-2 text-faint">{formatTime(task.created_at)}</td>
+      <td className="px-3 py-2 text-faint">{formatTime(task.finished_at)}</td>
+      <td className="px-3 py-2"><span className="ops inline-flex gap-1.5">
         {canRetryTask(task, all) ? <Button size="sm" variant="ghost" title={retryTaskLabel(task)} onClick={() => retry.mutate(task.id)}><RotateCcw size={13} /><span className="hidden sm:inline">{retryTaskLabel(task)}</span></Button> : null}
         {canDeleteTask(task) ? <Button size="sm" variant="danger" title="删除任务" onClick={() => confirm(`删除任务 #${task.id}？执行日志、worktree、任务分支及其合并子任务将一并删除。`) && remove.mutate(task.id)}><Trash2 size={13} /><span className="hidden sm:inline">删除</span></Button> : null}
       </span></td>
@@ -556,7 +556,7 @@ export function TaskDetailPage() {
   const filteredLogs = logFilter === "err" ? allLogs.filter(l => l.stream === "err") : allLogs;
   return <>
     <PageHeader title={value.title} copy={`${value.project_name || "无项目"} · ${value.role_name || "未指派"}`} actions={<><TaskStatus status={value.status} /><Button variant="ghost" onClick={() => navigate(-1)}>返回</Button></>} />
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_20rem]">
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
       <div className="min-w-0">
         <section className="task-hero">
           <div className="task-kicker"><span>{mergeTask ? `代码合并任务 · 来源 #${value.merge_of}` : `实现任务 #${value.id}`}</span><span>创建于 {createdAt}</span></div>
@@ -607,7 +607,7 @@ export function TaskDetailPage() {
         </details>
         <WorkspaceCard task={value} />
       </div>
-      <aside className="grid content-start gap-4">
+      <aside className="grid content-start gap-3">
         {mergeTask
           ? <details className="side-collapse side-properties" open>
             <summary><span>合并任务属性</span><span className="section-meta">系统管理</span></summary>

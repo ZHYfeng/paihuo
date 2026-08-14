@@ -85,7 +85,7 @@ export function DirectoryPicker({ open, onOpenChange, initial, onPick }: {
       </div>
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={() => onOpenChange(false)}>取消</Button>
-        <Button variant="primary" disabled={!listing} onClick={() => { if (listing) onPick(listing.path); }}>使用此目录</Button>
+        <Button variant="primary" disabled={!listing} onClick={() => { if (listing) { onPick(listing.path); onOpenChange(false); toast("已选择目录"); } }}>使用此目录</Button>
       </div>
     </div>
   </Dialog>;

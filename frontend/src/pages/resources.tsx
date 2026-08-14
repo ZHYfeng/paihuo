@@ -82,7 +82,7 @@ export function ProjectDetailPage() {
       <Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={16} />新建任务</Button>
     </>} />
     {value.description ? <div className="detail-desc mt-1">{value.description}</div> : null}
-    {stat ? <div className="mt-4 grid gap-4 lg:grid-cols-[auto_minmax(0,1fr)]">
+    {stat ? <div className="mt-3 grid gap-3 lg:grid-cols-[auto_minmax(0,1fr)]">
       <div className="ring" style={{ background: `conic-gradient(var(--brand) ${Math.round(Math.min(100, stat.progress || 0) * 3.6)}deg, color-mix(in srgb, var(--ink) 9%, transparent) 0)` }}>
         <div className="ring-inner"><b>{fmtPct(stat.progress || 0)}</b><span>完成度</span></div>
       </div>
@@ -94,7 +94,7 @@ export function ProjectDetailPage() {
         <DailyChart daily={stat.daily || []} days={14} />
       </div>
     </div> : null}
-    <Card className="mt-5"><div className="mb-4 flex items-center"><div><h2 className="font-semibold">任务</h2><p className="mt-1 text-sm text-muted">待执行任务可拖动或用箭头调整顺序，默认按创建时间。</p></div><span className="ml-auto text-sm text-muted">{implementations.length} 个实现 · {merges.length} 个合并</span></div>
+    <Card className="mt-4"><div className="mb-3 flex items-center"><div><h2 className="font-semibold">任务</h2><p className="mt-1 text-sm text-muted">待执行任务可拖动或用箭头调整顺序，默认按创建时间。</p></div><span className="ml-auto text-sm text-muted">{implementations.length} 个实现 · {merges.length} 个合并</span></div>
       {tasks.isLoading ? <Spinner /> : implementations.length ? <div className="grid gap-2">
         {implementations.map(task => {
           const queued = task.status === "queued";
@@ -116,9 +116,9 @@ export function ProjectDetailPage() {
           </div>;
         })}
       </div> : <Empty title="还没有任务" copy="创建任务并绑定此项目，执行顺序会显示在这里。" action={<Button size="sm" variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={15} />派活</Button>} />}
-      {merges.length ? <><h3 className="mb-2 mt-6 text-sm font-semibold text-muted">代码合并 {merges.length}</h3><div className="grid gap-2">{merges.map(task => <Link key={task.id} to={`/tasks/${task.id}`} className="flex items-center gap-2 rounded-xl border border-line bg-elevated px-4 py-3"><span className="chip merge">合并 #{task.merge_of}</span><span className="min-w-0 flex-1 truncate text-sm font-medium hover:text-brand-soft">{task.title}</span><TaskStatus status={task.status} /></Link>)}</div></> : null}
+      {merges.length ? <><h3 className="mb-2 mt-4 text-sm font-semibold text-muted">代码合并 {merges.length}</h3><div className="grid gap-2">{merges.map(task => <Link key={task.id} to={`/tasks/${task.id}`} className="flex items-center gap-2 rounded-xl border border-line bg-elevated px-3 py-2.5"><span className="chip merge">合并 #{task.merge_of}</span><span className="min-w-0 flex-1 truncate text-sm font-medium hover:text-brand-soft">{task.title}</span><TaskStatus status={task.status} /></Link>)}</div></> : null}
     </Card>
-    {agents.length ? <Card className="mt-6"><h2 className="font-semibold">成员统计</h2><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[36rem] text-left text-sm"><thead><tr className="border-b border-line text-xs uppercase tracking-wide text-muted"><th className="py-2 pr-4 font-medium">角色</th><th className="py-2 pr-4 font-medium">任务</th><th className="py-2 pr-4 font-medium">完成</th><th className="py-2 pr-4 font-medium">失败</th><th className="py-2 pr-4 font-medium">审批轮次</th><th className="py-2 pr-4 font-medium">成功率</th><th className="py-2 font-medium">平均耗时</th></tr></thead><tbody className="divide-y divide-line">{agents.map(agent => <tr key={agent.role_id}><td className="py-3 pr-4"><span className="grid size-5 place-items-center rounded-full bg-brand/10 text-[10px] font-semibold text-brand-soft">{String(agent.role_name || "?").slice(0, 1)}</span><span className="ml-1">{agent.role_name || `角色 #${agent.role_id}`}</span></td><td className="py-3 pr-4">{agent.total}</td><td className="py-3 pr-4">{agent.succeeded}</td><td className="py-3 pr-4">{agent.failed}</td><td className="py-3 pr-4">{agent.reviews || 0}</td><td className="py-3 pr-4">{fmtPct(agent.success_rate)}</td><td className="py-3">{fmtDur(agent.avg_duration)}</td></tr>)}</tbody></table></div></Card> : null}
+    {agents.length ? <Card className="mt-4"><h2 className="font-semibold">成员统计</h2><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[36rem] text-left text-sm"><thead><tr className="border-b border-line text-xs uppercase tracking-wide text-muted"><th className="py-2 pr-3 font-medium">角色</th><th className="py-2 pr-3 font-medium">任务</th><th className="py-2 pr-3 font-medium">完成</th><th className="py-2 pr-3 font-medium">失败</th><th className="py-2 pr-3 font-medium">审批轮次</th><th className="py-2 pr-3 font-medium">成功率</th><th className="py-2 font-medium">平均耗时</th></tr></thead><tbody className="divide-y divide-line">{agents.map(agent => <tr key={agent.role_id}><td className="py-2.5 pr-3"><span className="grid size-5 place-items-center rounded-full bg-brand/10 text-[10px] font-semibold text-brand-soft">{String(agent.role_name || "?").slice(0, 1)}</span><span className="ml-1">{agent.role_name || `角色 #${agent.role_id}`}</span></td><td className="py-2.5 pr-3">{agent.total}</td><td className="py-2.5 pr-3">{agent.succeeded}</td><td className="py-2.5 pr-3">{agent.failed}</td><td className="py-2.5 pr-3">{agent.reviews || 0}</td><td className="py-2.5 pr-3">{fmtPct(agent.success_rate)}</td><td className="py-3">{fmtDur(agent.avg_duration)}</td></tr>)}</tbody></table></div></Card> : null}
     <NewTaskDialog open={createOpen} onOpenChange={setCreateOpen} initialProjectID={id} />
   </>;
 }
@@ -175,7 +175,7 @@ export function ProjectsPage() {
   }, [query.data, search]);
   return <>
     <PageHeader title="项目" copy="项目定义代码目录、隔离边界与工作流归属。" actions={<Button variant="primary" onClick={() => setEditing({ status: "active" })}><CirclePlus size={17} />新建项目</Button>} />
-    <Card className="mb-5 flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
+    <Card className="mb-4 flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
       <span className="flex items-center gap-2 px-2 text-sm text-muted"><Search size={16} />搜索</span>
       <input className={inputClass + " sm:w-64"} placeholder="搜索项目…" value={search} onChange={e => setSearch(e.target.value)} aria-label="搜索项目" />
       <span className="text-sm text-muted sm:ml-auto">{visible.length} 个项目</span>
@@ -187,7 +187,7 @@ export function ProjectsPage() {
       const done = source.filter(t => t.status === "succeeded").length;
       const pct = source.length ? Math.round(done / source.length * 100) : 0;
       const roles = new Set(ts.map(t => t.role_name).filter(Boolean));
-      return <Link key={project.id} to={`/projects/${project.id}`} className="project-card rounded-xl border border-line bg-surface p-4 shadow-card transition hover:border-brand/35">
+      return <Link key={project.id} to={`/projects/${project.id}`} className="project-card rounded-xl border border-line bg-surface p-3.5 shadow-card transition hover:border-brand/35">
         <div className="flex items-start gap-3">
           <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">{project.name}</h2>{project.is_git ? <span className="chip git-chip" title="git 仓库，任务将获得独立 worktree">git</span> : <span className="chip" title="非 git 仓库，任务直接在项目目录执行">非 git</span>}<Badge tone={project.status === "active" ? "good" : "neutral"}>{project.status === "active" ? "进行中" : "已归档"}</Badge></div>
           {project.description ? <p className="mt-2 text-sm leading-6 text-muted">{project.description}</p> : null}</div>
@@ -286,39 +286,39 @@ export function RolesPage() {
   }, [tasks.data]);
   return <>
     <PageHeader title="角色" copy="角色只描述职责与策略；具体命令翻译由 Runtime 承担。" actions={<><Button onClick={() => setStudio({ draft: { name: "", description: "", runtime_id: runtimes.data?.[0]?.id || "pi", max_concurrency: 1, role_config: {} } })}><MessagesSquare size={16} />角色助手</Button><Button variant="primary" onClick={() => setDraft({ runtime_id: runtimes.data?.[0]?.id || "pi", max_concurrency: 1, enabled: true, role_config: {} })}><CirclePlus size={17} />新建角色</Button></>} />
-    <Card className="mb-5 flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
+    <Card className="mb-4 flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
       <span className="flex items-center gap-2 px-2 text-sm text-muted"><Search size={16} />搜索</span>
       <input className={inputClass + " sm:w-64"} placeholder="搜索角色…" value={search} onChange={e => setSearch(e.target.value)} aria-label="搜索角色" />
       <select className={inputClass + " sm:w-44"} value={sort} onChange={e => setSort(e.target.value)} aria-label="角色排序"><option value="name">名称 A-Z</option><option value="created">最近创建</option><option value="concurrency">并发：高到低</option><option value="runtime">智能体</option></select>
       <span className="text-sm text-muted sm:ml-auto">{visible.length} 个角色</span>
       <div className="flex rounded-xl border border-line bg-elevated p-0.5" role="tablist" aria-label="视图切换">
-        <button role="tab" aria-selected={view === "grid"} className={`rounded-[10px] px-3 py-1.5 text-sm ${view === "grid" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("grid")}>卡片</button>
-        <button role="tab" aria-selected={view === "table"} className={`rounded-[10px] px-3 py-1.5 text-sm ${view === "table" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("table")}>表格</button>
+        <button role="tab" aria-selected={view === "grid"} className={`rounded-[10px] px-2.5 py-1 text-[13px] ${view === "grid" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("grid")}>卡片</button>
+        <button role="tab" aria-selected={view === "table"} className={`rounded-[10px] px-2.5 py-1 text-[13px] ${view === "table" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("table")}>表格</button>
       </div>
     </Card>
-    {roles.isLoading ? <Spinner /> : !visible.length ? <Empty title={search ? "没有匹配的角色" : "还没有角色"} copy={search ? "尝试清除搜索词，查看全部任务角色。" : "先创建承担执行、评审或研究职责的角色。"} action={!search ? <Button size="sm" variant="primary" onClick={() => setDraft({ runtime_id: runtimes.data?.[0]?.id || "pi", max_concurrency: 1, enabled: true, role_config: {} })}>创建角色</Button> : undefined} /> : view === "grid" ? <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">{visible.map(role => {
+    {roles.isLoading ? <Spinner /> : !visible.length ? <Empty title={search ? "没有匹配的角色" : "还没有角色"} copy={search ? "尝试清除搜索词，查看全部任务角色。" : "先创建承担执行、评审或研究职责的角色。"} action={!search ? <Button size="sm" variant="primary" onClick={() => setDraft({ runtime_id: runtimes.data?.[0]?.id || "pi", max_concurrency: 1, enabled: true, role_config: {} })}>创建角色</Button> : undefined} /> : view === "grid" ? <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">{visible.map(role => {
     const stat = roleStats.get(role.id) || { total: 0, inFlight: 0, review: 0 };
     return <Card key={role.id}>
       <div className="flex items-start gap-3"><div className="min-w-0"><button className="text-left" onClick={() => setDetail(role)}><h2 className="font-semibold hover:text-brand-soft">{role.name}</h2></button><div className="flex flex-wrap items-center gap-2"><Badge tone={role.enabled ? "good" : "neutral"}>{role.enabled ? "启用" : "停用"}</Badge></div><p className="mt-2 min-h-10 text-sm leading-5 text-muted">{role.description || "未设置描述"}</p></div><Button size="sm" variant="ghost" className="ml-auto" aria-label={`编辑 ${role.name}`} onClick={() => setDraft({ ...role, role_config: role.role_config || {} })}><Pencil size={15} /></Button></div>
-      <div className="mt-4 flex flex-wrap gap-2"><Badge tone="info">{role.runtime_id}</Badge><span title="默认模型"><Badge>{role.role_config.model || "默认模型"}</Badge></span><span title="同一角色最多同时运行的任务数"><Badge>并发 {role.max_concurrency}</Badge></span></div>
-      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted"><span><b>{stat.total}</b> 任务</span><span><b style={{ color: "var(--st-running)" }}>{stat.inFlight}</b> 进行中</span><span><b style={{ color: "var(--st-review)" }}>{stat.review}</b> 待审批</span></div>
-      <div className="mt-4 flex flex-wrap gap-2"><Button size="sm" variant="ghost" onClick={() => setDetail(role)}>详情</Button><Button size="sm" variant="ghost" onClick={() => setStudio({ role, draft: { name: role.name, description: role.description, runtime_id: role.runtime_id, max_concurrency: role.max_concurrency, role_config: role.role_config || {} } })}>助手</Button><Button size="sm" variant="ghost" onClick={() => duplicate.mutate(role)}><Copy size={14} />复制</Button><Button size="sm" variant="ghost" onClick={() => toggle.mutate(role)}>{role.enabled ? "停用" : "启用"}</Button><Button size="sm" variant="danger" className="ml-auto" onClick={() => confirm(`删除角色“${role.name}”？`) && remove.mutate(role)}><Trash2 size={14} />删除</Button></div>
+      <div className="mt-3 flex flex-wrap gap-2"><Badge tone="info">{role.runtime_id}</Badge><span title="默认模型"><Badge>{role.role_config.model || "默认模型"}</Badge></span><span title="同一角色最多同时运行的任务数"><Badge>并发 {role.max_concurrency}</Badge></span></div>
+      <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted"><span><b>{stat.total}</b> 任务</span><span><b style={{ color: "var(--st-running)" }}>{stat.inFlight}</b> 进行中</span><span><b style={{ color: "var(--st-review)" }}>{stat.review}</b> 待审批</span></div>
+      <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" variant="ghost" onClick={() => setDetail(role)}>详情</Button><Button size="sm" variant="ghost" onClick={() => setStudio({ role, draft: { name: role.name, description: role.description, runtime_id: role.runtime_id, max_concurrency: role.max_concurrency, role_config: role.role_config || {} } })}>助手</Button><Button size="sm" variant="ghost" onClick={() => duplicate.mutate(role)}><Copy size={14} />复制</Button><Button size="sm" variant="ghost" onClick={() => toggle.mutate(role)}>{role.enabled ? "停用" : "启用"}</Button><Button size="sm" variant="danger" className="ml-auto" onClick={() => confirm(`删除角色“${role.name}”？`) && remove.mutate(role)}><Trash2 size={14} />删除</Button></div>
     </Card>;
   })}</div> : <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
-    <th className="px-4 py-2.5 font-medium">角色</th><th className="px-4 py-2.5 font-medium">智能体</th><th className="px-4 py-2.5 font-medium">模型</th><th className="px-4 py-2.5 font-medium">最大并发</th><th className="px-4 py-2.5 font-medium">任务</th><th className="px-4 py-2.5 font-medium">进行中</th><th className="px-4 py-2.5 font-medium">待审批</th><th className="px-4 py-2.5 font-medium">状态</th><th className="px-4 py-2.5 font-medium">操作</th>
+    <th className="px-3 py-2 font-medium">角色</th><th className="px-3 py-2 font-medium">智能体</th><th className="px-3 py-2 font-medium">模型</th><th className="px-3 py-2 font-medium">最大并发</th><th className="px-3 py-2 font-medium">任务</th><th className="px-3 py-2 font-medium">进行中</th><th className="px-3 py-2 font-medium">待审批</th><th className="px-3 py-2 font-medium">状态</th><th className="px-3 py-2 font-medium">操作</th>
   </tr></thead><tbody className="divide-y divide-line">{visible.map(role => { const stat = roleStats.get(role.id) || { total: 0, inFlight: 0, review: 0 }; return <tr key={role.id} className="hover:bg-hover">
-    <td className="px-4 py-2.5"><button className="text-left font-medium hover:text-brand-soft" onClick={() => setDetail(role)}>{role.name}</button><div className="mt-0.5 max-w-72 truncate text-xs text-faint">{role.description || "未设置描述"}</div></td>
-    <td className="px-4 py-2.5"><Badge tone="info">{role.runtime_id}</Badge></td>
-    <td className="px-4 py-2.5 text-muted">{role.role_config.model || "默认"}</td>
-    <td className="px-4 py-2.5 text-muted">{role.max_concurrency}</td>
-    <td className="px-4 py-2.5 text-muted">{stat.total}</td>
-    <td className="px-4 py-2.5 text-muted">{stat.inFlight}</td>
-    <td className="px-4 py-2.5 text-muted">{stat.review}</td>
-    <td className="px-4 py-2.5"><Badge tone={role.enabled ? "good" : "neutral"}>{role.enabled ? "启用" : "停用"}</Badge></td>
-    <td className="px-4 py-2.5"><span className="inline-flex gap-1.5"><Button size="sm" variant="ghost" onClick={() => setDraft({ ...role, role_config: role.role_config || {} })}>编辑</Button><Button size="sm" variant="ghost" onClick={() => duplicate.mutate(role)}>复制</Button><Button size="sm" variant="ghost" onClick={() => toggle.mutate(role)}>{role.enabled ? "停用" : "启用"}</Button><Button size="sm" variant="danger" onClick={() => confirm(`删除角色“${role.name}”？`) && remove.mutate(role)}><Trash2 size={14} />删除</Button></span></td>
+    <td className="px-3 py-2"><button className="text-left font-medium hover:text-brand-soft" onClick={() => setDetail(role)}>{role.name}</button><div className="mt-0.5 max-w-72 truncate text-xs text-faint">{role.description || "未设置描述"}</div></td>
+    <td className="px-3 py-2"><Badge tone="info">{role.runtime_id}</Badge></td>
+    <td className="px-3 py-2 text-muted">{role.role_config.model || "默认"}</td>
+    <td className="px-3 py-2 text-muted">{role.max_concurrency}</td>
+    <td className="px-3 py-2 text-muted">{stat.total}</td>
+    <td className="px-3 py-2 text-muted">{stat.inFlight}</td>
+    <td className="px-3 py-2 text-muted">{stat.review}</td>
+    <td className="px-3 py-2"><Badge tone={role.enabled ? "good" : "neutral"}>{role.enabled ? "启用" : "停用"}</Badge></td>
+    <td className="px-3 py-2"><span className="inline-flex gap-1.5"><Button size="sm" variant="ghost" onClick={() => setDraft({ ...role, role_config: role.role_config || {} })}>编辑</Button><Button size="sm" variant="ghost" onClick={() => duplicate.mutate(role)}>复制</Button><Button size="sm" variant="ghost" onClick={() => toggle.mutate(role)}>{role.enabled ? "停用" : "启用"}</Button><Button size="sm" variant="danger" onClick={() => confirm(`删除角色“${role.name}”？`) && remove.mutate(role)}><Trash2 size={14} />删除</Button></span></td>
   </tr>; })}</tbody></table></Card>}
     <Dialog open={draft !== null} onOpenChange={open => !open && setDraft(null)} title={draft?.id ? "编辑角色" : "新建角色"} wide>
-      {draft && <form className="grid gap-5" onSubmit={(event: FormEvent) => { event.preventDefault(); save.mutate(draft); }}>
+      {draft && <form className="grid gap-4" onSubmit={(event: FormEvent) => { event.preventDefault(); save.mutate(draft); }}>
         <div className="grid gap-4 md:grid-cols-2"><Field label="名称"><input className={inputClass} required value={draft.name || ""} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="Runtime"><select className={inputClass} value={draft.runtime_id} onChange={e => setDraft({ ...draft, runtime_id: e.target.value, role_config: {} })}>{runtimes.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field></div>
         <Field label="职责说明"><textarea className={inputClass + " min-h-24 py-3"} value={draft.description || ""} onChange={e => setDraft({ ...draft, description: e.target.value })} /></Field>
         <div className="grid gap-4 md:grid-cols-2">{selected?.fields.map(field => <RuntimeFieldInput key={field.key} field={resolveRuntimeField(field, draft.role_config, skills.data)} value={field.builtin ? draft.role_config[field.key as keyof RoleConfig] : draft.role_config.custom?.[field.key]} onChange={value => setDraft({ ...draft, role_config: field.builtin ? { ...draft.role_config, [field.key]: value } : { ...draft.role_config, custom: { ...draft.role_config.custom, [field.key]: String(value) } } })} />)}</div>
@@ -339,12 +339,12 @@ function RoleDetailDialog({ role, onClose }: { role: Role; onClose(): void }) {
     ["总任务", stat?.total ?? 0], ["进行中", stat?.in_flight ?? 0], ["完成", stat?.succeeded ?? 0], ["失败", stat?.failed ?? 0], ["取消", stat?.cancelled ?? 0], ["待审批", stat?.reviews ?? 0], ["成功率", stat ? `${Math.round(stat.success_rate)}%` : 0]
   ];
   return <Dialog open onOpenChange={open => !open && onClose()} title={`角色详情 · ${role.name}`} wide>
-    <div className="grid gap-5">
+    <div className="grid gap-4">
       <div className="flex flex-wrap gap-2"><Badge tone="info">{role.runtime_id}</Badge><Badge>并发 {role.max_concurrency}</Badge>{role.role_config.model && <Badge>{role.role_config.model}</Badge>}<Badge tone={role.enabled ? "good" : "neutral"}>{role.enabled ? "启用" : "停用"}</Badge></div>
       {role.description && <p className="text-sm leading-6 text-muted">{role.description}</p>}
       {stats.isLoading ? <Spinner /> : stat ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(([label, num]) => <div key={label} className="rounded-xl border border-line bg-elevated p-3"><div className="text-xs text-muted">{label}</div><div className="mt-1 text-xl font-semibold">{num}</div></div>)}</div> : null}
       {stat?.status_counts?.length ? <div className="grid gap-1.5"><StatusBarHTML counts={stat.status_counts} />{stat.status_counts.map((item: StatusCount) => <div key={item.status} className="flex items-center gap-3 text-sm"><span className="w-20 shrink-0 text-muted">{statusLabelOf(item.status)}</span><div className="h-2 flex-1 overflow-hidden rounded-full bg-elevated"><div className="h-full rounded-full bg-brand/70" style={{ width: `${stat.total ? (item.count / stat.total) * 100 : 0}%` }} /></div><span className="w-8 text-right text-muted">{item.count}</span></div>)}</div> : null}
-      {stat?.projects?.length ? <div><h3 className="mb-2 text-sm font-semibold text-muted">项目产出</h3><div className="overflow-x-auto"><table className="w-full min-w-[30rem] text-left text-sm"><thead><tr className="border-b border-line text-xs uppercase tracking-wide text-muted"><th className="py-2 pr-4 font-medium">项目</th><th className="py-2 pr-4 font-medium">总任务</th><th className="py-2 pr-4 font-medium">完成</th><th className="py-2 pr-4 font-medium">失败</th><th className="py-2 font-medium">成功率</th></tr></thead><tbody className="divide-y divide-line">{stat.projects.map((item: RoleProjectStat) => <tr key={item.project_id}><td className="py-3 pr-4">{item.project_name || `项目 #${item.project_id}`}</td><td className="py-3 pr-4">{item.total}</td><td className="py-3 pr-4">{item.succeeded}</td><td className="py-3 pr-4">{item.failed}</td><td className="py-3">{Math.round(item.success_rate)}%</td></tr>)}</tbody></table></div></div> : null}
+      {stat?.projects?.length ? <div><h3 className="mb-2 text-sm font-semibold text-muted">项目产出</h3><div className="overflow-x-auto"><table className="w-full min-w-[30rem] text-left text-sm"><thead><tr className="border-b border-line text-xs uppercase tracking-wide text-muted"><th className="py-2 pr-3 font-medium">项目</th><th className="py-2 pr-3 font-medium">总任务</th><th className="py-2 pr-3 font-medium">完成</th><th className="py-2 pr-3 font-medium">失败</th><th className="py-2 font-medium">成功率</th></tr></thead><tbody className="divide-y divide-line">{stat.projects.map((item: RoleProjectStat) => <tr key={item.project_id}><td className="py-2.5 pr-3">{item.project_name || `项目 #${item.project_id}`}</td><td className="py-2.5 pr-3">{item.total}</td><td className="py-2.5 pr-3">{item.succeeded}</td><td className="py-2.5 pr-3">{item.failed}</td><td className="py-3">{Math.round(item.success_rate)}%</td></tr>)}</tbody></table></div></div> : null}
       {recent.data?.length ? <div><h3 className="mb-2 text-sm font-semibold text-muted">最近任务</h3><div className="grid gap-2">{recent.data.map(task => <Link key={task.id} to={`/tasks/${task.id}`} className="flex items-center gap-2 rounded-xl border border-line bg-elevated px-3 py-2 text-sm hover:border-brand/40"><span className="min-w-0 flex-1 truncate">{task.title}</span><TaskStatus status={task.status} /></Link>)}</div></div> : null}
       <div className="flex justify-end"><Button variant="ghost" onClick={onClose}>关闭</Button></div>
     </div>
@@ -390,7 +390,7 @@ function RoleStudioDialog({ initial, onClose }: { initial: { role?: Role; draft:
   });
   const tabClass = (active: boolean) => `flex-1 rounded-lg px-3 py-2 text-sm font-medium ${active ? "bg-brand/15 text-brand-soft" : "text-muted hover:bg-hover"}`;
   return <Dialog open onOpenChange={open => !open && onClose()} title={`角色助手 · ${initial.role?.name || "新角色"}`} description="向创建助手描述职责，或测试草稿的实际表现；助手可改写草稿。">
-    <div className="grid gap-5">
+    <div className="grid gap-4">
       <div className="grid gap-4 md:grid-cols-2"><Field label="名称"><input className={inputClass} required value={draft.name || ""} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="Runtime"><select className={inputClass} value={draft.runtime_id} onChange={e => setDraft({ ...draft, runtime_id: e.target.value, role_config: {} })}>{runtimes.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field></div>
       <Field label="职责说明"><textarea className={inputClass + " min-h-20 py-3"} value={draft.description || ""} onChange={e => setDraft({ ...draft, description: e.target.value })} /></Field>
       <div className="grid gap-4 md:grid-cols-2">{selected?.fields.map(field => <RuntimeFieldInput key={field.key} field={resolveRuntimeField(field, draft.role_config, skills.data)} value={field.builtin ? draft.role_config[field.key as keyof RoleConfig] : draft.role_config.custom?.[field.key]} onChange={value => setField(field, value)} />)}</div>
@@ -402,7 +402,7 @@ function RoleStudioDialog({ initial, onClose }: { initial: { role?: Role; draft:
       </div> : <div className="grid gap-3">
         <div className="max-h-32 overflow-auto rounded-xl bg-elevated p-3 text-sm">{testMessages.map((msg, index) => <div key={index} className="mb-2"><b className="text-ink">{msg.role === "user" ? "测试输入" : "助手"}</b><p className="whitespace-pre-wrap text-muted">{msg.content}</p></div>)}</div>
         <div className="flex gap-2"><input className={inputClass} value={testMsg} onChange={e => setTestMsg(e.target.value)} placeholder="输入测试消息，模拟角色实际执行…" onKeyDown={e => { if (e.key === "Enter" && testMsg.trim() && !test.isPending) test.mutate(); }} /><Button disabled={!testMsg.trim() || test.isPending} onClick={() => test.mutate()}>运行测试</Button></div>
-        {test.isPending ? <Spinner label="测试执行中" /> : testOutput ? <pre className="max-h-52 overflow-auto whitespace-pre-wrap rounded-xl bg-[#080d15] p-4 text-xs leading-5 text-slate-200">{testOutput}</pre> : null}
+        {test.isPending ? <Spinner label="测试执行中" /> : testOutput ? <pre className="max-h-52 overflow-auto whitespace-pre-wrap rounded-xl bg-[#080d15] p-3 text-xs leading-5 text-slate-200">{testOutput}</pre> : null}
       </div>}
       <MutationError value={save.error} />
       <div className="flex justify-end gap-2"><Button variant="ghost" onClick={onClose}>关闭</Button><Button variant="primary" disabled={save.isPending} onClick={() => save.mutate()}>保存角色</Button></div>
@@ -493,9 +493,9 @@ export function RuntimesPage() {
             : <p className="text-warning">{provision.login_hint || "请在服务器终端完成登录"}</p>
           : <p className="font-mono text-muted" title="官方安装命令">$ {provision.install_cmd || "（请参考官方文档）"}</p>}
       </div> : null}
-      <div className="mt-4 flex flex-wrap gap-2">{runtime.capabilities.map(cap => <Badge key={cap} tone="info">{cap}</Badge>)}</div>
-      <div className="mt-4 text-xs text-muted">{runtime.models?.length || 0} 个可用模型 · {runtime.fields.length} 个配置字段</div>
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap gap-2">{runtime.capabilities.map(cap => <Badge key={cap} tone="info">{cap}</Badge>)}</div>
+      <div className="mt-3 text-xs text-muted">{runtime.models?.length || 0} 个可用模型 · {runtime.fields.length} 个配置字段</div>
+      <div className="mt-3 flex flex-wrap gap-2">
         {provision && !provision.installed ? <Button size="sm" variant="primary" onClick={() => startInstall(runtime.id)}><Download size={15} />安装</Button> : null}
         {provision && provision.installed ? <Button size="sm" onClick={() => startInstall(runtime.id)}><RefreshCcw size={14} />重装/更新</Button> : null}
         {provision && provision.installed && provision.login_hint ? <Button size="sm" variant="ghost" onClick={() => void copyText(provision.login_hint)}><Copy size={14} />复制登录指引</Button> : null}

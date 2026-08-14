@@ -53,18 +53,18 @@ export function ApprovalsPage() {
 
   return <>
     <PageHeader title="审批" copy="主线上的一道闸口：任务交付与 Workflow 采纳集中在这里裁决；批准后进入代码整合或冻结执行。" />
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(18rem,.8fr)]">
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(18rem,.8fr)]">
       <section>
         <div className="mb-3 flex items-center"><h2 className="font-semibold">任务交付</h2><span className="ml-auto text-sm text-faint">{reviewTasks.length} 条等待裁决</span></div>
         {tasks.isLoading ? <Spinner /> : reviewTasks.length ? <div className="grid gap-2">
-          {reviewTasks.map(task => <article key={task.id} className="rounded-xl border border-line bg-elevated p-4 transition hover:border-brand/35">
+          {reviewTasks.map(task => <article key={task.id} className="rounded-xl border border-line bg-elevated p-3.5 transition hover:border-brand/35">
             <div className="flex flex-wrap items-center gap-2"><span className="text-xs text-faint">#{task.id}</span>
               <Link to={`/tasks/${task.id}`} className="truncate font-semibold text-ink hover:text-brand-soft" onClick={e => e.stopPropagation()}>{task.title}</Link>
               {task.project_name ? <span className="chip">{task.project_name}</span> : null}
               {task.role_name ? <span className="chip">{task.role_name}</span> : null}
               <span className="ml-auto text-xs text-faint">{formatTime(task.created_at)}</span></div>
             {task.body ? <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted">{task.body}</p> : null}
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-2.5 flex flex-wrap gap-2">
               <Button size="sm" variant="primary" disabled={patchTask.isPending} onClick={() => patchTask.mutate({ id: task.id, status: "succeeded" })}><Check size={14} />通过并派发合并</Button>
               <Button size="sm" onClick={() => { setRejectNote(""); setRejectTask(task); }}><RotateCcw size={14} />驳回重做</Button>
               <Button size="sm" variant="danger" onClick={() => { if (confirm(`取消任务 #${task.id}？`)) patchTask.mutate({ id: task.id, status: "cancelled" }); }}><X size={14} />取消</Button>
@@ -76,11 +76,11 @@ export function ApprovalsPage() {
       <section>
         <div className="mb-3 flex items-center"><h2 className="font-semibold">Workflow 采纳</h2><span className="ml-auto text-sm text-faint">{pendingProposals.length} 条待冻结</span></div>
         {proposals.isLoading ? <Spinner /> : pendingProposals.length ? <div className="grid gap-2">
-          {pendingProposals.map(item => <article key={item.id} className="rounded-xl border border-line bg-elevated p-4 transition hover:border-brand/35">
+          {pendingProposals.map(item => <article key={item.id} className="rounded-xl border border-line bg-elevated p-3.5 transition hover:border-brand/35">
             <div className="flex items-center gap-2"><span className="text-xs text-faint">#{item.id}</span>
               <Link to={`/workflow-proposals/${item.id}`} className="truncate font-semibold text-ink hover:text-brand-soft">{item.spec.goal}</Link></div>
             <p className="mt-2 text-xs text-muted">{item.spec.nodes.length} 个节点 · 预算 {item.spec.limits.budget} · revision {item.revision}</p>
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-2.5 flex flex-wrap gap-2">
               <Button size="sm" variant="primary" disabled={adoptProposal.isPending} onClick={() => { if (confirm("采纳该 Proposal 并冻结为不可变 Plan？")) adoptProposal.mutate(item); }}><Snowflake size={14} />采纳并冻结</Button>
               <Button size="sm" variant="ghost" onClick={() => navigate(`/workflow-proposals/${item.id}`)}>查看规格</Button>
             </div>

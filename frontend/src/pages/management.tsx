@@ -82,24 +82,24 @@ export function SkillsPage() {
 
   return <>
     <PageHeader title="技能" copy="导入带 SKILL.md 的目录；角色只保存技能选择，执行时由平台物化挂载。" />
-    <div className="mb-5 flex gap-1 rounded-xl border border-line bg-surface p-1">
+    <div className="mb-4 flex gap-1 rounded-xl border border-line bg-surface p-1">
       <button className={cn("flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all", tab === "skills" ? "bg-brand text-white" : "text-muted hover:bg-hover hover:text-ink")} onClick={() => setTab("skills")}>技能库</button>
       <button className={cn("flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all", tab === "extensions" ? "bg-brand text-white" : "text-muted hover:bg-hover hover:text-ink")} onClick={() => setTab("extensions")}>Pi 扩展</button>
     </div>
     {tab === "skills" && <>
-      <Card className="mb-5"><form className="flex flex-col gap-3 sm:flex-row" onSubmit={e => { e.preventDefault(); importOne.mutate(); }}><input className={inputClass} required placeholder="技能目录绝对路径" value={path} onChange={e => setPath(e.target.value)} /><Button variant="primary"><CirclePlus size={16} />导入</Button><Button type="button" onClick={() => scan.mutate()}><FolderSearch size={16} />递归扫描</Button></form>{(importOne.error || scan.error) instanceof Error && <p className="mt-3 text-sm text-danger">{(importOne.error || scan.error as Error).message}</p>}
+      <Card className="mb-4"><form className="flex flex-col gap-3 sm:flex-row" onSubmit={e => { e.preventDefault(); importOne.mutate(); }}><input className={inputClass} required placeholder="技能目录绝对路径" value={path} onChange={e => setPath(e.target.value)} /><Button variant="primary"><CirclePlus size={16} />导入</Button><Button type="button" onClick={() => scan.mutate()}><FolderSearch size={16} />递归扫描</Button></form>{(importOne.error || scan.error) instanceof Error && <p className="mt-3 text-sm text-danger">{(importOne.error || scan.error as Error).message}</p>}
         {scanSummary ? <p className="mt-3 rounded-xl border border-success/25 bg-success/10 px-3 py-2 text-sm text-success">{scanSummary}</p> : null}</Card>
-      <Card className="mb-5 grid gap-3">
+      <Card className="mb-4 grid gap-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <input className={inputClass + " sm:flex-1"} placeholder="搜索技能名称或说明…" value={search} onChange={e => setSearch(e.target.value)} />
           {skills.data?.length ? <div className="flex shrink-0 rounded-xl border border-line bg-elevated p-0.5" role="tablist" aria-label="视图切换">
-            <button role="tab" aria-selected={view === "grid"} className={cn("rounded-[10px] px-3 py-1.5 text-sm", view === "grid" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted")} onClick={() => setView("grid")}>卡片</button>
-            <button role="tab" aria-selected={view === "list"} className={cn("rounded-[10px] px-3 py-1.5 text-sm", view === "list" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted")} onClick={() => setView("list")}>列表</button>
+            <button role="tab" aria-selected={view === "grid"} className={cn("rounded-[10px] px-2.5 py-1 text-[13px]", view === "grid" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted")} onClick={() => setView("grid")}>卡片</button>
+            <button role="tab" aria-selected={view === "list"} className={cn("rounded-[10px] px-2.5 py-1 text-[13px]", view === "list" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted")} onClick={() => setView("list")}>列表</button>
           </div> : null}
         </div>
         {allTags.length > 0 && <div className="flex flex-wrap gap-2">{allTags.map(tag => <button key={tag} type="button" className={cn("rounded-full border px-2.5 py-1 text-xs font-medium transition-colors", tagFilter.has(tag) ? "border-brand bg-brand/10 text-brand-soft" : "border-line bg-elevated text-muted hover:bg-hover")} onClick={() => toggleTag(tag)}>{tag}</button>)}</div>}
       </Card>
-      <div className="mb-5 flex flex-wrap items-center gap-3">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <span className="text-sm text-muted">{filtered.length === skills.data?.length ? `${skills.data.length} 个技能` : `${filtered.length} / ${skills.data?.length} 个技能`} · 已选 {selected.size} 项</span>
         <Button variant="danger" size="sm" disabled={selected.size === 0} onClick={() => confirm(`删除选中的 ${selected.size} 个技能？`) && removeMany.mutate(Array.from(selected))}><Trash2 size={15} />删除选中</Button>
       </div>
@@ -109,37 +109,37 @@ export function SkillsPage() {
             <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-ink"><input type="checkbox" className="size-4" checked={list.every(skill => selected.has(skill.id))} onChange={() => toggleGroup(list)} />来源目录 <code className="font-mono text-xs font-normal text-muted">{dir}</code></label>
             <span className="text-xs text-muted">{list.length} 个</span>
           </div>
-          <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">{list.map(skill => (
+          <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">{list.map(skill => (
             <Card key={skill.id}>
               <div className="flex items-start gap-3">
                 <button className="min-w-0 text-left" onClick={() => openDetail(skill)}><h2 className="font-semibold hover:text-brand-soft">{skill.name}</h2><p className="mt-2 text-sm leading-5 text-muted">{skill.description || "暂无说明"}</p></button>
                 <div className="ml-auto flex items-center gap-1"><input type="checkbox" className="size-4" aria-label={`选择 ${skill.name}`} checked={selected.has(skill.id)} onChange={() => toggleSkill(skill.id)} /><Button variant="danger" size="sm" aria-label={`删除 ${skill.name}`} onClick={() => confirm(`删除 skill「${skill.name}」？将同时移除工作目录中的副本，已引用它的角色配置会失效。`) && remove.mutate(skill.id)}><Trash2 size={15} /></Button></div>
               </div>
-              <div className="mt-4 flex flex-wrap items-center gap-2">{skill.tags?.length ? skill.tags.map(tag => <Badge key={tag}>{tag}</Badge>) : <Badge>未分类</Badge>}<Button size="sm" variant="ghost" className="ml-auto" onClick={() => void copyContent(skill)}><Copy size={13} />复制 SKILL.md</Button></div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">{skill.tags?.length ? skill.tags.map(tag => <Badge key={tag}>{tag}</Badge>) : <Badge>未分类</Badge>}<Button size="sm" variant="ghost" className="ml-auto" onClick={() => void copyContent(skill)}><Copy size={13} />复制 SKILL.md</Button></div>
             </Card>
           ))}</div>
         </div>
       )) : <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
-        <th className="w-10 px-4 py-2.5 font-medium"><input type="checkbox" className="size-4" aria-label="全选技能" checked={filtered.length > 0 && filtered.every(skill => selected.has(skill.id))} onChange={() => toggleGroup(filtered)} /></th>
-        <th className="px-4 py-2.5 font-medium">技能</th><th className="px-4 py-2.5 font-medium">标签</th><th className="px-4 py-2.5 font-medium">来源目录</th><th className="px-4 py-2.5 font-medium">添加时间</th><th className="px-4 py-2.5 font-medium">操作</th>
+        <th className="w-10 px-3 py-2 font-medium"><input type="checkbox" className="size-4" aria-label="全选技能" checked={filtered.length > 0 && filtered.every(skill => selected.has(skill.id))} onChange={() => toggleGroup(filtered)} /></th>
+        <th className="px-3 py-2 font-medium">技能</th><th className="px-3 py-2 font-medium">标签</th><th className="px-3 py-2 font-medium">来源目录</th><th className="px-3 py-2 font-medium">添加时间</th><th className="px-3 py-2 font-medium">操作</th>
       </tr></thead><tbody className="divide-y divide-line">{filtered.map(skill => <tr key={skill.id} className="hover:bg-hover">
-        <td className="px-4 py-2.5"><input type="checkbox" className="size-4" aria-label={`选择 ${skill.name}`} checked={selected.has(skill.id)} onChange={() => toggleSkill(skill.id)} /></td>
-        <td className="px-4 py-2.5 font-medium"><button className="hover:text-brand-soft" onClick={() => openDetail(skill)}>{skill.name}</button><div className="mt-0.5 max-w-80 truncate text-xs text-faint">{skill.description || ""}</div></td>
-        <td className="px-4 py-2.5"><span className="inline-flex flex-wrap gap-1">{skill.tags?.length ? skill.tags.map(tag => <Badge key={tag}>{tag}</Badge>) : <Badge>未分类</Badge>}</span></td>
-        <td className="max-w-52 truncate px-4 py-2.5 font-mono text-xs text-muted" title={skill.dir}>{skill.dir}</td>
-        <td className="px-4 py-2.5 text-faint">{formatTime(skill.created_at)}</td>
-        <td className="px-4 py-2.5"><span className="inline-flex gap-1.5"><Button size="sm" variant="ghost" onClick={() => void copyContent(skill)}><Copy size={13} />复制</Button><Button size="sm" variant="danger" onClick={() => confirm(`删除 skill「${skill.name}」？`) && remove.mutate(skill.id)}><Trash2 size={13} /></Button></span></td>
+        <td className="px-3 py-2"><input type="checkbox" className="size-4" aria-label={`选择 ${skill.name}`} checked={selected.has(skill.id)} onChange={() => toggleSkill(skill.id)} /></td>
+        <td className="px-3 py-2 font-medium"><button className="hover:text-brand-soft" onClick={() => openDetail(skill)}>{skill.name}</button><div className="mt-0.5 max-w-80 truncate text-xs text-faint">{skill.description || ""}</div></td>
+        <td className="px-3 py-2"><span className="inline-flex flex-wrap gap-1">{skill.tags?.length ? skill.tags.map(tag => <Badge key={tag}>{tag}</Badge>) : <Badge>未分类</Badge>}</span></td>
+        <td className="max-w-52 truncate px-3 py-2 font-mono text-xs text-muted" title={skill.dir}>{skill.dir}</td>
+        <td className="px-3 py-2 text-faint">{formatTime(skill.created_at)}</td>
+        <td className="px-3 py-2"><span className="inline-flex gap-1.5"><Button size="sm" variant="ghost" onClick={() => void copyContent(skill)}><Copy size={13} />复制</Button><Button size="sm" variant="danger" onClick={() => confirm(`删除 skill「${skill.name}」？`) && remove.mutate(skill.id)}><Trash2 size={13} /></Button></span></td>
       </tr>)}</tbody></table></Card>}
     </>}
     {tab === "extensions" && <>
-      <div className="mb-5 flex flex-wrap gap-2">
+      <div className="mb-4 flex flex-wrap gap-2">
         <Button variant="primary" onClick={() => openExtDialog("install")}><CirclePlus size={16} />安装扩展</Button>
         <Button variant="danger" onClick={() => openExtDialog("remove")}><Trash2 size={16} />移除扩展</Button>
       </div>
-      {extensions.isLoading ? <Spinner /> : <Card>{extensions.data?.error && <p className="mb-3 text-sm text-danger">{extensions.data.error}</p>}<pre className="whitespace-pre-wrap break-words rounded-xl border border-line bg-elevated p-4 font-mono text-xs leading-5 text-ink">{extensions.data?.raw || "（无输出）"}</pre></Card>}
+      {extensions.isLoading ? <Spinner /> : <Card>{extensions.data?.error && <p className="mb-3 text-sm text-danger">{extensions.data.error}</p>}<pre className="whitespace-pre-wrap break-words rounded-xl border border-line bg-elevated p-3 font-mono text-xs leading-5 text-ink">{extensions.data?.raw || "（无输出）"}</pre></Card>}
     </>}
     <Dialog open={detail !== null} onOpenChange={open => !open && setDetail(null)} title={detail?.name || "技能详情"} wide>{detail && <>
-      <div className="mb-5">
+      <div className="mb-4">
         <div className="mb-2 text-sm font-medium">标签</div>
         <div className="flex flex-wrap gap-2">{draftTags.map(tag => <span key={tag} className="inline-flex items-center gap-1 rounded-full border border-line bg-elevated px-2.5 py-1 text-xs font-medium text-muted">{tag}<button type="button" className="text-faint hover:text-danger" aria-label={`移除标签 ${tag}`} onClick={() => setDraftTags(tags => tags.filter(t => t !== tag))}><X size={12} /></button></span>)}{draftTags.length === 0 && <span className="text-sm text-faint">暂无标签</span>}</div>
         <div className="mt-2 flex flex-col gap-2 sm:flex-row">
@@ -152,12 +152,12 @@ export function SkillsPage() {
     </>}</Dialog>
     <Dialog open={extDialog === "install"} onOpenChange={open => !open && setExtDialog(null)} title="安装 Pi 扩展" description="输入本地路径或包名，由 Pi 负责安装并挂载。">{extDialog === "install" && <form className="grid gap-4" onSubmit={e => { e.preventDefault(); installExt.mutate(extSource); }}>
       <Field label="来源（本地路径或包名）"><input className={inputClass} required placeholder="例如 /path/to/ext 或 some-package" value={extSource} onChange={e => setExtSource(e.target.value)} /></Field>
-      {extOutput && <>{extOutput.error && <p className="text-sm text-danger">{extOutput.error}</p>}<pre className="whitespace-pre-wrap break-words rounded-xl border border-line bg-elevated p-4 font-mono text-xs leading-5 text-ink">{extOutput.raw || "（无输出）"}</pre></>}
+      {extOutput && <>{extOutput.error && <p className="text-sm text-danger">{extOutput.error}</p>}<pre className="whitespace-pre-wrap break-words rounded-xl border border-line bg-elevated p-3 font-mono text-xs leading-5 text-ink">{extOutput.raw || "（无输出）"}</pre></>}
       <div className="flex justify-end"><Button variant="primary" disabled={installExt.isPending}>{installExt.isPending ? "安装中…" : "安装"}</Button></div>
     </form>}</Dialog>
     <Dialog open={extDialog === "remove"} onOpenChange={open => !open && setExtDialog(null)} title="移除 Pi 扩展" description="按扩展名移除，卸载后技能列表会同步刷新。">{extDialog === "remove" && <form className="grid gap-4" onSubmit={e => { e.preventDefault(); removeExt.mutate(extName); }}>
       <Field label="扩展名"><input className={inputClass} required placeholder="扩展名称" value={extName} onChange={e => setExtName(e.target.value)} /></Field>
-      {extOutput && <>{extOutput.error && <p className="text-sm text-danger">{extOutput.error}</p>}<pre className="whitespace-pre-wrap break-words rounded-xl border border-line bg-elevated p-4 font-mono text-xs leading-5 text-ink">{extOutput.raw || "（无输出）"}</pre></>}
+      {extOutput && <>{extOutput.error && <p className="text-sm text-danger">{extOutput.error}</p>}<pre className="whitespace-pre-wrap break-words rounded-xl border border-line bg-elevated p-3 font-mono text-xs leading-5 text-ink">{extOutput.raw || "（无输出）"}</pre></>}
       <div className="flex justify-end"><Button variant="danger" disabled={removeExt.isPending}>{removeExt.isPending ? "移除中…" : "移除"}</Button></div>
     </form>}</Dialog>
   </>;
@@ -270,16 +270,16 @@ export function SchedulesPage() {
   return <>
     <PageHeader title="定时任务" copy="按 cron 创建普通任务，后续仍遵守同一依赖、权限和并发策略。" actions={<Button variant="primary" onClick={() => openEditor(null)}><CalendarPlus size={16} />新建定时任务</Button>} />
     {schedules.isLoading ? <Spinner /> : schedules.data?.length ? <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
-      <th className="px-4 py-2.5 font-medium">名称</th><th className="px-4 py-2.5 font-medium">周期</th><th className="px-4 py-2.5 font-medium">角色</th><th className="px-4 py-2.5 font-medium">类型</th><th className="px-4 py-2.5 font-medium">任务标题</th><th className="px-4 py-2.5 font-medium">上次执行</th><th className="px-4 py-2.5 font-medium">启用</th><th className="px-4 py-2.5 font-medium">操作</th>
+      <th className="px-3 py-2 font-medium">名称</th><th className="px-3 py-2 font-medium">周期</th><th className="px-3 py-2 font-medium">角色</th><th className="px-3 py-2 font-medium">类型</th><th className="px-3 py-2 font-medium">任务标题</th><th className="px-3 py-2 font-medium">上次执行</th><th className="px-3 py-2 font-medium">启用</th><th className="px-3 py-2 font-medium">操作</th>
     </tr></thead><tbody className="divide-y divide-line">{schedules.data.map(item => <tr key={item.id} className="hover:bg-hover">
-      <td className="px-4 py-2.5 font-medium">{item.name}</td>
-      <td className="px-4 py-2.5"><span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-elevated px-2.5 py-1 text-xs text-muted">{scheduleLabel(item.cron)}</span><code className="ml-1 text-[11px] text-faint">{item.cron}</code></td>
-      <td className="px-4 py-2.5 text-muted">{item.role_name || "-"}</td>
-      <td className="px-4 py-2.5">{item.project_id ? <><span className="chip">项目 · {item.project_name || `#${item.project_id}`}</span>{item.block_on_failure ? <span className="chip merge-blocked">失败阻塞</span> : null}</> : <span className="chip">通用</span>}</td>
-      <td className="max-w-52 truncate px-4 py-2.5 text-muted" title={item.title_template}>{item.title_template || "-"}</td>
-      <td className="px-4 py-2.5 text-faint">{String(item.last_run_at || "-").slice(0, 16).replace("T", " ")}</td>
-      <td className="px-4 py-2.5"><label className="sw" title={item.enabled ? "停用" : "启用"}><input type="checkbox" checked={item.enabled} onChange={() => toggle.mutate(item)} /><span className="sw-slider" /></label></td>
-      <td className="px-4 py-2.5"><span className="inline-flex gap-1.5"><Button size="sm" variant="ghost" onClick={() => openEditor(item)}><Pencil size={14} />编辑</Button><Button size="sm" variant="danger" aria-label={`删除 ${item.name}`} onClick={() => confirm(`删除“${item.name}”？`) && remove.mutate(item)}><Trash2 size={14} /></Button></span></td>
+      <td className="px-3 py-2 font-medium">{item.name}</td>
+      <td className="px-3 py-2"><span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-elevated px-2.5 py-1 text-xs text-muted">{scheduleLabel(item.cron)}</span><code className="ml-1 text-[11px] text-faint">{item.cron}</code></td>
+      <td className="px-3 py-2 text-muted">{item.role_name || "-"}</td>
+      <td className="px-3 py-2">{item.project_id ? <><span className="chip">项目 · {item.project_name || `#${item.project_id}`}</span>{item.block_on_failure ? <span className="chip merge-blocked">失败阻塞</span> : null}</> : <span className="chip">通用</span>}</td>
+      <td className="max-w-52 truncate px-3 py-2 text-muted" title={item.title_template}>{item.title_template || "-"}</td>
+      <td className="px-3 py-2 text-faint">{String(item.last_run_at || "-").slice(0, 16).replace("T", " ")}</td>
+      <td className="px-3 py-2"><label className="sw" title={item.enabled ? "停用" : "启用"}><input type="checkbox" checked={item.enabled} onChange={() => toggle.mutate(item)} /><span className="sw-slider" /></label></td>
+      <td className="px-3 py-2"><span className="inline-flex gap-1.5"><Button size="sm" variant="ghost" onClick={() => openEditor(item)}><Pencil size={14} />编辑</Button><Button size="sm" variant="danger" aria-label={`删除 ${item.name}`} onClick={() => confirm(`删除“${item.name}”？`) && remove.mutate(item)}><Trash2 size={14} /></Button></span></td>
     </tr>)}</tbody></table></Card> : <Empty title="没有定时任务" copy="为周期性检查、同步或报告创建一条 cron 规则。" />}
     <Dialog open={draft !== null} onOpenChange={open => !open && setDraft(null)} title={draft?.id ? "编辑定时任务" : "新建定时任务"} wide>{draft && <form className="grid gap-4" onSubmit={(e: FormEvent) => { e.preventDefault(); save.mutate(draft); }}>
       <div className="grid gap-4 md:grid-cols-2"><Field label="名称"><input className={inputClass} required value={draft.name || ""} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="任务标题"><input className={inputClass} required value={draft.title_template || ""} onChange={e => setDraft({ ...draft, title_template: e.target.value })} /></Field></div>
@@ -310,7 +310,7 @@ export function TemplatesPage() {
   const save = useMutation({ mutationFn: (value: Partial<TaskTemplate>) => value.id ? api(`/templates/${value.id}`, { method: "PATCH", body: { name: value.name, body: value.body, role_id: value.role_id || null } }) : api("/templates", { method: "POST", body: { name: value.name, body: value.body, role_id: value.role_id || null } }), onSuccess: () => { setDraft(null); qc.invalidateQueries({ queryKey: ["templates"] }); } });
   const remove = useMutation({ mutationFn: (id: number) => api(`/templates/${id}`, { method: "DELETE" }), onSuccess: () => qc.invalidateQueries({ queryKey: ["templates"] }) });
   return <><PageHeader title="模板" copy="维护可复用的任务说明，并可预选执行角色。" actions={<Button variant="primary" onClick={() => setDraft({})}><CirclePlus size={16} />新建模板</Button>} />
-    {templates.isLoading ? <Spinner /> : templates.data?.length ? <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint"><th className="px-4 py-2.5 font-medium">名称</th><th className="px-4 py-2.5 font-medium">角色</th><th className="px-4 py-2.5 font-medium">内容</th><th className="px-4 py-2.5 font-medium">操作</th></tr></thead><tbody className="divide-y divide-line">{templates.data.map(item => <tr key={item.id} className="hover:bg-hover"><td className="px-4 py-2.5 font-medium">{item.name}</td><td className="px-4 py-2.5">{item.role_name ? <Badge tone="info">{item.role_name}</Badge> : <span className="text-faint">不预选</span>}</td><td className="max-w-96 truncate px-4 py-2.5 text-muted" title={item.body}>{item.body}</td><td className="px-4 py-2.5"><span className="inline-flex gap-1.5"><Button size="sm" variant="ghost" onClick={() => setDraft(item)}><Pencil size={14} />编辑</Button><Button size="sm" variant="danger" aria-label={`删除模板 ${item.name}`} onClick={() => confirm(`删除模板“${item.name}”？`) && remove.mutate(item.id)}><Trash2 size={14} /></Button></span></td></tr>)}</tbody></table></Card> : <Empty title="没有模板" copy="把常用任务说明沉淀为模板。" />}
+    {templates.isLoading ? <Spinner /> : templates.data?.length ? <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint"><th className="px-3 py-2 font-medium">名称</th><th className="px-3 py-2 font-medium">角色</th><th className="px-3 py-2 font-medium">内容</th><th className="px-3 py-2 font-medium">操作</th></tr></thead><tbody className="divide-y divide-line">{templates.data.map(item => <tr key={item.id} className="hover:bg-hover"><td className="px-3 py-2 font-medium">{item.name}</td><td className="px-3 py-2">{item.role_name ? <Badge tone="info">{item.role_name}</Badge> : <span className="text-faint">不预选</span>}</td><td className="max-w-96 truncate px-3 py-2 text-muted" title={item.body}>{item.body}</td><td className="px-3 py-2"><span className="inline-flex gap-1.5"><Button size="sm" variant="ghost" onClick={() => setDraft(item)}><Pencil size={14} />编辑</Button><Button size="sm" variant="danger" aria-label={`删除模板 ${item.name}`} onClick={() => confirm(`删除模板“${item.name}”？`) && remove.mutate(item.id)}><Trash2 size={14} /></Button></span></td></tr>)}</tbody></table></Card> : <Empty title="没有模板" copy="把常用任务说明沉淀为模板。" />}
     <Dialog open={draft !== null} onOpenChange={open => !open && setDraft(null)} title={draft?.id ? "编辑模板" : "新建模板"}>{draft && <form className="grid gap-4" onSubmit={e => { e.preventDefault(); save.mutate(draft); }}><Field label="名称"><input className={inputClass} required value={draft.name || ""} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="内容"><textarea className={inputClass + " min-h-48 py-3"} required value={draft.body || ""} onChange={e => setDraft({ ...draft, body: e.target.value })} /></Field><Field label="默认角色"><select className={inputClass} value={draft.role_id || ""} onChange={e => setDraft({ ...draft, role_id: e.target.value ? Number(e.target.value) : null })}><option value="">不预选</option>{roles.data?.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}</select></Field><div className="flex justify-end"><Button variant="primary">保存</Button></div></form>}</Dialog>
   </>;
 }
@@ -345,7 +345,7 @@ export function SettingsPage() {
   const effectiveRetention = retention || values.retention_days || "";
   const effectiveWt = wtRetention || values.worktree_retention_days || "";
   return <><PageHeader title="设置" copy="设置即时写入平台配置；敏感凭据仍通过服务端环境变量提供。" actions={<Button variant="primary" onClick={() => save.mutate()} disabled={save.isPending}><Save size={16} />保存</Button>} />
-    <div className="grid gap-4">
+    <div className="grid gap-3">
       <Card><div className="mb-1 flex items-center"><h2 className="font-semibold">保留与清理</h2></div>
         <div className="grid gap-4">
           <div className="set-row grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-xl border border-line bg-elevated px-4 py-3"><div><div className="text-sm font-semibold">任务保留期限</div><div className="mt-0.5 text-xs text-muted">终态任务在数据库保留的天数，超过后由每小时自动清理回收。</div></div><div className="flex items-center gap-2"><input type="number" min={1} className={inputClass + " w-24"} value={effectiveRetention} placeholder="天数" aria-label="任务保留天数" onChange={e => setRetention(e.target.value)} /><Button size="sm" disabled={saveKey.isPending} onClick={() => saveKey.mutate({ key: "retention_days", value: effectiveRetention })}>保存</Button></div></div>
@@ -360,7 +360,7 @@ export function SettingsPage() {
         </div>
         {cleanup.error instanceof Error && <p className="mt-3 text-sm text-danger">{cleanup.error.message}</p>}
       </Card>
-      <Card><div className="grid gap-5 md:grid-cols-2">{Object.entries(values).filter(([key]) => key !== "retention_days" && key !== "worktree_retention_days").map(([key, value]) => <Field key={key} label={key}><input className={inputClass} value={value} onChange={e => setDraft({ ...values, [key]: e.target.value })} /></Field>)}</div>{!Object.keys(values).length && <Empty title="没有可编辑设置" copy="当前实例使用内置默认策略。" />}</Card>
+      <Card><div className="grid gap-4 md:grid-cols-2">{Object.entries(values).filter(([key]) => key !== "retention_days" && key !== "worktree_retention_days").map(([key, value]) => <Field key={key} label={key}><input className={inputClass} value={value} onChange={e => setDraft({ ...values, [key]: e.target.value })} /></Field>)}</div>{!Object.keys(values).length && <Empty title="没有可编辑设置" copy="当前实例使用内置默认策略。" />}</Card>
     </div>
   </>;
 }
