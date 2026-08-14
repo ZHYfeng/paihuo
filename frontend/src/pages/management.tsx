@@ -81,10 +81,10 @@ export function SkillsPage() {
   };
 
   return <>
-    <PageHeader kicker="Reusable capabilities" title="技能" copy="导入带 SKILL.md 的目录；角色只保存技能选择，执行时由平台物化挂载。" />
+    <PageHeader title="技能" copy="导入带 SKILL.md 的目录；角色只保存技能选择，执行时由平台物化挂载。" />
     <div className="mb-5 flex gap-1 rounded-xl border border-line bg-surface p-1">
-      <button className={cn("flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors", tab === "skills" ? "bg-brand text-white" : "text-muted hover:bg-hover hover:text-ink")} onClick={() => setTab("skills")}>技能库</button>
-      <button className={cn("flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors", tab === "extensions" ? "bg-brand text-white" : "text-muted hover:bg-hover hover:text-ink")} onClick={() => setTab("extensions")}>Pi 扩展</button>
+      <button className={cn("flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all", tab === "skills" ? "bg-brand text-white" : "text-muted hover:bg-hover hover:text-ink")} onClick={() => setTab("skills")}>技能库</button>
+      <button className={cn("flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all", tab === "extensions" ? "bg-brand text-white" : "text-muted hover:bg-hover hover:text-ink")} onClick={() => setTab("extensions")}>Pi 扩展</button>
     </div>
     {tab === "skills" && <>
       <Card className="mb-5"><form className="flex flex-col gap-3 sm:flex-row" onSubmit={e => { e.preventDefault(); importOne.mutate(); }}><input className={inputClass} required placeholder="技能目录绝对路径" value={path} onChange={e => setPath(e.target.value)} /><Button variant="primary"><CirclePlus size={16} />导入</Button><Button type="button" onClick={() => scan.mutate()}><FolderSearch size={16} />递归扫描</Button></form>{(importOne.error || scan.error) instanceof Error && <p className="mt-3 text-sm text-danger">{(importOne.error || scan.error as Error).message}</p>}
@@ -119,7 +119,7 @@ export function SkillsPage() {
             </Card>
           ))}</div>
         </div>
-      )) : <Card className="overflow-hidden p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
+      )) : <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
         <th className="w-10 px-4 py-2.5 font-medium"><input type="checkbox" className="size-4" aria-label="全选技能" checked={filtered.length > 0 && filtered.every(skill => selected.has(skill.id))} onChange={() => toggleGroup(filtered)} /></th>
         <th className="px-4 py-2.5 font-medium">技能</th><th className="px-4 py-2.5 font-medium">标签</th><th className="px-4 py-2.5 font-medium">来源目录</th><th className="px-4 py-2.5 font-medium">添加时间</th><th className="px-4 py-2.5 font-medium">操作</th>
       </tr></thead><tbody className="divide-y divide-line">{filtered.map(skill => <tr key={skill.id} className="hover:bg-hover">
@@ -268,8 +268,8 @@ export function SchedulesPage() {
   };
   const preview = unsupported && !dirty ? "当前任务使用了自定义周期；调整上面的选项后会转换为常用周期。" : `将按“${scheduleLabel(cronFromFields(frequency, weekday, monthday, time))}”执行`;
   return <>
-    <PageHeader kicker="Cron automation" title="定时任务" copy="按 cron 创建普通任务，后续仍遵守同一依赖、权限和并发策略。" actions={<Button variant="primary" onClick={() => openEditor(null)}><CalendarPlus size={16} />新建定时任务</Button>} />
-    {schedules.isLoading ? <Spinner /> : schedules.data?.length ? <Card className="overflow-hidden p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
+    <PageHeader title="定时任务" copy="按 cron 创建普通任务，后续仍遵守同一依赖、权限和并发策略。" actions={<Button variant="primary" onClick={() => openEditor(null)}><CalendarPlus size={16} />新建定时任务</Button>} />
+    {schedules.isLoading ? <Spinner /> : schedules.data?.length ? <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
       <th className="px-4 py-2.5 font-medium">名称</th><th className="px-4 py-2.5 font-medium">周期</th><th className="px-4 py-2.5 font-medium">角色</th><th className="px-4 py-2.5 font-medium">类型</th><th className="px-4 py-2.5 font-medium">任务标题</th><th className="px-4 py-2.5 font-medium">上次执行</th><th className="px-4 py-2.5 font-medium">启用</th><th className="px-4 py-2.5 font-medium">操作</th>
     </tr></thead><tbody className="divide-y divide-line">{schedules.data.map(item => <tr key={item.id} className="hover:bg-hover">
       <td className="px-4 py-2.5 font-medium">{item.name}</td>
@@ -309,8 +309,8 @@ export function TemplatesPage() {
   const [draft, setDraft] = useState<Partial<TaskTemplate> | null>(null);
   const save = useMutation({ mutationFn: (value: Partial<TaskTemplate>) => value.id ? api(`/templates/${value.id}`, { method: "PATCH", body: { name: value.name, body: value.body, role_id: value.role_id || null } }) : api("/templates", { method: "POST", body: { name: value.name, body: value.body, role_id: value.role_id || null } }), onSuccess: () => { setDraft(null); qc.invalidateQueries({ queryKey: ["templates"] }); } });
   const remove = useMutation({ mutationFn: (id: number) => api(`/templates/${id}`, { method: "DELETE" }), onSuccess: () => qc.invalidateQueries({ queryKey: ["templates"] }) });
-  return <><PageHeader kicker="Prompt library" title="模板" copy="维护可复用的任务说明，并可预选执行角色。" actions={<Button variant="primary" onClick={() => setDraft({})}><CirclePlus size={16} />新建模板</Button>} />
-    {templates.isLoading ? <Spinner /> : templates.data?.length ? <Card className="overflow-hidden p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint"><th className="px-4 py-2.5 font-medium">名称</th><th className="px-4 py-2.5 font-medium">角色</th><th className="px-4 py-2.5 font-medium">内容</th><th className="px-4 py-2.5 font-medium">操作</th></tr></thead><tbody className="divide-y divide-line">{templates.data.map(item => <tr key={item.id} className="hover:bg-hover"><td className="px-4 py-2.5 font-medium">{item.name}</td><td className="px-4 py-2.5">{item.role_name ? <Badge tone="info">{item.role_name}</Badge> : <span className="text-faint">不预选</span>}</td><td className="max-w-96 truncate px-4 py-2.5 text-muted" title={item.body}>{item.body}</td><td className="px-4 py-2.5"><span className="inline-flex gap-1.5"><Button size="sm" variant="ghost" onClick={() => setDraft(item)}><Pencil size={14} />编辑</Button><Button size="sm" variant="danger" aria-label={`删除模板 ${item.name}`} onClick={() => confirm(`删除模板“${item.name}”？`) && remove.mutate(item.id)}><Trash2 size={14} /></Button></span></td></tr>)}</tbody></table></Card> : <Empty title="没有模板" copy="把常用任务说明沉淀为模板。" />}
+  return <><PageHeader title="模板" copy="维护可复用的任务说明，并可预选执行角色。" actions={<Button variant="primary" onClick={() => setDraft({})}><CirclePlus size={16} />新建模板</Button>} />
+    {templates.isLoading ? <Spinner /> : templates.data?.length ? <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint"><th className="px-4 py-2.5 font-medium">名称</th><th className="px-4 py-2.5 font-medium">角色</th><th className="px-4 py-2.5 font-medium">内容</th><th className="px-4 py-2.5 font-medium">操作</th></tr></thead><tbody className="divide-y divide-line">{templates.data.map(item => <tr key={item.id} className="hover:bg-hover"><td className="px-4 py-2.5 font-medium">{item.name}</td><td className="px-4 py-2.5">{item.role_name ? <Badge tone="info">{item.role_name}</Badge> : <span className="text-faint">不预选</span>}</td><td className="max-w-96 truncate px-4 py-2.5 text-muted" title={item.body}>{item.body}</td><td className="px-4 py-2.5"><span className="inline-flex gap-1.5"><Button size="sm" variant="ghost" onClick={() => setDraft(item)}><Pencil size={14} />编辑</Button><Button size="sm" variant="danger" aria-label={`删除模板 ${item.name}`} onClick={() => confirm(`删除模板“${item.name}”？`) && remove.mutate(item.id)}><Trash2 size={14} /></Button></span></td></tr>)}</tbody></table></Card> : <Empty title="没有模板" copy="把常用任务说明沉淀为模板。" />}
     <Dialog open={draft !== null} onOpenChange={open => !open && setDraft(null)} title={draft?.id ? "编辑模板" : "新建模板"}>{draft && <form className="grid gap-4" onSubmit={e => { e.preventDefault(); save.mutate(draft); }}><Field label="名称"><input className={inputClass} required value={draft.name || ""} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="内容"><textarea className={inputClass + " min-h-48 py-3"} required value={draft.body || ""} onChange={e => setDraft({ ...draft, body: e.target.value })} /></Field><Field label="默认角色"><select className={inputClass} value={draft.role_id || ""} onChange={e => setDraft({ ...draft, role_id: e.target.value ? Number(e.target.value) : null })}><option value="">不预选</option>{roles.data?.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}</select></Field><div className="flex justify-end"><Button variant="primary">保存</Button></div></form>}</Dialog>
   </>;
 }
@@ -344,7 +344,7 @@ export function SettingsPage() {
   if (settings.isLoading) return <Spinner />;
   const effectiveRetention = retention || values.retention_days || "";
   const effectiveWt = wtRetention || values.worktree_retention_days || "";
-  return <><PageHeader kicker="Platform policy" title="设置" copy="设置即时写入平台配置；敏感凭据仍通过服务端环境变量提供。" actions={<Button variant="primary" onClick={() => save.mutate()} disabled={save.isPending}><Save size={16} />保存</Button>} />
+  return <><PageHeader title="设置" copy="设置即时写入平台配置；敏感凭据仍通过服务端环境变量提供。" actions={<Button variant="primary" onClick={() => save.mutate()} disabled={save.isPending}><Save size={16} />保存</Button>} />
     <div className="grid gap-4">
       <Card><div className="mb-1 flex items-center"><h2 className="font-semibold">保留与清理</h2></div>
         <div className="grid gap-4">

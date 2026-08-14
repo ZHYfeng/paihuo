@@ -1,60 +1,54 @@
 {{define "base"}}
 <!DOCTYPE html>
 <html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<title>登录 · 派活 PaiHuo</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23d7fa89'/%3E%3Cstop offset='1' stop-color='%2374e0bc'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='15' fill='url(%23g)'/%3E%3Ctext x='32' y='44' font-size='32' font-weight='800' text-anchor='middle' fill='%2311150f' font-family='sans-serif'%3E派%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/login.css">
-</head>
-<body class="login-body">
-<main class="login-stage">
-  <section class="login-hero" aria-label="派活产品介绍">
-    <div class="login-hero-brand">
-      <span class="logo-mark">派</span>
-      <span><b>派活</b><small>PAIHUO / OPERATIONS</small></span>
-    </div>
-    <div class="login-hero-copy">
-      <span class="login-eyebrow">SELF-HOSTED AGENT ORCHESTRATION</span>
-      <h1>把复杂工作，<br><em>派给正确角色。</em></h1>
-      <p>任务、项目、审批与本机智能体，在一个清晰的交付中枢里持续运转。</p>
-      <div class="login-proof" aria-label="产品特性">
-        <span><i></i>单机部署</span>
-        <span><i></i>实时执行</span>
-        <span><i></i>数据自持</span>
-      </div>
-    </div>
-    <div class="login-flow" aria-hidden="true">
-      <div class="flow-orbit flow-orbit-a"></div>
-      <div class="flow-orbit flow-orbit-b"></div>
-      <span class="flow-node flow-node-a"></span>
-      <span class="flow-node flow-node-b"></span>
-      <span class="flow-node flow-node-c"></span>
-      <div class="flow-core"><span>派</span><small>DISPATCH</small></div>
-    </div>
-    <div class="login-hero-foot"><span>01</span> LOCAL-FIRST CONTROL PLANE</div>
-  </section>
 
-  <section class="login-card" aria-labelledby="loginTitle">
-    <div class="login-card-head">
-      <span class="login-card-mark" aria-hidden="true"></span>
-      <span>安全入口</span>
-      <small>LOCAL ACCESS</small>
-    </div>
-    <div class="login-kicker">OPERATIONS CONSOLE</div>
-    <h2 id="loginTitle">欢迎回来</h2>
-    <p class="login-sub">验证访问令牌，进入你的智能体调度中枢。</p>
-    {{if .LoginError}}<div class="login-error" role="alert">{{.LoginError}}</div>{{end}}
-    <form method="post" action="/login" autocomplete="off">
-      <label class="field" for="loginToken">访问令牌</label>
-      <input type="password" name="token" id="loginToken" placeholder="输入令牌" autofocus required>
-      <button type="submit" class="btn primary login-btn">进入工作台 <span aria-hidden="true">→</span></button>
-    </form>
-    <div class="login-foot"><span class="runtime-dot"></span><span>数据与任务均在本机运行</span><small>ENCRYPTED SESSION</small></div>
-  </section>
-</main>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>登录 · 派活 PaiHuo</title>
+  <link rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236f93f8'/%3E%3Cstop offset='1' stop-color='%233f63dc'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='15' fill='url(%23g)'/%3E%3Ctext x='32' y='45' font-size='34' font-weight='800' text-anchor='middle' fill='%23ffffff' font-family='sans-serif'%3E派%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/login.css">
+</head>
+
+<body class="login-body">
+  <main class="login-stage">
+    <section class="login-hero" aria-label="派活产品介绍">
+      <div class="login-hero-brand">
+        <span class="logo-mark">派</span>
+        <span><b>派活</b><small>PAIHUO</small></span>
+      </div>
+      <div class="login-hero-copy">
+        <h1>把复杂工作，<br><em>派给正确角色。</em></h1>
+        <p>任务、项目、审批与本机智能体，在一个清晰的交付中枢里持续运转。</p>
+        <div class="login-proof" aria-label="产品特性">
+          <span><i></i>单机部署</span>
+          <span><i></i>实时执行</span>
+          <span><i></i>数据自持</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="login-card" aria-labelledby="loginTitle">
+      <div class="login-card-head">
+        <span class="login-card-mark" aria-hidden="true"></span>
+        <span>安全入口</span>
+        <small>LOCAL ACCESS</small>
+      </div>
+      <h2 id="loginTitle">欢迎回来</h2>
+      <p class="login-sub">验证访问令牌，进入你的智能体调度中枢。</p>
+      {{if .LoginError}}<div class="login-error" role="alert">{{.LoginError}}</div>{{end}}
+      <form method="post" action="/login" autocomplete="off">
+        <label class="field" for="loginToken">访问令牌</label>
+        <input type="password" name="token" id="loginToken" placeholder="输入令牌" autofocus required>
+        <button type="submit" class="btn primary login-btn">进入工作台 <span aria-hidden="true">→</span></button>
+      </form>
+      <div class="login-foot"><span class="runtime-dot"></span><span>数据与任务均在本机运行</span><small>ENCRYPTED SESSION</small>
+      </div>
+    </section>
+  </main>
 </body>
+
 </html>
 {{end}}

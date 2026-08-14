@@ -23,7 +23,7 @@ const WorkflowsPage = route(() => import("./pages/workflows"), "WorkflowsPage");
 const WorkflowProposalPage = route(() => import("./pages/workflows"), "WorkflowProposalPage");
 const WorkflowPlanPage = route(() => import("./pages/workflows"), "WorkflowPlanPage");
 
-const router = createBrowserRouter([{
+const routes: Array<{ path: string; element: React.ReactNode; errorElement?: React.ReactNode; children?: Array<{ index?: boolean; path?: string; element: React.ReactNode }> }> = [{
   path: "/",
   element: <AppShell />,
   errorElement: <RouteError />,
@@ -48,7 +48,9 @@ const router = createBrowserRouter([{
     { path: "settings", element: <SettingsPage /> },
     { path: "*", element: <NotFound /> }
   ]
-}]);
+}];
+
+const router = createBrowserRouter(routes, { basename: import.meta.env.DEV ? import.meta.env.BASE_URL : undefined });
 
 const client = new QueryClient({ defaultOptions: { queries: { staleTime: 10_000, retry: 1, refetchOnWindowFocus: false }, mutations: { retry: false } } });
 

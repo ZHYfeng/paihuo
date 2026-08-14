@@ -13,13 +13,14 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 
 export function Button({ variant = "secondary", size = "md", className, ...props }: ButtonProps) {
   return <button {...props} className={cn(
-    "inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border px-4 font-medium transition-colors",
-    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:pointer-events-none disabled:opacity-45",
-    size === "sm" ? "min-h-9 px-3 text-sm" : "text-sm",
-    variant === "primary" && "border-brand bg-brand text-white hover:bg-brand-strong",
-    variant === "secondary" && "border-line bg-elevated text-ink hover:bg-hover",
+    "inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border px-3.5 text-sm font-medium transition-colors duration-150",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-2 focus-visible:ring-offset-canvas",
+    "disabled:pointer-events-none disabled:opacity-45",
+    size === "sm" ? "min-h-8 px-2.5 text-[13px]" : "",
+    variant === "primary" && "border-transparent bg-brand text-white hover:bg-brand-strong active:translate-y-px",
+    variant === "secondary" && "border-line bg-surface text-ink hover:border-brand/40 hover:bg-hover active:translate-y-px",
     variant === "ghost" && "border-transparent bg-transparent text-muted hover:bg-hover hover:text-ink",
-    variant === "danger" && "border-danger/30 bg-danger/10 text-danger hover:bg-danger/20",
+    variant === "danger" && "border-danger/30 bg-danger/10 text-danger hover:bg-danger/20 hover:border-danger/45",
     className
   )} />;
 }
@@ -34,17 +35,17 @@ export function Dialog({ open, onOpenChange, title, description, children, wide 
 }) {
   return <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-slate-950/65 backdrop-blur-sm data-[state=open]:animate-in" />
+      <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-sm data-[state=open]:animate-in" />
       <DialogPrimitive.Content className={cn(
-        "fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-2xl border border-line bg-surface p-6 shadow-2xl",
+        "fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-xl border border-line bg-surface p-5 shadow-pop",
         "focus:outline-none", wide ? "max-w-5xl" : "max-w-xl"
       )}>
-        <DialogPrimitive.Title className="pr-10 text-xl font-semibold tracking-tight text-ink">{title}</DialogPrimitive.Title>
-        {description && <DialogPrimitive.Description className="mt-1 text-sm text-muted">{description}</DialogPrimitive.Description>}
-        <DialogPrimitive.Close className="absolute right-4 top-4 grid size-10 place-items-center rounded-xl text-muted hover:bg-hover hover:text-ink focus-visible:ring-2 focus-visible:ring-focus" aria-label="关闭">
-          <X size={18} />
+        <DialogPrimitive.Title className="pr-8 text-lg font-bold tracking-tight text-ink">{title}</DialogPrimitive.Title>
+        {description && <DialogPrimitive.Description className="mt-1 text-sm leading-6 text-muted">{description}</DialogPrimitive.Description>}
+        <DialogPrimitive.Close className="absolute right-3 top-3 grid size-8 place-items-center rounded-md text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:ring-2 focus-visible:ring-focus" aria-label="关闭">
+          <X size={16} />
         </DialogPrimitive.Close>
-        <div className="mt-5">{children}</div>
+        <div className="mt-4">{children}</div>
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   </DialogPrimitive.Root>;
@@ -58,11 +59,11 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   </label>;
 }
 
-export const inputClass = "min-h-11 w-full rounded-xl border border-line bg-elevated px-3 text-sm text-ink outline-none placeholder:text-faint focus:border-brand focus:ring-2 focus:ring-brand/20";
+export const inputClass = "min-h-10 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink outline-none transition-[border-color,box-shadow] placeholder:text-faint hover:border-muted/50 focus:border-brand focus:ring-4 focus:ring-brand/15";
 
 export function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "good" | "warn" | "bad" | "info" }) {
   return <span className={cn(
-    "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium",
+    "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
     tone === "neutral" && "border-line bg-elevated text-muted",
     tone === "good" && "border-success/25 bg-success/10 text-success",
     tone === "warn" && "border-warning/25 bg-warning/10 text-warning",
@@ -72,17 +73,17 @@ export function Badge({ children, tone = "neutral" }: { children: React.ReactNod
 }
 
 export function Card({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <section className={cn("rounded-2xl border border-line bg-surface p-5 shadow-card", className)}>{children}</section>;
+  return <section className={cn("rounded-xl border border-line bg-surface p-4 shadow-card", className)}>{children}</section>;
 }
 
 export function Empty({ title, copy, action }: { title: string; copy: string; action?: React.ReactNode }) {
-  return <div className="grid min-h-48 place-items-center rounded-2xl border border-dashed border-line bg-surface/60 p-8 text-center">
+  return <div className="grid min-h-40 place-items-center rounded-xl border border-dashed border-line bg-surface/60 p-6 text-center">
     <div><h3 className="font-semibold text-ink">{title}</h3><p className="mt-2 max-w-md text-sm leading-6 text-muted">{copy}</p>{action && <div className="mt-4">{action}</div>}</div>
   </div>;
 }
 
 export function Spinner({ label = "加载中" }: { label?: string }) {
-  return <div className="flex min-h-40 items-center justify-center gap-3 text-sm text-muted" role="status">
+  return <div className="flex min-h-32 items-center justify-center gap-3 text-sm text-muted" role="status">
     <span className="size-5 animate-spin rounded-full border-2 border-line border-t-brand motion-reduce:animate-none" />{label}
   </div>;
 }
@@ -101,7 +102,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return <ToastContext.Provider value={value}>
     {children}
     <div className="fixed bottom-5 right-5 z-[70] grid w-[min(24rem,calc(100%-2rem))] gap-2" aria-live="polite" aria-atomic="true">
-      {toasts.map(toast => <div key={toast.id} className={cn("rounded-xl border bg-surface px-4 py-3 text-sm shadow-xl", toast.tone === "bad" ? "border-danger/40 text-danger" : "border-success/40 text-ink")}>{toast.message}</div>)}
+      {toasts.map(toast => <div key={toast.id} className={cn("flex items-start gap-2.5 rounded-xl border bg-surface/95 px-4 py-3 text-sm shadow-pop backdrop-blur", toast.tone === "bad" ? "border-danger/35 text-danger" : "border-success/35 text-ink")}>
+        <span className={cn("mt-1 size-2 shrink-0 rounded-full", toast.tone === "bad" ? "bg-danger" : "bg-success")} aria-hidden="true" />
+        <span className="min-w-0 break-words">{toast.message}</span>
+      </div>)}
     </div>
   </ToastContext.Provider>;
 }

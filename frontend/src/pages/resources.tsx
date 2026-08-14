@@ -76,13 +76,13 @@ export function ProjectDetailPage() {
   const agents = stat?.roles || [];
   const projectTasks = tasks.data || [];
   return <>
-    <PageHeader kicker={`Project #${value.id}`} title={value.name} copy={value.description || value.project_dir || undefined} actions={<>
+    <PageHeader title={value.name} copy={value.description || value.project_dir || undefined} actions={<>
       <Badge tone={value.status === "active" ? "good" : "neutral"}>{value.status === "active" ? "进行中" : "已归档"}</Badge>{value.is_git && <Badge tone="info">Git</Badge>}
       <Button variant="ghost" onClick={() => navigate("/projects")}>返回</Button>
       <Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={16} />新建任务</Button>
     </>} />
     {value.description ? <div className="detail-desc mt-1">{value.description}</div> : null}
-    {stat ? <div className="mt-5 grid gap-5 lg:grid-cols-[auto_minmax(0,1fr)]">
+    {stat ? <div className="mt-4 grid gap-4 lg:grid-cols-[auto_minmax(0,1fr)]">
       <div className="ring" style={{ background: `conic-gradient(var(--brand) ${Math.round(Math.min(100, stat.progress || 0) * 3.6)}deg, color-mix(in srgb, var(--ink) 9%, transparent) 0)` }}>
         <div className="ring-inner"><b>{fmtPct(stat.progress || 0)}</b><span>完成度</span></div>
       </div>
@@ -94,7 +94,7 @@ export function ProjectDetailPage() {
         <DailyChart daily={stat.daily || []} days={14} />
       </div>
     </div> : null}
-    <Card className="mt-6"><div className="mb-4 flex items-center"><div><h2 className="font-semibold">任务</h2><p className="mt-1 text-sm text-muted">待执行任务可拖动或用箭头调整顺序，默认按创建时间。</p></div><span className="ml-auto text-sm text-muted">{implementations.length} 个实现 · {merges.length} 个合并</span></div>
+    <Card className="mt-5"><div className="mb-4 flex items-center"><div><h2 className="font-semibold">任务</h2><p className="mt-1 text-sm text-muted">待执行任务可拖动或用箭头调整顺序，默认按创建时间。</p></div><span className="ml-auto text-sm text-muted">{implementations.length} 个实现 · {merges.length} 个合并</span></div>
       {tasks.isLoading ? <Spinner /> : implementations.length ? <div className="grid gap-2">
         {implementations.map(task => {
           const queued = task.status === "queued";
@@ -174,20 +174,20 @@ export function ProjectsPage() {
     return (query.data || []).filter(project => project.name.toLowerCase().includes(q) || (project.description || "").toLowerCase().includes(q));
   }, [query.data, search]);
   return <>
-    <PageHeader kicker="Workspace boundaries" title="项目" copy="项目定义代码目录、隔离边界与工作流归属。" actions={<Button variant="primary" onClick={() => setEditing({ status: "active" })}><CirclePlus size={17} />新建项目</Button>} />
+    <PageHeader title="项目" copy="项目定义代码目录、隔离边界与工作流归属。" actions={<Button variant="primary" onClick={() => setEditing({ status: "active" })}><CirclePlus size={17} />新建项目</Button>} />
     <Card className="mb-5 flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
       <span className="flex items-center gap-2 px-2 text-sm text-muted"><Search size={16} />搜索</span>
       <input className={inputClass + " sm:w-64"} placeholder="搜索项目…" value={search} onChange={e => setSearch(e.target.value)} aria-label="搜索项目" />
       <span className="text-sm text-muted sm:ml-auto">{visible.length} 个项目</span>
     </Card>
-    {query.isLoading ? <Spinner /> : visible.length ? <div className="grid gap-4 lg:grid-cols-2">{visible.map(project => {
+    {query.isLoading ? <Spinner /> : visible.length ? <div className="grid gap-3 lg:grid-cols-2">{visible.map(project => {
       const ts = (tasks.data || []).filter(t => t.project_id === project.id);
       const source = ts.filter(t => t.merge_of == null);
       const merges = ts.filter(t => t.merge_of != null);
       const done = source.filter(t => t.status === "succeeded").length;
       const pct = source.length ? Math.round(done / source.length * 100) : 0;
       const roles = new Set(ts.map(t => t.role_name).filter(Boolean));
-      return <Link key={project.id} to={`/projects/${project.id}`} className="project-card rounded-2xl border border-line bg-surface p-5 shadow-card transition hover:border-brand/35">
+      return <Link key={project.id} to={`/projects/${project.id}`} className="project-card rounded-xl border border-line bg-surface p-4 shadow-card transition hover:border-brand/35">
         <div className="flex items-start gap-3">
           <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">{project.name}</h2>{project.is_git ? <span className="chip git-chip" title="git 仓库，任务将获得独立 worktree">git</span> : <span className="chip" title="非 git 仓库，任务直接在项目目录执行">非 git</span>}<Badge tone={project.status === "active" ? "good" : "neutral"}>{project.status === "active" ? "进行中" : "已归档"}</Badge></div>
           {project.description ? <p className="mt-2 text-sm leading-6 text-muted">{project.description}</p> : null}</div>
@@ -285,7 +285,7 @@ export function RolesPage() {
     return out;
   }, [tasks.data]);
   return <>
-    <PageHeader kicker="Responsibility profiles" title="角色" copy="角色只描述职责与策略；具体命令翻译由 Runtime 承担。" actions={<><Button onClick={() => setStudio({ draft: { name: "", description: "", runtime_id: runtimes.data?.[0]?.id || "pi", max_concurrency: 1, role_config: {} } })}><MessagesSquare size={16} />角色助手</Button><Button variant="primary" onClick={() => setDraft({ runtime_id: runtimes.data?.[0]?.id || "pi", max_concurrency: 1, enabled: true, role_config: {} })}><CirclePlus size={17} />新建角色</Button></>} />
+    <PageHeader title="角色" copy="角色只描述职责与策略；具体命令翻译由 Runtime 承担。" actions={<><Button onClick={() => setStudio({ draft: { name: "", description: "", runtime_id: runtimes.data?.[0]?.id || "pi", max_concurrency: 1, role_config: {} } })}><MessagesSquare size={16} />角色助手</Button><Button variant="primary" onClick={() => setDraft({ runtime_id: runtimes.data?.[0]?.id || "pi", max_concurrency: 1, enabled: true, role_config: {} })}><CirclePlus size={17} />新建角色</Button></>} />
     <Card className="mb-5 flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
       <span className="flex items-center gap-2 px-2 text-sm text-muted"><Search size={16} />搜索</span>
       <input className={inputClass + " sm:w-64"} placeholder="搜索角色…" value={search} onChange={e => setSearch(e.target.value)} aria-label="搜索角色" />
@@ -304,7 +304,7 @@ export function RolesPage() {
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted"><span><b>{stat.total}</b> 任务</span><span><b style={{ color: "var(--st-running)" }}>{stat.inFlight}</b> 进行中</span><span><b style={{ color: "var(--st-review)" }}>{stat.review}</b> 待审批</span></div>
       <div className="mt-4 flex flex-wrap gap-2"><Button size="sm" variant="ghost" onClick={() => setDetail(role)}>详情</Button><Button size="sm" variant="ghost" onClick={() => setStudio({ role, draft: { name: role.name, description: role.description, runtime_id: role.runtime_id, max_concurrency: role.max_concurrency, role_config: role.role_config || {} } })}>助手</Button><Button size="sm" variant="ghost" onClick={() => duplicate.mutate(role)}><Copy size={14} />复制</Button><Button size="sm" variant="ghost" onClick={() => toggle.mutate(role)}>{role.enabled ? "停用" : "启用"}</Button><Button size="sm" variant="danger" className="ml-auto" onClick={() => confirm(`删除角色“${role.name}”？`) && remove.mutate(role)}><Trash2 size={14} />删除</Button></div>
     </Card>;
-  })}</div> : <Card className="overflow-hidden p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
+  })}</div> : <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
     <th className="px-4 py-2.5 font-medium">角色</th><th className="px-4 py-2.5 font-medium">智能体</th><th className="px-4 py-2.5 font-medium">模型</th><th className="px-4 py-2.5 font-medium">最大并发</th><th className="px-4 py-2.5 font-medium">任务</th><th className="px-4 py-2.5 font-medium">进行中</th><th className="px-4 py-2.5 font-medium">待审批</th><th className="px-4 py-2.5 font-medium">状态</th><th className="px-4 py-2.5 font-medium">操作</th>
   </tr></thead><tbody className="divide-y divide-line">{visible.map(role => { const stat = roleStats.get(role.id) || { total: 0, inFlight: 0, review: 0 }; return <tr key={role.id} className="hover:bg-hover">
     <td className="px-4 py-2.5"><button className="text-left font-medium hover:text-brand-soft" onClick={() => setDetail(role)}>{role.name}</button><div className="mt-0.5 max-w-72 truncate text-xs text-faint">{role.description || "未设置描述"}</div></td>
@@ -481,9 +481,9 @@ export function RuntimesPage() {
     }
   };
   return <>
-    <PageHeader kicker="Execution providers" title="智能体" copy="智能体目录统一声明批处理、结构化会话、技能与安装能力。" actions={<Button onClick={() => refresh.mutate()} disabled={refresh.isPending}><RefreshCcw size={16} />刷新模型与健康状态</Button>} />
+    <PageHeader title="智能体" copy="智能体目录统一声明批处理、结构化会话、技能与安装能力。" actions={<Button onClick={() => refresh.mutate()} disabled={refresh.isPending}><RefreshCcw size={16} />刷新模型与健康状态</Button>} />
     <div className="mb-4 text-sm text-muted">已安装 {provisioning.data?.filter(p => p.installed).length || 0}/{provisioning.data?.length || 0}</div>
-    {runtimes.isLoading ? <Spinner /> : <div className="grid gap-4 lg:grid-cols-2">{runtimes.data?.map(runtime => { const provision = byID.get(runtime.id); return <Card key={runtime.id}>
+    {runtimes.isLoading ? <Spinner /> : <div className="grid gap-3 lg:grid-cols-2">{runtimes.data?.map(runtime => { const provision = byID.get(runtime.id); return <Card key={runtime.id}>
       <div className="flex items-start gap-3"><div><div className="flex items-center gap-2"><h2 className="font-semibold">{runtime.name}</h2><Badge tone={runtime.healthy ? "good" : "bad"}>{runtime.healthy ? "可用" : "不可用"}</Badge></div><a className="mt-1 block text-xs text-brand-soft hover:underline" href={runtime.docs} target="_blank" rel="noreferrer">官方文档 ↗</a></div>{provision?.version ? <span className="ml-auto text-sm text-faint">{provision.version}</span> : null}</div>
       {runtime.health && <p className="mt-3 text-sm text-muted">{runtime.health}</p>}
       {provision ? <div className="mt-3 rounded-xl border border-line bg-elevated px-3 py-2 text-xs">

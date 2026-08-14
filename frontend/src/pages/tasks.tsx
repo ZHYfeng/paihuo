@@ -96,7 +96,7 @@ function avatarInitial(name: string) { return (name || "?").slice(0, 1); }
 /* ---- 工作台卡片（旧 dashboard.js dashCardHTML） ---- */
 
 function DashCard({ task, actions, onOpen }: { task: Task; actions?: React.ReactNode; onOpen(): void }) {
-  return <article className="card dash-card rounded-xl border border-line bg-elevated p-3.5 transition hover:border-brand/35" style={{ "--st-color": ST_COLOR[task.status] } as React.CSSProperties} onClick={onOpen} role="button" tabIndex={0} onKeyDown={e => { if (e.key === "Enter") onOpen(); }}>
+  return <article className="card dash-card rounded-xl border border-line bg-surface p-3 shadow-card transition hover:border-brand/35" style={{ "--st-color": ST_COLOR[task.status] } as React.CSSProperties} onClick={onOpen} role="button" tabIndex={0} onKeyDown={e => { if (e.key === "Enter") onOpen(); }}>
     <div className="c-top"><span className="st-dot" style={{ background: ST_COLOR[task.status] }} /><span className="c-id">#{task.id}</span>
       <span className="c-time">{formatTime(task.created_at)}</span>
       {task.perm === "review" ? <span className="chip review">审批</span> : null}</div>
@@ -145,10 +145,10 @@ export function DashboardPage() {
   const visible = ranked.slice(0, 4);
   const installed = provisioning.data?.filter(p => p.installed) || [];
   return <>
-    <PageHeader kicker="Operations overview" title="工作台" copy="一条路：创建任务（单任务 / 复合任务 / 自由探索 / 定时）→ 执行 → 审批；所有状态由持久事件流同步。" actions={<><Button variant="ghost" onClick={() => navigate("/sessions")}><MessagesSquare size={16} />自由探索</Button><Button variant="ghost" onClick={() => navigate("/workflows")}><Workflow size={16} />复合任务</Button><Button variant="ghost" onClick={() => navigate("/schedules")}><CalendarClock size={16} />定时</Button><Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={17} />单任务</Button></>} />
+    <PageHeader title="工作台" copy="一条路：创建任务（单任务 / 复合任务 / 自由探索 / 定时）→ 执行 → 审批；所有状态由持久事件流同步。" actions={<><Button variant="ghost" onClick={() => navigate("/sessions")}><MessagesSquare size={16} />自由探索</Button><Button variant="ghost" onClick={() => navigate("/workflows")}><Workflow size={16} />复合任务</Button><Button variant="ghost" onClick={() => navigate("/schedules")}><CalendarClock size={16} />定时</Button><Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={17} />单任务</Button></>} />
     <StatsStrip dashboard />
-    <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(18rem,.75fr)]">
-      <div className="grid gap-6">
+    <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(18rem,.75fr)]">
+      <div className="grid gap-5">
         <Card><div className="mb-4 flex items-center"><div><h2 className="font-semibold">待审批</h2><p className="mt-1 text-sm text-muted">需要人工确认的交付与采纳会集中出现在这里</p></div><Link to="/approvals" className="ml-auto text-sm text-brand-soft hover:underline">审批工作台 →</Link></div>
           {tasks.isLoading ? <Spinner /> : review.length ? <div className="grid gap-2">{review.map(task => <DashCard key={task.id} task={task} onOpen={() => openTask(task.id)} actions={<>
             <Button size="sm" variant="primary" disabled={mutateStatus.isPending} onClick={() => mutateStatus.mutate({ id: task.id, status: "succeeded" })}><Check size={14} />通过并合并</Button>
@@ -160,7 +160,7 @@ export function DashboardPage() {
           {tasks.isLoading ? <Spinner /> : running.length ? <div className="grid gap-2">{running.map(task => <DashCard key={task.id} task={task} onOpen={() => openTask(task.id)} />)}</div> : <Empty title="执行队列已清空" copy="创建任务后，进度会在这里实时更新。" action={<Button size="sm" onClick={() => setCreateOpen(true)}>派发任务</Button>} />}
         </Card>
       </div>
-      <div className="grid content-start gap-6">
+      <div className="grid content-start gap-5">
         <Card><h2 className="font-semibold">项目进展</h2>
           {projects.isLoading ? <Spinner /> : !activeProjects.length ? <div className="dash-onboard mt-3"><div className="ob-title">开始第一次交付</div>
             <Link className="ob-step" to="/roles"><b>01</b><span>创建任务角色</span></Link>
@@ -187,7 +187,7 @@ export function DashboardPage() {
    ============================================================ */
 
 function TaskCard({ task, tasks, roles }: { task: Task; tasks: Task[]; roles: Role[] }) {
-  return <Link to={`/tasks/${task.id}`} className="card task-card block rounded-xl border border-line bg-elevated p-3 transition hover:border-brand/35 hover:bg-hover" style={{ "--st-color": ST_COLOR[task.status] } as React.CSSProperties}>
+  return <Link to={`/tasks/${task.id}`} className="card task-card block rounded-xl border border-line bg-surface p-3 shadow-card transition hover:border-brand/35 hover:bg-hover" style={{ "--st-color": ST_COLOR[task.status] } as React.CSSProperties}>
     <div className="flex items-center gap-1.5 text-[11px] text-faint"><span className="st-dot" style={{ background: ST_COLOR[task.status] }} /><span className="font-bold text-muted">#{task.id}</span><time className="text-faint">{formatTime(task.created_at)}</time></div>
     <div className="mt-1 text-[13px] font-semibold leading-5 text-ink">{task.title}</div>
     {task.body ? <div className="mt-1 line-clamp-2 text-xs leading-4 text-muted">{task.body}</div> : null}
@@ -246,7 +246,7 @@ export function BoardPage() {
   });
   useHotkeys({ newTask: () => setCreateOpen(true) });
   return <>
-    <PageHeader kicker="Delivery pipeline" title="任务" copy="任务状态机、依赖交付、审批和代码整合保持确定性。" actions={<Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={17} />新建任务</Button>} />
+    <PageHeader title="任务" copy="任务状态机、依赖交付、审批和代码整合保持确定性。" actions={<Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={17} />新建任务</Button>} />
     <StatsStrip />
     <Card className="mb-5 mt-4 flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
       <span className="flex items-center gap-2 px-2 text-sm text-muted"><ListFilter size={16} />筛选</span>
@@ -259,12 +259,12 @@ export function BoardPage() {
         <button role="tab" aria-selected={view === "list"} className={`rounded-[10px] px-3 py-1.5 text-sm ${view === "list" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("list")}>列表</button>
       </div>
     </Card>
-    {tasks.isLoading ? <Spinner /> : view === "board" ? <div className="grid gap-6">
+    {tasks.isLoading ? <Spinner /> : view === "board" ? <div className="grid grid-cols-1 gap-6">
       <section className="board-section"><div className="board-section-head"><div><h2>实现任务</h2><p>项目任务默认按创建时间顺序交付，也可在项目页调整；每项完成后会先处理自己的代码合并。</p></div><div className="board-section-counts"><span>{sourceTasks.length} 个</span></div></div>
         <div className="board-section-lanes">{sourceTasks.length ? <BoardColumnsHTML tasks={sourceTasks} roles={roles.data || []} mergeSection={false} /> : <div className="board-section-empty">没有符合条件的实现任务。</div>}</div></section>
       <section className="board-section merge-section"><div className="board-section-head"><div><h2>代码合并</h2><p>使用新的独立 worktree 验证、解决冲突并自动写入主分支。</p></div><div className="board-section-counts"><span>{mergeTasks.length} 个</span>{mergeTasks.filter(t => mergeBlockReason(t, roles.data || [])).length ? <span className="chip merge-blocked">{mergeTasks.filter(t => mergeBlockReason(t, roles.data || [])).length} 个角色不可用</span> : null}</div></div>
         <div className="board-section-lanes">{mergeTasks.length ? <BoardColumnsHTML tasks={mergeTasks} roles={roles.data || []} mergeSection={true} /> : <div className="board-section-empty">还没有代码合并任务；实现任务完成后会自动出现在这里。</div>}</div></section>
-    </div> : <Card className="overflow-hidden p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
+    </div> : <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
       <th className="px-4 py-2.5 font-medium">ID</th><th className="px-4 py-2.5 font-medium">标题</th><th className="px-4 py-2.5 font-medium">类型</th><th className="px-4 py-2.5 font-medium">角色</th><th className="px-4 py-2.5 font-medium">项目</th><th className="px-4 py-2.5 font-medium">状态</th><th className="px-4 py-2.5 font-medium">轮次</th><th className="px-4 py-2.5 font-medium">创建</th><th className="px-4 py-2.5 font-medium">结束</th><th className="px-4 py-2.5 font-medium">操作</th>
     </tr></thead><tbody className="divide-y divide-line">{filtered.map(task => <tr key={task.id} className="list-row hover:bg-hover" onClick={() => navigate(`/tasks/${task.id}`)}>
       <td className="px-4 py-2.5 text-faint">#{task.id}</td>
@@ -348,7 +348,7 @@ export function HistoryPage() {
     onError: error => toast((error as Error).message, "bad")
   });
   return <>
-    <PageHeader kicker="Audit history" title="历史" copy="已结算任务及其退出原因、审批轮次和时间。" />
+    <PageHeader title="历史" copy="已结算任务及其退出原因、审批轮次和时间。" />
     <Card className="mb-5 flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
       <span className="flex items-center gap-2 px-2 text-sm text-muted"><ListFilter size={16} />筛选</span>
       <select className={inputClass + " sm:w-40"} value={roleID} onChange={event => setRoleID(event.target.value)} aria-label="按角色筛选"><option value="">全部角色</option>{roles.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
@@ -361,7 +361,7 @@ export function HistoryPage() {
         <Button size="sm" disabled={!days || cleanup.isPending} title={days ? "按当前角色与时间筛选清理" : "请先填写天数"} onClick={() => confirm(`清理当前筛选下的历史任务（${days ? `近 ${days} 天` : ""}）？不可恢复！`) && cleanup.mutate()}>清理筛选结果</Button>
       </div>
     </Card>
-    {tasks.isLoading ? <Spinner /> : filtered.length ? <Card className="overflow-hidden p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
+    {tasks.isLoading ? <Spinner /> : filtered.length ? <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
       <th className="px-4 py-2.5 font-medium"><input type="checkbox" aria-label="全选非合并任务" checked={filtered.filter(t => !t.merge_of).every(t => selected.has(t.id)) && filtered.some(t => !t.merge_of)} onChange={toggleAll} className="size-4 accent-[var(--brand)]" /></th>
       <th className="px-4 py-2.5 font-medium">ID</th><th className="px-4 py-2.5 font-medium">标题</th><th className="px-4 py-2.5 font-medium">角色</th><th className="px-4 py-2.5 font-medium">项目</th><th className="px-4 py-2.5 font-medium">权限</th><th className="px-4 py-2.5 font-medium">状态</th><th className="px-4 py-2.5 font-medium">轮次</th><th className="px-4 py-2.5 font-medium">创建</th><th className="px-4 py-2.5 font-medium">结束</th><th className="px-4 py-2.5 font-medium">操作</th>
     </tr></thead><tbody className="divide-y divide-line">{filtered.map(task => <tr key={task.id} className="history-row hover:bg-hover">
@@ -555,8 +555,8 @@ export function TaskDetailPage() {
   const canMoveProject = value.dependency_mode === "none" && !value.depends_on;
   const filteredLogs = logFilter === "err" ? allLogs.filter(l => l.stream === "err") : allLogs;
   return <>
-    <PageHeader kicker={`Task #${value.id}`} title={value.title} copy={`${value.project_name || "无项目"} · ${value.role_name || "未指派"}`} actions={<><TaskStatus status={value.status} /><Button variant="ghost" onClick={() => navigate(-1)}>返回</Button></>} />
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
+    <PageHeader title={value.title} copy={`${value.project_name || "无项目"} · ${value.role_name || "未指派"}`} actions={<><TaskStatus status={value.status} /><Button variant="ghost" onClick={() => navigate(-1)}>返回</Button></>} />
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_20rem]">
       <div className="min-w-0">
         <section className="task-hero">
           <div className="task-kicker"><span>{mergeTask ? `代码合并任务 · 来源 #${value.merge_of}` : `实现任务 #${value.id}`}</span><span>创建于 {createdAt}</span></div>

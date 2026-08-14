@@ -52,8 +52,8 @@ export function ApprovalsPage() {
   const pendingProposals = (proposals.data || []).filter(p => p.status === "validated").sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
 
   return <>
-    <PageHeader kicker="Approval gate" title="审批" copy="主线上的一道闸口：任务交付与 Workflow 采纳集中在这里裁决；批准后进入代码整合或冻结执行。" />
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(18rem,.8fr)]">
+    <PageHeader title="审批" copy="主线上的一道闸口：任务交付与 Workflow 采纳集中在这里裁决；批准后进入代码整合或冻结执行。" />
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(18rem,.8fr)]">
       <section>
         <div className="mb-3 flex items-center"><h2 className="font-semibold">任务交付</h2><span className="ml-auto text-sm text-faint">{reviewTasks.length} 条等待裁决</span></div>
         {tasks.isLoading ? <Spinner /> : reviewTasks.length ? <div className="grid gap-2">
