@@ -196,6 +196,102 @@ export interface OverviewStats {
   avg_duration: number;
 }
 
+export interface StatusCount {
+  status: string;
+  count: number;
+}
+
+export interface RoleProjectStat {
+  role_id: ID;
+  role_name: string;
+  project_id: ID;
+  project_name: string;
+  total: number;
+  succeeded: number;
+  failed: number;
+  reviews: number;
+  success_rate: number;
+  avg_duration: number;
+}
+
+export interface DailyCount {
+  date: string;
+  count: number;
+}
+
+export interface ProjectStats {
+  project_id: ID;
+  project_name: string;
+  total: number;
+  in_flight: number;
+  succeeded: number;
+  failed: number;
+  reviews: number;
+  progress: number;
+  status_counts: StatusCount[];
+  roles: RoleProjectStat[];
+  daily: DailyCount[];
+}
+
+export interface WorkspaceStatus {
+  path: string;
+  is_git: boolean;
+  is_worktree: boolean;
+  branch: string;
+  base_commit: string;
+  head: string;
+  dirty: boolean;
+  ahead: number;
+  merged: boolean;
+  note?: string;
+}
+
+export interface TaskLogPage {
+  logs: TaskLog[];
+  has_more: boolean;
+  total: number;
+}
+
+export interface RoleStats {
+  role_id: ID;
+  role_name: string;
+  runtime_id: string;
+  total: number;
+  in_flight: number;
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+  reviews: number;
+  success_rate: number;
+  avg_duration: number;
+  status_counts: StatusCount[];
+  projects: RoleProjectStat[];
+  daily: DailyCount[];
+}
+
+export interface RoleStudioDraft {
+  name: string;
+  description: string;
+  runtime_id: string;
+  max_concurrency: number;
+  role_config: RoleConfig;
+}
+
+export interface RoleStudioMessage {
+  role: string;
+  content: string;
+}
+
+export interface RoleStudioResult {
+  message: string;
+  draft?: RoleStudioDraft;
+}
+
+export interface ExtensionOutput {
+  raw: string;
+  error?: string;
+}
+
 export interface WorkflowNode {
   id: string;
   intent: string;

@@ -9,6 +9,7 @@ const BoardPage = route(() => import("./pages/tasks"), "BoardPage");
 const HistoryPage = route(() => import("./pages/tasks"), "HistoryPage");
 const TaskDetailPage = route(() => import("./pages/tasks"), "TaskDetailPage");
 const ProjectsPage = route(() => import("./pages/resources"), "ProjectsPage");
+const ProjectDetailPage = route(() => import("./pages/resources"), "ProjectDetailPage");
 const RolesPage = route(() => import("./pages/resources"), "RolesPage");
 const RuntimesPage = route(() => import("./pages/resources"), "RuntimesPage");
 const SkillsPage = route(() => import("./pages/management"), "SkillsPage");
@@ -31,6 +32,7 @@ const router = createBrowserRouter([{
     { path: "history", element: <HistoryPage /> },
     { path: "tasks/:id", element: <TaskDetailPage /> },
     { path: "projects", element: <ProjectsPage /> },
+    { path: "projects/:id", element: <ProjectDetailPage /> },
     { path: "roles", element: <RolesPage /> },
     { path: "runtimes", element: <RuntimesPage /> },
     { path: "skills", element: <SkillsPage /> },

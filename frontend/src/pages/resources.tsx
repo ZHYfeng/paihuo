@@ -1,13 +1,62 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CirclePlus, Download, Pencil, RefreshCcw, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, CirclePlus, Copy, Download, FlaskConical, MessagesSquare, Pencil, RefreshCcw, Search, Trash2 } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { PageHeader } from "../components/shell";
 import { Badge, Button, Card, Dialog, Empty, Field, inputClass, Spinner, useToast } from "../components/ui";
 import { api, keys } from "../lib/api";
-import type { Project, ProvisionInfo, Role, RoleConfig, RuntimeDescriptor, RuntimeField, Skill } from "../types";
+import { NewTaskDialog, TaskStatus } from "./tasks";
+import type { Project, ProjectStats, ProvisionInfo, Role, RoleConfig, RoleProjectStat, RoleStats, RoleStudioDraft, RoleStudioMessage, RoleStudioResult, RuntimeDescriptor, RuntimeField, Skill, StatusCount, Task } from "../types";
 
 function MutationError({ value }: { value: unknown }) {
   return value instanceof Error ? <p role="alert" className="text-sm text-danger">{value.message}</p> : null;
+}
+
+export function ProjectDetailPage() {
+  const id = Number(useParams().id);
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const project = useQuery({ queryKey: [...keys.projects, id], queryFn: () => api<Project[]>("/projects").then(list => list.find(item => item.id === id)) });
+  const stats = useQuery({ queryKey: ["stats", "project", id], queryFn: () => api<ProjectStats>(`/stats/project/${id}`) });
+  const tasks = useQuery({ queryKey: ["tasks", "project", id], queryFn: () => api<Task[]>(`/tasks?project_id=${id}`) });
+  const [createOpen, setCreateOpen] = useState(false);
+  const implementations = tasks.data?.filter(task => task.merge_of == null) || [];
+  const merges = tasks.data?.filter(task => task.merge_of != null) || [];
+  const reorder = useMutation({
+    mutationFn: (taskIDs: number[]) => api<Task[]>(`/projects/${id}/tasks/order`, { method: "PUT", revision: project.data?.revision, body: { task_ids: taskIDs } }),
+    onSuccess: data => { qc.setQueryData(["tasks", "project", id], data); qc.invalidateQueries({ queryKey: keys.tasks }); },
+    onError: error => toast((error as Error).message, "bad")
+  });
+  const move = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= implementations.length || reorder.isPending) return;
+    const next = [...implementations];
+    [next[index], next[target]] = [next[target], next[index]];
+    // 后端只接受项目内全部「待执行」实现任务的排序请求；非排队任务不可重排。
+    reorder.mutate(next.filter(task => task.status === "queued").map(task => task.id));
+  };
+  if (project.isLoading || stats.isLoading) return <Spinner />;
+  if (!project.data) return <Empty title="项目不存在" copy="它可能已被删除。" />;
+  const value = project.data;
+  const stat = stats.data;
+  const metrics: Array<[string, number | string]> = [
+    ["总任务", stat?.total ?? 0], ["已完成", stat?.succeeded ?? 0], ["失败", stat?.failed ?? 0], ["待审批", stat?.reviews ?? 0]
+  ];
+  return <>
+    <PageHeader kicker={`Project #${value.id}`} title={value.name} copy={value.description || value.project_dir || undefined} actions={<>
+      <Badge tone={value.status === "active" ? "good" : "neutral"}>{value.status === "active" ? "活跃" : "归档"}</Badge>{value.is_git && <Badge tone="info">Git</Badge>}
+      <Button variant="ghost" onClick={() => navigate("/projects")}>返回</Button>
+      <Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={16} />新建任务</Button>
+    </>} />
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{metrics.map(([label, num]) => <Card key={label}><div className="text-sm text-muted">{label}</div><div className="mt-3 text-3xl font-semibold tracking-tight text-ink">{num}</div></Card>)}<Card><div className="text-sm text-muted">完成进度</div><div className="mt-3 text-3xl font-semibold tracking-tight text-ink">{Math.round(stat?.progress ?? 0)}%</div></Card></div>
+    {stat && stat.roles?.length ? <Card className="mt-6"><h2 className="font-semibold">角色产出</h2><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[36rem] text-left text-sm"><thead><tr className="border-b border-line text-xs uppercase tracking-wide text-muted"><th className="py-2 pr-4 font-medium">角色</th><th className="py-2 pr-4 font-medium">总任务</th><th className="py-2 pr-4 font-medium">完成</th><th className="py-2 pr-4 font-medium">失败</th><th className="py-2 pr-4 font-medium">审批轮次</th><th className="py-2 font-medium">成功率</th></tr></thead><tbody className="divide-y divide-line">{stat.roles.map(role => <tr key={role.role_id}><td className="py-3 pr-4">{role.role_name || `角色 #${role.role_id}`}</td><td className="py-3 pr-4">{role.total}</td><td className="py-3 pr-4">{role.succeeded}</td><td className="py-3 pr-4">{role.failed}</td><td className="py-3 pr-4">{role.reviews}</td><td className="py-3">{Math.round(role.success_rate)}%</td></tr>)}</tbody></table></div></Card> : null}
+    <Card className="mt-6"><div className="mb-4 flex items-center"><div><h2 className="font-semibold">任务</h2><p className="mt-1 text-sm text-muted">按执行顺序排列；箭头调整顺序，合并任务单独成组。</p></div><span className="ml-auto text-sm text-muted">{implementations.length} 个实现 · {merges.length} 个合并</span></div>
+      {tasks.isLoading ? <Spinner /> : implementations.length ? <div className="grid gap-2">{implementations.map((task, index) => <div key={task.id} className="flex items-center gap-2 rounded-xl border border-line bg-elevated p-2 pl-4"><Link to={`/tasks/${task.id}`} className="group min-w-0 flex-1"><span className="block truncate text-sm font-medium group-hover:text-brand-soft">{task.title}</span><span className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted">{task.role_name && <span>{task.role_name}</span>}<TaskStatus status={task.status} /></span></Link><div className="flex flex-col">{task.status === "queued" && implementations.length > 1 && <><button className="grid size-7 place-items-center rounded-lg text-muted hover:bg-hover hover:text-ink disabled:opacity-30" disabled={index === 0 || reorder.isPending} aria-label={`上移任务 ${task.title}`} onClick={() => move(index, -1)}><ArrowUp size={15} /></button><button className="grid size-7 place-items-center rounded-lg text-muted hover:bg-hover hover:text-ink disabled:opacity-30" disabled={index === implementations.length - 1 || reorder.isPending} aria-label={`下移任务 ${task.title}`} onClick={() => move(index, 1)}><ArrowDown size={15} /></button></>}</div></div>)}</div> : <Empty title="还没有任务" copy="创建任务并绑定此项目，执行顺序会显示在这里。" />}
+      {merges.length ? <><h3 className="mb-2 mt-6 text-sm font-semibold text-muted">代码合并</h3><div className="grid gap-2">{merges.map(task => <Link key={task.id} to={`/tasks/${task.id}`} className="flex items-center gap-2 rounded-xl border border-line bg-elevated px-4 py-3"><span className="min-w-0 flex-1 truncate text-sm font-medium hover:text-brand-soft">{task.title}</span><TaskStatus status={task.status} /></Link>)}</div></> : null}
+    </Card>
+    <NewTaskDialog open={createOpen} onOpenChange={setCreateOpen} initialProjectID={id} />
+  </>;
 }
 
 export function ProjectsPage() {
@@ -49,7 +98,24 @@ export function RolesPage() {
   const qc = useQueryClient();
   const toast = useToast();
   const [draft, setDraft] = useState<RoleDraft | null>(null);
+  const [detail, setDetail] = useState<Role | null>(null);
+  const [studio, setStudio] = useState<{ role?: Role; draft: RoleStudioDraft } | null>(null);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("name");
   const selected = runtimes.data?.find(runtime => runtime.id === draft?.runtime_id);
+  const visible = useMemo(() => {
+    let list = roles.data || [];
+    const q = search.trim().toLowerCase();
+    if (q) list = list.filter(role => role.name.toLowerCase().includes(q) || (role.description || "").toLowerCase().includes(q));
+    const copy = [...list];
+    switch (sort) {
+      case "created": copy.sort((a, b) => b.created_at.localeCompare(a.created_at)); break;
+      case "concurrency": copy.sort((a, b) => b.max_concurrency - a.max_concurrency); break;
+      case "runtime": copy.sort((a, b) => a.runtime_id.localeCompare(b.runtime_id)); break;
+      default: copy.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return copy;
+  }, [roles.data, search, sort]);
   const save = useMutation({
     mutationFn: (value: RoleDraft) => value.id
       ? api<Role>(`/roles/${value.id}`, { method: "PATCH", revision: value.revision, body: rolePayload(value) })
@@ -57,13 +123,24 @@ export function RolesPage() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: keys.roles }); setDraft(null); toast("角色已保存"); }
   });
   const remove = useMutation({ mutationFn: (value: Role) => api<void>(`/roles/${value.id}`, { method: "DELETE", revision: value.revision }), onSuccess: () => qc.invalidateQueries({ queryKey: keys.roles }) });
+  const duplicate = useMutation({
+    mutationFn: (value: Role) => api<Role>("/roles", { method: "POST", body: { ...rolePayload({ ...value, role_config: value.role_config || {} }), name: `${value.name}（副本）` } }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: keys.roles }); toast("已复制角色"); },
+    onError: error => toast((error as Error).message, "bad")
+  });
   return <>
-    <PageHeader kicker="Responsibility profiles" title="角色" copy="角色只描述职责与策略；具体命令翻译由 Runtime 承担。" actions={<Button variant="primary" onClick={() => setDraft({ runtime_id: runtimes.data?.[0]?.id || "pi", max_concurrency: 1, enabled: true, role_config: {} })}><CirclePlus size={17} />新建角色</Button>} />
-    {roles.isLoading ? <Spinner /> : roles.data?.length ? <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">{roles.data.map(role => <Card key={role.id}>
-      <div className="flex items-start gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">{role.name}</h2><Badge tone={role.enabled ? "good" : "neutral"}>{role.enabled ? "启用" : "停用"}</Badge></div><p className="mt-2 min-h-10 text-sm leading-5 text-muted">{role.description || "暂无职责说明"}</p></div><Button size="sm" variant="ghost" className="ml-auto" aria-label={`编辑 ${role.name}`} onClick={() => setDraft({ ...role, role_config: role.role_config || {} })}><Pencil size={15} /></Button></div>
+    <PageHeader kicker="Responsibility profiles" title="角色" copy="角色只描述职责与策略；具体命令翻译由 Runtime 承担。" actions={<><Button onClick={() => setStudio({ draft: { name: "", description: "", runtime_id: runtimes.data?.[0]?.id || "pi", max_concurrency: 1, role_config: {} } })}><MessagesSquare size={16} />角色助手</Button><Button variant="primary" onClick={() => setDraft({ runtime_id: runtimes.data?.[0]?.id || "pi", max_concurrency: 1, enabled: true, role_config: {} })}><CirclePlus size={17} />新建角色</Button></>} />
+    <Card className="mb-5 flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
+      <span className="flex items-center gap-2 px-2 text-sm text-muted"><Search size={16} />搜索</span>
+      <input className={inputClass + " sm:w-64"} placeholder="搜索角色…" value={search} onChange={e => setSearch(e.target.value)} aria-label="搜索角色" />
+      <select className={inputClass + " sm:w-44"} value={sort} onChange={e => setSort(e.target.value)} aria-label="角色排序"><option value="name">名称 A-Z</option><option value="created">最近创建</option><option value="concurrency">并发：高到低</option><option value="runtime">Runtime</option></select>
+      <span className="text-sm text-muted sm:ml-auto">{visible.length} 个角色</span>
+    </Card>
+    {roles.isLoading ? <Spinner /> : visible.length ? <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">{visible.map(role => <Card key={role.id}>
+      <div className="flex items-start gap-3"><div className="min-w-0"><button className="text-left" onClick={() => setDetail(role)}><h2 className="font-semibold hover:text-brand-soft">{role.name}</h2></button><div className="flex flex-wrap items-center gap-2"><Badge tone={role.enabled ? "good" : "neutral"}>{role.enabled ? "启用" : "停用"}</Badge></div><p className="mt-2 min-h-10 text-sm leading-5 text-muted">{role.description || "暂无职责说明"}</p></div><Button size="sm" variant="ghost" className="ml-auto" aria-label={`编辑 ${role.name}`} onClick={() => setDraft({ ...role, role_config: role.role_config || {} })}><Pencil size={15} /></Button></div>
       <div className="mt-4 flex flex-wrap gap-2"><Badge tone="info">{role.runtime_id}</Badge><Badge>并发 {role.max_concurrency}</Badge>{role.role_config.model && <Badge>{role.role_config.model}</Badge>}</div>
-      <Button size="sm" variant="danger" className="mt-4" onClick={() => confirm(`删除角色“${role.name}”？`) && remove.mutate(role)}><Trash2 size={15} />删除</Button>
-    </Card>)}</div> : <Empty title="还没有角色" copy="先创建承担执行、评审或研究职责的角色。" />}
+      <div className="mt-4 flex flex-wrap gap-2"><Button size="sm" variant="ghost" onClick={() => setDetail(role)}>详情</Button><Button size="sm" variant="ghost" onClick={() => setStudio({ role, draft: { name: role.name, description: role.description, runtime_id: role.runtime_id, max_concurrency: role.max_concurrency, role_config: role.role_config || {} } })}>助手</Button><Button size="sm" variant="ghost" onClick={() => duplicate.mutate(role)}><Copy size={14} />复制</Button><Button size="sm" variant="danger" className="ml-auto" onClick={() => confirm(`删除角色“${role.name}”？`) && remove.mutate(role)}><Trash2 size={14} />删除</Button></div>
+    </Card>)}</div> : <Empty title={search ? "没有匹配的角色" : "还没有角色"} copy={search ? "调整搜索或排序条件。" : "先创建承担执行、评审或研究职责的角色。"} />}
     <Dialog open={draft !== null} onOpenChange={open => !open && setDraft(null)} title={draft?.id ? "编辑角色" : "新建角色"} wide>
       {draft && <form className="grid gap-5" onSubmit={(event: FormEvent) => { event.preventDefault(); save.mutate(draft); }}>
         <div className="grid gap-4 md:grid-cols-2"><Field label="名称"><input className={inputClass} required value={draft.name || ""} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="Runtime"><select className={inputClass} value={draft.runtime_id} onChange={e => setDraft({ ...draft, runtime_id: e.target.value, role_config: {} })}>{runtimes.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field></div>
@@ -73,7 +150,93 @@ export function RolesPage() {
         <MutationError value={save.error} /><div className="flex justify-end"><Button variant="primary" disabled={save.isPending}>保存角色</Button></div>
       </form>}
     </Dialog>
+    {detail && <RoleDetailDialog role={detail} onClose={() => setDetail(null)} />}
+    {studio && <RoleStudioDialog initial={studio} onClose={() => setStudio(null)} />}
   </>;
+}
+
+function RoleDetailDialog({ role, onClose }: { role: Role; onClose(): void }) {
+  const stats = useQuery({ queryKey: ["stats", "roles", role.id], queryFn: () => api<RoleStats>(`/stats/roles/${role.id}`) });
+  const recent = useQuery({ queryKey: ["tasks", "role", role.id], queryFn: () => api<Task[]>(`/tasks?role_id=${role.id}&limit=10`) });
+  const stat = stats.data;
+  const metrics: Array<[string, number | string]> = [
+    ["总任务", stat?.total ?? 0], ["进行中", stat?.in_flight ?? 0], ["完成", stat?.succeeded ?? 0], ["失败", stat?.failed ?? 0], ["取消", stat?.cancelled ?? 0], ["待审批", stat?.reviews ?? 0], ["成功率", stat ? `${Math.round(stat.success_rate)}%` : 0]
+  ];
+  return <Dialog open onOpenChange={open => !open && onClose()} title={`角色详情 · ${role.name}`} wide>
+    <div className="grid gap-5">
+      <div className="flex flex-wrap gap-2"><Badge tone="info">{role.runtime_id}</Badge><Badge>并发 {role.max_concurrency}</Badge>{role.role_config.model && <Badge>{role.role_config.model}</Badge>}<Badge tone={role.enabled ? "good" : "neutral"}>{role.enabled ? "启用" : "停用"}</Badge></div>
+      {role.description && <p className="text-sm leading-6 text-muted">{role.description}</p>}
+      {stats.isLoading ? <Spinner /> : stat ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(([label, num]) => <div key={label} className="rounded-xl border border-line bg-elevated p-3"><div className="text-xs text-muted">{label}</div><div className="mt-1 text-xl font-semibold">{num}</div></div>)}</div> : null}
+      {stat?.status_counts?.length ? <div className="grid gap-1.5">{stat.status_counts.map((item: StatusCount) => <div key={item.status} className="flex items-center gap-3 text-sm"><span className="w-20 shrink-0 text-muted">{statusLabelOf(item.status)}</span><div className="h-2 flex-1 overflow-hidden rounded-full bg-elevated"><div className="h-full rounded-full bg-brand/70" style={{ width: `${stat.total ? (item.count / stat.total) * 100 : 0}%` }} /></div><span className="w-8 text-right text-muted">{item.count}</span></div>)}</div> : null}
+      {stat?.projects?.length ? <div><h3 className="mb-2 text-sm font-semibold text-muted">项目产出</h3><div className="overflow-x-auto"><table className="w-full min-w-[30rem] text-left text-sm"><thead><tr className="border-b border-line text-xs uppercase tracking-wide text-muted"><th className="py-2 pr-4 font-medium">项目</th><th className="py-2 pr-4 font-medium">总任务</th><th className="py-2 pr-4 font-medium">完成</th><th className="py-2 pr-4 font-medium">失败</th><th className="py-2 font-medium">成功率</th></tr></thead><tbody className="divide-y divide-line">{stat.projects.map((item: RoleProjectStat) => <tr key={item.project_id}><td className="py-3 pr-4">{item.project_name || `项目 #${item.project_id}`}</td><td className="py-3 pr-4">{item.total}</td><td className="py-3 pr-4">{item.succeeded}</td><td className="py-3 pr-4">{item.failed}</td><td className="py-3">{Math.round(item.success_rate)}%</td></tr>)}</tbody></table></div></div> : null}
+      {recent.data?.length ? <div><h3 className="mb-2 text-sm font-semibold text-muted">最近任务</h3><div className="grid gap-2">{recent.data.map(task => <Link key={task.id} to={`/tasks/${task.id}`} className="flex items-center gap-2 rounded-xl border border-line bg-elevated px-3 py-2 text-sm hover:border-brand/40"><span className="min-w-0 flex-1 truncate">{task.title}</span><TaskStatus status={task.status} /></Link>)}</div></div> : null}
+      <div className="flex justify-end"><Button variant="ghost" onClick={onClose}>关闭</Button></div>
+    </div>
+  </Dialog>;
+}
+
+function RoleStudioDialog({ initial, onClose }: { initial: { role?: Role; draft: RoleStudioDraft }; onClose(): void }) {
+  const runtimes = useQuery({ queryKey: keys.runtimes, queryFn: () => api<RuntimeDescriptor[]>("/runtimes") });
+  const skills = useQuery({ queryKey: keys.skills, queryFn: () => api<Skill[]>("/skills") });
+  const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [draft, setDraft] = useState<RoleStudioDraft>(initial.draft);
+  const [creatorID, setCreatorID] = useState(0);
+  const [tab, setTab] = useState<"chat" | "test">("chat");
+  const [chatMsg, setChatMsg] = useState("");
+  const [testMsg, setTestMsg] = useState("");
+  const [creatorMessages, setCreatorMessages] = useState<RoleStudioMessage[]>([]);
+  const [testMessages, setTestMessages] = useState<RoleStudioMessage[]>([]);
+  const [testOutput, setTestOutput] = useState("");
+  const selected = runtimes.data?.find(runtime => runtime.id === draft.runtime_id);
+  const setField = (field: RuntimeField, value: unknown) => setDraft(prev => ({ ...prev, role_config: field.builtin ? { ...prev.role_config, [field.key]: value } : { ...prev.role_config, custom: { ...prev.role_config.custom, [field.key]: String(value) } } }));
+  const chat = useMutation({
+    mutationFn: () => api<RoleStudioResult>("/role-studio/chat", { method: "POST", body: { creator_role_id: creatorID, draft, message: chatMsg, creator_messages: creatorMessages, test_messages: testMessages } }),
+    onSuccess: result => {
+      setCreatorMessages(prev => [...prev, { role: "user", content: chatMsg }, { role: "assistant", content: result.message }]);
+      if (result.draft) { setDraft(result.draft); toast("已应用助手草稿"); }
+      setChatMsg("");
+    },
+    onError: error => toast((error as Error).message, "bad")
+  });
+  const test = useMutation({
+    mutationFn: () => api<{ output: string }>("/role-studio/test", { method: "POST", body: { draft, message: testMsg, test_messages: testMessages } }),
+    onSuccess: result => { setTestMessages(prev => [...prev, { role: "user", content: testMsg }]); setTestOutput(result.output); setTestMsg(""); },
+    onError: error => toast((error as Error).message, "bad")
+  });
+  const save = useMutation({
+    mutationFn: () => initial.role
+      ? api<Role>(`/roles/${initial.role.id}`, { method: "PATCH", revision: initial.role.revision, body: { name: draft.name, description: draft.description, runtime_id: draft.runtime_id, role_config: draft.role_config, max_concurrency: draft.max_concurrency, enabled: initial.role.enabled } })
+      : api<Role>("/roles", { method: "POST", body: { name: draft.name, description: draft.description, runtime_id: draft.runtime_id, role_config: draft.role_config, max_concurrency: draft.max_concurrency, enabled: true } }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: keys.roles }); toast("角色已保存"); onClose(); },
+    onError: error => toast((error as Error).message, "bad")
+  });
+  const tabClass = (active: boolean) => `flex-1 rounded-lg px-3 py-2 text-sm font-medium ${active ? "bg-brand/15 text-brand-soft" : "text-muted hover:bg-hover"}`;
+  return <Dialog open onOpenChange={open => !open && onClose()} title={`角色助手 · ${initial.role?.name || "新角色"}`} description="向创建助手描述职责，或测试草稿的实际表现；助手可改写草稿。">
+    <div className="grid gap-5">
+      <div className="grid gap-4 md:grid-cols-2"><Field label="名称"><input className={inputClass} required value={draft.name || ""} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="Runtime"><select className={inputClass} value={draft.runtime_id} onChange={e => setDraft({ ...draft, runtime_id: e.target.value, role_config: {} })}>{runtimes.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field></div>
+      <Field label="职责说明"><textarea className={inputClass + " min-h-20 py-3"} value={draft.description || ""} onChange={e => setDraft({ ...draft, description: e.target.value })} /></Field>
+      <div className="grid gap-4 md:grid-cols-2">{selected?.fields.map(field => <RuntimeFieldInput key={field.key} field={resolveRuntimeField(field, draft.role_config, skills.data)} value={field.builtin ? draft.role_config[field.key as keyof RoleConfig] : draft.role_config.custom?.[field.key]} onChange={value => setField(field, value)} />)}</div>
+      <div className="grid gap-4 md:grid-cols-2"><Field label="最大并发"><input className={inputClass} type="number" min="1" value={draft.max_concurrency || 1} onChange={e => setDraft({ ...draft, max_concurrency: Number(e.target.value) })} /></Field><Field label="创建助手角色" hint="角色助手由哪个已启用角色驱动"><select className={inputClass} value={creatorID} onChange={e => setCreatorID(Number(e.target.value))}><option value={0}>自动选择</option>{roles.data?.filter(role => role.enabled).map(role => <option key={role.id} value={role.id}>{role.name} · {role.runtime_id}</option>)}</select></Field></div>
+      <div className="flex gap-1 rounded-xl border border-line p-1"><button type="button" className={tabClass(tab === "chat")} onClick={() => setTab("chat")}><MessagesSquare size={14} className="mr-1 inline" />助手对话</button><button type="button" className={tabClass(tab === "test")} onClick={() => setTab("test")}><FlaskConical size={14} className="mr-1 inline" />测试</button></div>
+      {tab === "chat" ? <div className="grid gap-3">
+        <div className="max-h-52 overflow-auto rounded-xl bg-elevated p-3 text-sm">{creatorMessages.length ? creatorMessages.map((msg, index) => <div key={index} className="mb-2"><b className="text-ink">{msg.role === "user" ? "你" : "助手"}</b><p className="whitespace-pre-wrap text-muted">{msg.content}</p></div>) : <p className="text-muted">向助手描述你想创建的角色，或要求它检查/修改当前草稿。回复可能附带新的角色草稿。</p>}</div>
+        <div className="flex gap-2"><textarea className={inputClass + " min-h-16 py-3"} value={chatMsg} onChange={e => setChatMsg(e.target.value)} placeholder="例如：帮我检查当前草稿，并补充适合资深后端工程师的系统提示词…" /><Button variant="primary" disabled={!chatMsg.trim() || chat.isPending} onClick={() => chat.mutate()}>发送</Button></div>
+      </div> : <div className="grid gap-3">
+        <div className="max-h-32 overflow-auto rounded-xl bg-elevated p-3 text-sm">{testMessages.map((msg, index) => <div key={index} className="mb-2"><b className="text-ink">{msg.role === "user" ? "测试输入" : "助手"}</b><p className="whitespace-pre-wrap text-muted">{msg.content}</p></div>)}</div>
+        <div className="flex gap-2"><input className={inputClass} value={testMsg} onChange={e => setTestMsg(e.target.value)} placeholder="输入测试消息，模拟角色实际执行…" onKeyDown={e => { if (e.key === "Enter" && testMsg.trim() && !test.isPending) test.mutate(); }} /><Button disabled={!testMsg.trim() || test.isPending} onClick={() => test.mutate()}>运行测试</Button></div>
+        {test.isPending ? <Spinner label="测试执行中" /> : testOutput ? <pre className="max-h-52 overflow-auto whitespace-pre-wrap rounded-xl bg-[#080d15] p-4 text-xs leading-5 text-slate-200">{testOutput}</pre> : null}
+      </div>}
+      <MutationError value={save.error} />
+      <div className="flex justify-end gap-2"><Button variant="ghost" onClick={onClose}>关闭</Button><Button variant="primary" disabled={save.isPending} onClick={() => save.mutate()}>保存角色</Button></div>
+    </div>
+  </Dialog>;
+}
+
+function statusLabelOf(status: string): string {
+  const map: Record<string, string> = { queued: "排队", claimed: "领取", running: "执行中", awaiting_review: "待审批", succeeded: "完成", failed: "失败", cancelled: "取消" };
+  return map[status] || status;
 }
 
 function resolveRuntimeField(field: RuntimeField, config: RoleConfig, skills?: Skill[]): RuntimeField {
