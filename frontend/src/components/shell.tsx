@@ -28,7 +28,7 @@ export function AppShell() {
       <span className="grid size-8 place-items-center rounded-lg bg-brand font-bold text-white">派</span>
       <span><b className="block text-sm tracking-wide text-ink">PAIHUO</b><small className="text-xs text-muted">Agent operations</small></span>
     </Link>
-    <nav className="mt-2 grid gap-3" aria-label="主导航">
+    <nav className="mt-2 grid min-h-0 flex-1 content-start gap-3 overflow-y-auto" aria-label="主导航">
       {groups.map(group => <div key={group.label}>
         <div className="mb-1.5 px-2.5 text-[11px] font-semibold uppercase tracking-[.16em] text-faint">{group.label}</div>
         <div className="grid gap-0.5">
