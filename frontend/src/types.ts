@@ -51,6 +51,9 @@ export interface Task {
   merge_of?: ID | null;
   session_id?: ID | null;
   workflow_run_id?: ID | null;
+  resume_of?: ID | null;
+  worktree_branch?: string;
+  base_commit?: string;
   terminal_cols?: number;
   terminal_rows?: number;
   revision: number;
@@ -64,7 +67,7 @@ export interface TaskLog {
   id: ID;
   task_id: ID;
   seq: number;
-  stream: "out" | "err" | "sys" | "in";
+  stream: "out" | "err" | "sys" | "in" | "term";
   content: string;
   created_at: string;
 }
@@ -194,6 +197,8 @@ export interface OverviewStats {
   projects: number;
   success_rate: number;
   avg_duration: number;
+  status_counts: StatusCount[];
+  daily: DailyCount[];
 }
 
 export interface StatusCount {

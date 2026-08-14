@@ -1,89 +1,310 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, CirclePlus, Copy, FolderKanban, GitBranch, ListFilter, ListTree, Play, RotateCcw, Save, Square, TerminalSquare, X } from "lucide-react";
+import { Check, CirclePlus, Copy, GitBranch, ListFilter, ListTree, Play, RotateCcw, Save, TerminalSquare, Trash2, X } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { PageHeader } from "../components/shell";
+import { DiffView } from "../components/diff-view";
 import { TaskTerminal } from "../components/terminal";
 import { Badge, Button, Card, Dialog, Empty, Field, inputClass, Spinner, useToast } from "../components/ui";
+import { useHotkeys } from "../lib/hotkeys";
 import { api, keys } from "../lib/api";
-import type { Artifact, OverviewStats, Project, Role, Task, TaskLog, TaskLogPage, TaskTemplate, WorkspaceStatus } from "../types";
+import { BOARD_COLS, STATUS_LABEL, ST_COLOR, PERM_LABEL, canDeleteTask, canRetryTask, cleanLogContent, dependencyInfo, fmtDur, fmtPct, isMergeTask, mergeBlockReason, mergeTaskFor, retryTaskLabel, splitReviewRounds, terminalRenderableLog, tsOf } from "../lib/taskmeta";
+import type { Artifact, OverviewStats, Project, ProvisionInfo, Role, Task, TaskLog, TaskLogPage, TaskTemplate, WorkspaceStatus } from "../types";
 
-const statusLabel: Record<string, string> = { queued: "排队", claimed: "领取", running: "执行中", awaiting_review: "待审批", succeeded: "完成", failed: "失败", cancelled: "取消" };
 const statusTone: Record<string, "neutral" | "good" | "warn" | "bad" | "info"> = { queued: "neutral", claimed: "info", running: "info", awaiting_review: "warn", succeeded: "good", failed: "bad", cancelled: "neutral" };
 
 export function TaskStatus({ status }: { status: string }) {
-  return <Badge tone={statusTone[status] || "neutral"}>{statusLabel[status] || status}</Badge>;
+  return <Badge tone={statusTone[status] || "neutral"}>{STATUS_LABEL[status] || status}</Badge>;
 }
 
 function useTasks(query = "") {
   return useQuery({ queryKey: [...keys.tasks, query], queryFn: () => api<Task[]>(`/tasks${query}`), refetchInterval: 15_000 });
 }
 
-function TaskRow({ task }: { task: Task }) {
-  return <Link to={`/tasks/${task.id}`} className="group grid gap-3 rounded-xl border border-line bg-elevated p-4 transition hover:border-brand/35 hover:bg-hover focus-visible:ring-2 focus-visible:ring-focus sm:grid-cols-[1fr_auto]">
-    <div className="min-w-0"><div className="flex items-center gap-2"><span className="text-xs text-faint">#{task.id}</span><h3 className="truncate font-medium text-ink group-hover:text-brand-soft">{task.title}</h3></div><div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">{task.project_name && <span>{task.project_name}</span>}{task.role_name && <span>· {task.role_name}</span>}<span>· {formatTime(task.updated_at)}</span></div></div>
-    <div className="flex items-center gap-2"><TaskStatus status={task.status} />{task.review_rounds > 0 && <Badge>{task.review_rounds} 轮</Badge>}</div>
-  </Link>;
+/* ---- 统计条（工作台 4 项 / 看板 6 项，旧 main.js renderStatsStrip） ---- */
+
+function StatsStrip({ dashboard = false }: { dashboard?: boolean }) {
+  const stats = useQuery({ queryKey: keys.stats, queryFn: () => api<OverviewStats>("/stats/overview") });
+  const counts = stats.data?.status_counts || [];
+  const review = counts.find(s => s.status === "awaiting_review");
+  const daily = stats.data?.daily || [];
+  const today = daily.length ? daily[daily.length - 1] : null;
+  const chips: Array<[string, string | number, string]> = [
+    ["进行中", stats.data?.in_flight || 0, "var(--st-running)"],
+    ["待审批", review?.count || 0, "var(--st-review)"],
+    ["今日完成", today?.count ?? 0, "var(--st-done)"],
+    ["完成率", fmtPct(stats.data?.success_rate || 0), "var(--st-done)"],
+    ["平均耗时", fmtDur(stats.data?.avg_duration || 0), "var(--fg-muted)"],
+    ["活跃项目", stats.data?.projects || 0, "var(--fg-muted)"]
+  ];
+  const visible = dashboard ? [chips[1], chips[0], chips[2], chips[3]] : chips;
+  return <div className="stat-strip">{visible.map(([label, value, color]) => <div key={label} className="stat-chip" style={{ "--metric-color": color } as React.CSSProperties} aria-label={`${label} ${value}`}>
+    <span className="sc-dot" style={{ background: color }} /><b>{value}</b><span className="sc-label">{label}</span>
+  </div>)}</div>;
 }
+
+/* ---- 卡片 chips（旧 task.js cardHTML） ---- */
+
+function TaskKindChip({ task }: { task: Task }) {
+  return isMergeTask(task)
+    ? <span className="chip merge" title={`由源任务 #${task.merge_of} 自动创建`}>代码合并 · #{task.merge_of}</span>
+    : <span className="chip task-kind">实现</span>;
+}
+
+function DependencyChip({ task, tasks }: { task: Task; tasks: Task[] }) {
+  const info = dependencyInfo(task, tasks);
+  if (info.mode === "system") return null;
+  const kind = info.mode === "strong" ? "strong" : info.mode === "weak" ? "weak" : "none";
+  return <span className={`chip dependency ${kind}`} title={info.reason || info.label}>{info.label}</span>;
+}
+
+function DependencyStateChip({ task, tasks }: { task: Task; tasks: Task[] }) {
+  if (task.status !== "queued") return null;
+  const info = dependencyInfo(task, tasks);
+  if (info.state === "blocked") return <span className="chip dependency blocked" title={info.reason}>{info.stateLabel || "等待前序"}</span>;
+  if (info.state === "skipped") return <span className="chip dependency skipped" title={info.reason}>{info.stateLabel || "前序已跳过"}</span>;
+  return null;
+}
+
+function SourceMergeChip({ task, tasks }: { task: Task; tasks: Task[] }) {
+  if (isMergeTask(task)) return null;
+  const merge = mergeTaskFor(task, tasks);
+  if (!merge) {
+    return task.status === "succeeded" && task.worktree_branch
+      ? <span className="chip merge-pending">正在创建合并</span> : null;
+  }
+  return <span className={`chip merge-state ${merge.status}`} title={`代码合并任务 #${merge.id}`}>合并：{STATUS_LABEL[merge.status] || merge.status}</span>;
+}
+
+function taskChips(task: Task, tasks: Task[], roles: Role[]): React.ReactNode {
+  const blocked = mergeBlockReason(task, roles);
+  return <>
+    <TaskKindChip task={task} />
+    <DependencyChip task={task} tasks={tasks} />
+    <DependencyStateChip task={task} tasks={tasks} />
+    <SourceMergeChip task={task} tasks={tasks} />
+    {blocked ? <span className="chip merge-blocked">{blocked}</span> : null}
+    {task.perm === "review" ? <span className="chip review">审批</span> : null}
+    {task.run_mode === "interactive" ? <span className="chip">交互</span> : null}
+    {task.concurrent ? <span className="chip">并发</span> : null}
+    {task.review_rounds > 0 ? <span className="chip">第{task.review_rounds}轮</span> : null}
+  </>;
+}
+
+function avatarInitial(name: string) { return (name || "?").slice(0, 1); }
+
+/* ---- 工作台卡片（旧 dashboard.js dashCardHTML） ---- */
+
+function DashCard({ task, actions, onOpen }: { task: Task; actions?: React.ReactNode; onOpen(): void }) {
+  return <article className="card dash-card rounded-xl border border-line bg-elevated p-3.5 transition hover:border-brand/35" style={{ "--st-color": ST_COLOR[task.status] } as React.CSSProperties} onClick={onOpen}>
+    <div className="c-top"><span className="st-dot" style={{ background: ST_COLOR[task.status] }} /><span className="c-id">#{task.id}</span>
+      <span className="c-time">{formatTime(task.created_at)}</span>
+      {task.perm === "review" ? <span className="chip review">审批</span> : null}</div>
+    <Link to={`/tasks/${task.id}`} onClick={e => e.stopPropagation()} className="c-title mt-1 block truncate text-sm group-hover:text-brand-soft">{task.title}</Link>
+    <div className="c-meta mt-1.5">
+      {task.project_name ? <span className="chip">{task.project_name}</span> : null}
+      <span className="ml-auto flex items-center gap-1 text-xs text-muted">
+        {task.role_name ? <span className="flex items-center gap-1"><span className="grid size-5 place-items-center rounded-full bg-brand/10 text-[10px] font-semibold text-brand-soft">{avatarInitial(task.role_name)}</span>{task.role_name}</span> : <span className="text-faint">未指派</span>}
+      </span>
+    </div>
+    {actions ? <div className="dash-actions mt-2.5 border-t border-line pt-2.5" onClick={e => e.stopPropagation()}>{actions}</div> : null}
+  </article>;
+}
+
+/* ============================================================
+   工作台
+   ============================================================ */
 
 export function DashboardPage() {
   const [createOpen, setCreateOpen] = useState(false);
-  const stats = useQuery({ queryKey: keys.stats, queryFn: () => api<OverviewStats>("/stats/overview") });
-  const tasks = useTasks("?limit=40");
+  const tasks = useTasks();
   const projects = useQuery({ queryKey: keys.projects, queryFn: () => api<Project[]>("/projects") });
-  const active = tasks.data?.filter(task => ["queued", "claimed", "running", "awaiting_review"].includes(task.status)) || [];
-  const metrics = [
-    ["进行中", stats.data?.in_flight || 0], ["待审批", stats.data?.reviews || 0], ["已完成", stats.data?.succeeded || 0], ["成功率", `${Math.round(stats.data?.success_rate || 0)}%`]
-  ];
+  const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
+  const provisioning = useQuery({ queryKey: keys.provisioning, queryFn: () => api<ProvisionInfo[]>("/runtimes/provisioning") });
+  const navigate = useNavigate();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const openTask = (id: number) => navigate(`/tasks/${id}`);
+  const mutateStatus = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: string }) => api(`/tasks/${id}`, { method: "PATCH", body: { status } }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: keys.tasks }); queryClient.invalidateQueries({ queryKey: keys.stats }); toast("已更新"); },
+    onError: error => toast((error as Error).message, "bad")
+  });
+  useHotkeys({ newTask: () => setCreateOpen(true) });
+  const all = tasks.data || [];
+  const running = all.filter(t => ["queued", "claimed", "running"].includes(t.status)).sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, 6);
+  const review = all.filter(t => t.status === "awaiting_review").sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, 6);
+  const activeProjects = projects.data?.filter(p => p.status === "active") || [];
+  const ranked = activeProjects.map(p => {
+    const ts = all.filter(t => t.project_id === p.id);
+    const done = ts.filter(t => t.status === "succeeded").length;
+    const pct = ts.length ? Math.round(done / ts.length * 100) : 0;
+    const inflight = ts.filter(t => ["queued", "claimed", "running", "awaiting_review"].includes(t.status)).length;
+    return { p, pct, inflight };
+  }).sort((a, b) => b.inflight - a.inflight || a.p.name.localeCompare(b.p.name, "zh-CN"));
+  const visible = ranked.slice(0, 4);
+  const installed = provisioning.data?.filter(p => p.installed) || [];
   return <>
     <PageHeader kicker="Operations overview" title="工作台" copy="从审批、执行和项目进展开始，所有状态都由持久事件流同步。" actions={<Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={17} />新建任务</Button>} />
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(([label, value]) => <Card key={label as string}><div className="text-sm text-muted">{label}</div><div className="mt-3 text-3xl font-semibold tracking-tight text-ink">{value}</div></Card>)}</div>
+    <StatsStrip dashboard />
     <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(18rem,.75fr)]">
-      <Card><div className="mb-4 flex items-center"><div><h2 className="font-semibold">待办与执行</h2><p className="mt-1 text-sm text-muted">先处理审批，再跟进运行任务</p></div><Link to="/board" className="ml-auto text-sm text-brand-soft hover:underline">完整任务板 →</Link></div>
-        {tasks.isLoading ? <Spinner /> : active.length ? <div className="grid gap-2">{active.slice(0, 8).map(task => <TaskRow key={task.id} task={task} />)}</div> : <Empty title="当前没有待办" copy="创建一个任务，或让 Workflow Plan 实例化任务节点。" />}
-      </Card>
-      <Card><div className="mb-4 flex items-center"><div><h2 className="font-semibold">活跃项目</h2><p className="mt-1 text-sm text-muted">工作目标与本地目录</p></div><Link to="/projects" className="ml-auto text-sm text-brand-soft">管理 →</Link></div>
-        {projects.isLoading ? <Spinner /> : <div className="grid gap-2">{projects.data?.filter(project => project.status === "active").slice(0, 6).map(project => <Link to={`/projects/${project.id}`} key={project.id} className="flex items-center gap-3 rounded-xl border border-line bg-elevated p-3 hover:bg-hover"><span className="grid size-9 place-items-center rounded-lg bg-brand/10 text-brand-soft"><FolderKanban size={17} /></span><span className="min-w-0"><b className="block truncate text-sm">{project.name}</b><small className="block truncate text-muted">{project.project_dir}</small></span>{project.is_git && <Badge tone="good">git</Badge>}</Link>)}</div>}
-      </Card>
+      <div className="grid gap-6">
+        <Card><div className="mb-4 flex items-center"><div><h2 className="font-semibold">待审批</h2><p className="mt-1 text-sm text-muted">需要人工确认的交付会集中出现在这里</p></div><Link to="/board" className="ml-auto text-sm text-brand-soft hover:underline">完整任务板 →</Link></div>
+          {tasks.isLoading ? <Spinner /> : review.length ? <div className="grid gap-2">{review.map(task => <DashCard key={task.id} task={task} onOpen={() => openTask(task.id)} actions={<>
+            <Button size="sm" variant="primary" disabled={mutateStatus.isPending} onClick={() => mutateStatus.mutate({ id: task.id, status: "succeeded" })}><Check size={14} />通过并合并</Button>
+            <Button size="sm" onClick={() => openTask(task.id)}>驳回</Button>
+            <Button size="sm" variant="ghost" onClick={() => openTask(task.id)}>查看详情</Button>
+          </>} />)}</div> : <Empty title="当前无需审批" copy="需要人工确认的交付会集中出现在这里。" />}
+        </Card>
+        <Card><div className="mb-4 flex items-center"><div><h2 className="font-semibold">执行队列</h2><p className="mt-1 text-sm text-muted">创建任务后，进度会在这里实时更新</p></div><span className="ml-auto text-sm text-faint">{running.length} 个进行中</span></div>
+          {tasks.isLoading ? <Spinner /> : running.length ? <div className="grid gap-2">{running.map(task => <DashCard key={task.id} task={task} onOpen={() => openTask(task.id)} />)}</div> : <Empty title="执行队列已清空" copy="创建任务后，进度会在这里实时更新。" action={<Button size="sm" onClick={() => setCreateOpen(true)}>派发任务</Button>} />}
+        </Card>
+      </div>
+      <div className="grid content-start gap-6">
+        <Card><h2 className="font-semibold">项目进展</h2>
+          {projects.isLoading ? <Spinner /> : !activeProjects.length ? <div className="dash-onboard mt-3"><div className="ob-title">开始第一次交付</div>
+            <Link className="ob-step" to="/roles"><b>01</b><span>创建任务角色</span></Link>
+            <Link className="ob-step" to="/projects"><b>02</b><span>建立项目工作区</span></Link>
+            <Link className="ob-step" to="/board"><b>03</b><span>派发首个任务</span></Link>
+          </div> : <div className="mt-3 grid gap-2">{visible.map(({ p, pct, inflight }) => <Link key={p.id} className="dash-proj" to={`/projects/${p.id}`}>
+            <div className="dp-top"><b title={p.name}>{p.name}</b>{inflight ? <span className="badge running inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-[11px] text-brand-soft"><span className="st-dot" style={{ background: "var(--brand)" }} />{inflight} 活跃</span> : <span className="badge inline-flex items-center rounded-full border border-line bg-elevated px-2 py-0.5 text-[11px] text-muted">{all.filter(t => t.project_id === p.id).length} 任务</span>}</div>
+            <div className="pc-progress"><div className="pp-bar"><div style={{ width: `${pct}%` }} /></div><span className="pc-pct">{pct}%</span></div>
+          </Link>)}
+            {ranked.length > visible.length ? <Link className="dash-more" to="/projects">查看其余 {ranked.length - visible.length} 个项目 →</Link> : null}</div>}
+        </Card>
+        <Card><div className="mb-3 flex items-center"><div><h2 className="font-semibold">运行环境</h2><p className="mt-1 text-sm text-muted">CLI 安装与登录状态</p></div></div>
+          <div className="dash-prov">{provisioning.data?.map(p => <span key={p.id} className={`prov-chip ${p.installed ? "ok" : ""} ${p.login ? "login" : ""}`} title={`${p.name}${p.installed ? ` ${p.version}` : " — 未安装"}${p.installed && !p.login ? "（未登录）" : ""}`}><i aria-hidden="true" />{p.name}<span className="sr-only">{p.installed ? (p.login ? "已安装并登录" : "已安装，未登录") : "未安装"}</span></span>)}</div>
+          <div className="dash-prov-meta"><span><b>{installed.length}/{provisioning.data?.length || 0}</b> 已安装</span><span><b>{roles.data?.filter(r => r.enabled).length || 0}</b> 角色启用</span></div>
+        </Card>
+      </div>
     </div>
     <NewTaskDialog open={createOpen} onOpenChange={setCreateOpen} />
   </>;
 }
 
+/* ============================================================
+   看板
+   ============================================================ */
+
+function TaskCard({ task, tasks, roles }: { task: Task; tasks: Task[]; roles: Role[] }) {
+  return <Link to={`/tasks/${task.id}`} className="card task-card block rounded-xl border border-line bg-elevated p-3 transition hover:border-brand/35 hover:bg-hover" style={{ "--st-color": ST_COLOR[task.status] } as React.CSSProperties}>
+    <div className="flex items-center gap-1.5 text-[11px] text-faint"><span className="st-dot" style={{ background: ST_COLOR[task.status] }} /><span className="font-bold text-muted">#{task.id}</span><time className="text-faint">{formatTime(task.created_at)}</time></div>
+    <div className="mt-1 text-[13px] font-semibold leading-5 text-ink">{task.title}</div>
+    {task.body ? <div className="mt-1 line-clamp-2 text-xs leading-4 text-muted">{task.body}</div> : null}
+    <div className="mt-2 flex flex-wrap items-center gap-1">{taskChips(task, tasks, roles)}</div>
+    <div className="c-meta mt-2 flex items-center gap-1.5 text-xs text-muted">
+      {task.project_id && task.project_name ? <Link to={`/projects/${task.project_id}`} className="chip chip-link hover:text-brand-soft" onClick={e => e.stopPropagation()} title="打开项目页">{task.project_name}</Link> : null}
+      <span className="ml-auto flex items-center gap-1">{task.role_name ? <span className="flex items-center gap-1"><span className="grid size-5 place-items-center rounded-full bg-brand/10 text-[10px] font-semibold text-brand-soft">{avatarInitial(task.role_name)}</span><span className="c-agent-name">{task.role_name}</span></span> : <span className="text-faint">未指派</span>}
+        {task.error ? <span className="text-danger">✗</span> : null}</span>
+    </div>
+  </Link>;
+}
+
+function BoardColumnsHTML({ tasks, roles, mergeSection }: { tasks: Task[]; roles: Role[]; mergeSection: boolean }) {
+  const columns: Array<[string, string, string[]]> = mergeSection
+    ? [...BOARD_COLS, ["merge-attention", "需处理", ["failed", "cancelled"]]]
+    : BOARD_COLS;
+  return <>{columns.map(([key, label, statuses]) => {
+    const items = tasks.filter(t => statuses.includes(t.status));
+    return <div key={key} className="board-col" style={{ "--st-color": ST_COLOR[statuses[0]] } as React.CSSProperties}>
+      <div className="board-col-head"><span className="st-dot" /><span>{label}</span><span className="count">{items.length}</span></div>
+      <div className="board-col-body">{items.map(task => <TaskCard key={task.id} task={task} tasks={tasks} roles={roles} />)}{!items.length ? <div className="empty">—</div> : null}</div>
+    </div>;
+  })}</>;
+}
+
 export function BoardPage() {
   const [createOpen, setCreateOpen] = useState(false);
-  const [status, setStatus] = useState("");
+  const [view, setView] = useState<"board" | "list">("board");
+  const [roleID, setRoleID] = useState("");
   const [project, setProject] = useState("");
+  const [status, setStatus] = useState("");
   const tasks = useTasks();
   const projects = useQuery({ queryKey: keys.projects, queryFn: () => api<Project[]>("/projects") });
-  const filtered = useMemo(() => (tasks.data || []).filter(task => (!status || task.status === status) && (!project || String(task.project_id) === project)), [tasks.data, status, project]);
-  const columns: Array<[string, string, Task["status"][]]> = [
-    ["queued", "待执行", ["queued", "claimed"]], ["running", "执行中", ["running"]], ["awaiting_review", "待审批", ["awaiting_review"]], ["failed", "需处理", ["failed", "cancelled"]]
-  ];
+  const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
+  const navigate = useNavigate();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const all = useMemo(() => tasks.data || [], [tasks.data]);
+  const filtered = useMemo(() => all.filter(task => {
+    if (roleID && task.role_id !== Number(roleID)) return false;
+    if (project && task.project_id !== Number(project)) return false;
+    if (status && task.status !== status) return false;
+    return true;
+  }), [all, roleID, project, status]);
+  const sourceTasks = filtered.filter(task => !isMergeTask(task));
+  const mergeTasks = filtered.filter(isMergeTask);
+  const mutateStatus = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: string }) => api(`/tasks/${id}`, { method: "PATCH", body: { status } }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: keys.tasks }); queryClient.invalidateQueries({ queryKey: keys.stats }); toast("已更新"); },
+    onError: error => toast((error as Error).message, "bad")
+  });
+  const removeTask = useMutation({
+    mutationFn: (id: number) => api(`/tasks/${id}`, { method: "DELETE" }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: keys.tasks }); queryClient.invalidateQueries({ queryKey: keys.stats }); toast("已删除"); },
+    onError: error => toast((error as Error).message, "bad")
+  });
+  useHotkeys({ newTask: () => setCreateOpen(true) });
   return <>
     <PageHeader kicker="Delivery pipeline" title="任务" copy="任务状态机、依赖交付、审批和代码整合保持确定性。" actions={<Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={17} />新建任务</Button>} />
-    <Card className="mb-5 flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
+    <StatsStrip />
+    <Card className="mb-5 mt-4 flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
       <span className="flex items-center gap-2 px-2 text-sm text-muted"><ListFilter size={16} />筛选</span>
+      <select className={inputClass + " sm:w-40"} value={roleID} onChange={event => setRoleID(event.target.value)} aria-label="按角色筛选"><option value="">全部角色</option>{roles.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
       <select className={inputClass + " sm:w-44"} value={project} onChange={event => setProject(event.target.value)} aria-label="按项目筛选"><option value="">全部项目</option>{projects.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
-      <select className={inputClass + " sm:w-40"} value={status} onChange={event => setStatus(event.target.value)} aria-label="按状态筛选"><option value="">全部状态</option>{Object.entries(statusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-      <span className="text-sm text-muted sm:ml-auto">{filtered.length} 个任务</span>
+      <select className={inputClass + " sm:w-36"} value={status} onChange={event => setStatus(event.target.value)} aria-label="按状态筛选"><option value="">全部状态</option>{Object.entries(STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+      <span className="text-sm text-muted sm:ml-auto">{sourceTasks.length} 个实现 · {mergeTasks.length} 个合并</span>
+      <div className="flex rounded-xl border border-line bg-elevated p-0.5" role="tablist" aria-label="视图切换">
+        <button role="tab" aria-selected={view === "board"} className={`rounded-[10px] px-3 py-1.5 text-sm ${view === "board" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("board")}>看板</button>
+        <button role="tab" aria-selected={view === "list"} className={`rounded-[10px] px-3 py-1.5 text-sm ${view === "list" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("list")}>列表</button>
+      </div>
     </Card>
-    {tasks.isLoading ? <Spinner /> : <div className="grid gap-4 xl:grid-cols-4">{columns.map(([key, label, statuses]) => <section key={key} className="min-w-0 rounded-2xl border border-line bg-surface/60 p-3"><div className="mb-3 flex items-center px-1"><h2 className="text-sm font-semibold">{label}</h2><Badge tone={statusTone[key]}>{filtered.filter(task => statuses.includes(task.status)).length}</Badge></div><div className="grid gap-2">{filtered.filter(task => statuses.includes(task.status)).map(task => <TaskRow key={task.id} task={task} />)}</div></section>)}</div>}
+    {tasks.isLoading ? <Spinner /> : view === "board" ? <div className="grid gap-6">
+      <section className="board-section"><div className="board-section-head"><div><h2>实现任务</h2><p>项目任务默认按创建时间顺序交付，也可在项目页调整；每项完成后会先处理自己的代码合并。</p></div><div className="board-section-counts"><span>{sourceTasks.length} 个</span></div></div>
+        <div className="board-section-lanes">{sourceTasks.length ? <BoardColumnsHTML tasks={sourceTasks} roles={roles.data || []} mergeSection={false} /> : <div className="board-section-empty">没有符合条件的实现任务。</div>}</div></section>
+      <section className="board-section merge-section"><div className="board-section-head"><div><h2>代码合并</h2><p>使用新的独立 worktree 验证、解决冲突并自动写入主分支。</p></div><div className="board-section-counts"><span>{mergeTasks.length} 个</span>{mergeTasks.filter(t => mergeBlockReason(t, roles.data || [])).length ? <span className="chip merge-blocked">{mergeTasks.filter(t => mergeBlockReason(t, roles.data || [])).length} 个角色不可用</span> : null}</div></div>
+        <div className="board-section-lanes">{mergeTasks.length ? <BoardColumnsHTML tasks={mergeTasks} roles={roles.data || []} mergeSection={true} /> : <div className="board-section-empty">还没有代码合并任务；实现任务完成后会自动出现在这里。</div>}</div></section>
+    </div> : <Card className="overflow-hidden p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
+      <th className="px-4 py-2.5 font-medium">ID</th><th className="px-4 py-2.5 font-medium">标题</th><th className="px-4 py-2.5 font-medium">类型</th><th className="px-4 py-2.5 font-medium">角色</th><th className="px-4 py-2.5 font-medium">项目</th><th className="px-4 py-2.5 font-medium">状态</th><th className="px-4 py-2.5 font-medium">轮次</th><th className="px-4 py-2.5 font-medium">创建</th><th className="px-4 py-2.5 font-medium">结束</th><th className="px-4 py-2.5 font-medium">操作</th>
+    </tr></thead><tbody className="divide-y divide-line">{filtered.map(task => <tr key={task.id} className="list-row hover:bg-hover" onClick={() => navigate(`/tasks/${task.id}`)}>
+      <td className="px-4 py-2.5 text-faint">#{task.id}</td>
+      <td className="t-title px-4 py-2.5"><Link to={`/tasks/${task.id}`} onClick={e => e.stopPropagation()} className="hover:text-brand-soft">{task.title}</Link>{isMergeTask(task) ? <span className="chip merge ml-1">合并 #{task.merge_of}</span> : null}</td>
+      <td className="px-4 py-2.5"><span className="task-list-chips">{taskChips(task, all, roles.data || [])}</span></td>
+      <td className="px-4 py-2.5 text-muted">{task.role_name || "-"}</td>
+      <td className="px-4 py-2.5 text-muted">{task.project_name || "-"}</td>
+      <td className="px-4 py-2.5"><TaskStatus status={task.status} /></td>
+      <td className="px-4 py-2.5 text-faint">{task.review_rounds || "—"}</td>
+      <td className="px-4 py-2.5 text-faint">{formatTime(task.created_at)}</td>
+      <td className="px-4 py-2.5 text-faint">{formatTime(task.finished_at)}</td>
+      <td className="px-4 py-2.5"><span className="ops inline-flex gap-1.5">
+        {canRetryTask(task, all) ? <Button size="sm" variant="ghost" title={retryTaskLabel(task)} onClick={e => { e.stopPropagation(); mutateStatus.mutate({ id: task.id, status: "queued" }); }}><RotateCcw size={13} /><span className="hidden sm:inline">{retryTaskLabel(task)}</span></Button> : null}
+        {canDeleteTask(task) ? <Button size="sm" variant="danger" title="删除任务" onClick={e => { e.stopPropagation(); if (confirm(`删除任务 #${task.id}？执行日志、worktree、任务分支及其合并子任务将一并删除。`)) removeTask.mutate(task.id); }}><Trash2 size={13} /><span className="hidden sm:inline">删除</span></Button> : null}
+      </span></td>
+    </tr>)}</tbody></table>{!filtered.length ? <div className="p-8"><Empty title="没有符合条件的任务" copy="调整筛选条件试试。" /></div> : null}</Card>}
     <NewTaskDialog open={createOpen} onOpenChange={setCreateOpen} />
   </>;
 }
 
+/* ============================================================
+   历史
+   ============================================================ */
+
 export function HistoryPage() {
-  const tasks = useTasks("?limit=300");
+  const tasks = useTasks("?limit=500");
   const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
   const qc = useQueryClient();
   const toast = useToast();
   const [roleID, setRoleID] = useState("");
   const [status, setStatus] = useState("");
   const [days, setDays] = useState("");
+  const [cutoff, setCutoff] = useState(0);
+  const onDaysChange = (value: string) => {
+    setDays(value);
+    setCutoff(value ? Date.now() - Number(value) * 86400_000 : 0);
+  };
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
-  const terminal = tasks.data?.filter(task => ["succeeded", "failed", "cancelled"].includes(task.status)) || [];
-  const cutoff = days ? Date.now() - Number(days) * 86400_000 : 0;
+  const all = useMemo(() => tasks.data || [], [tasks.data]);
+  const terminal = useMemo(() => all.filter(task => ["succeeded", "failed", "cancelled"].includes(task.status)), [all]);
   const filtered = terminal.filter(task => {
     if (roleID && String(task.role_id) !== roleID) return false;
     if (status && task.status !== status) return false;
@@ -105,7 +326,7 @@ export function HistoryPage() {
     if (allPicked) eligible.forEach(id => next.delete(id)); else eligible.forEach(id => next.add(id));
     return next;
   });
-  const refresh = () => { qc.invalidateQueries({ queryKey: ["tasks"] }); qc.invalidateQueries({ queryKey: keys.tasks }); };
+  const refresh = () => { qc.invalidateQueries({ queryKey: ["tasks"] }); qc.invalidateQueries({ queryKey: keys.tasks }); qc.invalidateQueries({ queryKey: keys.stats }); };
   const removeSelected = useMutation({
     mutationFn: async () => { await Promise.all([...selected].map(id => api(`/tasks/${id}`, { method: "DELETE" }))); },
     onSuccess: () => { toast(`已删除 ${selected.size} 条`); setSelected(new Set()); refresh(); },
@@ -116,26 +337,130 @@ export function HistoryPage() {
     onSuccess: data => { toast(`已清理 ${data.deleted} 条历史任务`); setSelected(new Set()); refresh(); },
     onError: error => toast((error as Error).message, "bad")
   });
+  const retry = useMutation({
+    mutationFn: (id: number) => api(`/tasks/${id}`, { method: "PATCH", body: { status: "queued" } }),
+    onSuccess: () => { refresh(); toast("已重新排队"); },
+    onError: error => toast((error as Error).message, "bad")
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => api(`/tasks/${id}`, { method: "DELETE" }),
+    onSuccess: () => { refresh(); toast("已删除"); },
+    onError: error => toast((error as Error).message, "bad")
+  });
   return <>
     <PageHeader kicker="Audit history" title="历史" copy="已结算任务及其退出原因、审批轮次和时间。" />
     <Card className="mb-5 flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
       <span className="flex items-center gap-2 px-2 text-sm text-muted"><ListFilter size={16} />筛选</span>
-      <select className={inputClass + " sm:w-44"} value={roleID} onChange={event => setRoleID(event.target.value)} aria-label="按角色筛选"><option value="">全部角色</option>{roles.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
-      <select className={inputClass + " sm:w-36"} value={status} onChange={event => setStatus(event.target.value)} aria-label="按状态筛选"><option value="">全部状态</option>{Object.entries(statusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-      <select className={inputClass + " sm:w-32"} value={days} onChange={event => setDays(event.target.value)} aria-label="按天数筛选"><option value="">全部时间</option>{["7", "30", "90"].map(day => <option key={day} value={day}>近 {day} 天</option>)}</select>
+      <select className={inputClass + " sm:w-40"} value={roleID} onChange={event => setRoleID(event.target.value)} aria-label="按角色筛选"><option value="">全部角色</option>{roles.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
+      <select className={inputClass + " sm:w-36"} value={status} onChange={event => setStatus(event.target.value)} aria-label="按状态筛选"><option value="">全部状态</option>{Object.entries(STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+      <Field label="天数"><input type="number" min={1} className={inputClass + " sm:w-28"} value={days} onChange={event => onDaysChange(event.target.value)} placeholder="全部时间" aria-label="按天数筛选" /></Field>
       <span className="text-sm text-muted sm:ml-auto">{filtered.length} 条</span>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" onClick={toggleAll}>全选非合并</Button>
         <Button size="sm" variant="danger" disabled={!selected.size || removeSelected.isPending} onClick={() => confirm(`删除选中的 ${selected.size} 条历史任务？`) && removeSelected.mutate()}>删除选中{selected.size ? `（${selected.size}）` : ""}</Button>
-        <Button size="sm" disabled={!days || cleanup.isPending} title={days ? "按当前角色与时间筛选清理" : "请先选择时间范围"} onClick={() => confirm(`清理当前筛选下的历史任务（${days ? `近 ${days} 天` : ""}）？`) && cleanup.mutate()}>清理筛选结果</Button>
+        <Button size="sm" disabled={!days || cleanup.isPending} title={days ? "按当前角色与时间筛选清理" : "请先填写天数"} onClick={() => confirm(`清理当前筛选下的历史任务（${days ? `近 ${days} 天` : ""}）？不可恢复！`) && cleanup.mutate()}>清理筛选结果</Button>
       </div>
     </Card>
-    {tasks.isLoading ? <Spinner /> : filtered.length ? <Card className="overflow-hidden p-0"><div className="divide-y divide-line">{filtered.map(task => <div key={task.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-hover">
-      <input type="checkbox" aria-label={`选择任务 ${task.title}`} checked={selected.has(task.id)} onChange={() => toggle(task.id)} className="size-4 shrink-0 accent-[var(--brand)]" />
-      <Link to={`/tasks/${task.id}`} className="group min-w-0 flex-1"><span className="block truncate text-sm font-medium group-hover:text-brand-soft">{task.title}</span><span className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted"><span>#{task.id}</span>{task.role_name && <span>{task.role_name}</span>}{task.project_name && <span>· {task.project_name}</span>}<span>· {formatTime(task.finished_at || task.created_at)}</span></span></Link>
-      <TaskStatus status={task.status} />{task.review_rounds > 0 && <Badge>{task.review_rounds} 轮</Badge>}<Badge tone={task.perm === "review" ? "warn" : "neutral"}>{task.perm === "review" ? "审批" : "自动"}</Badge>
-    </div>)}</div></Card> : <Empty title="没有符合条件的记录" copy="调整筛选条件，或等任务进入终态。" />}
+    {tasks.isLoading ? <Spinner /> : filtered.length ? <Card className="overflow-hidden p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
+      <th className="px-4 py-2.5 font-medium"><input type="checkbox" aria-label="全选非合并任务" checked={filtered.filter(t => !t.merge_of).every(t => selected.has(t.id)) && filtered.some(t => !t.merge_of)} onChange={toggleAll} className="size-4 accent-[var(--brand)]" /></th>
+      <th className="px-4 py-2.5 font-medium">ID</th><th className="px-4 py-2.5 font-medium">标题</th><th className="px-4 py-2.5 font-medium">角色</th><th className="px-4 py-2.5 font-medium">项目</th><th className="px-4 py-2.5 font-medium">权限</th><th className="px-4 py-2.5 font-medium">状态</th><th className="px-4 py-2.5 font-medium">轮次</th><th className="px-4 py-2.5 font-medium">创建</th><th className="px-4 py-2.5 font-medium">结束</th><th className="px-4 py-2.5 font-medium">操作</th>
+    </tr></thead><tbody className="divide-y divide-line">{filtered.map(task => <tr key={task.id} className="history-row hover:bg-hover">
+      <td className="px-4 py-2.5"><input type="checkbox" aria-label={`选择任务 ${task.title}`} checked={selected.has(task.id)} onChange={() => toggle(task.id)} className="size-4 accent-[var(--brand)]" /></td>
+      <td className="px-4 py-2.5 text-faint">#{task.id}</td>
+      <td className="px-4 py-2.5 font-medium"><Link to={`/tasks/${task.id}`} className="hover:text-brand-soft">{task.title}</Link>{task.merge_of ? <span className="chip merge ml-1">合并 #{task.merge_of}</span> : null}</td>
+      <td className="px-4 py-2.5 text-muted">{task.role_name || "-"}</td>
+      <td className="px-4 py-2.5 text-muted">{task.project_name || "-"}</td>
+      <td className="px-4 py-2.5 text-muted">{PERM_LABEL[task.perm] || task.perm}</td>
+      <td className="px-4 py-2.5"><TaskStatus status={task.status} /></td>
+      <td className="px-4 py-2.5 text-faint">{task.review_rounds || ""}</td>
+      <td className="px-4 py-2.5 text-faint">{formatTime(task.created_at)}</td>
+      <td className="px-4 py-2.5 text-faint">{formatTime(task.finished_at)}</td>
+      <td className="px-4 py-2.5"><span className="ops inline-flex gap-1.5">
+        {canRetryTask(task, all) ? <Button size="sm" variant="ghost" title={retryTaskLabel(task)} onClick={() => retry.mutate(task.id)}><RotateCcw size={13} /><span className="hidden sm:inline">{retryTaskLabel(task)}</span></Button> : null}
+        {canDeleteTask(task) ? <Button size="sm" variant="danger" title="删除任务" onClick={() => confirm(`删除任务 #${task.id}？执行日志、worktree、任务分支及其合并子任务将一并删除。`) && remove.mutate(task.id)}><Trash2 size={13} /><span className="hidden sm:inline">删除</span></Button> : null}
+      </span></td>
+    </tr>)}</tbody></table></Card> : <Empty title="没有符合条件的记录" copy="调整筛选条件，或等任务进入终态。" />}
   </>;
+}
+
+/* ============================================================
+   任务详情
+   ============================================================ */
+
+function TaskBody({ task }: { task: Task }) {
+  const { intro, rounds } = splitReviewRounds(task.body);
+  return <div className="task-prompt-body">{intro || "未填写任务说明"}
+    {rounds.map(round => <div key={round.round} className="review-round"><div className="review-round-head">修改意见 · 第 {round.round} 轮{round.time ? <time>{round.time}</time> : null}</div>{round.note || ""}</div>)}
+  </div>;
+}
+
+function ChildrenSections({ task, onOpen }: { task: Task; onOpen(id: number): void }) {
+  const children = useQuery({ queryKey: ["tasks", task.id, "children"], queryFn: () => api<Task[]>(`/tasks/${task.id}/children`) });
+  if (!children.data?.length) return null;
+  const sourceKids = children.data.filter(k => !isMergeTask(k));
+  const mergeKids = children.data.filter(isMergeTask);
+  const section = (title: string, items: Task[], merge: boolean) => {
+    if (!items.length) return null;
+    const done = items.filter(k => ["succeeded", "failed", "cancelled"].includes(k.status)).length;
+    const active = items.some(k => ["queued", "claimed", "running", "awaiting_review"].includes(k.status));
+    return <details className={`task-section ${merge ? "task-merge-children" : ""}`} open={active}>
+      <summary><span>{title}</span><span className="section-meta">{done}/{items.length} 已结束</span></summary>
+      <div className="task-subtask-list">{items.map(k => <div key={k.id} className="task-subtask" onClick={() => onOpen(k.id)} role="button" tabIndex={0} onKeyDown={e => { if (e.key === "Enter") onOpen(k.id); }}>
+        <div className="flex items-center gap-2"><span className="font-semibold text-ink hover:text-brand-soft">#{k.id} {k.title}</span></div>
+        <div className="c-meta">{isMergeTask(k) ? <span className="chip merge">代码合并</span> : null}<TaskStatus status={k.status} /><span className="c-agent">{k.role_name || ""}</span></div>
+      </div>)}</div>
+    </details>;
+  };
+  return <>{section("子任务", sourceKids, false)}{section("代码合并任务", mergeKids, true)}</>;
+}
+
+function WorkspaceCard({ task }: { task: Task }) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const workspace = useQuery({ queryKey: ["tasks", task.id, "workspace"], queryFn: () => api<WorkspaceStatus>(`/workspace/${task.id}`) });
+  const discardWs = useMutation({
+    mutationFn: () => api(`/workspace/${task.id}/discard`, { method: "POST" }),
+    onSuccess: () => { toast("已丢弃"); queryClient.invalidateQueries({ queryKey: ["tasks", task.id, "workspace"] }); },
+    onError: error => toast((error as Error).message, "bad")
+  });
+  const gitInit = useMutation({
+    mutationFn: () => api(`/workspace/git-init`, { method: "POST", body: { path: task.project_dir } }),
+    onSuccess: () => { toast("已初始化"); queryClient.invalidateQueries({ queryKey: ["tasks", task.id, "workspace"] }); queryClient.invalidateQueries({ queryKey: keys.projects }); },
+    onError: error => toast((error as Error).message, "bad")
+  });
+  const w = workspace.data;
+  if (!w) return null;
+  const done = ["succeeded", "failed", "cancelled"].includes(task.status);
+  const sourceMerge = mergeTaskFor(task, []);
+  const sourceAwaitingMerge = !isMergeTask(task) && task.status === "succeeded";
+  let actions: React.ReactNode = null;
+  if (isMergeTask(task)) {
+    if (task.status === "succeeded") actions = <div className="ws-actions"><span className="ws-val">代码已由本合并任务自动写入主分支</span><Button size="sm" variant="danger" onClick={() => confirm(`丢弃任务 #${task.id} 的工作空间？分支与 worktree 将删除，改动不可恢复。`) && discardWs.mutate()}>清理工作空间</Button></div>;
+    else actions = <div className="ws-actions"><span className="ws-val">{task.status === "failed" || task.status === "cancelled" ? "请使用“重试合并”继续处理。" : "代码将由本合并任务成功结算时自动写入主分支。"}</span></div>;
+  } else if (sourceAwaitingMerge) {
+    actions = <div className="ws-actions"><span className="ws-val">{sourceMerge ? `代码由合并任务 #${sourceMerge.id}（${STATUS_LABEL[sourceMerge.status] || sourceMerge.status}）处理` : "代码已完成，系统正在补建代码合并任务"}</span></div>;
+  } else if (done) {
+    actions = <div className="ws-actions"><Button size="sm" variant="danger" onClick={() => confirm(`丢弃任务 #${task.id} 的工作空间？分支与 worktree 将删除，改动不可恢复。`) && discardWs.mutate()}>丢弃</Button></div>;
+  }
+  if (!w.is_git) {
+    return <Card><h2 className="font-semibold">工作空间</h2>
+      <div className="ws-row mt-2"><span className="ws-label">隔离</span><span className="ws-val">项目非 git 仓库，任务直接在项目目录执行</span>{task.project_dir ? <Button size="sm" disabled={gitInit.isPending} onClick={() => confirm(`在 ${task.project_dir} 初始化 git 仓库？之后的任务将获得独立 worktree。`) && gitInit.mutate()}><GitBranch size={14} />git init</Button> : null}</div>
+    </Card>;
+  }
+  if (!w.is_worktree) {
+    return <Card><h2 className="font-semibold">工作空间</h2>
+      <div className="ws-row mt-2"><span className="ws-label">隔离</span><span className="ws-val">{w.note || "无独立工作空间"}</span></div>
+    </Card>;
+  }
+  return <Card><h2 className="font-semibold">工作空间</h2><dl className="mt-2 grid gap-1.5 text-sm">
+    <div className="ws-row"><span className="ws-label">分支</span><span className="ws-val mono font-mono">{w.branch}</span></div>
+    <div className="ws-row"><span className="ws-label">HEAD</span><span className="ws-val mono font-mono">{w.head || "-"}{w.dirty ? <span className="ws-tag dirty">dirty</span> : null}{w.ahead > 0 ? <span className="ws-tag ahead">+{w.ahead}</span> : null}</span></div>
+    <div className="ws-row"><span className="ws-label">路径</span><span className="ws-val mono font-mono" title={w.path}>{w.path}</span></div>
+  </dl>{actions}</Card>;
+}
+
+function LogFilterToggle({ mode, onToggle }: { mode: "all" | "err"; onToggle(): void }) {
+  return <Button size="sm" variant="ghost" className={mode === "err" ? "active-filter" : ""} onClick={onToggle}>{mode === "err" ? "✓ " : ""}只看错误</Button>;
 }
 
 export function TaskDetailPage() {
@@ -143,18 +468,20 @@ export function TaskDetailPage() {
   const navigate = useNavigate();
   const toast = useToast();
   const queryClient = useQueryClient();
+  const [logFilter, setLogFilter] = useState<"all" | "err">("all");
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectNote, setRejectNote] = useState("");
   const task = useQuery({ queryKey: keys.task(id), queryFn: () => api<Task>(`/tasks/${id}`), refetchInterval: 5000 });
+  const tasks = useTasks();
+  const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
+  const projects = useQuery({ queryKey: keys.projects, queryFn: () => api<Project[]>("/projects") });
   const logs = useQuery({ queryKey: ["tasks", id, "logs"], queryFn: () => api<TaskLogPage>(`/tasks/${id}/logs?limit=500`), refetchInterval: task.data?.status === "running" ? 1500 : false });
   const [olderLogs, setOlderLogs] = useState<TaskLog[]>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const allLogs = [...olderLogs, ...(logs.data?.logs || [])];
-  const diff = useQuery({ queryKey: ["tasks", id, "diff"], queryFn: () => api<{ stat: string; diff: string; note?: string }>(`/tasks/${id}/diff`), enabled: task.data?.status === "awaiting_review" });
+  const diff = useQuery({ queryKey: ["tasks", id, "diff"], queryFn: () => api<{ stat: string; diff: string; note?: string }>(`/tasks/${id}/diff`) });
   const artifacts = useQuery({ queryKey: ["tasks", id, "artifacts"], queryFn: () => api<Artifact[]>(`/artifacts?task_id=${id}`) });
-  const children = useQuery({ queryKey: ["tasks", id, "children"], queryFn: () => api<Task[]>(`/tasks/${id}/children`) });
-  const workspace = useQuery({ queryKey: ["tasks", id, "workspace"], queryFn: () => api<WorkspaceStatus>(`/workspace/${id}`) });
-  const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
-  const projects = useQuery({ queryKey: keys.projects, queryFn: () => api<Project[]>("/projects") });
-  const mutate = useMutation({ mutationFn: (body: Record<string, unknown>) => api<Task>(`/tasks/${id}`, { method: "PATCH", revision: task.data?.revision, body }), onSuccess: value => { queryClient.setQueryData(keys.task(id), value); void queryClient.invalidateQueries({ queryKey: keys.tasks }); toast("任务已更新"); }, onError: error => toast((error as Error).message, "bad") });
+  const mutate = useMutation({ mutationFn: (body: Record<string, unknown>) => api<Task>(`/tasks/${id}`, { method: "PATCH", revision: task.data?.revision, body }), onSuccess: value => { queryClient.setQueryData(keys.task(id), value); void queryClient.invalidateQueries({ queryKey: keys.tasks }); queryClient.invalidateQueries({ queryKey: keys.stats }); toast("任务已更新"); }, onError: error => toast((error as Error).message, "bad") });
   const remove = useMutation({ mutationFn: () => api<void>(`/tasks/${id}`, { method: "DELETE", revision: task.data?.revision }), onSuccess: () => { toast("任务已删除"); navigate("/board"); }, onError: error => toast((error as Error).message, "bad") });
   const [subtaskOpen, setSubtaskOpen] = useState(false);
   const [subtask, setSubtask] = useState({ title: "", body: "", role_id: "" });
@@ -168,21 +495,16 @@ export function TaskDetailPage() {
     onSuccess: () => { toast("已在原任务中重新排队"); void queryClient.invalidateQueries({ queryKey: keys.tasks }); void queryClient.invalidateQueries({ queryKey: keys.task(id) }); },
     onError: error => toast((error as Error).message, "bad")
   });
+  const endSession = useMutation({
+    mutationFn: () => api<{ sent: string }>(`/tasks/${id}/end-session`, { method: "POST" }),
+    onSuccess: data => { toast(`已发送 ${data.sent}，等待 agent 退出`); },
+    onError: error => toast((error as Error).message, "bad")
+  });
   const [templateOpen, setTemplateOpen] = useState(false);
   const [templateName, setTemplateName] = useState("");
   const saveTemplate = useMutation({
     mutationFn: () => api("/templates", { method: "POST", body: { name: templateName || task.data?.title || `任务 #${id}`, body: task.data?.body || "", role_id: task.data?.role_id ?? null } }),
     onSuccess: () => { setTemplateOpen(false); setTemplateName(""); toast("已保存为模板"); void queryClient.invalidateQueries({ queryKey: ["templates"] }); },
-    onError: error => toast((error as Error).message, "bad")
-  });
-  const discardWs = useMutation({
-    mutationFn: () => api(`/workspace/${id}/discard`, { method: "POST" }),
-    onSuccess: () => { toast("工作区已丢弃"); void queryClient.invalidateQueries({ queryKey: ["tasks", id, "workspace"] }); },
-    onError: error => toast((error as Error).message, "bad")
-  });
-  const gitInit = useMutation({
-    mutationFn: () => api(`/workspace/git-init`, { method: "POST", body: { path: task.data?.project_dir } }),
-    onSuccess: () => { toast("Git 仓库已初始化"); void queryClient.invalidateQueries({ queryKey: ["tasks", id, "workspace"] }); void queryClient.invalidateQueries({ queryKey: keys.projects }); },
     onError: error => toast((error as Error).message, "bad")
   });
   const loadOlder = async () => {
@@ -209,33 +531,151 @@ export function TaskDetailPage() {
   if (task.isLoading) return <Spinner />;
   if (!task.data) return <Empty title="任务不存在" copy="该任务可能已被删除。" />;
   const value = task.data;
+  const all = tasks.data || [];
+  const mergeTask = isMergeTask(value);
+  const dependency = dependencyInfo(value, all);
+  const mergeSource = mergeTask ? all.find(t => t.id === value.merge_of) : null;
+  const mergeBlocked = mergeTask ? mergeBlockReason(value, roles.data || []) : "";
+  const interactive = value.run_mode === "interactive";
+  const isLive = interactive && ["claimed", "running"].includes(value.status);
+  const runMode = interactive ? "交互式" : "批处理";
+  const createdAt = String(value.created_at || "").slice(0, 16).replace("T", " ");
+  const renderableLogs = allLogs.filter(terminalRenderableLog);
+  const visibleLogs = renderableLogs.filter(l => cleanLogContent(l.content).trim()).length;
+  const logErrors = allLogs.filter(l => l.stream === "err").length;
+  const logMeta = interactive
+    ? isLive ? "实时画面 · 跟随浏览器尺寸" : `已归档画面 · ${value.terminal_cols || 80} × ${value.terminal_rows || 24}`
+    : logs.data?.has_more || olderLogs.length ? `已加载 ${visibleLogs}/${logs.data?.total ?? visibleLogs} 条` : `${visibleLogs} 条`;
+  const dependencyAlert = !mergeTask && value.status === "queued" && dependency.state !== "ready"
+    ? <div className="task-alert"><span className="task-alert-title">{dependency.state === "skipped" ? "前序交付已跳过" : "等待前置交付"}</span><span>{dependency.reason || "等待调度"}</span></div> : null;
+  const errorAlert = value.error ? <div className="task-alert"><span className="task-alert-title">{mergeTask ? "代码合并失败" : "任务失败"}</span><span>{value.error}</span></div> : null;
+  const statusOpts = Object.keys(STATUS_LABEL).map(s => <option key={s} value={s} selected={s === value.status}>{STATUS_LABEL[s]}</option>);
+  const agentOpts = <><option value="">不指派</option>{roles.data?.filter(a => a.enabled || a.id === value.role_id).map(a => <option key={a.id} value={a.id} selected={a.id === value.role_id}>{a.name}</option>)}</>;
+  const pOpts = <><option value="">无项目</option>{projects.data?.map(p => <option key={p.id} value={p.id} selected={p.id === value.project_id}>{p.name}</option>)}</>;
+  const canMoveProject = value.dependency_mode === "none" && !value.depends_on;
+  const filteredLogs = logFilter === "err" ? allLogs.filter(l => l.stream === "err") : allLogs;
   return <>
     <PageHeader kicker={`Task #${value.id}`} title={value.title} copy={`${value.project_name || "无项目"} · ${value.role_name || "未指派"}`} actions={<><TaskStatus status={value.status} /><Button variant="ghost" onClick={() => navigate(-1)}>返回</Button></>} />
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
-      <div className="grid gap-6">
-        <Card><h2 className="mb-3 font-semibold">任务目标</h2><p className="whitespace-pre-wrap text-sm leading-7 text-muted">{value.body || "未填写任务说明"}</p></Card>
-        {value.status === "awaiting_review" && <Card><h2 className="font-semibold">审批差异</h2><pre className="mt-3 max-h-[32rem] overflow-auto rounded-xl bg-[#080d15] p-4 text-xs leading-5 text-slate-200">{diff.data?.diff || diff.data?.note || "没有检测到差异"}</pre><div className="mt-4 flex gap-2"><Button variant="primary" onClick={() => mutate.mutate({ status: "succeeded" })}><Check size={16} />通过</Button><Button variant="danger" onClick={() => mutate.mutate({ status: "queued", review_note: "请根据审批意见修正后重新提交" })}><X size={16} />驳回重做</Button></div></Card>}
-        {children.data?.length ? <Card><h2 className="font-semibold">子任务</h2><div className="mt-3 grid gap-2">{children.data.map(child => <TaskRow key={child.id} task={child} />)}</div></Card> : null}
-        <Card><div className="mb-3 flex items-center gap-2"><h2 className="font-semibold">终端与日志</h2><Badge tone={value.run_mode === "interactive" ? "info" : "neutral"}>{value.run_mode}</Badge><div className="ml-auto flex gap-2"><Button size="sm" onClick={loadOlder} disabled={loadingOlder || (logs.data ? !logs.data.has_more && !olderLogs.length : true)}>加载更早</Button><Button size="sm" onClick={copyLogs}>复制全部</Button></div></div><TaskTerminal task={value} logs={allLogs} /></Card>
+      <div className="min-w-0">
+        <section className="task-hero">
+          <div className="task-kicker"><span>{mergeTask ? `代码合并任务 · 来源 #${value.merge_of}` : `实现任务 #${value.id}`}</span><span>创建于 {createdAt}</span></div>
+          <h2>{value.title}</h2>
+          <div className="task-meta">
+            <span className="task-meta-item"><span className="grid size-5 place-items-center rounded-full bg-brand/10 text-[10px] font-semibold text-brand-soft">{avatarInitial(value.role_name || "?")}</span>{value.role_name || "未指派"}</span>
+            {value.project_name ? <span className="task-meta-item">{value.project_name}</span> : null}
+            <span className="task-meta-item">{runMode}</span>
+            {!mergeTask ? <DependencyChip task={value} tasks={all} /> : null}
+            {!mergeTask ? <DependencyStateChip task={value} tasks={all} /> : null}
+            {mergeTask ? <span className="task-meta-item task-meta-accent">{mergeSource ? `源任务：#${mergeSource.id}` : `源任务：#${value.merge_of}`}</span> : <SourceMergeChip task={value} tasks={all} />}
+            {value.resume_of ? <span className="task-meta-item task-meta-accent">续跑自 #{value.resume_of}</span> : null}
+          </div>
+        </section>
+        {value.body ? <details className="task-section task-prompt" open={value.body.length <= 160}>
+          <summary><span>任务说明</span><span className="section-meta">{value.body.length} 字</span></summary>
+          <TaskBody task={value} />
+        </details> : null}
+        {dependencyAlert}
+        {errorAlert}
+        <ChildrenSections task={value} onOpen={id => navigate(`/tasks/${id}`)} />
+        <details className="task-section task-diff" open={value.status === "awaiting_review" || value.status === "running"}>
+          <summary><span>代码改动</span><span className="section-meta">{value.status === "awaiting_review" ? "等待审批" : "git diff"}</span></summary>
+          <div className="pt-2">{diff.isLoading ? <Spinner /> : <DiffView taskId={id} status={value.status} stat={diff.data?.stat} diff={diff.data?.diff || ""} note={diff.data?.note} />}</div>
+        </details>
+        <details className="task-section task-log-section" open={isLive || !interactive}>
+          <summary><span>{interactive ? "交互终端" : "执行记录"}</span><span className="section-meta">{logMeta}{logErrors && !interactive ? ` · ${logErrors} 个错误` : ""}</span></summary>
+          <div className="section-head">
+            <div className="section-sub">{value.role_name || "未指派"} · {runMode}</div>
+            <div className="section-tools">
+              {interactive ? null : <LogFilterToggle mode={logFilter} onToggle={() => setLogFilter(logFilter === "err" ? "all" : "err")} />}
+              <Button size="sm" variant="ghost" onClick={() => void copyLogs()}><Copy size={14} />{interactive ? "复制画面" : "复制"}</Button>
+            </div>
+          </div>
+          {interactive
+            ? <TaskTerminal task={value} logs={renderableLogs} onLoadOlder={loadOlder} hasMore={logs.data?.has_more || false} />
+            : <div className="log-lines mt-2" onScroll={e => { if (e.currentTarget.scrollTop <= 64) loadOlder(); }}>
+              {filteredLogs.map((log, index) => {
+                const content = cleanLogContent(log.content);
+                if (!content.trim() && log.stream !== "sys") return null;
+                return <div key={log.id}>
+                  {logFilter === "err" && index > 0 && filteredLogs[index - 1].stream !== "err" ? <div className="err-divider" /> : null}
+                  <div className="line"><span className="ts">{tsOf(log)}</span><span className={`c ${log.stream}`}>{content}</span></div>
+                </div>;
+              })}
+              {!renderableLogs.length ? <div className="line"><span className="ts" /><span className="c out">（暂无输出）</span></div> : null}
+            </div>}
+        </details>
+        <WorkspaceCard task={value} />
       </div>
       <aside className="grid content-start gap-4">
-        <Card><h2 className="font-semibold">属性</h2><dl className="mt-4 grid gap-3 text-sm">{[["状态", statusLabel[value.status]], ["权限", value.perm], ["依赖", value.dependency_mode], ["审批轮次", value.review_rounds > 0 ? `${value.review_rounds} 轮` : null], ["创建", formatTime(value.created_at)], ["更新", formatTime(value.updated_at)]].filter(([, text]) => text != null).map(([key, text]) => <div key={key} className="flex gap-3"><dt className="w-14 text-muted">{key}</dt><dd className="min-w-0 flex-1 break-words">{text}</dd></div>)}</dl>
-          {value.review_note ? <p className="mt-3 rounded-xl bg-elevated p-3 text-xs leading-5 text-muted"><b className="block text-ink">最近意见</b>{value.review_note}</p> : null}
-          <div className="mt-4 grid gap-3 border-t border-line pt-4">
-            <Field label="角色"><select className={inputClass} value={value.role_id || ""} onChange={e => mutate.mutate({ role_id: e.target.value ? Number(e.target.value) : null })}><option value="">未指派</option>{roles.data?.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}</select></Field>
-            <Field label="项目" hint={value.depends_on != null ? "有前置依赖时不可改" : undefined}><select className={inputClass} value={value.project_id || ""} disabled={value.depends_on != null} onChange={e => mutate.mutate({ project_id: e.target.value ? Number(e.target.value) : null })}><option value="">不绑定</option>{projects.data?.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field>
-            <Field label="依赖模式"><select className={inputClass} value={value.dependency_mode} onChange={e => mutate.mutate({ dependency_mode: e.target.value })}><option value="none">无依赖</option><option value="weak">弱依赖（失败跳过）</option><option value="strong">强依赖（失败阻塞）</option></select></Field>
-            <label className="flex min-h-11 items-center gap-3 rounded-xl border border-line bg-elevated px-3 text-sm"><input type="checkbox" checked={value.block_on_failure} onChange={e => mutate.mutate({ block_on_failure: e.target.checked })} />失败后阻塞后续任务</label>
-            <label className="flex min-h-11 items-center gap-3 rounded-xl border border-line bg-elevated px-3 text-sm"><input type="checkbox" checked={value.concurrent} onChange={e => mutate.mutate({ concurrent: e.target.checked })} />允许与同项目任务并行</label>
+        {mergeTask
+          ? <details className="side-collapse side-properties" open>
+            <summary><span>合并任务属性</span><span className="section-meta">系统管理</span></summary>
+            <div className="side-collapse-body">
+              <div className="prop-row"><span className="k">来源</span><span className="v"><Button size="sm" variant="ghost" onClick={() => navigate(`/tasks/${value.merge_of}`)}>任务 #{value.merge_of}</Button></span></div>
+              <div className="prop-row"><span className="k">状态</span><span className="v">{STATUS_LABEL[value.status] || value.status}</span></div>
+              <div className="prop-row"><span className="k">角色</span><span className="v">{value.role_name || "未指派"}{mergeBlocked ? ` · ${mergeBlocked}` : ""}</span></div>
+              <div className="prop-row"><span className="k">策略</span><span className="v">独立 worktree · 串行 · 自动写入主分支{mergeSource?.block_on_failure ? " · 失败阻塞后续自动任务" : " · 失败可跳过"}</span></div>
+            </div>
+          </details>
+          : <details className="side-collapse side-properties" open>
+            <summary><span>任务属性</span><span className="section-meta">可编辑</span></summary>
+            <div className="side-collapse-body">
+              <div className="prop-row"><span className="k">状态</span><span className="v"><select className={inputClass} onChange={e => mutate.mutate({ status: e.target.value })}>{statusOpts}</select></span></div>
+              <div className="prop-row"><span className="k">项目</span><span className="v"><select className={inputClass} disabled={!canMoveProject} title={canMoveProject ? undefined : "有前置依赖的任务不能改项目"} onChange={e => mutate.mutate({ project_id: e.target.value ? Number(e.target.value) : null })}>{pOpts}</select></span></div>
+              <div className="prop-row"><span className="k">角色</span><span className="v"><select className={inputClass} aria-label="任务角色" onChange={e => mutate.mutate({ role_id: e.target.value ? Number(e.target.value) : null })}>{agentOpts}</select></span></div>
+              <div className="prop-row"><span className="k">权限</span><span className="v">{value.perm === "full" ? "自动合并" : "审批后合并"}</span></div>
+              <div className="prop-row"><span className="k">方式</span><span className="v">{runMode}</span></div>
+              <div className="prop-row"><span className="k">前置交付</span><span className="v"><DependencyChip task={value} tasks={all} />{dependency.state !== "ready" ? <span title={dependency.reason || ""}>{dependency.stateLabel || dependency.reason || "等待"}</span> : null}</span></div>
+              <div className="prop-row"><span className="k">失败后</span><span className="v"><select className={inputClass} onChange={e => mutate.mutate({ block_on_failure: e.target.value === "1" })}><option value="0" selected={!value.block_on_failure}>后续弱依赖可跳过</option><option value="1" selected={value.block_on_failure}>阻塞后续弱依赖</option></select></span></div>
+              <div className="prop-row"><span className="k">并发</span><span className="v"><select className={inputClass} onChange={e => mutate.mutate({ concurrent: e.target.value === "1" })}><option value="0" selected={!value.concurrent}>不重叠执行（默认）</option><option value="1" selected={value.concurrent}>允许资源并发</option></select></span></div>
+            </div>
+          </details>}
+        <details className="side-collapse"><summary><span>运行信息</span><span className="section-meta">技术细节</span></summary>
+          <div className="side-collapse-body">
+            <div className="prop-row"><span className="k">执行器</span><span className="v">tmux · {["claimed", "running"].includes(value.status) ? `paihuo:task-${value.id}` : "日志已归档"}</span></div>
+            <div className="prop-row"><span className="k">目录</span><span className="v prop-mono" title={value.project_dir || ""}>{value.project_dir || "-"}</span></div>
+            <div className="prop-row"><span className="k">审批轮次</span><span className="v">{value.review_rounds || "-"}</span></div>
+            <div className="prop-row"><span className="k">开始</span><span className="v">{String(value.started_at || "-").slice(0, 16).replace("T", " ")}</span></div>
+            <div className="prop-row"><span className="k">结束</span><span className="v">{String(value.finished_at || "-").slice(0, 16).replace("T", " ")}</span></div>
           </div>
-        </Card>
-        {workspace.data && (workspace.data.is_worktree || workspace.data.is_git) ? <Card><h2 className="font-semibold">工作区</h2><dl className="mt-4 grid gap-2 text-sm">{workspace.data.is_worktree ? <><div className="flex gap-3"><dt className="w-14 text-muted">分支</dt><dd className="min-w-0 flex-1 break-all font-mono text-xs">{workspace.data.branch}</dd></div><div className="flex gap-3"><dt className="w-14 text-muted">HEAD</dt><dd className="min-w-0 flex-1 break-all font-mono text-xs">{workspace.data.head || workspace.data.base_commit}</dd></div><div className="flex gap-3"><dt className="w-14 text-muted">状态</dt><dd className="min-w-0 flex-1">{workspace.data.dirty ? <Badge tone="warn">有未提交改动</Badge> : <Badge tone="good">干净</Badge>}</dd></div>{workspace.data.ahead > 0 && <div className="flex gap-3"><dt className="w-14 text-muted">领先</dt><dd className="min-w-0 flex-1">{workspace.data.ahead} 个提交</dd></div>}<div className="flex gap-3"><dt className="w-14 text-muted">合并</dt><dd className="min-w-0 flex-1">{workspace.data.merged ? <Badge tone="good">已合并</Badge> : <Badge>未合并</Badge>}</dd></div></> : <div className="flex gap-3"><dt className="w-14 text-muted">仓库</dt><dd className="min-w-0 flex-1">Git 项目</dd></div>}</dl>
-          <div className="mt-4 grid gap-2">{(workspace.data.is_worktree && !workspace.data.merged) && <Button variant="danger" onClick={() => confirm("丢弃该任务的工作区改动？") && discardWs.mutate()}><RotateCcw size={15} />丢弃工作区</Button>}{(!workspace.data.is_git && value.project_dir) && <Button onClick={() => confirm(`在 ${value.project_dir} 初始化 Git 仓库？`) && gitInit.mutate()}><GitBranch size={15} />Git 初始化</Button>}</div>
-        </Card> : null}
+        </details>
         {artifacts.data?.length ? <Card><h2 className="font-semibold">Artifacts</h2><div className="mt-3 grid gap-2">{artifacts.data.map(item => <a key={item.id} className="rounded-lg border border-line p-3 text-sm hover:border-brand/40" href={`/api/v1/artifacts/${item.id}/content`}><span className="block truncate font-medium">{item.name}</span><span className="mt-1 block text-xs text-muted">{item.media_type} · {formatBytes(item.size)}</span></a>)}</div></Card> : null}
-        <Card><h2 className="font-semibold">操作</h2><div className="mt-4 grid gap-2">{["failed", "cancelled"].includes(value.status) && <Button onClick={() => mutate.mutate({ status: "queued" })}><RotateCcw size={16} />重试</Button>}{["queued", "claimed", "running"].includes(value.status) && <Button variant="danger" onClick={() => mutate.mutate({ status: "cancelled" })}><Square size={15} />取消</Button>}{value.run_mode === "interactive" && value.status === "running" && <Button onClick={() => api(`/tasks/${id}/end-session`, { method: "POST" })}><TerminalSquare size={16} />结束会话</Button>}{["succeeded", "failed", "cancelled"].includes(value.status) && <Button onClick={() => resume.mutate()}><Play size={16} />继续对话</Button>}<Button onClick={() => setSubtaskOpen(true)}><ListTree size={16} />拆分子任务</Button><Button onClick={() => { setTemplateName(value.title); setTemplateOpen(true); }}><Save size={16} />保存为模板</Button><Button variant="danger" onClick={() => { if (confirm("确定删除这个任务及其工作空间？")) remove.mutate(); }}>删除任务</Button></div></Card>
+        <section className="side-actions">
+          <div className="side-heading">下一步</div>
+          <div className="detail-actions">
+            {["queued", "claimed", "running"].includes(value.status) ? <Button variant="danger" onClick={() => { if (confirm("取消该任务？")) mutate.mutate({ status: "cancelled" }); }}><X size={15} />取消任务</Button> : null}
+            {interactive && value.status === "running" ? <Button onClick={() => { if (confirm("结束交互会话？将向终端发送该 CLI 的退出命令（pi 为 /quit），agent 收尾后任务按正常退出结果结算。")) endSession.mutate(); }}><TerminalSquare size={15} />结束会话</Button> : null}
+            {value.status === "awaiting_review" ? <>
+              <Button variant="primary" onClick={() => { mutate.mutate({ status: "succeeded" }); toast("已审批，代码合并任务已派发"); }}><Check size={15} />通过并派发合并</Button>
+              <Button onClick={() => { setRejectNote(""); setRejectOpen(true); }}><RotateCcw size={15} />驳回重做</Button>
+              <Button variant="danger" onClick={() => { if (confirm("取消该任务？")) mutate.mutate({ status: "cancelled" }); }}><X size={15} />取消</Button>
+            </> : null}
+            {canRetryTask(value, all) ? <Button onClick={() => mutate.mutate({ status: "queued" })}><RotateCcw size={15} />{retryTaskLabel(value)}</Button> : null}
+            {canRetryTask(value, all) && !mergeTask ? <Button onClick={() => { if (confirm(`继续任务 #${value.id}？将保留任务编号、任务会话目录、工作空间和历史记录，重新排队执行。`)) resume.mutate(); }}><TerminalSquare size={15} />继续对话</Button> : null}
+            {!["queued", "claimed", "running", "awaiting_review"].includes(value.status) && <span className="side-muted">暂无需要处理的操作</span>}
+          </div>
+          <details className="side-more-actions">
+            <summary>更多操作</summary>
+            <div className="detail-actions">
+              {mergeTask
+                ? <Button variant="ghost" onClick={() => navigate(`/tasks/${value.merge_of}`)}>打开源任务 #{value.merge_of}</Button>
+                : <>
+                  <Button variant="ghost" onClick={() => setSubtaskOpen(true)}><ListTree size={15} />拆分子任务</Button>
+                  {value.body ? <Button variant="ghost" onClick={() => { setTemplateName(value.title); setTemplateOpen(true); }}><Save size={15} />保存为模板</Button> : null}
+                  <Button variant="ghost" onClick={() => { if (confirm("确定删除这个任务及其工作空间？")) remove.mutate(); }}><Trash2 size={15} />删除任务</Button>
+                </>}
+            </div>
+          </details>
+        </section>
       </aside>
     </div>
+    <Dialog open={rejectOpen} onOpenChange={setRejectOpen} title="驳回重做" description="填写驳回原因 / 修改意见（将追加到任务提示词，重新执行）。">
+      <form className="grid gap-4" onSubmit={(event: FormEvent) => { event.preventDefault(); mutate.mutate({ status: "queued", review_note: rejectNote }); setRejectOpen(false); toast("已驳回，任务重新执行"); }}>
+        <Field label="驳回原因"><textarea className={inputClass + " min-h-28 py-3"} autoFocus required value={rejectNote} onChange={e => setRejectNote(e.target.value)} placeholder="例如：接口命名不符合规范，请改为…" /></Field>
+        <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setRejectOpen(false)}>取消</Button><Button type="submit" variant="primary">驳回并重新执行</Button></div>
+      </form>
+    </Dialog>
     <Dialog open={subtaskOpen} onOpenChange={setSubtaskOpen} title="拆分子任务" description="子任务继承当前项目的弱依赖，等待父任务交付后执行。"><form className="grid gap-4" onSubmit={(event: FormEvent) => { event.preventDefault(); createSubtask.mutate(); }}>
       <Field label="标题"><input className={inputClass} required value={subtask.title} onChange={e => setSubtask({ ...subtask, title: e.target.value })} /></Field>
       <Field label="任务说明"><textarea className={inputClass + " min-h-28 py-3"} required value={subtask.body} onChange={e => setSubtask({ ...subtask, body: e.target.value })} /></Field>

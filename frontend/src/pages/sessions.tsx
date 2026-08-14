@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CirclePlus, Pause, Play, Send, Square, Trash2, Truck } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Markdown } from "../components/markdown";
 import { PageHeader } from "../components/shell";
@@ -105,16 +105,20 @@ export function SessionDetailPage() {
   }, [older, transcript.data]);
   const deliver = useMutation({ mutationFn: () => api(`/sessions/${id}/deliver`, { method: "POST", body: delivery }), onSuccess: () => { setDeliverOpen(false); refresh(); toast("会话已交付为任务"); } });
   const remove = useMutation({ mutationFn: () => api(`/sessions/${id}`, { method: "DELETE", revision: session.data?.revision }), onSuccess: () => navigate("/sessions") });
+  const [recentActivity, setRecentActivity] = useState(false);
+  useEffect(() => {
+    const latest = allEntries[allEntries.length - 1]?.timestamp;
+    if (!latest) return;
+    const timer = window.setTimeout(() => {
+      const elapsed = Date.now() - new Date(latest).getTime();
+      if (elapsed < 60_000) setRecentActivity(true);
+      window.setTimeout(() => setRecentActivity(false), Math.max(0, 60_000 - elapsed));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [allEntries]);
   if (session.isLoading) return <Spinner />;
   if (!session.data) return <Empty title="会话不存在" copy="它可能已经被删除。" />;
   const item = session.data;
-  const recentActivity = (() => {
-    for (let i = allEntries.length - 1; i >= 0; i--) {
-      const ts = allEntries[i].timestamp;
-      if (ts) return Date.now() - new Date(ts).getTime() < 60_000;
-    }
-    return false;
-  })();
   return <>
     <PageHeader kicker={`Session #${item.id}`} title={item.title} copy={`${item.role_name || "角色"} · ${item.project_name || "无项目"} · ${item.runtime_id}`} actions={<><Badge tone={sessionTone[item.status] || "neutral"}>{sessionLabel[item.status]}</Badge>{item.status === "created" && <Button variant="primary" onClick={() => action.mutate("start")}><Play size={16} />启动</Button>}{item.status === "suspended" && <Button variant="primary" onClick={() => action.mutate("resume")}><Play size={16} />恢复</Button>}{item.status === "active" && <Button onClick={() => action.mutate("suspend")}><Pause size={16} />挂起</Button>}{["active", "suspended"].includes(item.status) && <Button onClick={() => setDeliverOpen(true)}><Truck size={16} />交付</Button>}{item.status === "active" && (prompt.isPending || recentActivity) && <Button variant="danger" disabled={abort.isPending} onClick={() => abort.mutate()}><Square size={16} />中止</Button>}<Button variant="danger" onClick={() => confirm("删除这个会话及其工作区？") && remove.mutate()}><Trash2 size={16} /></Button></>} />
     <Card className="min-h-[28rem]"><div className="mb-5 flex items-center justify-between"><h2 className="font-semibold">消息</h2><span className="flex items-center gap-2"><span className="text-xs text-muted">{transcript.data?.total || item.message_count} 条</span>{prompt.isPending && <Badge tone="info">正在处理…</Badge>}</span></div>{transcript.isLoading ? <Spinner /> : allEntries.length ? <><div className="grid gap-4">{allEntries.map((entry, index) => { const entryKey = typeof entry.id === "string" && entry.id ? entry.id : JSON.stringify(entry); return <article key={entry.id || index} className="rounded-xl border border-line bg-elevated p-4">{entry.type === "extension_ui_request" ? <ExtensionRequestCard entry={entry} answered={!!answered[entryKey]} onAsk={body => ask.mutate(body)} /> : <><div className="mb-3 flex items-center gap-2 text-xs text-muted"><Badge tone={entry.role === "assistant" ? "info" : "neutral"}>{entry.role === "assistant" ? "助手" : entry.role === "user" ? "用户" : entry.type || "事件"}</Badge>{entry.timestamp && <time>{new Date(entry.timestamp).toLocaleString("zh-CN")}</time>}</div><TranscriptContent entry={entry} /></>}</article>; })}</div>{(transcript.data?.total ?? allEntries.length) > allEntries.length && <div className="mt-4 flex justify-center"><Button size="sm" onClick={loadOlder} disabled={loadingOlder}>{loadingOlder ? "加载中…" : "加载更早"}</Button></div>}</> : <Empty title="还没有消息" copy="在下方输入第一条消息。" />}</Card>
