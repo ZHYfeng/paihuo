@@ -124,11 +124,14 @@ body {
   font-feature-settings: "cv11";
 }
 
+/* 只继承字族，不重置字号/字重/行高：`font: inherit` 是非分层规则，会覆盖
+   Tailwind v4 分层工具类（text-sm/font-medium 等），导致按钮/输入框以 16px
+   默认字号渲染，窄按钮里两字标签（保存/导入/编辑…）被压成逐字竖排。 */
 button,
 input,
 textarea,
 select {
-  font: inherit;
+  font-family: inherit;
 }
 
 button,

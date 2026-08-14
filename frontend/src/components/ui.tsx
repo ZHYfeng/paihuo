@@ -13,7 +13,7 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 
 export function Button({ variant = "secondary", size = "md", className, ...props }: ButtonProps) {
   return <button {...props} className={cn(
-    "inline-flex min-h-8 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors duration-150",
+    "inline-flex min-h-8 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-3 text-sm font-medium transition-colors duration-150",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-2 focus-visible:ring-offset-canvas",
     "disabled:pointer-events-none disabled:opacity-45",
     size === "sm" ? "min-h-7 px-2.5 text-[13px]" : "",
