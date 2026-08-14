@@ -248,15 +248,15 @@ export function BoardPage() {
   return <>
     <PageHeader title="任务" copy="任务状态机、依赖交付、审批和代码整合保持确定性。" actions={<Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={17} />新建任务</Button>} />
     <StatsStrip />
-    <Card className="mb-4 mt-3 flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
-      <span className="flex items-center gap-2 px-2 text-sm text-muted"><ListFilter size={16} />筛选</span>
+    <Card className="mb-4 mt-3 flex flex-col gap-2 p-3 sm:flex-row sm:flex-wrap sm:items-center">
+      <span className="flex shrink-0 items-center gap-2 px-2 text-sm text-muted whitespace-nowrap"><ListFilter size={16} />筛选</span>
       <select className={inputClass + " sm:w-40"} value={roleID} onChange={event => setRoleID(event.target.value)} aria-label="按角色筛选"><option value="">全部角色</option>{roles.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
       <select className={inputClass + " sm:w-44"} value={project} onChange={event => setProject(event.target.value)} aria-label="按项目筛选"><option value="">全部项目</option>{projects.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
       <select className={inputClass + " sm:w-36"} value={status} onChange={event => setStatus(event.target.value)} aria-label="按状态筛选"><option value="">全部状态</option>{Object.entries(STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-      <span className="text-sm text-muted sm:ml-auto">{sourceTasks.length} 个实现 · {mergeTasks.length} 个合并</span>
-      <div className="flex rounded-xl border border-line bg-elevated p-0.5" role="tablist" aria-label="视图切换">
-        <button role="tab" aria-selected={view === "board"} className={`rounded-[10px] px-2.5 py-1 text-[13px] ${view === "board" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("board")}>看板</button>
-        <button role="tab" aria-selected={view === "list"} className={`rounded-[10px] px-2.5 py-1 text-[13px] ${view === "list" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("list")}>列表</button>
+      <span className="whitespace-nowrap text-sm text-muted sm:ml-auto">{sourceTasks.length} 个实现 · {mergeTasks.length} 个合并</span>
+      <div className="flex shrink-0 rounded-xl border border-line bg-elevated p-0.5" role="tablist" aria-label="视图切换">
+        <button role="tab" aria-selected={view === "board"} className={`rounded-[10px] whitespace-nowrap px-2.5 py-1 text-[13px] ${view === "board" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("board")}>看板</button>
+        <button role="tab" aria-selected={view === "list"} className={`rounded-[10px] whitespace-nowrap px-2.5 py-1 text-[13px] ${view === "list" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setView("list")}>列表</button>
       </div>
     </Card>
     {tasks.isLoading ? <Spinner /> : view === "board" ? <div className="grid grid-cols-1 gap-4">
@@ -267,15 +267,15 @@ export function BoardPage() {
     </div> : <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
       <th className="whitespace-nowrap px-3 py-2 font-medium">ID</th><th className="whitespace-nowrap px-3 py-2 font-medium">标题</th><th className="whitespace-nowrap px-3 py-2 font-medium">类型</th><th className="whitespace-nowrap px-3 py-2 font-medium">角色</th><th className="whitespace-nowrap px-3 py-2 font-medium">项目</th><th className="whitespace-nowrap px-3 py-2 font-medium">状态</th><th className="whitespace-nowrap px-3 py-2 font-medium">轮次</th><th className="whitespace-nowrap px-3 py-2 font-medium">创建</th><th className="whitespace-nowrap px-3 py-2 font-medium">结束</th><th className="whitespace-nowrap px-3 py-2 font-medium">操作</th>
     </tr></thead><tbody className="divide-y divide-line">{filtered.map(task => <tr key={task.id} className="list-row hover:bg-hover" onClick={() => navigate(`/tasks/${task.id}`)}>
-      <td className="px-3 py-2 text-faint">#{task.id}</td>
-      <td className="t-title px-3 py-2"><Link to={`/tasks/${task.id}`} onClick={e => e.stopPropagation()} className="hover:text-brand-soft">{task.title}</Link>{isMergeTask(task) ? <span className="chip merge ml-1">合并 #{task.merge_of}</span> : null}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-faint">#{task.id}</td>
+      <td className="t-title whitespace-nowrap px-3 py-2"><Link to={`/tasks/${task.id}`} onClick={e => e.stopPropagation()} className="hover:text-brand-soft">{task.title}</Link>{isMergeTask(task) ? <span className="chip merge ml-1">合并 #{task.merge_of}</span> : null}</td>
       <td className="px-3 py-2"><span className="task-list-chips">{taskChips(task, all, roles.data || [])}</span></td>
-      <td className="px-3 py-2 text-muted">{task.role_name || "-"}</td>
-      <td className="px-3 py-2 text-muted">{task.project_name || "-"}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-muted">{task.role_name || "-"}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-muted">{task.project_name || "-"}</td>
       <td className="px-3 py-2"><TaskStatus status={task.status} /></td>
-      <td className="px-3 py-2 text-faint">{task.review_rounds || "—"}</td>
-      <td className="px-3 py-2 text-faint">{formatTime(task.created_at)}</td>
-      <td className="px-3 py-2 text-faint">{formatTime(task.finished_at)}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-faint">{task.review_rounds || "—"}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-faint">{formatTime(task.created_at)}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-faint">{formatTime(task.finished_at)}</td>
       <td className="px-3 py-2"><span className="ops inline-flex gap-1.5">
         {canRetryTask(task, all) ? <Button size="sm" variant="ghost" title={retryTaskLabel(task)} onClick={e => { e.stopPropagation(); mutateStatus.mutate({ id: task.id, status: "queued" }); }}><RotateCcw size={13} /><span className="hidden sm:inline">{retryTaskLabel(task)}</span></Button> : null}
         {canDeleteTask(task) ? <Button size="sm" variant="danger" title="删除任务" onClick={e => { e.stopPropagation(); if (confirm(`删除任务 #${task.id}？执行日志、worktree、任务分支及其合并子任务将一并删除。`)) removeTask.mutate(task.id); }}><Trash2 size={13} /><span className="hidden sm:inline">删除</span></Button> : null}
@@ -349,12 +349,12 @@ export function HistoryPage() {
   });
   return <>
     <PageHeader title="历史" copy="已结算任务及其退出原因、审批轮次和时间。" />
-    <Card className="mb-4 flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
-      <span className="flex items-center gap-2 px-2 text-sm text-muted"><ListFilter size={16} />筛选</span>
+    <Card className="mb-4 flex flex-col gap-2 p-3 sm:flex-row sm:flex-wrap sm:items-center">
+      <span className="flex shrink-0 items-center gap-2 px-2 text-sm text-muted whitespace-nowrap"><ListFilter size={16} />筛选</span>
       <select className={inputClass + " sm:w-40"} value={roleID} onChange={event => setRoleID(event.target.value)} aria-label="按角色筛选"><option value="">全部角色</option>{roles.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
       <select className={inputClass + " sm:w-36"} value={status} onChange={event => setStatus(event.target.value)} aria-label="按状态筛选"><option value="">全部状态</option>{Object.entries(STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       <Field label="天数"><input type="number" min={1} className={inputClass + " sm:w-28"} value={days} onChange={event => onDaysChange(event.target.value)} placeholder="全部时间" aria-label="按天数筛选" /></Field>
-      <span className="text-sm text-muted sm:ml-auto">{filtered.length} 条</span>
+      <span className="whitespace-nowrap text-sm text-muted sm:ml-auto">{filtered.length} 条</span>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" onClick={toggleAll}>全选非合并</Button>
         <Button size="sm" variant="danger" disabled={!selected.size || removeSelected.isPending} onClick={() => confirm(`删除选中的 ${selected.size} 条历史任务？`) && removeSelected.mutate()}>删除选中{selected.size ? `（${selected.size}）` : ""}</Button>
@@ -366,15 +366,15 @@ export function HistoryPage() {
       <th className="whitespace-nowrap px-3 py-2 font-medium">ID</th><th className="whitespace-nowrap px-3 py-2 font-medium">标题</th><th className="whitespace-nowrap px-3 py-2 font-medium">角色</th><th className="whitespace-nowrap px-3 py-2 font-medium">项目</th><th className="whitespace-nowrap px-3 py-2 font-medium">权限</th><th className="whitespace-nowrap px-3 py-2 font-medium">状态</th><th className="whitespace-nowrap px-3 py-2 font-medium">轮次</th><th className="whitespace-nowrap px-3 py-2 font-medium">创建</th><th className="whitespace-nowrap px-3 py-2 font-medium">结束</th><th className="whitespace-nowrap px-3 py-2 font-medium">操作</th>
     </tr></thead><tbody className="divide-y divide-line">{filtered.map(task => <tr key={task.id} className="history-row hover:bg-hover">
       <td className="px-3 py-2"><input type="checkbox" aria-label={`选择任务 ${task.title}`} checked={selected.has(task.id)} onChange={() => toggle(task.id)} className="size-4 accent-[var(--brand)]" /></td>
-      <td className="px-3 py-2 text-faint">#{task.id}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-faint">#{task.id}</td>
       <td className="whitespace-nowrap px-3 py-2 font-medium"><Link to={`/tasks/${task.id}`} className="hover:text-brand-soft">{task.title}</Link>{task.merge_of ? <span className="chip merge ml-1">合并 #{task.merge_of}</span> : null}</td>
-      <td className="px-3 py-2 text-muted">{task.role_name || "-"}</td>
-      <td className="px-3 py-2 text-muted">{task.project_name || "-"}</td>
-      <td className="px-3 py-2 text-muted">{PERM_LABEL[task.perm] || task.perm}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-muted">{task.role_name || "-"}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-muted">{task.project_name || "-"}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-muted">{PERM_LABEL[task.perm] || task.perm}</td>
       <td className="px-3 py-2"><TaskStatus status={task.status} /></td>
-      <td className="px-3 py-2 text-faint">{task.review_rounds || ""}</td>
-      <td className="px-3 py-2 text-faint">{formatTime(task.created_at)}</td>
-      <td className="px-3 py-2 text-faint">{formatTime(task.finished_at)}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-faint">{task.review_rounds || ""}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-faint">{formatTime(task.created_at)}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-faint">{formatTime(task.finished_at)}</td>
       <td className="px-3 py-2"><span className="ops inline-flex gap-1.5">
         {canRetryTask(task, all) ? <Button size="sm" variant="ghost" title={retryTaskLabel(task)} onClick={() => retry.mutate(task.id)}><RotateCcw size={13} /><span className="hidden sm:inline">{retryTaskLabel(task)}</span></Button> : null}
         {canDeleteTask(task) ? <Button size="sm" variant="danger" title="删除任务" onClick={() => confirm(`删除任务 #${task.id}？执行日志、worktree、任务分支及其合并子任务将一并删除。`) && remove.mutate(task.id)}><Trash2 size={13} /><span className="hidden sm:inline">删除</span></Button> : null}
