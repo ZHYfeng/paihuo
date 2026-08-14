@@ -37,6 +37,7 @@
   --warning: #a15c00;
   --danger: #c3344d;
   --focus: #3867e8;
+  --merge-accent: var(--brand-soft);
 }
 
 .dark {
@@ -56,10 +57,34 @@
   --warning: #f0b45c;
   --danger: #ff8193;
   --focus: #80a0ff;
+  --merge-accent: var(--brand-soft);
 }
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 45%, transparent) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 38%, transparent);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted) 58%, transparent);
+  background-clip: padding-box;
 }
 
 html {
@@ -364,6 +389,15 @@ a {
 }
 
 .sc-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+/* 通用状态点（工作台/看板/项目卡片；看板列内使用 .board-col-head 的精修版） */
+.st-dot {
+  display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -1524,8 +1558,12 @@ a {
 }
 
 .board-col-body .empty {
-  padding: 10px;
+  padding: 14px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  color: var(--faint);
   font-size: 11.5px;
+  text-align: center;
 }
 
 /* 项目进展卡（工作台） */

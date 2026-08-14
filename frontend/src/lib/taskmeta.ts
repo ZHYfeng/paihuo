@@ -7,7 +7,7 @@ export const PERM_LABEL: Record<string, string> = { full: "自动派发代码合
 
 export const ST_COLOR: Record<string, string> = {
   queued: "var(--st-queued)", claimed: "var(--st-claimed)", running: "var(--st-running)",
-  awaiting_review: "var(--st-review)", succeeded: "var(--st-done)", failed: "var(--st-failed)", cancelled: "var(--fg-muted)"
+  awaiting_review: "var(--st-review)", succeeded: "var(--st-done)", failed: "var(--st-failed)", cancelled: "var(--muted)"
 };
 
 // 看板列：实现任务区 3 列；合并任务区额外追加需处理列。

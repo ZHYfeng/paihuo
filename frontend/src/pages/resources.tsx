@@ -88,7 +88,7 @@ export function ProjectDetailPage() {
       </div>
       <div className="grid content-start gap-3">
         <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
-          {([["进行中", stat.in_flight || 0, "var(--st-running)"], ["待审批", review?.count || 0, "var(--st-review)"], ["完成", stat.succeeded, "var(--st-done)"], ["失败", stat.failed, "var(--st-failed)"], ["实现任务", implementations.length, "var(--fg-muted)"], ["合并任务", merges.length, "var(--merge-accent)"]] as Array<[string, number, string]>).map(([label, num, color]) => <div key={label} className="stat-chip" style={{ "--metric-color": color } as React.CSSProperties}><span className="sc-dot" style={{ background: color }} /><b>{num}</b><span className="sc-label">{label}</span></div>)}
+          {([["进行中", stat.in_flight || 0, "var(--st-running)"], ["待审批", review?.count || 0, "var(--st-review)"], ["完成", stat.succeeded, "var(--st-done)"], ["失败", stat.failed, "var(--st-failed)"], ["实现任务", implementations.length, "var(--muted)"], ["合并任务", merges.length, "var(--merge-accent)"]] as Array<[string, number, string]>).map(([label, num, color]) => <div key={label} className="stat-chip"><span className="sc-dot" style={{ background: color }} /><b>{num}</b><span className="sc-label">{label}</span></div>)}
         </div>
         <div className="text-xs font-semibold uppercase tracking-wide text-faint">近 14 天完成</div>
         <DailyChart daily={stat.daily || []} days={14} />
@@ -110,8 +110,8 @@ export function ProjectDetailPage() {
               <button className="grid size-7 place-items-center rounded-lg text-muted hover:bg-hover hover:text-ink disabled:opacity-30" disabled={(pendingIndex.get(task.id) ?? 0) === pendingItems.length - 1 || reorder.isPending} aria-label={`下移任务 ${task.title}`} onClick={() => move(task.id, 1)}><ArrowDown size={15} /></button>
             </div> : null}
             <div className="flex gap-1">
-              {task.status === "queued" && <Button size="sm" variant="ghost" title="重试" onClick={() => patch.mutate({ taskID: task.id, body: { status: "queued" } })}><RotateCcw size={13} /></Button>}
-              <Button size="sm" variant="danger" title="删除任务" onClick={() => confirm(`删除任务 #${task.id}？`) && removeTask.mutate(task.id)}><Trash2 size={13} /></Button>
+              {task.status === "queued" && <Button size="sm" variant="ghost" aria-label={`重试任务 ${task.title}`} title="重试" onClick={() => patch.mutate({ taskID: task.id, body: { status: "queued" } })}><RotateCcw size={13} /></Button>}
+              <Button size="sm" variant="danger" aria-label={`删除任务 ${task.title}`} title="删除任务" onClick={() => confirm(`删除任务 #${task.id}？`) && removeTask.mutate(task.id)}><Trash2 size={13} /></Button>
             </div>
           </div>;
         })}

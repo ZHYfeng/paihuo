@@ -34,11 +34,11 @@ function StatsStrip({ dashboard = false }: { dashboard?: boolean }) {
     ["待审批", review?.count || 0, "var(--st-review)"],
     ["今日完成", today?.count ?? 0, "var(--st-done)"],
     ["完成率", fmtPct(stats.data?.success_rate || 0), "var(--st-done)"],
-    ["平均耗时", fmtDur(stats.data?.avg_duration || 0), "var(--fg-muted)"],
-    ["活跃项目", stats.data?.projects || 0, "var(--fg-muted)"]
+    ["平均耗时", fmtDur(stats.data?.avg_duration || 0), "var(--muted)"],
+    ["活跃项目", stats.data?.projects || 0, "var(--muted)"]
   ];
   const visible = dashboard ? [chips[1], chips[0], chips[2], chips[3]] : chips;
-  return <div className="stat-strip">{visible.map(([label, value, color]) => <div key={label} className="stat-chip" style={{ "--metric-color": color } as React.CSSProperties} aria-label={`${label} ${value}`}>
+  return <div className="stat-strip">{visible.map(([label, value, color]) => <div key={label} className="stat-chip" aria-label={`${label} ${value}`}>
     <span className="sc-dot" style={{ background: color }} /><b>{value}</b><span className="sc-label">{label}</span>
   </div>)}</div>;
 }
@@ -96,7 +96,7 @@ function avatarInitial(name: string) { return (name || "?").slice(0, 1); }
 /* ---- 工作台卡片（旧 dashboard.js dashCardHTML） ---- */
 
 function DashCard({ task, actions, onOpen }: { task: Task; actions?: React.ReactNode; onOpen(): void }) {
-  return <article className="card dash-card rounded-xl border border-line bg-elevated p-3.5 transition hover:border-brand/35" style={{ "--st-color": ST_COLOR[task.status] } as React.CSSProperties} onClick={onOpen}>
+  return <article className="card dash-card rounded-xl border border-line bg-elevated p-3.5 transition hover:border-brand/35" style={{ "--st-color": ST_COLOR[task.status] } as React.CSSProperties} onClick={onOpen} role="button" tabIndex={0} onKeyDown={e => { if (e.key === "Enter") onOpen(); }}>
     <div className="c-top"><span className="st-dot" style={{ background: ST_COLOR[task.status] }} /><span className="c-id">#{task.id}</span>
       <span className="c-time">{formatTime(task.created_at)}</span>
       {task.perm === "review" ? <span className="chip review">审批</span> : null}</div>
@@ -208,7 +208,7 @@ function BoardColumnsHTML({ tasks, roles, mergeSection }: { tasks: Task[]; roles
     const items = tasks.filter(t => statuses.includes(t.status));
     return <div key={key} className="board-col" style={{ "--st-color": ST_COLOR[statuses[0]] } as React.CSSProperties}>
       <div className="board-col-head"><span className="st-dot" /><span>{label}</span><span className="count">{items.length}</span></div>
-      <div className="board-col-body">{items.map(task => <TaskCard key={task.id} task={task} tasks={tasks} roles={roles} />)}{!items.length ? <div className="empty">—</div> : null}</div>
+      <div className="board-col-body">{items.map(task => <TaskCard key={task.id} task={task} tasks={tasks} roles={roles} />)}{!items.length ? <div className="empty">暂无</div> : null}</div>
     </div>;
   })}</>;
 }
