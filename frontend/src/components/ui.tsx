@@ -63,7 +63,7 @@ export const inputClass = "min-h-9 w-full rounded-lg border border-line bg-surfa
 
 export function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "good" | "warn" | "bad" | "info" }) {
   return <span className={cn(
-    "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
+    "inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium",
     tone === "neutral" && "border-line bg-elevated text-muted",
     tone === "good" && "border-success/25 bg-success/10 text-success",
     tone === "warn" && "border-warning/25 bg-warning/10 text-warning",
