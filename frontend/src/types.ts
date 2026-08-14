@@ -54,6 +54,7 @@ export interface Task {
   resume_of?: ID | null;
   worktree_branch?: string;
   base_commit?: string;
+  sort_order?: number;
   terminal_cols?: number;
   terminal_rows?: number;
   revision: number;
