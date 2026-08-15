@@ -191,6 +191,7 @@ function TaskCard({ task, tasks, roles }: { task: Task; tasks: Task[]; roles: Ro
     <div className="flex items-center gap-1.5 text-[11px] text-faint"><span className="st-dot" style={{ background: ST_COLOR[task.status] }} /><span className="font-bold text-muted">#{task.id}</span><time className="text-faint">{formatTime(task.created_at)}</time></div>
     <div className="mt-1 text-[13px] font-semibold leading-5 text-ink">{task.title}</div>
     {task.body ? <div className="mt-1 line-clamp-2 text-xs leading-4 text-muted">{task.body}</div> : null}
+    {task.error ? <div className="mt-1 line-clamp-2 text-xs leading-4 text-danger" title={task.error}>{task.error}</div> : null}
     <div className="mt-1.5 flex flex-wrap items-center gap-1">{taskChips(task, tasks, roles)}</div>
     <div className="c-meta mt-1.5 flex items-center gap-1.5 text-xs text-muted">
       {task.project_id && task.project_name ? <Link to={`/projects/${task.project_id}`} className="chip chip-link hover:text-brand-soft" onClick={e => e.stopPropagation()} title="打开项目页">{task.project_name}</Link> : null}
@@ -262,7 +263,7 @@ export function BoardPage() {
     {tasks.isLoading ? <Spinner /> : view === "board" ? <div className="grid grid-cols-1 gap-4">
       <section className="board-section"><div className="board-section-head"><div><h2>实现任务</h2><p>项目任务默认按创建时间顺序交付，也可在项目页调整；每项完成后会先处理自己的代码合并。</p></div><div className="board-section-counts"><span>{sourceTasks.length} 个</span></div></div>
         <div className="board-section-lanes">{sourceTasks.length ? <BoardColumnsHTML tasks={sourceTasks} roles={roles.data || []} mergeSection={false} /> : <div className="board-section-empty">没有符合条件的实现任务。</div>}</div></section>
-      <section className="board-section merge-section"><div className="board-section-head"><div><h2>代码合并</h2><p>使用新的独立 worktree 验证、解决冲突并自动写入主分支。</p></div><div className="board-section-counts"><span>{mergeTasks.length} 个</span>{mergeTasks.filter(t => mergeBlockReason(t, roles.data || [])).length ? <span className="chip merge-blocked">{mergeTasks.filter(t => mergeBlockReason(t, roles.data || [])).length} 个角色不可用</span> : null}</div></div>
+      <section className="board-section merge-section"><div className="board-section-head"><div><h2>代码合并</h2><p>无冲突时平台直接整合；有冲突时 agent 在独立 worktree 中解决后写入主分支。</p></div><div className="board-section-counts"><span>{mergeTasks.length} 个</span>{mergeTasks.filter(t => mergeBlockReason(t, roles.data || [])).length ? <span className="chip merge-blocked">{mergeTasks.filter(t => mergeBlockReason(t, roles.data || [])).length} 个角色不可用</span> : null}</div></div>
         <div className="board-section-lanes">{mergeTasks.length ? <BoardColumnsHTML tasks={mergeTasks} roles={roles.data || []} mergeSection={true} /> : <div className="board-section-empty">还没有代码合并任务；实现任务完成后会自动出现在这里。</div>}</div></section>
     </div> : <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
       <th className="whitespace-nowrap px-3 py-2 font-medium">ID</th><th className="whitespace-nowrap px-3 py-2 font-medium">标题</th><th className="whitespace-nowrap px-3 py-2 font-medium">类型</th><th className="whitespace-nowrap px-3 py-2 font-medium">角色</th><th className="whitespace-nowrap px-3 py-2 font-medium">项目</th><th className="whitespace-nowrap px-3 py-2 font-medium">状态</th><th className="whitespace-nowrap px-3 py-2 font-medium">轮次</th><th className="whitespace-nowrap px-3 py-2 font-medium">创建</th><th className="whitespace-nowrap px-3 py-2 font-medium">结束</th><th className="whitespace-nowrap px-3 py-2 font-medium">操作</th>
@@ -614,8 +615,12 @@ export function TaskDetailPage() {
             <div className="side-collapse-body">
               <div className="prop-row"><span className="k">来源</span><span className="v"><Button size="sm" variant="ghost" onClick={() => navigate(`/tasks/${value.merge_of}`)}>任务 #{value.merge_of}</Button></span></div>
               <div className="prop-row"><span className="k">状态</span><span className="v">{STATUS_LABEL[value.status] || value.status}</span></div>
-              <div className="prop-row"><span className="k">角色</span><span className="v">{value.role_name || "未指派"}{mergeBlocked ? ` · ${mergeBlocked}` : ""}</span></div>
-              <div className="prop-row"><span className="k">策略</span><span className="v">独立 worktree · 串行 · 自动写入主分支{mergeSource?.block_on_failure ? " · 失败阻塞后续自动任务" : " · 失败可跳过"}</span></div>
+              <div className="prop-row"><span className="k">角色</span><span className="v">
+                {value.status === "queued"
+                  ? <span className="flex flex-wrap items-center gap-1.5"><select value={value.role_id ?? ""} onChange={e => { const v = e.target.value; mutate.mutate(v ? { role_id: Number(v) } : { role_id: null }); }} className={inputClass + " py-0.5 text-xs"} aria-label="更换合并任务角色">{roles.data?.filter(a => a.enabled || a.id === value.role_id).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>{mergeBlocked ? <span className="text-danger">{mergeBlocked}</span> : null}</span>
+                  : <>{value.role_name || "未指派"}{mergeBlocked ? ` · ${mergeBlocked}` : ""}</>}
+              </span></div>
+              <div className="prop-row"><span className="k">策略</span><span className="v">独立 worktree · 串行 · 无冲突时平台自动合并，冲突时 agent 整合后写入主分支{mergeSource?.block_on_failure ? " · 失败阻塞后续自动任务" : " · 失败可跳过"}</span></div>
             </div>
           </details>
           : <details className="side-collapse side-properties" open>

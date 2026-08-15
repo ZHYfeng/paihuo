@@ -178,6 +178,187 @@ func TestExecutorQueuesMergeTaskAfterSuccessfulFullTask(t *testing.T) {
 	if nested, err := st.ListChildren(merge.ID); err != nil || len(nested) != 0 {
 		t.Fatalf("合并任务不应递归创建合并任务: %+v err=%v", nested, err)
 	}
+	// 源分支无冲突：合并任务应由平台自动合并，不再启动 agent。
+	logs, err := st.ListLogs(merge.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := ""
+	for _, l := range logs {
+		joined += l.Content + "\n"
+	}
+	if !strings.Contains(joined, "自动合并") {
+		t.Fatalf("无冲突合并任务应记录自动合并日志: %s", joined)
+	}
+}
+
+func TestExecutorFailsMergeTaskEarlyWhenMainWorktreeDirty(t *testing.T) {
+	// 主工作区有未提交改动时，合并任务必须在 agent 启动前直接失败：
+	// 最终 squash 合并必然被阻塞，提前失败省掉一轮 agent 开销。
+	requireTmuxIntegration(t)
+	registry[tmuxAutoMergeTestCLI] = tmuxAutoMergeTestAdapter{}
+	t.Cleanup(func() { delete(registry, tmuxAutoMergeTestCLI) })
+
+	projectDir := initExecutorGitProject(t)
+	if err := os.WriteFile(filepath.Join(projectDir, "local.txt"), []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	agentID, err := st.CreateRole(store.Role{Name: "merger", RuntimeID: tmuxAutoMergeTestCLI, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, err := st.CreateProject(store.Project{Name: "proj", ProjectDir: projectDir, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionsRoot := t.TempDir()
+	sourceID, err := st.CreateTask(store.Task{
+		Title: "dirty main source", Status: store.StatusSucceeded, Perm: store.PermFull,
+		RoleID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := st.GetTask(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, branch, base, err := workspace.Ensure(*source, sessionsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateTask(sourceID, map[string]any{"worktree_branch": branch, "base_commit": base}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source.WorktreeBranch, source.BaseCommit = branch, base
+	if _, err := workspace.Snapshot(*source, sessionsRoot); err != nil {
+		t.Fatal(err)
+	}
+	mergeID, err := st.CreateTask(store.NewMergeTask(*source))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	socket := fmt.Sprintf("paihuo-dirty-main-test-%d", os.Getpid())
+	e := New(st, events.NewEventStream(), sessionsRoot, "dirty-main-test.db")
+	e.runner = newTmuxRunnerAt(sessionsRoot, socket)
+	cleanupRunner := newTmuxRunnerAt(sessionsRoot, socket)
+	t.Cleanup(func() { stopTmuxServerAndClean(t, cleanupRunner, sessionsRoot) })
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	e.Start(ctx)
+	e.Wake()
+
+	waitTaskStatus(t, st, mergeID, store.StatusFailed, 5*time.Second)
+	merge, err := st.GetTask(mergeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(merge.Error, "未提交改动") {
+		t.Fatalf("合并任务应因主工作区未提交改动而失败: %+v", merge)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, "feature.txt")); !os.IsNotExist(err) {
+		t.Fatalf("主工作区未提交改动不应被合并覆盖: %v", err)
+	}
+	logs, err := st.ListLogs(mergeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := ""
+	for _, l := range logs {
+		joined += l.Content + "\n"
+	}
+	if strings.Contains(joined, "\n$ ") {
+		t.Fatalf("脏主工作区的合并任务不应启动 agent: %s", joined)
+	}
+}
+
+// 源任务没有任何修改（agent 跑完未改动文件）也应自动完成合并：
+// 无内容可导入，平台直接结算成功，主分支不产生新提交。
+func TestExecutorAutoMergesSourceWithNoChanges(t *testing.T) {
+	requireTmuxIntegration(t)
+	registry[tmuxAutoMergeTestCLI] = tmuxAutoMergeTestAdapter{}
+	t.Cleanup(func() { delete(registry, tmuxAutoMergeTestCLI) })
+	projectDir := initExecutorGitProject(t)
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	agentID, err := st.CreateRole(store.Role{Name: "noop", RuntimeID: tmuxAutoMergeTestCLI, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, err := st.CreateProject(store.Project{Name: "proj", ProjectDir: projectDir, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionsRoot := t.TempDir()
+	sourceID, err := st.CreateTask(store.Task{
+		Title: "no changes source", Status: store.StatusSucceeded, Perm: store.PermFull,
+		RoleID: &agentID, ProjectID: &projectID, ProjectDir: projectDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := st.GetTask(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, branch, base, err := workspace.Ensure(*source, sessionsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateTask(sourceID, map[string]any{"worktree_branch": branch, "base_commit": base}); err != nil {
+		t.Fatal(err)
+	}
+	// 不写任何文件：Snapshot 不会产生新提交，源分支停留在 base。
+	source.WorktreeBranch, source.BaseCommit = branch, base
+	if _, err := workspace.Snapshot(*source, sessionsRoot); err != nil {
+		t.Fatal(err)
+	}
+	mergeID, err := st.CreateTask(store.NewMergeTask(*source))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	socket := fmt.Sprintf("paihuo-noop-merge-test-%d", os.Getpid())
+	e := New(st, events.NewEventStream(), sessionsRoot, "noop-merge-test.db")
+	e.runner = newTmuxRunnerAt(sessionsRoot, socket)
+	cleanupRunner := newTmuxRunnerAt(sessionsRoot, socket)
+	t.Cleanup(func() { stopTmuxServerAndClean(t, cleanupRunner, sessionsRoot) })
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	e.Start(ctx)
+	e.Wake()
+
+	waitTaskStatus(t, st, mergeID, store.StatusSucceeded, 5*time.Second)
+	// 主分支应保持 init 单提交，无新增合并提交。
+	if out, err := osexec.Command("git", "-C", projectDir, "rev-list", "--count", "HEAD").Output(); err != nil || strings.TrimSpace(string(out)) != "1" {
+		t.Fatalf("无修改合并不应产生新提交: %q err=%v", out, err)
+	}
+	logs, err := st.ListLogs(mergeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := ""
+	for _, l := range logs {
+		joined += l.Content + "\n"
+	}
+	if !strings.Contains(joined, "自动合并") {
+		t.Fatalf("无修改合并任务应记录自动合并日志: %s", joined)
+	}
+	if strings.Contains(joined, "\n$ ") {
+		t.Fatalf("无修改合并任务不应启动 agent: %s", joined)
+	}
 }
 
 func TestExecutorReconcilesCompletedGitTaskWithoutMerge(t *testing.T) {
@@ -455,6 +636,9 @@ func writeTestAgentExitCode(path string, code int) error {
 }
 
 func TestExecutorPreparesAndAutoMergesReviewMergeTask(t *testing.T) {
+	// 无冲突的合并任务：平台直接整合，跳过 agent。源分支内容进入主分支，
+	// agent 不应被启动（tmuxReviewMergeTestAdapter 一旦运行就会写入
+	// merge-verified.txt，用于断言 agent 未启动）。
 	requireTmuxIntegration(t)
 	registry[tmuxReviewMergeTestCLI] = tmuxReviewMergeTestAdapter{}
 	t.Cleanup(func() { delete(registry, tmuxReviewMergeTestCLI) })
@@ -518,11 +702,23 @@ func TestExecutorPreparesAndAutoMergesReviewMergeTask(t *testing.T) {
 	e.Wake()
 
 	waitTaskStatus(t, st, mergeID, store.StatusSucceeded, 5*time.Second)
-	for name, want := range map[string]string{"approved.txt": "approved\n", "merge-verified.txt": "verified\n"} {
-		got, err := os.ReadFile(filepath.Join(projectDir, name))
-		if err != nil || string(got) != want {
-			t.Fatalf("合并任务产出 %s 未进入主分支: %q err=%v", name, got, err)
-		}
+	got, err := os.ReadFile(filepath.Join(projectDir, "approved.txt"))
+	if err != nil || string(got) != "approved\n" {
+		t.Fatalf("源任务产出未进入主分支: %q err=%v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, "merge-verified.txt")); !os.IsNotExist(err) {
+		t.Fatalf("无冲突合并任务不应启动 agent（merge-verified.txt 不应存在）: %v", err)
+	}
+	logs, err := st.ListLogs(mergeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := ""
+	for _, l := range logs {
+		joined += l.Content + "\n"
+	}
+	if !strings.Contains(joined, "自动合并") {
+		t.Fatalf("合并任务应记录自动合并日志: %s", joined)
 	}
 }
 

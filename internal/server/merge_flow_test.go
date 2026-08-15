@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -269,6 +270,76 @@ func TestWorkspaceMergeGuards(t *testing.T) {
 	s.deleteTask(resp, req)
 	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "代码合并任务不能单独删除") {
 		t.Fatalf("代码合并任务不能单独删除: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+// 合并任务继承源任务角色；源角色被禁用时合并任务会永远排队并堵住项目
+// 交付链。允许为排队中的合并任务更换角色是解卡手段；运行中/终态任务与
+// 其他字段仍受系统管理保护。
+func TestPatchMergeTaskRoleGuards(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	hub := events.NewEventStream()
+	executor := paiexec.NewForTest(st, hub, t.TempDir(), "merge-role-guard-test.db", "merge-role-guard-test")
+	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
+	agentA, err := st.CreateRole(store.Role{Name: "a", RuntimeID: "pi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentB, err := st.CreateRole(store.Role{Name: "b", RuntimeID: "pi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID, err := st.CreateTask(store.Task{Title: "ordinary", Status: store.StatusSucceeded, Perm: store.PermFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mergeID, err := st.CreateTask(store.NewMergeTask(store.Task{ID: taskID, Title: "ordinary"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	patch := func(id int64, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(id), strings.NewReader(body))
+		req.SetPathValue("id", itoa(id))
+		setTaskRevision(t, st, id, req)
+		resp := httptest.NewRecorder()
+		s.patchTask(resp, req)
+		return resp
+	}
+
+	// 排队中的合并任务可以更换角色（源角色被禁用时的解卡路径）。
+	resp := patch(mergeID, fmt.Sprintf(`{"role_id":%d}`, agentB))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("排队合并任务更换角色应成功: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	merge, err := st.GetTask(mergeID)
+	if err != nil || merge.RoleID == nil || *merge.RoleID != agentB {
+		t.Fatalf("合并任务角色未更新: %+v err=%v", merge, err)
+	}
+
+	// 排队中的合并任务不能清空角色。
+	resp = patch(mergeID, `{"role_id":null}`)
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "必须指派角色") {
+		t.Fatalf("合并任务不能清空角色: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+
+	// 运行中的合并任务不能更换角色。
+	if err := st.UpdateTask(mergeID, map[string]any{"status": store.StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	resp = patch(mergeID, fmt.Sprintf(`{"role_id":%d}`, agentA))
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "只能为排队中") {
+		t.Fatalf("运行中合并任务不能更换角色: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+
+	// 合并任务的其他字段仍受系统管理保护。
+	resp = patch(mergeID, `{"title":"改标题"}`)
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "系统管理") {
+		t.Fatalf("合并任务标题不能被修改: code=%d body=%s", resp.Code, resp.Body.String())
 	}
 }
 

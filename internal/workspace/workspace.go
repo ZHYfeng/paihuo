@@ -377,6 +377,16 @@ func Integrate(source, target store.Task, sessionsRoot string) (IntegrationResul
 			return IntegrationResult{Skipped: true}, nil
 		}
 	}
+	// 源任务没有任何修改（源分支与合并 worktree 内容一致）：无需导入，
+	// 视为无冲突，交给自动合并路径直接完成。显式判断避免依赖不同 git
+	// 版本对「nothing to squash」合并的退出码行为。
+	differs, err := treesDiffer(targetDir, "HEAD", source.WorktreeBranch)
+	if err != nil {
+		return IntegrationResult{}, fmt.Errorf("比较源任务分支失败: %v", err)
+	}
+	if !differs {
+		return IntegrationResult{}, nil
+	}
 	if _, err := git(targetDir, "merge", "--squash", source.WorktreeBranch); err != nil {
 		conflicts := mergeConflicts(targetDir)
 		if len(conflicts) > 0 {
@@ -386,6 +396,20 @@ func Integrate(source, target store.Task, sessionsRoot string) (IntegrationResul
 		return IntegrationResult{}, fmt.Errorf("导入源任务分支失败: %v", err)
 	}
 	return IntegrationResult{}, nil
+}
+
+// MainWorktreeDirty 返回项目主工作区是否有未提交改动。代码合并最终要把
+// 任务分支写入主分支，主工作区的未提交改动会阻塞合并；在 agent 启动前
+// 检测可以让合并任务立即失败，而不是烧一轮 agent 后才在结算时失败。
+func MainWorktreeDirty(projectDir string) (bool, error) {
+	if !isGitRepo(projectDir) {
+		return false, nil
+	}
+	status, err := git(projectDir, "status", "--porcelain")
+	if err != nil {
+		return false, fmt.Errorf("读取主工作区状态失败: %v", err)
+	}
+	return strings.TrimSpace(status) != "", nil
 }
 
 // Merge 把任务分支 squash 合并回主分支：
@@ -405,9 +429,9 @@ func Merge(tk store.Task, sessionsRoot string) (string, error) {
 		return "", fmt.Errorf("项目不是 git 仓库")
 	}
 	// 代码合并任务绝不能覆盖用户或其他任务留在主工作区的未提交内容。
-	if status, err := git(tk.ProjectDir, "status", "--porcelain"); err != nil {
-		return "", fmt.Errorf("读取主工作区状态失败: %v", err)
-	} else if strings.TrimSpace(status) != "" {
+	if dirty, err := MainWorktreeDirty(tk.ProjectDir); err != nil {
+		return "", err
+	} else if dirty {
 		return "", fmt.Errorf("主工作区存在未提交改动，无法合并")
 	}
 	if _, err := snapshotLocked(tk, sessionsRoot); err != nil {

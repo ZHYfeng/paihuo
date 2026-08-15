@@ -803,6 +803,73 @@ func TestReorderProjectQueuedTasks(t *testing.T) {
 	}
 }
 
+// 合并任务只相对自己项目的实现任务优先；跨项目按「项目最早排队任务」公平
+// 竞争，避免一个项目的合并任务抢占其他项目的角色槽位。
+func TestListQueuedTasksFairAcrossProjects(t *testing.T) {
+	s := openTest(t)
+	agentID := mustRole(t, s, "worker", true)
+	projectA, err := s.CreateProject(Project{Name: "proj-a", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectB, err := s.CreateProject(Project{Name: "proj-b", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 时间线：B 项目的实现任务最先排队（T0）；A 项目的源任务完成于 T1，
+	// 随后 A 创建合并任务（T2）与新的实现任务（T3）。
+	setCreated := func(id int64, at string) {
+		if err := s.UpdateTask(id, map[string]any{"created_at": at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	otherID, err := s.CreateTask(Task{Title: "other-project impl", Status: StatusQueued, RoleID: &agentID, ProjectID: &projectB, ProjectDir: "/tmp/b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setCreated(otherID, "2026-08-14T10:00:00")
+	sourceID, err := s.CreateTask(Task{Title: "source", Status: StatusSucceeded, RoleID: &agentID, ProjectID: &projectA, ProjectDir: "/tmp/a", WorktreeBranch: "paihuo/task-source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setCreated(sourceID, "2026-08-14T10:01:00")
+	source, err := s.GetTask(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mergeID, err := s.CreateTask(NewMergeTask(*source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setCreated(mergeID, "2026-08-14T10:02:00")
+	nextID, err := s.CreateTask(Task{Title: "same-project next", Status: StatusQueued, RoleID: &agentID, ProjectID: &projectA, ProjectDir: "/tmp/a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setCreated(nextID, "2026-08-14T10:03:00")
+
+	queued, err := s.ListQueuedTasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]int64, 0, len(queued))
+	for _, tk := range queued {
+		got = append(got, tk.ID)
+	}
+	// B 项目整体更早排队（T0），先于 A 项目的合并任务（T2）；A 项目内部
+	// 合并任务仍排在实现任务之前。
+	want := []int64{otherID, mergeID, nextID}
+	if len(got) != len(want) {
+		t.Fatalf("排队顺序 = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("排队顺序 = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestMovingTaskIntoProjectAppendsItsSortOrder(t *testing.T) {
 	s := openTest(t)
 	firstProject, err := s.CreateProject(Project{Name: "first-order-project", Status: "active"})

@@ -589,6 +589,15 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		e.log(tk.ID, "sys", "📁 在项目目录直接执行（非 git 仓库，无隔离）")
 	}
 	if tk.MergeOf != nil {
+		// 代码合并最终要把任务分支写入主分支；主工作区的未提交改动会阻塞
+		// 合并。在 agent 启动前检测，让合并任务立即失败而不是白跑一轮。
+		if dirty, err := workspace.MainWorktreeDirty(tk.ProjectDir); err != nil {
+			fail("检查主工作区失败: " + err.Error())
+			return
+		} else if dirty {
+			fail("主工作区存在未提交改动，无法执行代码合并；请先提交或暂存主工作区的改动，再重试本合并任务")
+			return
+		}
 		source, err := e.st.GetTask(*tk.MergeOf)
 		if err != nil {
 			fail(fmt.Sprintf("读取待合并源任务 #%d 失败: %v", *tk.MergeOf, err))
@@ -605,7 +614,30 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 		case result.Skipped:
 			e.log(tk.ID, "sys", "↻ 合并内容已准备或项目未启用 Git 隔离，交给 agent 检查")
 		default:
-			e.log(tk.ID, "sys", fmt.Sprintf("⇄ 已将源任务 #%d 的分支导入当前工作空间", *tk.MergeOf))
+			// 无冲突：平台直接整合，跳过 agent。合并任务的核心增量只是
+			// 「验证 + 跑测试」，无冲突时这一轮 agent 是纯开销；源任务成功
+			// 退出即代表其自我验证通过，信任模型与源任务一致。
+			e.log(tk.ID, "sys", fmt.Sprintf("⇄ 已将源任务 #%d 的分支导入当前工作空间，无冲突，平台直接整合", *tk.MergeOf))
+			hash, err := workspace.Merge(tk, e.sessionsRoot)
+			if err != nil {
+				msg := "自动合并失败: " + err.Error()
+				_ = e.st.UpdateTask(tk.ID, map[string]any{
+					"status": store.StatusFailed, "finished_at": store.Now(), "exit_code": 1, "error": msg,
+				})
+				e.log(tk.ID, "sys", "✗ "+msg)
+				e.publishTask(tk.ID)
+				return
+			}
+			_ = e.st.UpdateTask(tk.ID, map[string]any{
+				"status": store.StatusSucceeded, "finished_at": store.Now(), "exit_code": 0,
+			})
+			if hash == "" {
+				e.log(tk.ID, "sys", "✓ 无冲突，平台已自动合并（主分支无需新增提交）")
+			} else {
+				e.log(tk.ID, "sys", "✓ 无冲突，平台已自动合并到主分支: "+hash)
+			}
+			e.publishTask(tk.ID)
+			return
 		}
 	}
 

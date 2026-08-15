@@ -266,11 +266,23 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	}
 	// 合并子任务是系统状态机的一部分，来源、工作目录、权限和串行策略都
 	// 不能在详情页被改坏；用户只需重试失败/取消的合并任务，或取消运行中
-	// 的任务，角色不可用时则先在角色页恢复原角色。
+	// 的任务。角色例外：合并任务继承源任务角色，源角色被禁用时合并任务会
+	// 永远排队并堵住项目交付链；允许为排队中的合并任务重新指派角色是唯一
+	// 的解卡手段。
 	if cur.MergeOf != nil {
 		for key := range set {
-			if key != "status" {
-				writeErr(w, http.StatusConflict, "代码合并任务由系统管理；只能取消运行中任务或重试失败任务")
+			if key != "status" && key != "role_id" {
+				writeErr(w, http.StatusConflict, "代码合并任务由系统管理；只能取消运行中任务、重试失败任务，或为排队中的任务更换角色")
+				return
+			}
+		}
+		if _, ok := set["role_id"]; ok {
+			if cur.Status != store.StatusQueued {
+				writeErr(w, http.StatusConflict, "只能为排队中的合并任务更换角色")
+				return
+			}
+			if v, isNum := set["role_id"].(float64); !isNum || int64(v) <= 0 {
+				writeErr(w, http.StatusConflict, "合并任务必须指派角色")
 				return
 			}
 		}

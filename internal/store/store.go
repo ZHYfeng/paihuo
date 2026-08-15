@@ -763,9 +763,11 @@ func (s *Store) ListTasksFiltered(f TaskFilter) ([]Task, error) {
 // ListQueuedTasks 返回可派发的排队任务：已指派角色且角色处于启用状态
 // （停用角色不再接收新任务，队列中的任务保持 queued 等待重新启用）。
 func (s *Store) ListQueuedTasks() ([]Task, error) {
-	// 合并子任务属于其源任务的交付链，必须先于已排队的后续实现任务；否则
-	// 后项会从尚未写入源代码的主分支建立 worktree。
-	rows, err := s.db.Query("SELECT " + taskColsBrief + taskFrom + " WHERE t.status='queued' AND t.role_id IS NOT NULL AND a.enabled=1 ORDER BY CASE WHEN t.merge_of IS NOT NULL THEN 0 ELSE 1 END, t.created_at, t.id")
+	// 合并子任务属于其源任务的交付链，必须排在同项目后续实现任务之前；
+	// 否则后项会从尚未写入源代码的主分支建立 worktree。跨项目公平性在
+	// queuedTaskLess 中处理（按项目最早排队任务竞争，合并任务不插队到
+	// 其他项目的实现任务前）。
+	rows, err := s.db.Query("SELECT " + taskColsBrief + taskFrom + " WHERE t.status='queued' AND t.role_id IS NOT NULL AND a.enabled=1 ORDER BY t.created_at, t.id")
 	if err != nil {
 		return nil, err
 	}
@@ -781,14 +783,27 @@ func (s *Store) ListQueuedTasks() ([]Task, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// Keep the existing global creation-time order across projects, while
-	// honoring a custom order whenever two implementation tasks belong to the
-	// same project. Merge tasks are always ahead of every implementation task.
-	sort.SliceStable(out, func(i, j int) bool { return queuedTaskLess(out[i], out[j]) })
+	// 项目级排序键：该项目所有排队任务的最早创建时间。合并任务只相对
+	// 自己项目的实现任务优先；跨项目按「项目整体何时开始排队」公平竞争，
+	// 避免一个项目的合并任务抢占其他项目的角色槽位。
+	projEarliest := make(map[int64]string, len(out))
+	for _, tk := range out {
+		if tk.ProjectID != nil {
+			if cur, ok := projEarliest[*tk.ProjectID]; !ok || tk.CreatedAt < cur {
+				projEarliest[*tk.ProjectID] = tk.CreatedAt
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return queuedTaskLess(out[i], out[j], projEarliest) })
 	return out, nil
 }
 
-func queuedTaskLess(a, b Task) bool {
+func queuedTaskLess(a, b Task, projEarliest map[int64]string) bool {
+	aKey := queueKey(a, projEarliest)
+	bKey := queueKey(b, projEarliest)
+	if aKey != bKey {
+		return aKey < bKey
+	}
 	aMerge := a.MergeOf != nil
 	bMerge := b.MergeOf != nil
 	if aMerge != bMerge {
@@ -803,6 +818,18 @@ func queuedTaskLess(a, b Task) bool {
 		return a.CreatedAt < b.CreatedAt
 	}
 	return a.ID < b.ID
+}
+
+// queueKey 返回任务在全局排队中的排序键：项目任务按该项目最早排队任务的
+// 创建时间（项目整体公平竞争），无项目任务按自身创建时间。ISO 时间字符串
+// 可字典序比较。
+func queueKey(t Task, projEarliest map[int64]string) string {
+	if t.ProjectID != nil {
+		if e, ok := projEarliest[*t.ProjectID]; ok {
+			return e
+		}
+	}
+	return t.CreatedAt
 }
 
 // ListRunningTasks 返回卡在执行态的任务（服务重启时用于重置）。
