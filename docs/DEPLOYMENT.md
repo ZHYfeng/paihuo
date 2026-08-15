@@ -1,6 +1,6 @@
 # 部署指南
 
-> 当前生产基线：Debian，用户 `yu`，PaiHuo `v2026.08.13`。服务以
+> 当前生产基线：Debian，用户 `yu`，PaiHuo `v2026.08.14`。服务以
 > systemd 用户服务 `paihuo.service` 运行，目录为 `/home/yu/paihuo`，监听
 > `0.0.0.0:8080`。
 
@@ -56,7 +56,7 @@ loginctl enable-linger yu
 cd /home/yu/Agents/paihuo
 npm ci
 make check
-make build VERSION=v2026.08.13
+make build VERSION=v2026.08.14
 
 install -d -m 0755 /home/yu/paihuo
 install -m 0755 bin/paihuo /home/yu/paihuo/paihuo
@@ -78,11 +78,13 @@ systemctl --user enable --now paihuo.service
 公开监听必须配置令牌。经 HTTPS 反向代理访问时，在 systemd 的
 `ExecStart` 中增加 `--secure-cookie`。
 
-## 发布当前版本
+## 重新部署（默认保存数据）
 
-PaiHuo 只支持当前 schema，不提供数据库迁移链。涉及 schema 或领域模型的
-版本替换使用全新数据库，不导入原数据库中的 Role、Project、Task、Session、
-Workflow 或 Artifact metadata。`token.env` 和独立的 `skills/` 可以保留。
+PaiHuo 只支持当前 schema，不提供数据库迁移链。**同一 schema / 领域模型
+版本内的重新部署默认保留全部业务状态**：`paihuo.db`（Role、Project、
+Task、Session、Workflow、Schedule 等）、`sessions/` worktree、`artifacts/`
+以及 tmux 中仍在执行的 Task 全部保留。只有涉及 schema 或领域模型变更的
+版本替换才执行「全新部署（清空数据）」。
 
 替换前先确认没有需要继续运行的 Task，然后执行：
 
@@ -91,7 +93,39 @@ cd /home/yu/Agents/paihuo
 npm ci
 make check
 make test-race
-make build VERSION=v2026.08.13
+make build VERSION=v2026.08.14
+./bin/paihuo --version
+
+systemctl --user stop paihuo.service
+
+install -m 0755 bin/paihuo /home/yu/paihuo/paihuo
+install -m 0644 deploy/systemd/paihuo.service \
+  /home/yu/.config/systemd/user/paihuo.service
+install -m 0644 deploy/systemd/paihuo.service.d/task-safe-restart.conf \
+  /home/yu/.config/systemd/user/paihuo.service.d/task-safe-restart.conf
+
+systemctl --user daemon-reload
+systemctl --user start paihuo.service
+```
+
+此流程不删除任何业务数据，不重启 tmux server。升级前建议先按「数据保护」
+备份数据库与 Artifact。若新版本 schema 不兼容，服务启动会提示 schema 不受
+支持——此时停止服务并执行「全新部署（清空数据）」。
+
+## 全新部署（清空数据）
+
+仅用于涉及 schema 或领域模型变更的版本替换：使用全新数据库，不导入原
+数据库中的 Role、Project、Task、Session、Workflow 或 Artifact metadata。
+`token.env` 和独立的 `skills/` 可以保留。此流程会**永久删除当前业务状态**。
+
+替换前先确认没有需要继续运行的 Task，然后执行：
+
+```bash
+cd /home/yu/Agents/paihuo
+npm ci
+make check
+make test-race
+make build VERSION=v2026.08.14
 ./bin/paihuo --version
 
 systemctl --user stop paihuo.service
@@ -113,9 +147,6 @@ systemctl --user daemon-reload
 systemctl --user start paihuo.service
 ```
 
-此流程会永久删除当前业务状态。日常配置变更可以重启服务并保留数据；发布新的
-应用版本时统一执行上述干净部署，不沿用数据库或运行状态。
-
 ## 验证
 
 ```bash
@@ -131,7 +162,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/login
 
 ## 数据保护
 
-同一版本内恢复时，数据库和 Artifact 内容必须作为一个集合处理：
+同一版本内恢复、或执行「重新部署（保存数据）」前，数据库和 Artifact 内容
+必须作为一个集合处理：
 
 ```bash
 systemctl --user stop paihuo.service
@@ -152,7 +184,7 @@ systemctl --user start paihuo.service
   `worktree_retention_days` 清理 worktree，并回收无引用 Artifact。
 - Runtime 模型和能力在服务启动时探测，此后每七天刷新，也可从 Web 手动刷新。
 - 令牌遗失时重新生成 `token.env` 并重启服务；所有已有登录会话会失效。
-- 启动提示 schema 不受支持时，停止服务并按“发布当前版本”流程创建空数据库。
+- 启动提示 schema 不受支持时，停止服务并按“全新部署（清空数据）”流程创建空数据库。
 
 ## 安全边界
 
