@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -44,7 +45,11 @@ func (s *Server) withIdempotency(next http.Handler) http.Handler {
 		}
 		capture := &responseCapture{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(capture, r)
-		_ = s.st.CompleteIdempotency(key, r.Method, r.URL.Path, capture.status, capture.body.Bytes())
+		if err := s.st.CompleteIdempotency(key, r.Method, r.URL.Path, capture.status, capture.body.Bytes()); err != nil {
+			// 响应已发出，无法再改状态码；失败会让记录停留在“执行中”，
+			// 后续同键重放会得到 409。记录日志便于发现此类问题。
+			log.Printf("幂等记录完成失败 key=%s method=%s path=%s: %v", key, r.Method, r.URL.Path, err)
+		}
 	})
 }
 

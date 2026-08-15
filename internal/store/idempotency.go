@@ -36,8 +36,11 @@ func (s *Store) ReserveIdempotency(key, method, path string) (record Idempotency
 	return record, false, err
 }
 
+// CompleteIdempotency 记录首次完成的响应。body 以 string 绑定：空 body 的
+// 204 响应会得到空切片，[]byte 绑定会被 go-sqlite3 当成 NULL 而违反
+// body NOT NULL 约束，string 绑定总是非 NULL。
 func (s *Store) CompleteIdempotency(key, method, path string, status int, body []byte) error {
 	_, err := s.db.Exec(`UPDATE idempotency_records SET status_code=?, body=?
-		WHERE key=? AND method=? AND path=? AND status_code=0`, status, body, key, method, path)
+		WHERE key=? AND method=? AND path=? AND status_code=0`, status, string(body), key, method, path)
 	return err
 }
