@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, CirclePlus, Play, Snowflake } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
+import { CheckCircle2, CirclePlus, Code2, ListTree, Play, Snowflake, Trash2 } from "lucide-react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { PageHeader } from "../components/shell";
 import { TaskGraph } from "../components/visualization";
-import { Badge, Button, Card, Dialog, Empty, Field, inputClass, Spinner } from "../components/ui";
+import { Badge, Button, Card, cn, Dialog, Empty, Field, inputClass, Spinner } from "../components/ui";
 import { api, keys } from "../lib/api";
 import type { Project, Role, WorkflowPlan, WorkflowProposal, WorkflowRun, WorkflowSpec } from "../types";
 
@@ -13,16 +13,12 @@ export function WorkflowsPage() {
   const plans = useQuery({ queryKey: keys.workflows, queryFn: () => api<WorkflowPlan[]>("/workflows") });
   const projects = useQuery({ queryKey: keys.projects, queryFn: () => api<Project[]>("/projects") });
   const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
-  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
-  const initial = useMemo(() => exampleSpec(projects.data?.[0]?.id || 0, roles.data?.[0]?.id || 0), [projects.data, roles.data]);
-  const [source, setSource] = useState("");
-  const create = useMutation({ mutationFn: () => api<WorkflowProposal>("/workflow-proposals", { method: "POST", body: JSON.parse(source || JSON.stringify(initial)) }), onSuccess: () => { setOpen(false); setSource(""); qc.invalidateQueries({ queryKey: ["workflow-proposals"] }); } });
   return <>
-    <PageHeader title="工作流" copy="Proposal 先经过确定性策略校验，采纳后冻结为不可变 Plan，再原子创建 Run 与任务依赖图。" actions={<Button variant="primary" onClick={() => { setSource(JSON.stringify(initial, null, 2)); setOpen(true); }}><CirclePlus size={16} />新建 Proposal</Button>} />
+    <PageHeader title="工作流" copy="Proposal 先经过确定性策略校验，采纳后冻结为不可变 Plan，再原子创建 Run 与任务依赖图。" actions={<Button variant="primary" onClick={() => setOpen(true)}><CirclePlus size={16} />新建 Proposal</Button>} />
     <div className="grid gap-4 xl:grid-cols-2"><section><h2 className="mb-3 text-sm font-semibold text-muted">待决 Proposal</h2>{proposals.isLoading ? <Spinner /> : proposals.data?.length ? <div className="grid gap-3">{proposals.data.map(item => <Link key={item.id} to={`/workflow-proposals/${item.id}`} className="rounded-xl border border-line bg-surface p-3.5 shadow-card transition hover:border-brand/35"><div className="flex items-center gap-2"><span className="text-xs text-faint">#{item.id}</span><h3 className="truncate font-semibold">{item.spec.goal}</h3><Badge tone={item.status === "validated" ? "good" : item.status === "rejected" ? "bad" : "neutral"}>{item.status}</Badge></div><p className="mt-2 text-sm text-muted">{item.spec.nodes.length} 个节点 · revision {item.revision}</p></Link>)}</div> : <Empty title="没有 Proposal" copy="提交一份只描述意图、依赖和边界的工作流规格。" />}</section>
       <section><h2 className="mb-3 text-sm font-semibold text-muted">冻结 Plan</h2>{plans.isLoading ? <Spinner /> : plans.data?.length ? <div className="grid gap-3">{plans.data.map(item => <Link key={item.id} to={`/workflows/${item.id}`} className="rounded-xl border border-line bg-surface p-3.5 shadow-card transition hover:border-brand/35"><div className="flex items-center gap-2"><Snowflake size={15} className="text-brand-soft"/><h3 className="truncate font-semibold">{item.spec.goal}</h3><Badge tone="info">{item.status}</Badge></div><p className="mt-2 truncate font-mono text-xs text-muted">{item.spec_hash}</p></Link>)}</div> : <Empty title="没有冻结 Plan" copy="通过校验并采纳 Proposal 后，Plan 会出现在这里。" />}</section></div>
-    <Dialog open={open} onOpenChange={setOpen} title="新建 Workflow Proposal" description="JSON 仅能表达声明式节点，不会直接执行命令。" wide><form className="grid gap-4" onSubmit={(e: FormEvent) => { e.preventDefault(); create.mutate(); }}><Field label="Workflow Spec"><textarea className={inputClass + " min-h-[22rem] py-3 font-mono text-xs"} value={source} onChange={e => setSource(e.target.value)} /></Field>{create.error instanceof Error && <p className="text-sm text-danger">{create.error.message}</p>}<div className="flex justify-end"><Button variant="primary">提交 Proposal</Button></div></form></Dialog>
+    <NewProposalDialog open={open} onOpenChange={setOpen} projects={projects.data} roles={roles.data} />
   </>;
 }
 
@@ -66,6 +62,303 @@ function WorkflowGraph({ spec }: { spec: WorkflowSpec }) {
   const nodes = spec.nodes.map(node => ({ id: node.id, label: node.intent, status: node.approval_required ? "需审批" : node.permission }));
   const edges = spec.nodes.flatMap(node => (node.depends_on || []).map(parent => ({ from: parent, to: node.id })));
   return <TaskGraph title="任务依赖图" nodes={nodes} edges={edges} />;
+}
+
+/* ============================================================
+   新建 Proposal：表单驱动，附带 JSON 高级模式。
+   客户端校验镜像服务端 DefaultPolicy，避免提交被策略拒绝后才返工。
+   ============================================================ */
+
+const LIMITS = { budget: 1_000_000, max_nodes: 64, max_depth: 12, max_concurrency: 8, timeout: 24 * 60 * 60 };
+const nodeIDPattern = /^[a-z][a-z0-9_-]{0,63}$/;
+
+interface NodeDraft {
+  key: number;
+  id: string;
+  intent: string;
+  role_id: string;
+  permission: "full" | "review";
+  approval_required: boolean;
+  depends_on: string[];
+  timeout_seconds: string;
+  failure_policy: "stop" | "continue";
+  budget: string;
+}
+
+interface Draft {
+  goal: string;
+  project_id: string;
+  budget: string;
+  max_nodes: string;
+  max_depth: string;
+  max_concurrency: string;
+  nodes: NodeDraft[];
+}
+
+let nodeSeq = 0;
+
+function draftFromSpec(spec: WorkflowSpec): Draft {
+  const limits = spec.limits || { budget: 0, max_nodes: 8, max_depth: 4, max_concurrency: 2 };
+  return {
+    goal: spec.goal || "",
+    project_id: spec.project_id > 0 ? String(spec.project_id) : "",
+    budget: String(limits.budget),
+    max_nodes: String(limits.max_nodes),
+    max_depth: String(limits.max_depth),
+    max_concurrency: String(limits.max_concurrency),
+    nodes: (spec.nodes || []).map(node => ({
+      key: ++nodeSeq,
+      id: node.id || "",
+      intent: node.intent || "",
+      role_id: node.role && node.role.role_id > 0 ? String(node.role.role_id) : "",
+      permission: node.permission === "review" ? "review" : "full",
+      approval_required: Boolean(node.approval_required),
+      depends_on: [...(node.depends_on || [])],
+      timeout_seconds: String(node.timeout_seconds || 3600),
+      failure_policy: node.failure_policy === "continue" ? "continue" : "stop",
+      budget: String(node.budget ?? 0),
+    })),
+  };
+}
+
+function buildSpec(draft: Draft): WorkflowSpec {
+  return {
+    version: 1,
+    goal: draft.goal.trim(),
+    project_id: Number(draft.project_id),
+    created_by: "operator",
+    adoption_policy: "manual",
+    limits: { budget: Number(draft.budget), max_nodes: Number(draft.max_nodes), max_depth: Number(draft.max_depth), max_concurrency: Number(draft.max_concurrency) },
+    nodes: draft.nodes.map(node => ({
+      id: node.id,
+      intent: node.intent.trim(),
+      role: { role_id: Number(node.role_id) },
+      permission: node.permission,
+      approval_required: node.approval_required,
+      ...(node.depends_on.length ? { depends_on: [...node.depends_on] } : {}),
+      timeout_seconds: Number(node.timeout_seconds),
+      failure_policy: node.failure_policy,
+      budget: Number(node.budget),
+    })),
+  };
+}
+
+function analyzeGraph(nodes: NodeDraft[]): { cycle: boolean; depth: number } {
+  const byId = new Map(nodes.map(node => [node.id, node]));
+  const memo = new Map<string, number>();
+  const visiting = new Set<string>();
+  let cycle = false;
+  const depth = (id: string): number => {
+    const cached = memo.get(id);
+    if (cached !== undefined) return cached;
+    if (visiting.has(id)) { cycle = true; return 0; }
+    visiting.add(id);
+    let d = 1;
+    const node = byId.get(id);
+    if (node) for (const dep of node.depends_on) d = Math.max(d, depth(dep) + 1);
+    visiting.delete(id);
+    memo.set(id, d);
+    return d;
+  };
+  let maxDepth = 0;
+  for (const node of nodes) maxDepth = Math.max(maxDepth, depth(node.id));
+  return { cycle, depth: maxDepth };
+}
+
+function validateDraft(draft: Draft): string[] {
+  const errors: string[] = [];
+  const toNum = (value: string) => (value.trim() === "" ? Number.NaN : Number(value));
+  if (!draft.goal.trim()) errors.push("目标不能为空");
+  if (!draft.project_id) errors.push("请选择项目");
+  const budget = toNum(draft.budget);
+  if (!Number.isFinite(budget) || budget < 0 || budget > LIMITS.budget) errors.push(`总预算必须是 0–${LIMITS.budget} 的整数`);
+  const maxNodes = toNum(draft.max_nodes);
+  if (!Number.isInteger(maxNodes) || maxNodes < 1 || maxNodes > LIMITS.max_nodes) errors.push(`最大节点数必须是 1–${LIMITS.max_nodes} 的整数`);
+  const maxDepth = toNum(draft.max_depth);
+  if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > LIMITS.max_depth) errors.push(`最大深度必须是 1–${LIMITS.max_depth} 的整数`);
+  const maxConcurrency = toNum(draft.max_concurrency);
+  if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > LIMITS.max_concurrency) errors.push(`最大并发必须是 1–${LIMITS.max_concurrency} 的整数`);
+
+  const ids = new Map<string, number>();
+  draft.nodes.forEach((node, index) => {
+    const label = `节点 ${index + 1}`;
+    if (!nodeIDPattern.test(node.id)) errors.push(`${label}：ID「${node.id || "（空）"}」必须是小写字母开头的 slug（a-z / 0-9 / - / _，最长 64）`);
+    if (ids.has(node.id)) errors.push(`${label}：ID「${node.id}」重复`);
+    ids.set(node.id, index);
+    if (!node.intent.trim()) errors.push(`${label}：意图不能为空`);
+    if (!node.role_id) errors.push(`${label}：请选择角色`);
+    if (node.permission !== "full" && node.permission !== "review") errors.push(`${label}：权限必须是 full 或 review`);
+    const timeout = toNum(node.timeout_seconds);
+    if (!Number.isInteger(timeout) || timeout < 1 || timeout > LIMITS.timeout) errors.push(`${label}：超时必须是 1–${LIMITS.timeout} 秒的整数`);
+    if (node.failure_policy !== "stop" && node.failure_policy !== "continue") errors.push(`${label}：失败策略必须是 stop 或 continue`);
+    const nodeBudget = toNum(node.budget);
+    if (!Number.isFinite(nodeBudget) || nodeBudget < 0) errors.push(`${label}：预算不能为负数`);
+  });
+  if (!draft.nodes.length) errors.push("至少需要一个节点");
+  if (draft.nodes.length > (Number.isInteger(maxNodes) ? maxNodes : LIMITS.max_nodes)) errors.push(`节点数量 ${draft.nodes.length} 超过最大节点数上限`);
+
+  let totalBudget = 0;
+  draft.nodes.forEach((node, index) => {
+    const label = `节点 ${index + 1}`;
+    const nodeBudget = toNum(node.budget);
+    if (Number.isFinite(nodeBudget)) totalBudget += nodeBudget;
+    const seen = new Set<string>();
+    for (const dep of node.depends_on) {
+      if (dep === node.id) errors.push(`${label}：不能依赖自己`);
+      else if (!ids.has(dep)) errors.push(`${label}：依赖的节点「${dep}」不存在`);
+      else if (seen.has(dep)) errors.push(`${label}：依赖「${dep}」重复`);
+      seen.add(dep);
+    }
+  });
+  if (Number.isFinite(budget) && totalBudget > budget) errors.push(`节点预算总和 ${totalBudget} 超过总预算 ${budget}`);
+
+  if (!errors.length) {
+    const { cycle, depth } = analyzeGraph(draft.nodes);
+    if (cycle) errors.push("依赖图存在循环");
+    else if (depth > (Number.isInteger(maxDepth) ? maxDepth : LIMITS.max_depth)) errors.push(`依赖图深度 ${depth} 超过最大深度 ${maxDepth}`);
+  }
+  return errors;
+}
+
+function NewProposalDialog({ open, onOpenChange, projects, roles }: {
+  open: boolean;
+  onOpenChange(open: boolean): void;
+  projects?: Project[];
+  roles?: Role[];
+}) {
+  const qc = useQueryClient();
+  const [mode, setMode] = useState<"form" | "json">("form");
+  const [draft, setDraft] = useState<Draft>(() => draftFromSpec(exampleSpec(0, 0)));
+  const [json, setJson] = useState("");
+  const [jsonError, setJsonError] = useState("");
+  const didInit = useRef(false);
+  const errors = useMemo(() => validateDraft(draft), [draft]);
+  const create = useMutation({
+    mutationFn: () => {
+      const spec = mode === "json" ? (JSON.parse(json) as WorkflowSpec) : buildSpec(draft);
+      return api<WorkflowProposal>("/workflow-proposals", { method: "POST", body: spec });
+    },
+    onSuccess: () => { onOpenChange(false); qc.invalidateQueries({ queryKey: ["workflow-proposals"] }); },
+  });
+  useEffect(() => {
+    if (open && !didInit.current) {
+      didInit.current = true;
+      const spec = exampleSpec(projects?.[0]?.id || 0, roles?.[0]?.id || 0);
+      setDraft(draftFromSpec(spec));
+      setJson(JSON.stringify(spec, null, 2));
+      setMode("form");
+      setJsonError("");
+    } else if (!open) {
+      didInit.current = false;
+    }
+  }, [open, projects, roles]);
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (mode === "json") {
+      try { JSON.parse(json); } catch (error) { setJsonError(`JSON 格式错误：${error instanceof Error ? error.message : String(error)}`); return; }
+    } else if (errors.length) return;
+    create.mutate();
+  };
+  const switchForm = () => {
+    if (mode === "json") {
+      try {
+        setDraft(draftFromSpec(JSON.parse(json) as WorkflowSpec));
+        setJsonError("");
+        setMode("form");
+      } catch (error) {
+        setJsonError(`JSON 格式错误，无法切回表单：${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  };
+  const switchJson = () => {
+    if (mode === "form") setJson(JSON.stringify(buildSpec(draft), null, 2));
+    setMode("json");
+  };
+  const addNode = () => setDraft(current => ({ ...current, nodes: [...current.nodes, { key: ++nodeSeq, id: "", intent: "", role_id: "", permission: "full" as const, approval_required: false, depends_on: [], timeout_seconds: "3600", failure_policy: "stop" as const, budget: "30" }] }));
+  const removeNode = (key: number) => setDraft(current => ({ ...current, nodes: current.nodes.filter(node => node.key !== key) }));
+  const updateNode = (key: number, patch: Partial<NodeDraft>) => setDraft(current => {
+    const old = current.nodes.find(node => node.key === key);
+    const nodes = current.nodes.map(node => (node.key === key ? { ...node, ...patch } : node));
+    if (old && patch.id !== undefined && patch.id !== old.id) {
+      for (const node of nodes) {
+        if (node.key !== key && node.depends_on.includes(old.id)) node.depends_on = node.depends_on.map(dep => (dep === old.id ? patch.id as string : dep));
+      }
+    }
+    return { ...current, nodes };
+  });
+  const otherIds = useMemo(() => {
+    const seen = new Set<string>();
+    const dup = new Set<string>();
+    for (const node of draft.nodes) {
+      if (!nodeIDPattern.test(node.id)) continue;
+      if (seen.has(node.id)) dup.add(node.id);
+      seen.add(node.id);
+    }
+    return [...seen].filter(id => !dup.has(id));
+  }, [draft.nodes]);
+
+  return <Dialog open={open} onOpenChange={onOpenChange} title="新建 Workflow Proposal" description="声明式描述工作流：目标、依赖与边界；节点不含可执行命令，提交后先经确定性策略校验。" wide>
+    <form className="grid gap-4" onSubmit={submit}>
+      <div className="flex w-fit items-center gap-1 rounded-lg border border-line bg-elevated p-1 text-sm">
+        <button type="button" onClick={switchForm} className={cn("flex items-center gap-1.5 rounded-md px-3 py-1.5 transition", mode === "form" ? "bg-surface font-medium text-ink shadow-sm" : "text-muted hover:text-ink")}><ListTree size={14} />表单</button>
+        <button type="button" onClick={switchJson} className={cn("flex items-center gap-1.5 rounded-md px-3 py-1.5 transition", mode === "json" ? "bg-surface font-medium text-ink shadow-sm" : "text-muted hover:text-ink")}><Code2 size={14} />JSON</button>
+      </div>
+      {mode === "form" ? <>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="目标" hint="一句话说明这个工作流要交付什么。"><input className={inputClass} value={draft.goal} onChange={event => setDraft({ ...draft, goal: event.target.value })} placeholder="例如：交付一个经过验证的变更" autoFocus /></Field>
+          <Field label="项目"><select className={inputClass} value={draft.project_id} onChange={event => setDraft({ ...draft, project_id: event.target.value })}><option value="">选择项目</option>{projects?.filter(project => project.status === "active").map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label="总预算" hint={`节点预算之和不能超过它（上限 ${LIMITS.budget}）`}><input type="number" min={0} max={LIMITS.budget} className={inputClass} value={draft.budget} onChange={event => setDraft({ ...draft, budget: event.target.value })} /></Field>
+          <Field label="最大节点数" hint={`1–${LIMITS.max_nodes}`}><input type="number" min={1} max={LIMITS.max_nodes} className={inputClass} value={draft.max_nodes} onChange={event => setDraft({ ...draft, max_nodes: event.target.value })} /></Field>
+          <Field label="最大深度" hint={`依赖链最长 ${LIMITS.max_depth} 层`}><input type="number" min={1} max={LIMITS.max_depth} className={inputClass} value={draft.max_depth} onChange={event => setDraft({ ...draft, max_depth: event.target.value })} /></Field>
+          <Field label="最大并发" hint={`1–${LIMITS.max_concurrency}`}><input type="number" min={1} max={LIMITS.max_concurrency} className={inputClass} value={draft.max_concurrency} onChange={event => setDraft({ ...draft, max_concurrency: event.target.value })} /></Field>
+        </div>
+        <div>
+          <div className="mb-2.5 flex items-baseline gap-2"><h3 className="text-sm font-semibold">节点</h3><span className="text-xs text-faint">{draft.nodes.length} 个 · 依赖决定执行顺序</span></div>
+          <div className="grid gap-3">{draft.nodes.map((node, index) => <NodeEditor key={node.key} node={node} index={index} roles={roles} otherIds={otherIds.filter(id => id !== node.id)} onChange={patch => updateNode(node.key, patch)} onRemove={() => removeNode(node.key)} />)}</div>
+          <button type="button" onClick={addNode} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line bg-surface/60 py-2.5 text-sm text-muted transition hover:border-brand/40 hover:text-ink"><CirclePlus size={15} />添加节点</button>
+        </div>
+        {errors.length > 0 && <div className="rounded-xl border border-danger/30 bg-danger/5 p-3"><h3 className="text-sm font-semibold text-danger">还有 {errors.length} 处需要修正</h3><ul className="mt-2 grid gap-1 text-sm leading-6 text-muted">{errors.map((error, i) => <li key={i}>{error}</li>)}</ul></div>}
+        {create.error instanceof Error && <p className="text-sm text-danger">{create.error.message}</p>}
+        <div className="flex items-center gap-2"><span className="mr-auto text-xs leading-5 text-faint">提交后进入策略校验，通过后可在「审批」页采纳冻结为不可变 Plan。</span><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant="primary" disabled={create.isPending || errors.length > 0}>提交 Proposal</Button></div>
+      </> : <>
+        <Field label="Workflow Spec（JSON）" hint="仅表达声明式节点，不会直接执行命令。"><textarea className={inputClass + " min-h-[26rem] py-3 font-mono text-xs"} value={json} onChange={event => { setJson(event.target.value); setJsonError(""); }} /></Field>
+        {jsonError && <p className="text-sm text-danger">{jsonError}</p>}
+        {create.error instanceof Error && <p className="text-sm text-danger">{create.error.message}</p>}
+        <div className="flex items-center gap-2"><span className="mr-auto text-xs leading-5 text-faint">提交后进入策略校验，通过后可在「审批」页采纳冻结为不可变 Plan。</span><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant="primary" disabled={create.isPending}>提交 Proposal</Button></div>
+      </>}
+    </form>
+  </Dialog>;
+}
+
+function NodeEditor({ node, index, roles, otherIds, onChange, onRemove }: {
+  node: NodeDraft;
+  index: number;
+  roles?: Role[];
+  otherIds: string[];
+  onChange(patch: Partial<NodeDraft>): void;
+  onRemove(): void;
+}) {
+  return <div className="rounded-xl border border-line bg-elevated p-3.5">
+    <div className="mb-3 flex flex-wrap items-center gap-2"><span className="text-sm font-semibold">节点 {index + 1}</span>{node.id ? <code className="rounded bg-surface px-1.5 py-0.5 font-mono text-xs text-muted">{node.id}</code> : null}<span className="ml-auto" /><Button size="sm" variant="ghost" onClick={onRemove}><Trash2 size={14} />删除</Button></div>
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <Field label="节点 ID" hint="小写字母开头的 slug，供依赖引用"><input className={inputClass + " font-mono"} value={node.id} onChange={event => onChange({ id: event.target.value })} placeholder="implement" /></Field>
+      <Field label="角色"><select className={inputClass} value={node.role_id} onChange={event => onChange({ role_id: event.target.value })}><option value="">选择角色</option>{roles?.filter(role => role.enabled).map(role => <option key={role.id} value={role.id}>{role.name}</option>)}</select></Field>
+      <Field label="权限"><select className={inputClass} value={node.permission} onChange={event => onChange({ permission: event.target.value as "full" | "review" })}><option value="full">full · 自动整合</option><option value="review">review · 人工审批</option></select></Field>
+    </div>
+    <div className="mt-3"><Field label="意图" hint="节点要完成什么；只写意图，不含可执行命令"><textarea className={inputClass + " min-h-20 py-3"} value={node.intent} onChange={event => onChange({ intent: event.target.value })} /></Field></div>
+    <div className="mt-3 grid gap-3 sm:grid-cols-3">
+      <Field label="超时（秒）"><input type="number" min={1} className={inputClass} value={node.timeout_seconds} onChange={event => onChange({ timeout_seconds: event.target.value })} /></Field>
+      <Field label="失败策略"><select className={inputClass} value={node.failure_policy} onChange={event => onChange({ failure_policy: event.target.value as "stop" | "continue" })}><option value="stop">stop · 失败即停</option><option value="continue">continue · 继续后续</option></select></Field>
+      <Field label="预算"><input type="number" min={0} className={inputClass} value={node.budget} onChange={event => onChange({ budget: event.target.value })} /></Field>
+    </div>
+    <div className="mt-3"><span className="text-sm font-medium">依赖节点</span>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">{otherIds.length ? otherIds.map(id => { const checked = node.depends_on.includes(id); return <label key={id} className={cn("flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition select-none", checked ? "border-brand/40 bg-brand/10 text-brand-soft" : "border-line bg-surface text-muted hover:border-muted/50")}><input type="checkbox" className="accent-brand" checked={checked} onChange={event => onChange({ depends_on: event.target.checked ? [...node.depends_on, id] : node.depends_on.filter(dep => dep !== id) })} /><code className="font-mono">{id}</code></label>; }) : <span className="text-xs text-faint">为其他节点填写有效 ID 后可建立依赖</span>}</div>
+    </div>
+    <label className="mt-3 flex min-h-11 items-center gap-3 rounded-xl border border-line bg-surface px-3 text-sm"><input type="checkbox" className="accent-brand" checked={node.approval_required} onChange={event => onChange({ approval_required: event.target.checked })} />需要人工审批</label>
+  </div>;
 }
 
 function exampleSpec(projectID: number, roleID: number): WorkflowSpec {
