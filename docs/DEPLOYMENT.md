@@ -1,6 +1,6 @@
 # 部署指南
 
-> 当前生产基线：Debian，用户 `yu`，PaiHuo `v2026.08.14`。服务以
+> 当前生产基线：Debian，用户 `yu`，PaiHuo `v2026.08.15`。服务以
 > systemd 用户服务 `paihuo.service` 运行，目录为 `/home/yu/paihuo`，监听
 > `0.0.0.0:8080`。
 
@@ -56,7 +56,7 @@ loginctl enable-linger yu
 cd /home/yu/Agents/paihuo
 npm ci
 make check
-make build VERSION=v2026.08.14
+make build VERSION=v2026.08.15
 
 install -d -m 0755 /home/yu/paihuo
 install -m 0755 bin/paihuo /home/yu/paihuo/paihuo
@@ -93,7 +93,7 @@ cd /home/yu/Agents/paihuo
 npm ci
 make check
 make test-race
-make build VERSION=v2026.08.14
+make build VERSION=v2026.08.15
 ./bin/paihuo --version
 
 systemctl --user stop paihuo.service
@@ -125,7 +125,7 @@ cd /home/yu/Agents/paihuo
 npm ci
 make check
 make test-race
-make build VERSION=v2026.08.14
+make build VERSION=v2026.08.15
 ./bin/paihuo --version
 
 systemctl --user stop paihuo.service
