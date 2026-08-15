@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CirclePlus, Layers, Copy, Pause, Send, Square, Trash2, Truck } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Markdown } from "../components/markdown";
 import { PageHeader } from "../components/shell";
@@ -275,6 +275,9 @@ export function SessionDetailPage() {
   const [liveAsks, setLiveAsks] = useState<TranscriptEntry[]>([]);
   const [agentRunning, setAgentRunning] = useState(false);
   const [sending, setSending] = useState(false);
+  const [scrollPct, setScrollPct] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const prevMsgLen = useRef(0);
   const [deliverOpen, setDeliverOpen] = useState(false);
   const [delivery, setDelivery] = useState({ task_title: "", task_body: "", perm: "review" });
   const refresh = () => { qc.invalidateQueries({ queryKey: ["sessions", id] }); qc.invalidateQueries({ queryKey: keys.sessions }); };
@@ -289,6 +292,8 @@ export function SessionDetailPage() {
     if (!first) return;
     const before = typeof first.id === "string" && first.id ? first.id : JSON.stringify(first);
     setLoadingOlder(true);
+    const el = listRef.current;
+    const prevHeight = el ? el.scrollHeight : 0;
     try {
       const page = await api<{ entries: TranscriptEntry[]; total: number }>(`/sessions/${id}/transcript?limit=200&before=${encodeURIComponent(before)}`);
       setOlder(prev => {
@@ -302,6 +307,8 @@ export function SessionDetailPage() {
         }
         return merged;
       });
+      // 更早消息插到列表顶部：滚动偏移增加对应高度，保持当前可视内容不动。
+      if (el) requestAnimationFrame(() => { el.scrollTop += el.scrollHeight - prevHeight; });
     } catch (error) {
       toast(error instanceof Error ? error.message : "加载更早消息失败", "bad");
     } finally {
@@ -320,12 +327,17 @@ export function SessionDetailPage() {
     return out;
   }, [older, transcript.data]);
   const renderItems = useMemo(() => buildRenderItems(allEntries), [allEntries]);
-  // 顶部进度 rail：已加载条目 / 全部条目（older 由 before 游标分页，与最新页无重叠）。
-  // 用未过滤的 entries 计数（buildRenderItems 会丢弃 toolResult/隐藏 custom_message，
-  // 用 renderItems 做分子会让有工具调用的会话永远不满格）。
-  const loaded = older.length + (transcript.data?.entries.length ?? 0);
-  const total = transcript.data?.total ?? 0;
-  const pct = total > 0 ? Math.min(100, Math.round(loaded / total * 100)) : 0;
+  // 消息窗口滚动：内容增长时若已在底部附近则跟随；首次打开直接滚到底部。
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const max = el.scrollHeight - el.clientHeight;
+    if (max <= 0) return;
+    const first = prevMsgLen.current === 0;
+    const atBottom = el.scrollTop >= max - 120;
+    prevMsgLen.current = renderItems.length;
+    if (first || atBottom) el.scrollTop = max;
+  }, [renderItems.length, liveAsks.length]);
   // SSE 实时：session.message 事件 → 增量刷新 transcript 与运行状态
   useEffect(() => {
     const source = new EventSource("/api/v1/events");
@@ -377,12 +389,14 @@ export function SessionDetailPage() {
   };
   return <>
     <PageHeader title={item.title} copy={`${item.role_name || "角色"} · ${item.project_name || "无项目"} · ${item.runtime_id}`} actions={<><Badge tone={sessionTone[item.status] || "neutral"}>{sessionLabel[item.status]}</Badge>{item.status === "active" && <Button onClick={() => action.mutate("suspend")}><Pause size={16} />挂起</Button>}{item.status === "active" && <Button onClick={() => compact.mutate()} disabled={compact.isPending} title="压缩会话上下文，降低后续 token 消耗"><Layers size={16} />压缩上下文</Button>}{["active", "suspended"].includes(item.status) && <Button onClick={() => setDeliverOpen(true)}><Truck size={16} />交付</Button>}{item.status === "active" && <Button variant="danger" onClick={() => abort.mutate()}><Square size={15} />中止</Button>}<Button variant="ghost" onClick={() => { if (confirm(`删除会话 #${item.id}？其消息记录与工作区将一并删除。`)) remove.mutate(); }}><Trash2 size={15} />删除</Button><Button variant="ghost" onClick={() => navigate(-1)}>返回</Button></>} />
-    <div className="session-rail" aria-label="会话进度" aria-valuenow={pct}>
-      <div className="rail-track"><div className="rail-progress" style={{ width: `${pct}%` }} />{agentRunning && <span className="rail-marker" style={{ left: `${pct}%` }} />}</div>
+    <div className="session-rail" aria-label="会话进度" aria-valuenow={scrollPct}>
+      <div className="rail-track"><div className="rail-progress" style={{ width: `${scrollPct}%` }} />{agentRunning && <span className="rail-marker" style={{ left: `${scrollPct}%` }} />}</div>
     </div>
-    <Card className="min-h-[24rem]"><div className="mb-3 flex items-center justify-between"><h2 className="font-semibold">消息</h2><span className="flex items-center gap-2"><span className="text-xs text-muted">{transcript.data?.total || item.message_count} 条</span>{(agentRunning || sending || prompt.isPending) && <Badge tone="info">{agentRunning ? "Agent 运行中" : sending || prompt.isPending ? "正在处理…" : ""}</Badge>}</span></div>{transcript.isLoading ? <Spinner /> : renderItems.length || liveAsks.length ? <><div className="grid gap-3">{renderItems.map(item => <MessageCard key={item.key} item={item} />)}{liveAsks.map((entry, index) => { const entryKey = String(entry.id || `ask-${index}`); return <ExtensionRequestCard key={`ask-${entryKey}`} entry={entry} answered={!!answered[entryKey]} onAsk={body => ask.mutate(body)} />; })}</div>
+    <div ref={listRef} onScroll={e => { const el = e.currentTarget; const max = el.scrollHeight - el.clientHeight; setScrollPct(max > 0 ? Math.min(100, Math.round(el.scrollTop / max * 100)) : 0); }} className="h-[calc(100dvh-17rem)] overflow-y-auto">
+    <Card className="min-h-full"><div className="mb-3 flex items-center justify-between"><h2 className="font-semibold">消息</h2><span className="flex items-center gap-2"><span className="text-xs text-muted">{transcript.data?.total || item.message_count} 条</span>{(agentRunning || sending || prompt.isPending) && <Badge tone="info">{agentRunning ? "Agent 运行中" : sending || prompt.isPending ? "正在处理…" : ""}</Badge>}</span></div>{transcript.isLoading ? <Spinner /> : renderItems.length || liveAsks.length ? <><div className="grid gap-3">{renderItems.map(item => <MessageCard key={item.key} item={item} />)}{liveAsks.map((entry, index) => { const entryKey = String(entry.id || `ask-${index}`); return <ExtensionRequestCard key={`ask-${entryKey}`} entry={entry} answered={!!answered[entryKey]} onAsk={body => ask.mutate(body)} />; })}</div>
       {item.status === "active" && agentRunning ? <div className="activity-dock active"><span className="dot" />Agent 正在执行…</div> : null}
       <div className="mt-4 text-center"><Button size="sm" variant="ghost" disabled={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? "加载中…" : "加载更早消息"}</Button></div></> : <Empty title="还没有消息" copy="会话启动后，消息会实时显示在这里。" />}</Card>
+    </div>
     {canInput && <form className="sticky bottom-4 mt-3 flex gap-3 rounded-xl border border-line bg-surface/95 p-3 shadow-pop backdrop-blur" onSubmit={e => { e.preventDefault(); send(); }}>
       <div className="grid min-w-0 flex-1 gap-2">
         <textarea className={inputClass + " min-h-14 resize-y py-3"} required aria-label="发送消息" placeholder="输入消息…（Enter 发送，Shift+Enter 换行）" value={message} onChange={e => setMessage(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
