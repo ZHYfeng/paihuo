@@ -490,6 +490,12 @@ func Discard(tk store.Task, sessionsRoot string) error {
 	if !isGitRepo(tk.ProjectDir) {
 		return nil
 	}
+	// 清理幽灵 worktree 注册：worktree 目录已被外部删除（如部署清空
+	// sessions/）时 remove 无从执行，.git/worktrees/<id> 注册会残留；
+	// 必须先 prune，否则 git 会以 "used by worktree" 拒绝删除任务分支。
+	if _, err := git(tk.ProjectDir, "worktree", "prune"); err != nil {
+		return fmt.Errorf("清理 worktree 注册失败: %v", err)
+	}
 	branches, err := git(tk.ProjectDir, "branch", "--list", Branch(tk.ID))
 	if err != nil {
 		return fmt.Errorf("读取任务分支失败: %v", err)
@@ -568,14 +574,19 @@ func firstLine(s string) string {
 	return s
 }
 
-// git 执行 git 命令并返回 stdout。
+// git 执行 git 命令并返回 stdout。失败时错误附带命令真实输出
+// （stderr+stdout），让上层错误信息能直接暴露 git 失败根因
+// （如 "fatal: a branch named ... already exists"），而不是只显示退出码。
 func git(dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
-	return string(out), err
+	if err != nil {
+		return "", fmt.Errorf("git %s 失败: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
 }
 
 func isGitRepo(dir string) bool { return IsGitRepo(dir) }

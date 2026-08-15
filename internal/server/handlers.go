@@ -737,9 +737,9 @@ func (s *Server) workspaceGitInit(w http.ResponseWriter, r *http.Request) {
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := osexec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("git %s 失败: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return string(out), nil
 }

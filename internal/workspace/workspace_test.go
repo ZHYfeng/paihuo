@@ -302,3 +302,52 @@ func TestCleanup(t *testing.T) {
 		t.Fatal("任务分支未被清理")
 	}
 }
+
+// TestDiscardPrunesGhostWorktree 目录被外部删除（如部署清空 sessions/）后
+// Discard 仍应删分支并清理幽灵 worktree 注册，让仓库不留下任务痕迹。
+func TestDiscardPrunesGhostWorktree(t *testing.T) {
+	proj := gitInitTest(t)
+	sess := t.TempDir()
+	tk := store.Task{ID: 8, ProjectDir: proj, ProjectName: "proj", Title: "ghost"}
+	dir, _, _, err := Ensure(tk, sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 模拟外部删除 worktree 目录：注册仍在，目录消失。
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := Discard(tk, sess); err != nil {
+		t.Fatalf("Discard: %v", err)
+	}
+	// 分支应删除。
+	if out, err := git(proj, "branch", "--list", "paihuo/task-8"); err != nil || out != "" {
+		t.Fatalf("任务分支未删除: %q %v", out, err)
+	}
+	// worktree 注册应被 prune 清掉。
+	out, err := git(proj, "worktree", "list", "--porcelain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "task-8") || strings.Contains(out, "paihuo/task-8") {
+		t.Fatalf("幽灵 worktree 注册未清理:\n%s", out)
+	}
+}
+
+// TestGitErrorIncludesOutput 断言 git 失败错误携带真实 stderr 消息，
+// 而不是只有退出码。
+func TestGitErrorIncludesOutput(t *testing.T) {
+	proj := gitInitTest(t)
+	wt := filepath.Join(t.TempDir(), "wt")
+	if _, err := git(proj, "worktree", "add", wt, "-b", "paihuo/branch-taken"); err != nil {
+		t.Fatal(err)
+	}
+	// 同名分支再建 → git fatal，错误必须带 "already exists"。
+	_, err := git(proj, "worktree", "add", wt+"-2", "-b", "paihuo/branch-taken")
+	if err == nil {
+		t.Fatal("同名分支重复创建应失败")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("错误未包含 git 真实输出: %v", err)
+	}
+}
