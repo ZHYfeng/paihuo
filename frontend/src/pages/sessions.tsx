@@ -320,6 +320,12 @@ export function SessionDetailPage() {
     return out;
   }, [older, transcript.data]);
   const renderItems = useMemo(() => buildRenderItems(allEntries), [allEntries]);
+  // 顶部进度 rail：已加载条目 / 全部条目（older 由 before 游标分页，与最新页无重叠）。
+  // 用未过滤的 entries 计数（buildRenderItems 会丢弃 toolResult/隐藏 custom_message，
+  // 用 renderItems 做分子会让有工具调用的会话永远不满格）。
+  const loaded = older.length + (transcript.data?.entries.length ?? 0);
+  const total = transcript.data?.total ?? 0;
+  const pct = total > 0 ? Math.min(100, Math.round(loaded / total * 100)) : 0;
   // SSE 实时：session.message 事件 → 增量刷新 transcript 与运行状态
   useEffect(() => {
     const source = new EventSource("/api/v1/events");
@@ -371,8 +377,8 @@ export function SessionDetailPage() {
   };
   return <>
     <PageHeader title={item.title} copy={`${item.role_name || "角色"} · ${item.project_name || "无项目"} · ${item.runtime_id}`} actions={<><Badge tone={sessionTone[item.status] || "neutral"}>{sessionLabel[item.status]}</Badge>{item.status === "active" && <Button onClick={() => action.mutate("suspend")}><Pause size={16} />挂起</Button>}{item.status === "active" && <Button onClick={() => compact.mutate()} disabled={compact.isPending} title="压缩会话上下文，降低后续 token 消耗"><Layers size={16} />压缩上下文</Button>}{["active", "suspended"].includes(item.status) && <Button onClick={() => setDeliverOpen(true)}><Truck size={16} />交付</Button>}{item.status === "active" && <Button variant="danger" onClick={() => abort.mutate()}><Square size={15} />中止</Button>}<Button variant="ghost" onClick={() => { if (confirm(`删除会话 #${item.id}？其消息记录与工作区将一并删除。`)) remove.mutate(); }}><Trash2 size={15} />删除</Button><Button variant="ghost" onClick={() => navigate(-1)}>返回</Button></>} />
-    <div className="session-rail" aria-label="会话进度" aria-valuenow={Math.round(renderItems.length / Math.max(1, transcript.data?.total || renderItems.length) * 100)}>
-      <div className="rail-track"><div className="rail-progress" style={{ width: `${Math.round(renderItems.length / Math.max(1, transcript.data?.total || renderItems.length) * 100)}%` }} />{agentRunning && <span className="rail-marker" />}</div>
+    <div className="session-rail" aria-label="会话进度" aria-valuenow={pct}>
+      <div className="rail-track"><div className="rail-progress" style={{ width: `${pct}%` }} />{agentRunning && <span className="rail-marker" style={{ left: `${pct}%` }} />}</div>
     </div>
     <Card className="min-h-[24rem]"><div className="mb-3 flex items-center justify-between"><h2 className="font-semibold">消息</h2><span className="flex items-center gap-2"><span className="text-xs text-muted">{transcript.data?.total || item.message_count} 条</span>{(agentRunning || sending || prompt.isPending) && <Badge tone="info">{agentRunning ? "Agent 运行中" : sending || prompt.isPending ? "正在处理…" : ""}</Badge>}</span></div>{transcript.isLoading ? <Spinner /> : renderItems.length || liveAsks.length ? <><div className="grid gap-3">{renderItems.map(item => <MessageCard key={item.key} item={item} />)}{liveAsks.map((entry, index) => { const entryKey = String(entry.id || `ask-${index}`); return <ExtensionRequestCard key={`ask-${entryKey}`} entry={entry} answered={!!answered[entryKey]} onAsk={body => ask.mutate(body)} />; })}</div>
       {item.status === "active" && agentRunning ? <div className="activity-dock active"><span className="dot" />Agent 正在执行…</div> : null}
