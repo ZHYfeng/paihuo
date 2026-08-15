@@ -34,12 +34,12 @@ export function ProjectDetailPage() {
     onError: error => toast((error as Error).message, "bad")
   });
   const patch = useMutation({
-    mutationFn: ({ taskID, body }: { taskID: number; body: Record<string, unknown> }) => api(`/tasks/${taskID}`, { method: "PATCH", body }),
+    mutationFn: ({ taskID, revision, body }: { taskID: number; revision: number; body: Record<string, unknown> }) => api(`/tasks/${taskID}`, { method: "PATCH", revision, body }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["tasks", "project", id] }); qc.invalidateQueries({ queryKey: keys.tasks }); },
     onError: error => toast((error as Error).message, "bad")
   });
   const removeTask = useMutation({
-    mutationFn: (taskID: number) => api(`/tasks/${taskID}`, { method: "DELETE" }),
+    mutationFn: (task: Task) => api(`/tasks/${task.id}`, { method: "DELETE", revision: task.revision }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["tasks", "project", id] }); qc.invalidateQueries({ queryKey: keys.tasks }); },
     onError: error => toast((error as Error).message, "bad")
   });
@@ -110,8 +110,8 @@ export function ProjectDetailPage() {
               <button className="grid size-7 place-items-center rounded-lg text-muted hover:bg-hover hover:text-ink disabled:opacity-30" disabled={(pendingIndex.get(task.id) ?? 0) === pendingItems.length - 1 || reorder.isPending} aria-label={`下移任务 ${task.title}`} onClick={() => move(task.id, 1)}><ArrowDown size={15} /></button>
             </div> : null}
             <div className="flex gap-1">
-              {task.status === "queued" && <Button size="sm" variant="ghost" aria-label={`重试任务 ${task.title}`} title="重试" onClick={() => patch.mutate({ taskID: task.id, body: { status: "queued" } })}><RotateCcw size={13} /></Button>}
-              <Button size="sm" variant="danger" aria-label={`删除任务 ${task.title}`} title="删除任务" onClick={() => confirm(`删除任务 #${task.id}？`) && removeTask.mutate(task.id)}><Trash2 size={13} /></Button>
+              {task.status === "queued" && <Button size="sm" variant="ghost" aria-label={`重试任务 ${task.title}`} title="重试" onClick={() => patch.mutate({ taskID: task.id, revision: task.revision, body: { status: "queued" } })}><RotateCcw size={13} /></Button>}
+              <Button size="sm" variant="danger" aria-label={`删除任务 ${task.title}`} title="删除任务" onClick={() => confirm(`删除任务 #${task.id}？`) && removeTask.mutate(task)}><Trash2 size={13} /></Button>
             </div>
           </div>;
         })}

@@ -126,7 +126,7 @@ export function DashboardPage() {
   const queryClient = useQueryClient();
   const openTask = (id: number) => navigate(`/tasks/${id}`);
   const mutateStatus = useMutation({
-    mutationFn: ({ id, status }: { id: number; status: string }) => api(`/tasks/${id}`, { method: "PATCH", body: { status } }),
+    mutationFn: ({ id, status, revision }: { id: number; status: string; revision: number }) => api(`/tasks/${id}`, { method: "PATCH", revision, body: { status } }),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: keys.tasks }); queryClient.invalidateQueries({ queryKey: keys.stats }); toast("已更新"); },
     onError: error => toast((error as Error).message, "bad")
   });
@@ -151,7 +151,7 @@ export function DashboardPage() {
       <div className="grid gap-4">
         <Card><div className="mb-3 flex items-center"><div><h2 className="font-semibold">待审批</h2><p className="mt-1 text-sm text-muted">需要人工确认的交付与采纳会集中出现在这里</p></div><Link to="/approvals" className="ml-auto shrink-0 whitespace-nowrap text-sm text-brand-soft hover:underline">审批工作台 →</Link></div>
           {tasks.isLoading ? <Spinner /> : review.length ? <div className="grid gap-2">{review.map(task => <DashCard key={task.id} task={task} onOpen={() => openTask(task.id)} actions={<>
-            <Button size="sm" variant="primary" disabled={mutateStatus.isPending} onClick={() => mutateStatus.mutate({ id: task.id, status: "succeeded" })}><Check size={14} />通过并合并</Button>
+            <Button size="sm" variant="primary" disabled={mutateStatus.isPending} onClick={() => mutateStatus.mutate({ id: task.id, status: "succeeded", revision: task.revision })}><Check size={14} />通过并合并</Button>
             <Button size="sm" onClick={() => openTask(task.id)}>驳回</Button>
             <Button size="sm" variant="ghost" onClick={() => openTask(task.id)}>查看详情</Button>
           </>} />)}</div> : <Empty title="当前无需审批" copy="需要人工确认的交付会集中出现在这里。" />}
@@ -236,12 +236,12 @@ export function BoardPage() {
   const sourceTasks = filtered.filter(task => !isMergeTask(task));
   const mergeTasks = filtered.filter(isMergeTask);
   const mutateStatus = useMutation({
-    mutationFn: ({ id, status }: { id: number; status: string }) => api(`/tasks/${id}`, { method: "PATCH", body: { status } }),
+    mutationFn: ({ id, status, revision }: { id: number; status: string; revision: number }) => api(`/tasks/${id}`, { method: "PATCH", revision, body: { status } }),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: keys.tasks }); queryClient.invalidateQueries({ queryKey: keys.stats }); toast("已更新"); },
     onError: error => toast((error as Error).message, "bad")
   });
   const removeTask = useMutation({
-    mutationFn: (id: number) => api(`/tasks/${id}`, { method: "DELETE" }),
+    mutationFn: (task: Task) => api(`/tasks/${task.id}`, { method: "DELETE", revision: task.revision }),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: keys.tasks }); queryClient.invalidateQueries({ queryKey: keys.stats }); toast("已删除"); },
     onError: error => toast((error as Error).message, "bad")
   });
@@ -278,8 +278,8 @@ export function BoardPage() {
       <td className="whitespace-nowrap px-3 py-2 text-faint">{formatTime(task.created_at)}</td>
       <td className="whitespace-nowrap px-3 py-2 text-faint">{formatTime(task.finished_at)}</td>
       <td className="px-3 py-2"><span className="ops inline-flex gap-1.5">
-        {canRetryTask(task, all) ? <Button size="sm" variant="ghost" title={retryTaskLabel(task)} onClick={e => { e.stopPropagation(); mutateStatus.mutate({ id: task.id, status: "queued" }); }}><RotateCcw size={13} /><span className="hidden sm:inline">{retryTaskLabel(task)}</span></Button> : null}
-        {canDeleteTask(task) ? <Button size="sm" variant="danger" title="删除任务" onClick={e => { e.stopPropagation(); if (confirm(`删除任务 #${task.id}？执行日志、worktree、任务分支及其合并子任务将一并删除。`)) removeTask.mutate(task.id); }}><Trash2 size={13} /><span className="hidden sm:inline">删除</span></Button> : null}
+        {canRetryTask(task, all) ? <Button size="sm" variant="ghost" title={retryTaskLabel(task)} onClick={e => { e.stopPropagation(); mutateStatus.mutate({ id: task.id, status: "queued", revision: task.revision }); }}><RotateCcw size={13} /><span className="hidden sm:inline">{retryTaskLabel(task)}</span></Button> : null}
+        {canDeleteTask(task) ? <Button size="sm" variant="danger" title="删除任务" onClick={e => { e.stopPropagation(); if (confirm(`删除任务 #${task.id}？执行日志、worktree、任务分支及其合并子任务将一并删除。`)) removeTask.mutate(task); }}><Trash2 size={13} /><span className="hidden sm:inline">删除</span></Button> : null}
       </span></td>
     </tr>)}</tbody></table>{!filtered.length ? <div className="p-8"><Empty title="没有符合条件的任务" copy="调整筛选条件试试。" /></div> : null}</Card>}
     <NewTaskDialog open={createOpen} onOpenChange={setCreateOpen} />
@@ -329,7 +329,7 @@ export function HistoryPage() {
   });
   const refresh = () => { qc.invalidateQueries({ queryKey: ["tasks"] }); qc.invalidateQueries({ queryKey: keys.tasks }); qc.invalidateQueries({ queryKey: keys.stats }); };
   const removeSelected = useMutation({
-    mutationFn: async () => { await Promise.all([...selected].map(id => api(`/tasks/${id}`, { method: "DELETE" }))); },
+    mutationFn: async () => { const revisions = new Map(all.map(t => [t.id, t.revision])); await Promise.all([...selected].map(id => api(`/tasks/${id}`, { method: "DELETE", revision: revisions.get(id) }))); },
     onSuccess: () => { toast(`已删除 ${selected.size} 条`); setSelected(new Set()); refresh(); },
     onError: error => toast((error as Error).message, "bad")
   });
@@ -339,12 +339,12 @@ export function HistoryPage() {
     onError: error => toast((error as Error).message, "bad")
   });
   const retry = useMutation({
-    mutationFn: (id: number) => api(`/tasks/${id}`, { method: "PATCH", body: { status: "queued" } }),
+    mutationFn: (task: Task) => api(`/tasks/${task.id}`, { method: "PATCH", revision: task.revision, body: { status: "queued" } }),
     onSuccess: () => { refresh(); toast("已重新排队"); },
     onError: error => toast((error as Error).message, "bad")
   });
   const remove = useMutation({
-    mutationFn: (id: number) => api(`/tasks/${id}`, { method: "DELETE" }),
+    mutationFn: (task: Task) => api(`/tasks/${task.id}`, { method: "DELETE", revision: task.revision }),
     onSuccess: () => { refresh(); toast("已删除"); },
     onError: error => toast((error as Error).message, "bad")
   });
@@ -377,8 +377,8 @@ export function HistoryPage() {
       <td className="whitespace-nowrap px-3 py-2 text-faint">{formatTime(task.created_at)}</td>
       <td className="whitespace-nowrap px-3 py-2 text-faint">{formatTime(task.finished_at)}</td>
       <td className="px-3 py-2"><span className="ops inline-flex gap-1.5">
-        {canRetryTask(task, all) ? <Button size="sm" variant="ghost" title={retryTaskLabel(task)} onClick={() => retry.mutate(task.id)}><RotateCcw size={13} /><span className="hidden sm:inline">{retryTaskLabel(task)}</span></Button> : null}
-        {canDeleteTask(task) ? <Button size="sm" variant="danger" title="删除任务" onClick={() => confirm(`删除任务 #${task.id}？执行日志、worktree、任务分支及其合并子任务将一并删除。`) && remove.mutate(task.id)}><Trash2 size={13} /><span className="hidden sm:inline">删除</span></Button> : null}
+        {canRetryTask(task, all) ? <Button size="sm" variant="ghost" title={retryTaskLabel(task)} onClick={() => retry.mutate(task)}><RotateCcw size={13} /><span className="hidden sm:inline">{retryTaskLabel(task)}</span></Button> : null}
+        {canDeleteTask(task) ? <Button size="sm" variant="danger" title="删除任务" onClick={() => confirm(`删除任务 #${task.id}？执行日志、worktree、任务分支及其合并子任务将一并删除。`) && remove.mutate(task)}><Trash2 size={13} /><span className="hidden sm:inline">删除</span></Button> : null}
       </span></td>
     </tr>)}</tbody></table></Card> : <Empty title="没有符合条件的记录" copy="调整筛选条件，或等任务进入终态。" />}
   </>;
