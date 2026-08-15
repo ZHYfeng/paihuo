@@ -621,21 +621,21 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 			hash, err := workspace.Merge(tk, e.sessionsRoot)
 			if err != nil {
 				msg := "自动合并失败: " + err.Error()
+				e.log(tk.ID, "sys", "✗ "+msg)
 				_ = e.st.UpdateTask(tk.ID, map[string]any{
 					"status": store.StatusFailed, "finished_at": store.Now(), "exit_code": 1, "error": msg,
 				})
-				e.log(tk.ID, "sys", "✗ "+msg)
 				e.publishTask(tk.ID)
 				return
 			}
-			_ = e.st.UpdateTask(tk.ID, map[string]any{
-				"status": store.StatusSucceeded, "finished_at": store.Now(), "exit_code": 0,
-			})
 			if hash == "" {
 				e.log(tk.ID, "sys", "✓ 无冲突，平台已自动合并（主分支无需新增提交）")
 			} else {
 				e.log(tk.ID, "sys", "✓ 无冲突，平台已自动合并到主分支: "+hash)
 			}
+			_ = e.st.UpdateTask(tk.ID, map[string]any{
+				"status": store.StatusSucceeded, "finished_at": store.Now(), "exit_code": 0,
+			})
 			e.publishTask(tk.ID)
 			return
 		}
