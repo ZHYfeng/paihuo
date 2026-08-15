@@ -392,11 +392,16 @@ export function SessionDetailPage() {
     <div className="session-rail" aria-label="会话进度" aria-valuenow={scrollPct}>
       <div className="rail-track"><div className="rail-progress" style={{ width: `${scrollPct}%` }} />{agentRunning && <span className="rail-marker" style={{ left: `${scrollPct}%` }} />}</div>
     </div>
-    <div ref={listRef} onScroll={e => { const el = e.currentTarget; const max = el.scrollHeight - el.clientHeight; setScrollPct(max > 0 ? Math.min(100, Math.round(el.scrollTop / max * 100)) : 0); }} className="h-[calc(100dvh-17rem)] overflow-y-auto">
-    <Card className="min-h-full"><div className="mb-3 flex items-center justify-between"><h2 className="font-semibold">消息</h2><span className="flex items-center gap-2"><span className="text-xs text-muted">{transcript.data?.total || item.message_count} 条</span>{(agentRunning || sending || prompt.isPending) && <Badge tone="info">{agentRunning ? "Agent 运行中" : sending || prompt.isPending ? "正在处理…" : ""}</Badge>}</span></div>{transcript.isLoading ? <Spinner /> : renderItems.length || liveAsks.length ? <><div className="grid gap-3">{renderItems.map(item => <MessageCard key={item.key} item={item} />)}{liveAsks.map((entry, index) => { const entryKey = String(entry.id || `ask-${index}`); return <ExtensionRequestCard key={`ask-${entryKey}`} entry={entry} answered={!!answered[entryKey]} onAsk={body => ask.mutate(body)} />; })}</div>
-      {item.status === "active" && agentRunning ? <div className="activity-dock active"><span className="dot" />Agent 正在执行…</div> : null}
-      <div className="mt-4 text-center"><Button size="sm" variant="ghost" disabled={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? "加载中…" : "加载更早消息"}</Button></div></> : <Empty title="还没有消息" copy="会话启动后，消息会实时显示在这里。" />}</Card>
-    </div>
+    <Card className="flex h-[calc(100dvh-17rem)] flex-col">
+      <div className="mb-3 flex shrink-0 items-center justify-between"><h2 className="font-semibold">消息</h2><span className="flex items-center gap-2"><span className="text-xs text-muted">{transcript.data?.total || item.message_count} 条</span>{(agentRunning || sending || prompt.isPending) && <Badge tone="info">{agentRunning ? "Agent 运行中" : sending || prompt.isPending ? "正在处理…" : ""}</Badge>}</span></div>
+      <div ref={listRef} onScroll={e => { const el = e.currentTarget; const max = el.scrollHeight - el.clientHeight; setScrollPct(max > 0 ? Math.min(100, Math.round(el.scrollTop / max * 100)) : 0); }} className="min-h-0 flex-1 overflow-y-auto">
+        {transcript.isLoading ? <Spinner /> : renderItems.length || liveAsks.length ? <>
+          <div className="mb-3 text-center"><Button size="sm" variant="ghost" disabled={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? "加载中…" : "加载更早消息"}</Button></div>
+          <div className="grid gap-3">{renderItems.map(item => <MessageCard key={item.key} item={item} />)}{liveAsks.map((entry, index) => { const entryKey = String(entry.id || `ask-${index}`); return <ExtensionRequestCard key={`ask-${entryKey}`} entry={entry} answered={!!answered[entryKey]} onAsk={body => ask.mutate(body)} />; })}</div>
+        {item.status === "active" && agentRunning ? <div className="activity-dock active"><span className="dot" />Agent 正在执行…</div> : null}
+        </> : <Empty title="还没有消息" copy="会话启动后，消息会实时显示在这里。" />}
+      </div>
+    </Card>
     {canInput && <form className="sticky bottom-4 mt-3 flex gap-3 rounded-xl border border-line bg-surface/95 p-3 shadow-pop backdrop-blur" onSubmit={e => { e.preventDefault(); send(); }}>
       <div className="grid min-w-0 flex-1 gap-2">
         <textarea className={inputClass + " min-h-14 resize-y py-3"} required aria-label="发送消息" placeholder="输入消息…（Enter 发送，Shift+Enter 换行）" value={message} onChange={e => setMessage(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
