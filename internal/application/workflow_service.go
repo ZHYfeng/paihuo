@@ -158,6 +158,12 @@ func (s *WorkflowService) GetRun(id int64) (*workflow.Run, error) {
 	return s.store.GetWorkflowRun(id)
 }
 
+// ListRunsByPlan 返回某个 Plan 的全部 Run（新→旧），供 Plan 页恢复并
+// 展示最近一次启动的聚合状态。
+func (s *WorkflowService) ListRunsByPlan(planID int64) ([]workflow.Run, error) {
+	return s.store.ListWorkflowRunsByPlan(planID)
+}
+
 func (s *WorkflowService) StartMonitor(ctx context.Context) {
 	go func() {
 		ticker := time.NewTicker(time.Second)

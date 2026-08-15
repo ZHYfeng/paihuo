@@ -41,11 +41,25 @@ export function WorkflowProposalPage() {
 export function WorkflowPlanPage() {
   const id = Number(useParams().id);
   const plan = useQuery({ queryKey: ["workflows", id], queryFn: () => api<WorkflowPlan>(`/workflows/${id}`) });
+  const runs = useQuery({ queryKey: ["workflows", id, "runs"], queryFn: () => api<WorkflowRun[]>(`/workflows/${id}/runs`), refetchInterval: query => (query.state.data as WorkflowRun[] | undefined)?.some(r => r.status === "running" || r.status === "created") ? 3000 : false });
+  const qc = useQueryClient();
   const [run, setRun] = useState<WorkflowRun | null>(null);
-  const start = useMutation({ mutationFn: () => api<WorkflowRun>(`/workflows/${id}/runs`, { method: "POST", revision: plan.data?.revision }), onSuccess: setRun });
+  const start = useMutation({ mutationFn: () => api<WorkflowRun>(`/workflows/${id}/runs`, { method: "POST", revision: plan.data?.revision }), onSuccess: value => { setRun(value); qc.invalidateQueries({ queryKey: ["workflows", id, "runs"] }); } });
   if (plan.isLoading) return <Spinner />;
   if (!plan.data) return <Empty title="Plan 不存在" copy="请返回工作流列表。" />;
-  return <><PageHeader title={plan.data.spec.goal} copy={`版本 ${plan.data.version} · ${plan.data.spec_hash}`} actions={<Button variant="primary" onClick={() => start.mutate()} disabled={start.isPending || !!run}><Play size={16} />启动 Run</Button>} />{run && <Card className="mb-4 border-success/30"><div className="flex items-center gap-2"><Badge tone="good">Run #{run.id}</Badge><span className="text-sm text-muted">已原子创建 {Object.keys(run.task_ids).length} 个任务</span></div></Card>}<WorkflowGraph spec={plan.data.spec} /></>;
+  const latest = run ?? runs.data?.[0] ?? null;
+  const latestRunning = latest?.status === "running" || latest?.status === "created";
+  const runTone: Record<string, "neutral" | "good" | "bad" | "info"> = { created: "neutral", running: "info", succeeded: "good", failed: "bad", cancelled: "neutral" };
+  return <><PageHeader title={plan.data.spec.goal} copy={`版本 ${plan.data.version} · ${plan.data.spec_hash}`} actions={<Button variant="primary" onClick={() => start.mutate()} disabled={start.isPending || latestRunning}><Play size={16} />{latestRunning ? "Run 进行中" : "启动 Run"}</Button>} />
+    {latest && <Card className="mb-4"><div className="flex items-center gap-2"><Badge tone={runTone[latest.status] || "neutral"}>Run #{latest.id} · {latest.status}</Badge><span className="text-sm text-muted">{formatRunTime(latest.created_at)}{latest.finished_at ? ` · 结束 ${formatRunTime(latest.finished_at)}` : ""}</span></div>
+      <table className="mt-3 w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint"><th className="py-1.5 pr-3 font-medium">节点</th><th className="py-1.5 pr-3 font-medium">意图</th><th className="py-1.5 font-medium">任务</th></tr></thead><tbody className="divide-y divide-line">{Object.entries(latest.task_ids).map(([nodeID, taskID]) => <tr key={nodeID}><td className="py-1.5 pr-3 font-mono text-xs text-muted">{nodeID}</td><td className="py-1.5 pr-3 text-muted">{plan.data.spec.nodes.find(n => n.id === nodeID)?.intent || "-"}</td><td className="py-1.5"><Link to={`/tasks/${taskID}`} className="text-brand-soft hover:underline">任务 #{taskID} →</Link></td></tr>)}</tbody></table></Card>}
+    {run && <Card className="mb-4 border-success/30"><div className="flex items-center gap-2"><Badge tone="good">Run #{run.id}</Badge><span className="text-sm text-muted">已原子创建 {Object.keys(run.task_ids).length} 个任务</span></div></Card>}<WorkflowGraph spec={plan.data.spec} /></>;
+}
+
+function formatRunTime(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 function WorkflowGraph({ spec }: { spec: WorkflowSpec }) {

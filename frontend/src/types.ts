@@ -352,6 +352,8 @@ export interface WorkflowRun {
   task_ids: Record<string, ID>;
   revision: number;
   created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
   updated_at: string;
 }
 

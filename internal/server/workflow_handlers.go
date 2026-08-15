@@ -18,6 +18,7 @@ func (s *Server) workflowRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/workflow-proposals/{id}/adopt", s.adoptWorkflowProposal)
 	mux.HandleFunc("GET /api/v1/workflows", s.listWorkflows)
 	mux.HandleFunc("GET /api/v1/workflows/{id}", s.getWorkflow)
+	mux.HandleFunc("GET /api/v1/workflows/{id}/runs", s.listWorkflowRuns)
 	mux.HandleFunc("POST /api/v1/workflows/{id}/runs", s.startWorkflow)
 	mux.HandleFunc("GET /api/v1/workflow-runs/{id}", s.getWorkflowRun)
 }
@@ -128,6 +129,19 @@ func (s *Server) startWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeResource(w, http.StatusCreated, item.Revision, item)
+}
+
+func (s *Server) listWorkflowRuns(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	items, err := s.workflows.ListRunsByPlan(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (s *Server) getWorkflowRun(w http.ResponseWriter, r *http.Request) {

@@ -333,6 +333,26 @@ func (s *Store) ListActiveWorkflowRuns() ([]workflow.Run, error) {
 	return out, rows.Err()
 }
 
+// ListWorkflowRunsByPlan 返回某个 Plan 的全部 Run（新→旧）。Plan 页用它
+// 恢复最近一次启动的 Run：刷新页面后也能继续看到聚合状态与节点任务。
+func (s *Store) ListWorkflowRunsByPlan(planID int64) ([]workflow.Run, error) {
+	rows, err := s.db.Query(`SELECT id, plan_id, status, task_ids, revision,
+		created_at, started_at, finished_at, updated_at FROM workflow_runs WHERE plan_id=? ORDER BY id DESC`, planID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]workflow.Run, 0)
+	for rows.Next() {
+		item, err := scanWorkflowRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) FinishWorkflowRun(runID, expected int64, status string) error {
 	if status != workflow.RunStatusSucceeded && status != workflow.RunStatusFailed && status != workflow.RunStatusCancelled {
 		return errors.New("非法 Workflow Run 终态")
