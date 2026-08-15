@@ -213,8 +213,21 @@ export function ProjectsPage() {
         <MutationError value={save.error} /><div className="flex justify-end"><Button variant="primary" disabled={save.isPending}>保存</Button></div>
       </form>}
     </Dialog>
-    <DirectoryPicker open={dirOpen} onOpenChange={setDirOpen} initial={editing?.project_dir} onPick={path => setEditing(current => current ? { ...current, project_dir: path } : current)} />
+    <DirectoryPicker open={dirOpen} onOpenChange={setDirOpen} initial={editing?.project_dir} onPick={path => setEditing(current => {
+      if (!current) return current;
+      const next = { ...current, project_dir: path };
+      // 创建项目时，确认选择文件夹后若名称为空，自动用文件夹名称填充。
+      if (!current.id && !current.name?.trim()) next.name = folderName(path);
+      return next;
+    })} />
   </>;
+}
+
+// 从路径中提取文件夹名称（最后一段），供创建项目时自动填充项目名称。
+function folderName(path: string): string {
+  const trimmed = (path || "").trim().replace(/[\\/]+$/, "");
+  const parts = trimmed.split(/[\\/]/);
+  return parts[parts.length - 1] || "";
 }
 
 function formatTime(value?: string | null) {
