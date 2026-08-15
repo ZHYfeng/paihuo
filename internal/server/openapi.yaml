@@ -150,7 +150,7 @@ components:
         error: {type: object, required: [code, message], properties: {code: {type: string}, message: {type: string}}}
     TaskInput:
       type: object
-      required: [title, body, project_id, role_id]
+      required: [title]
       properties:
         title: {type: string}
         body: {type: string}
