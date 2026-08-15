@@ -52,14 +52,14 @@ export function Dialog({ open, onOpenChange, title, description, children, wide 
 }
 
 export function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return <label className="grid gap-1 text-sm font-medium text-ink">
+  return <label className="grid content-start gap-1 text-sm font-medium text-ink">
     <span>{label}</span>
     {children}
     {hint && <span className="text-xs font-normal leading-5 text-muted">{hint}</span>}
   </label>;
 }
 
-export const inputClass = "min-h-9 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink outline-none transition-[border-color,box-shadow] placeholder:text-faint hover:border-muted/50 focus:border-brand focus:ring-4 focus:ring-brand/15";
+export const inputClass = "h-9 self-start w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink outline-none transition-[border-color,box-shadow] placeholder:text-faint hover:border-muted/50 focus:border-brand focus:ring-4 focus:ring-brand/15";
 
 export function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "good" | "warn" | "bad" | "info" }) {
   return <span className={cn(
