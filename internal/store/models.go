@@ -176,16 +176,14 @@ func NewMergeTask(source Task) Task {
 	sourceID := source.ID
 	return Task{
 		Title: fmt.Sprintf("合并任务 #%d：%s", source.ID, taskFirstLine(source.Title, 80)),
-		Body: fmt.Sprintf(`这是系统在任务 #%d 完成或审批通过后自动创建的代码合并任务。
+		Body: fmt.Sprintf(`系统在任务 #%d 完成或审批通过后自动创建了本合并任务，源任务改动已导入当前 worktree。
 
 源任务：%s
 源分支：%s
 
-系统会在本任务启动前，把源任务的改动导入当前独立 worktree。请：
-1. 检查 git status 和完整 diff，确认源任务改动已进入当前工作区；
-2. 如有冲突，正确解决冲突并保留双方有效改动；
-3. 运行与改动相关的测试或构建，修复发现的问题；
-4. 不要直接操作主工作区或手工合并 main。完成退出后，平台会自动 squash 合并本任务分支。`,
+请先 git status / diff 确认改动已进入当前工作区；如有冲突，解决冲突并保留双方有效改动；
+然后运行与改动相关的测试或构建并修复问题。不要操作主工作区或手工合并 main——
+退出后平台会自动 squash 合并本任务分支。`,
 			source.ID, source.Title, source.WorktreeBranch),
 		Status:         StatusQueued,
 		Perm:           PermFull,
