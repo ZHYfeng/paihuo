@@ -62,17 +62,17 @@ Role 表达责任、指令、技能和并发策略；Runtime 表达执行能力�
 
 ## Workflow
 
-`Workflow Proposal` 只包含声明式 JSON：目标、Project、预算与图限制，以及节点的 intent、Role selector、依赖、权限、允许动作、输入引用、输出 schema、超时和失败策略。Edge 不包含代码。
+Workflow spec 只包含声明式 JSON：目标、预算与图限制，以及节点的 intent、Role selector、依赖、权限、允许动作、输入引用、输出 schema、超时和失败策略。Edge 不包含代码。spec 不绑定 Project——启动 Run 时选择具体项目。
 
-Policy 在采纳前拒绝：
+Policy 在创建时同步校验，拒绝即不落库：
 
-- 空目标、无 Project、节点重复或依赖缺失；
+- 空目标、节点重复或依赖缺失；
 - 图循环、深度/节点/并发/预算/超时越界；
 - Role 不存在、停用或 Runtime capability 不足；
 - 非 `node:` / `artifact:` 受控引用；
 - 危险动作没有显式审批。
 
-通过校验后，Proposal 冻结成带 canonical hash 的不可变 Plan。Run 中每个 Task 持有 `workflow_run_id`；执行器跨 Role 强制执行 Plan 的并发上限，并以包含代码整合子任务在内的 Delivery 状态结算 Run。运行中的 Plan 不允许原地修改。
+通过校验后，Workflow 直接冻结成带 canonical hash 的不可变定义。启动 Run 时绑定具体 Project，Run 中每个 Task 持有 `workflow_run_id`；执行器跨 Role 强制执行 Workflow 的并发上限，并以包含代码整合子任务在内的 Delivery 状态结算 Run。冻结后的 Workflow 不允许原地修改。
 
 ## HTTP 合同
 

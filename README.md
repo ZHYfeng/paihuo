@@ -12,7 +12,7 @@ PaiHuo 是个人自托管的 Coding Agent 调度平台。它把项目、Role、T
 - Task 状态机、角色/项目并发、审批、定时、重试和持久日志。
 - Git worktree 隔离与确定性代码整合任务。
 - Pi/OMP 结构化 Session，支持挂起、恢复和交付为 Task。
-- Workflow Proposal → Policy 校验 → 冻结 Plan → 原子 Run。
+- Workflow 创建即冻结（策略校验）→ 绑定项目启动原子 Run。
 - 持久 SSE 事件序号、断线补拉、mutation 幂等键与 revision 冲突保护。
 - 内容寻址 ArtifactStore 与受控 VisualizationSpec。
 - React + TypeScript 响应式控制台，亮/暗主题和可访问工作流表格。
@@ -67,7 +67,7 @@ Git Project 中每个 Task 使用 `<db-dir>/sessions/<project>/task-<id>` worktr
    （选择 Runtime、模型、指令、Skills 和并发数）；创建 Project 并绑定主机代码目录。
 2. **创建任务（四种形态）**：
    - 单任务：创建 Task，选择权限、执行方式和依赖；
-   - 复合任务：多节点协作用 Workflow Proposal，策略校验通过后采纳为冻结 Plan 并启动 Run；
+   - 复合任务：多节点协作，Workflow 创建即冻结（策略校验），启动 Run 时绑定项目并原子实例化节点任务；
    - 自由探索任务：复杂问题先建立结构化 Session，产生成果后交付为 Task；
    - 定时任务：创建 Schedule，到点自动生成普通任务。
 3. **执行**：在任务板观察执行；Runtime 在专用 `tmux -L paihuo` server 中执行，

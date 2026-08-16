@@ -23,7 +23,7 @@
 | 形态 | 当前实现 | 特征 |
 |---|---|---|
 | **单任务** | tasks 表 type=task | 一个 Role 执行一次，后台跑完，日常主力 |
-| **复合任务** | tasks 表 type=workflow | 带编排 spec（节点 + 依赖边）的任务，提案→校验→冻结后实例化为子任务树，状态聚合 |
+| **复合任务** | tasks 表 type=workflow | 带编排 spec（节点 + 依赖边）的任务，创建即冻结，启动 Run 时绑定项目并原子实例化为子任务树，状态聚合 |
 | **自由探索任务** | tasks 表 type=session | 持久多轮协作，可挂起/恢复，产出后交付为收编任务 |
 | **定时任务** | 任何形态 + cron 属性 | 定时是正交属性：任务/会话/工作流都可挂 cron，到点按形态创建实例 |
 
@@ -86,15 +86,15 @@ Task ──► Role（指令/模型/并发/技能选择）──► Runtime（Pi
 
 ## 5. 审批闸口
 
-审批是主线上的一道闸口，两类触发点聚合在同一个"待审批"概念下：
+审批是主线上的一道闸口，聚合在同一个"待审批"概念下：
 
 | 触发点 | 审批什么 | 动作 |
 |---|---|---|
 | review 任务执行完毕 | 交付成果可否进入整合 | 批准 → succeeded + 自动建 merge；拒绝 → cancelled；打回 → queued |
-| Workflow Proposal 校验通过 | 冻结的 Plan 可否启动 | 采纳 → 冻结；拒绝 → 修改重提 |
 
+工作流没有独立的采纳审批：创建工作流时同步完成确定性策略校验，通过即冻结。
 危险动作（install_runtime、arbitrary_host_path、full_permission、
-merge_workspace、delete_workspace）在 Proposal 校验期强制要求人工审批声明。
+merge_workspace、delete_workspace）在创建时强制要求节点声明人工审批。
 
 ## 6. 管理面（支撑设施）
 
@@ -108,13 +108,17 @@ merge_workspace、delete_workspace）在 Proposal 校验期强制要求人工审
 | 角色和技能 | Roles / 技能 | Role 指令与约束；SKILL.md 导入与挂载 |
 | Pi 扩展 | 技能页 Pi 扩展 tab | 安装/移除 Pi 扩展 |
 | 模板 | 模板 | 调度模板 + MCP 任务创建模板 |
-| Workflow 管理 | Workflows | Proposal/Plan/Run 全生命周期 |
-| 审批 | 工作台待审批聚合 | 所有 awaiting_review 与采纳请求集中出现 |
+| Workflow 管理 | Workflows | 工作流创建/冻结、启动 Run、Run 历史与节点任务 |
+| 审批 | 工作台待审批聚合 | 所有 awaiting_review 任务集中出现 |
 
 ## 7. 设计决策
 
 - **一条路，一个实体**：Task 是唯一实体，四种形态是创建方式差异；
-  Proposal/Plan/Run 是复合任务的采纳门禁与历史，不是另一类实体。
+  Workflow 是创建即冻结的编排定义，Run 是它的执行实例书签，不是另一类实体。
+- **定义与项目解耦**：Workflow spec 不绑定 Project，启动 Run 时选择具体
+  项目——一个定义可复用于多个项目；定时工作流在创建时绑定目标项目。
+- **创建即冻结**：创建工作流时同步完成确定性策略校验，通过直接冻结可用，
+  不设提案/采纳两阶段门禁；校验失败返回违规明细且不落库。
 - **路由层保持确定性**：跨角色任务路由（复合任务的依赖图）是平台职责，
   必须可静态校验、可审计、可重放；LLM 动态路由放在自由探索任务内部
   （runtime 职责）。

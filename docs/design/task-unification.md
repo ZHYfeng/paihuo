@@ -75,10 +75,11 @@ spec_hash       TEXT NOT NULL DEFAULT ''        -- 采纳时冻结
 |---|---|---|
 | task | queued → claimed → running → awaiting_review → succeeded/failed/cancelled | 不变；定时定义保持 queued 但被认领过滤排除 |
 | session | created → active ⇄ suspended → delivered → deleted | 不变（session 包白名单）；交付仍创建 type=task 的收编任务（session_id 回链） |
-| workflow | proposed → validated → adopted（校验失败 → rejected） | 提案门禁并入任务状态；adopted = 冻结（spec_hash + revision 保护），可被多次 run |
+| workflow | adopted（创建即冻结） | 创建时同步策略校验，通过即冻结（spec_hash + revision 保护），可被多次 run；存量 proposed/validated/rejected 为旧版遗留，不可启动 |
 
 `tasks` 状态转换校验按 type 分派：task 走 `TaskLifecycle.CanTransition`，
-session 走 `session.CanTransition`，workflow 走提案门禁。status 列无 DB CHECK。
+session 走 `session.CanTransition`，workflow 创建即冻结、启动走
+`WorkflowService.StartPlan`。status 列无 DB CHECK。
 
 ## 5. API 变更
 
@@ -88,7 +89,7 @@ URL 面尽量保留（前端路由不变），语义全部指向统一 tasks：
 |---|---|
 | GET/POST /tasks | 支持 `?type=` / `?scheduled=1` 过滤；POST body 支持 type + 形态字段 + cron |
 | /sessions/*（start/resume/suspend/prompt/deliver/abort/ask/command/transcript） | 路径保留，读写 type=session 的任务 |
-| /workflow-proposals/{id}/validate\|adopt、/workflows/{id}/runs、/workflow-runs/{id} | 路径保留，读写 type=workflow 的任务 |
+| /workflows（POST 创建即冻结；GET 列表）、/workflows/{id}、/workflows/{id}/runs（GET/POST 启动 Run）、/workflow-runs/{id} | 路径保留，读写 type=workflow 的任务与 Run |
 | /schedules/* | **删除**；定时页改走 /tasks?scheduled=1，CRUD 走 /tasks（创建带 cron；PATCH 改 cron/enabled；DELETE 删定义） |
 
 openapi.yaml 同步：Task schema 加 type/定时/会话/工作流字段，
@@ -99,7 +100,7 @@ Schedule/Proposal/Plan schema 移除。
 - **store**：`Task` 结构体加字段；`taskCols`/`scanTask` 扩展；
   `TaskFilter` 加 `Type`/`ExcludeScheduled`；会话查询函数改为
   `ListTasksFiltered(Type=session)`；`CreateSession` →
-  `CreateTask(type=session)`；工作流提案/采纳/实例化改为读写 tasks。
+  `CreateTask(type=session)`；工作流创建（即冻结）/启动 Run/实例化改为读写 tasks。
 - **session manager**：`store.Session` 引用换成 `store.Task`；
   `Create`/`Get`/`List` 走统一查询；状态读写走 `tasks.status`；
   `Deliver` 不变（收编任务 + 合并链）。
