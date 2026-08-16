@@ -10,7 +10,7 @@ import { useHotkeys } from "../lib/hotkeys";
 import { api, keys } from "../lib/api";
 import { BOARD_COLS, STATUS_LABEL, ST_COLOR, PERM_LABEL, canDeleteTask, canRetryTask, cleanLogContent, dependencyInfo, fmtDur, fmtPct, isMergeTask, mergeBlockReason, mergeTaskFor, retryTaskLabel, splitReviewRounds, terminalRenderableLog, tsOf } from "../lib/taskmeta";
 import type { Artifact, OverviewStats, Project, ProvisionInfo, Role, Session, Task, TaskLog, TaskLogPage, TaskTemplate, WorkspaceStatus } from "../types";
-import { NewProposalDialog } from "./workflows";
+import { NewWorkflowDialog } from "./workflows";
 
 const statusTone: Record<string, "neutral" | "good" | "warn" | "bad" | "info"> = { queued: "neutral", claimed: "info", running: "info", awaiting_review: "warn", succeeded: "good", failed: "bad", cancelled: "neutral" };
 
@@ -866,8 +866,8 @@ export function NewTaskDialog({ open, onOpenChange, initialProjectID }: { open: 
         <Field label="初始指令"><textarea className={inputClass + " min-h-28 py-3"} value={sessionForm.body} onChange={event => setSessionForm({ ...sessionForm, body: event.target.value })} placeholder={sessSched ? "到点创建会话后自动发送的初始指令" : "可选：创建后自动启动并发起首轮对话"} /></Field>
         <ScheduleToggle checked={sessSched} onChange={setSessSched} enabled={schedEnabled} onEnabledChange={setSchedEnabled} cronForm={cronForm} onCronChange={patch => setCronForm(current => ({ ...current, ...patch }))} />
       </> : kind === "workflow" ? <>
-        <p className="rounded-xl border border-line bg-elevated px-3 py-2.5 text-sm leading-6 text-muted">复合任务使用声明式节点编排（节点 + 依赖边 + 策略门禁）：提交后先经确定性校验，通过后在「审批」页采纳冻结，再启动 Run 原子实例化子任务树。</p>
-        <p className="text-sm text-muted">创建工作流将打开完整构建器；需要定时执行时，在构建器中勾选「定时执行」即可（定时是正交属性）。</p>
+        <p className="rounded-xl border border-line bg-elevated px-3 py-2.5 text-sm leading-6 text-muted">复合任务使用声明式节点编排（节点 + 依赖边 + 策略门禁）：创建时同步完成确定性校验，通过即冻结；之后在「工作流」页选择具体项目启动 Run，原子实例化子任务树。</p>
+        <p className="text-sm text-muted">创建工作流将打开完整构建器；需要定时执行时，在构建器中勾选「定时执行」并绑定目标项目（定时是正交属性）。</p>
         <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="button" variant="primary" onClick={() => { onOpenChange(false); setProposalOpen(true); }}><Workflow size={16} />打开工作流构建器</Button></div>
       </> : null}
 
@@ -876,7 +876,7 @@ export function NewTaskDialog({ open, onOpenChange, initialProjectID }: { open: 
         : null}
     </form>
   </Dialog>
-    <NewProposalDialog open={proposalOpen} onOpenChange={setProposalOpen} projects={projects.data} roles={roles.data} />
+    <NewWorkflowDialog open={proposalOpen} onOpenChange={setProposalOpen} projects={projects.data} roles={roles.data} />
   </>;
 }
 

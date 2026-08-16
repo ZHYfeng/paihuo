@@ -20,8 +20,7 @@ const SettingsPage = route(() => import("./pages/management"), "SettingsPage");
 const SessionsPage = route(() => import("./pages/sessions"), "SessionsPage");
 const SessionDetailPage = route(() => import("./pages/sessions"), "SessionDetailPage");
 const WorkflowsPage = route(() => import("./pages/workflows"), "WorkflowsPage");
-const WorkflowProposalPage = route(() => import("./pages/workflows"), "WorkflowProposalPage");
-const WorkflowPlanPage = route(() => import("./pages/workflows"), "WorkflowPlanPage");
+const WorkflowDetailPage = route(() => import("./pages/workflows"), "WorkflowDetailPage");
 
 const routes: Array<{ path: string; element: React.ReactNode; errorElement?: React.ReactNode; children?: Array<{ index?: boolean; path?: string; element: React.ReactNode }> }> = [{
   path: "/",
@@ -43,8 +42,7 @@ const routes: Array<{ path: string; element: React.ReactNode; errorElement?: Rea
     { path: "sessions", element: <SessionsPage /> },
     { path: "sessions/:id", element: <SessionDetailPage /> },
     { path: "workflows", element: <WorkflowsPage /> },
-    { path: "workflow-proposals/:id", element: <WorkflowProposalPage /> },
-    { path: "workflows/:id", element: <WorkflowPlanPage /> },
+    { path: "workflows/:id", element: <WorkflowDetailPage /> },
     { path: "settings", element: <SettingsPage /> },
     { path: "*", element: <NotFound /> }
   ]

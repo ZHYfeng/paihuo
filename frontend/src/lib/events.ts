@@ -21,7 +21,7 @@ export function useEventStream() {
       setLastSync(new Date());
       void queryClient.invalidateQueries();
     };
-    ["task", "log", "session.updated", "session.message", "workflow.proposal.created", "workflow.proposal.validated", "workflow.plan.frozen", "workflow.run.started", "workflow.run.finished", "provision"].forEach(type => source.addEventListener(type, receive));
+    ["task", "log", "session.updated", "session.message", "workflow.created", "workflow.run.started", "workflow.run.finished", "provision"].forEach(type => source.addEventListener(type, receive));
     return () => source.close();
   }, [queryClient]);
 

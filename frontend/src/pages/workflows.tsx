@@ -1,14 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, CirclePlus, Clock, Code2, ListTree, Play, Snowflake, Trash2 } from "lucide-react";
+import { CirclePlus, Clock, Code2, ListTree, Play, Trash2 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { PageHeader } from "../components/shell";
 import { TaskGraph } from "../components/visualization";
 import { Badge, Button, Card, cn, Dialog, Empty, Field, inputClass, Spinner } from "../components/ui";
-import { api, keys } from "../lib/api";
+import { APIError, api, keys } from "../lib/api";
 import type { Project, Role, Task, WorkflowRun, WorkflowSpec } from "../types";
 
-/** Task.spec / Task.violations 是 JSON 字符串；parse 失败返回 null（列表/详情用占位展示，不崩溃）。 */
+/** Task.spec 是 JSON 字符串；parse 失败返回 null（列表/详情用占位展示，不崩溃）。 */
 function parseWorkflowSpec(spec?: string | null): WorkflowSpec | null {
   if (!spec) return null;
   try {
@@ -20,16 +20,6 @@ function parseWorkflowSpec(spec?: string | null): WorkflowSpec | null {
 }
 
 interface WorkflowViolation { code: string; node_id?: string; message: string }
-
-function parseViolations(violations?: string | null): WorkflowViolation[] {
-  if (!violations) return [];
-  try {
-    const parsed = JSON.parse(violations);
-    return Array.isArray(parsed) ? parsed as WorkflowViolation[] : [];
-  } catch {
-    return [];
-  }
-}
 
 // 定时快捷选择：与 management.tsx SchedulesPage 的 parseScheduleCron/cronFromFields/scheduleLabel 同一套 cron 规则（内联实现，避免跨页 import）。
 const SCHEDULE_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
@@ -81,56 +71,70 @@ function scheduleLabel(cron: string): string {
 }
 
 export function WorkflowsPage() {
-  const proposals = useQuery({ queryKey: ["workflow-proposals"], queryFn: () => api<Task[]>("/workflow-proposals") });
+  const workflows = useQuery({ queryKey: keys.workflows, queryFn: () => api<Task[]>("/workflows") });
   const projects = useQuery({ queryKey: keys.projects, queryFn: () => api<Project[]>("/projects") });
   const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
   const [open, setOpen] = useState(false);
-  const plans = (proposals.data || []).filter(item => item.status === "adopted");
   return <>
-    <PageHeader title="工作流" copy="Proposal 先经过确定性策略校验，采纳后冻结为不可变 Plan，再原子创建 Run 与任务依赖图。" actions={<Button variant="primary" onClick={() => setOpen(true)}><CirclePlus size={16} />新建 Proposal</Button>} />
-    <div className="grid gap-4 xl:grid-cols-2"><section><h2 className="mb-3 text-sm font-semibold text-muted">待决 Proposal</h2>{proposals.isLoading ? <Spinner /> : proposals.data?.length ? <div className="grid gap-3">{proposals.data.map(item => {
-      const spec = parseWorkflowSpec(item.spec);
-      return <Link key={item.id} to={`/workflow-proposals/${item.id}`} className="rounded-xl border border-line bg-surface p-3.5 shadow-card transition hover:border-brand/35"><div className="flex items-center gap-2"><span className="text-xs text-faint">#{item.id}</span><h3 className="truncate font-semibold">{spec?.goal || "（无法解析规格）"}</h3><Badge tone={item.status === "validated" ? "good" : item.status === "rejected" ? "bad" : "neutral"}>{item.status}</Badge></div><p className="mt-2 text-sm text-muted">{spec ? `${spec.nodes.length} 个节点 · ` : ""}revision {item.revision}</p></Link>;
-    })}</div> : <Empty title="没有 Proposal" copy="提交一份只描述意图、依赖和边界的工作流规格。" />}</section>
-      <section><h2 className="mb-3 text-sm font-semibold text-muted">冻结 Plan</h2>{proposals.isLoading ? <Spinner /> : plans.length ? <div className="grid gap-3">{plans.map(item => {
+    <PageHeader title="工作流" copy="创建工作流时同步完成确定性策略校验，通过即冻结可用；启动 Run 时绑定具体项目，原子创建节点任务与依赖图。" actions={<Button variant="primary" onClick={() => setOpen(true)}><CirclePlus size={16} />新建工作流</Button>} />
+    {workflows.isLoading ? <Spinner /> : workflows.data?.length ? <div className="grid gap-3">
+      {workflows.data.map(item => {
         const spec = parseWorkflowSpec(item.spec);
-        return <Link key={item.id} to={`/workflows/${item.id}`} className="rounded-xl border border-line bg-surface p-3.5 shadow-card transition hover:border-brand/35"><div className="flex items-center gap-2"><Snowflake size={15} className="text-brand-soft"/><h3 className="truncate font-semibold">{spec?.goal || "（无法解析规格）"}</h3><Badge tone="info">{item.status}</Badge></div><p className="mt-2 truncate font-mono text-xs text-muted">{item.spec_hash}</p></Link>;
-      })}</div> : <Empty title="没有冻结 Plan" copy="通过校验并采纳 Proposal 后，Plan 会出现在这里。" />}</section></div>
-    <NewProposalDialog open={open} onOpenChange={setOpen} projects={projects.data} roles={roles.data} />
+        const frozen = item.status === "adopted";
+        return <Link key={item.id} to={`/workflows/${item.id}`} className="rounded-xl border border-line bg-surface p-3.5 shadow-card transition hover:border-brand/35">
+          <div className="flex items-center gap-2"><span className="text-xs text-faint">#{item.id}</span>
+            <h3 className="truncate font-semibold">{spec?.goal || "（无法解析规格）"}</h3>
+            <Badge tone={frozen ? "info" : "neutral"}>{frozen ? "已冻结" : item.status}</Badge>
+            {item.cron ? <span className="chip"><Clock size={11} className="mr-1 inline" />{scheduleLabel(item.cron)}</span> : null}
+          </div>
+          <p className="mt-2 text-sm text-muted">{spec ? `${spec.nodes.length} 个节点 · 预算 ${spec.limits?.budget ?? "-"}` : ""}<span className="ml-2 truncate font-mono text-xs text-faint">{item.spec_hash}</span></p>
+        </Link>;
+      })}
+    </div> : <Card><Empty title="没有工作流" copy="提交一份只描述意图、依赖和边界的工作流规格，创建即冻结。" /></Card>}
+    <NewWorkflowDialog open={open} onOpenChange={setOpen} projects={projects.data} roles={roles.data} />
   </>;
 }
 
-export function WorkflowProposalPage() {
-  const id = Number(useParams().id);
-  const item = useQuery({ queryKey: ["workflow-proposals", id], queryFn: () => api<Task>(`/workflow-proposals/${id}`) });
-  const qc = useQueryClient();
-  const act = useMutation({ mutationFn: (name: "validate" | "adopt") => api(`/workflow-proposals/${id}/${name}`, { method: "POST", revision: item.data?.revision }), onSuccess: () => { qc.invalidateQueries({ queryKey: ["workflow-proposals"] }); qc.invalidateQueries({ queryKey: keys.workflows }); } });
-  if (item.isLoading) return <Spinner />;
-  if (!item.data) return <Empty title="Proposal 不存在" copy="请返回工作流列表。" />;
-  const proposal = item.data;
-  const spec = parseWorkflowSpec(proposal.spec);
-  const violations = parseViolations(proposal.violations);
-  return <><PageHeader title={spec?.goal || "（无法解析规格）"} copy={`由 ${spec?.created_by || "operator"} 创建 · revision ${proposal.revision}`} actions={<>{proposal.status !== "adopted" && <Button onClick={() => act.mutate("validate")}><CheckCircle2 size={16} />校验</Button>}{proposal.status === "validated" && <Button variant="primary" onClick={() => act.mutate("adopt")}><Snowflake size={16} />采纳并冻结</Button>}</>} />
-    {violations.length > 0 && <Card className="mb-4 border-danger/30"><h2 className="font-semibold text-danger">策略拒绝</h2><ul className="mt-3 grid gap-2 text-sm text-muted">{violations.map((v, i) => <li key={i}><code className="text-danger">{v.code}</code>{v.node_id && ` · ${v.node_id}`}：{v.message}</li>)}</ul></Card>}{spec ? <WorkflowGraph spec={spec} /> : <Empty title="无法解析规格" copy="该 Proposal 的 spec 不是有效 JSON 字符串。" />}</>;
-}
-
-export function WorkflowPlanPage() {
+export function WorkflowDetailPage() {
   const id = Number(useParams().id);
   const plan = useQuery({ queryKey: ["workflows", id], queryFn: () => api<Task>(`/workflows/${id}`) });
+  const projects = useQuery({ queryKey: keys.projects, queryFn: () => api<Project[]>("/projects") });
   const runs = useQuery({ queryKey: ["workflows", id, "runs"], queryFn: () => api<WorkflowRun[]>(`/workflows/${id}/runs`), refetchInterval: query => (query.state.data as WorkflowRun[] | undefined)?.some(r => r.status === "running" || r.status === "created") ? 3000 : false });
   const qc = useQueryClient();
   const [run, setRun] = useState<WorkflowRun | null>(null);
-  const start = useMutation({ mutationFn: () => api<WorkflowRun>(`/workflows/${id}/runs`, { method: "POST", revision: plan.data?.revision }), onSuccess: value => { setRun(value); qc.invalidateQueries({ queryKey: ["workflows", id, "runs"] }); } });
+  const [startOpen, setStartOpen] = useState(false);
+  const [projectID, setProjectID] = useState("");
+  const start = useMutation({
+    mutationFn: () => api<WorkflowRun>(`/workflows/${id}/runs`, { method: "POST", revision: plan.data?.revision, body: { project_id: Number(projectID) } }),
+    onSuccess: value => { setRun(value); setStartOpen(false); setProjectID(""); qc.invalidateQueries({ queryKey: ["workflows", id, "runs"] }); },
+  });
   if (plan.isLoading) return <Spinner />;
-  if (!plan.data) return <Empty title="Plan 不存在" copy="请返回工作流列表。" />;
+  if (!plan.data) return <Empty title="工作流不存在" copy="请返回工作流列表。" />;
   const spec = parseWorkflowSpec(plan.data.spec);
+  const activeProjects = (projects.data || []).filter(p => p.status === "active");
+  const projectName = (pid: number) => (projects.data || []).find(p => p.id === pid)?.name || `项目 #${pid}`;
   const latest = run ?? runs.data?.[0] ?? null;
   const latestRunning = latest?.status === "running" || latest?.status === "created";
   const runTone: Record<string, "neutral" | "good" | "bad" | "info"> = { created: "neutral", running: "info", succeeded: "good", failed: "bad", cancelled: "neutral" };
-  return <><PageHeader title={spec?.goal || "（无法解析规格）"} copy={`版本 ${spec?.version ?? 1} · ${plan.data.spec_hash}`} actions={<Button variant="primary" onClick={() => start.mutate()} disabled={start.isPending || latestRunning}><Play size={16} />{latestRunning ? "Run 进行中" : "启动 Run"}</Button>} />
-    {latest && <Card className="mb-4"><div className="flex items-center gap-2"><Badge tone={runTone[latest.status] || "neutral"}>Run #{latest.id} · {latest.status}</Badge><span className="text-sm text-muted">{formatRunTime(latest.created_at)}{latest.finished_at ? ` · 结束 ${formatRunTime(latest.finished_at)}` : ""}</span></div>
-      <table className="mt-3 w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint"><th className="py-1.5 pr-3 font-medium">节点</th><th className="py-1.5 pr-3 font-medium">意图</th><th className="py-1.5 font-medium">任务</th></tr></thead><tbody className="divide-y divide-line">{Object.entries(latest.task_ids).map(([nodeID, taskID]) => <tr key={nodeID}><td className="py-1.5 pr-3 font-mono text-xs text-muted">{nodeID}</td><td className="py-1.5 pr-3 text-muted">{spec?.nodes.find(n => n.id === nodeID)?.intent || "-"}</td><td className="py-1.5"><Link to={`/tasks/${taskID}`} className="text-brand-soft hover:underline">任务 #{taskID} →</Link></td></tr>)}</tbody></table></Card>}
-    {run && <Card className="mb-4 border-success/30"><div className="flex items-center gap-2"><Badge tone="good">Run #{run.id}</Badge><span className="text-sm text-muted">已原子创建 {Object.keys(run.task_ids).length} 个任务</span></div></Card>}{spec ? <WorkflowGraph spec={spec} /> : <Empty title="无法解析规格" copy="该 Plan 的 spec 不是有效 JSON 字符串。" />}</>;
+  return <>
+    <PageHeader title={spec?.goal || "（无法解析规格）"} copy={`版本 ${spec?.version ?? 1} · ${plan.data.spec_hash}${plan.data.cron ? ` · 定时 ${scheduleLabel(plan.data.cron)}` : ""}`} actions={<Button variant="primary" onClick={() => setStartOpen(true)} disabled={start.isPending || latestRunning}><Play size={16} />{latestRunning ? "Run 进行中" : "创建 Run"}</Button>} />
+    {latest && <Card className="mb-4">
+      <div className="flex items-center gap-2"><Badge tone={runTone[latest.status] || "neutral"}>Run #{latest.id} · {latest.status}</Badge><span className="chip">{projectName(latest.project_id)}</span><span className="text-sm text-muted">{formatRunTime(latest.created_at)}{latest.finished_at ? ` · 结束 ${formatRunTime(latest.finished_at)}` : ""}</span></div>
+      <table className="mt-3 w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint"><th className="py-1.5 pr-3 font-medium">节点</th><th className="py-1.5 pr-3 font-medium">意图</th><th className="py-1.5 font-medium">任务</th></tr></thead><tbody className="divide-y divide-line">{Object.entries(latest.task_ids).map(([nodeID, taskID]) => <tr key={nodeID}><td className="py-1.5 pr-3 font-mono text-xs text-muted">{nodeID}</td><td className="py-1.5 pr-3 text-muted">{spec?.nodes.find(n => n.id === nodeID)?.intent || "-"}</td><td className="py-1.5"><Link to={`/tasks/${taskID}`} className="text-brand-soft hover:underline">任务 #{taskID} →</Link></td></tr>)}</tbody></table>
+    </Card>}
+    {(runs.data?.length || 0) > 1 && <Card className="mb-4">
+      <h2 className="text-sm font-semibold">Run 历史</h2>
+      <div className="mt-2 grid gap-1.5">{runs.data?.map(item => <div key={item.id} className="flex items-center gap-2 text-sm"><Badge tone={runTone[item.status] || "neutral"}>#{item.id} · {item.status}</Badge><span className="chip">{projectName(item.project_id)}</span><span className="text-xs text-faint">{formatRunTime(item.created_at)}</span></div>)}</div>
+    </Card>}
+    {spec ? <WorkflowGraph spec={spec} /> : <Empty title="无法解析规格" copy="该工作流的 spec 不是有效 JSON 字符串。" />}
+    <Dialog open={startOpen} onOpenChange={setStartOpen} title="创建 Run" description="选择具体项目：节点任务将原子创建在该项目下（工作流定义本身不绑定项目）。">
+      <form className="grid gap-4" onSubmit={(event: FormEvent) => { event.preventDefault(); if (projectID) start.mutate(); }}>
+        <Field label="目标项目"><select className={inputClass} required value={projectID} onChange={e => setProjectID(e.target.value)}><option value="">选择项目</option>{activeProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
+        {start.error instanceof Error && <p className="text-sm text-danger">{start.error.message}</p>}
+        <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setStartOpen(false)}>取消</Button><Button type="submit" variant="primary" disabled={start.isPending || !projectID}>创建并启动</Button></div>
+      </form>
+    </Dialog>
+  </>;
 }
 
 function formatRunTime(value?: string): string {
@@ -146,8 +150,9 @@ function WorkflowGraph({ spec }: { spec: WorkflowSpec }) {
 }
 
 /* ============================================================
-   新建 Proposal：表单驱动，附带 JSON 高级模式。
-   客户端校验镜像服务端 DefaultPolicy，避免提交被策略拒绝后才返工。
+   新建工作流：表单驱动，附带 JSON 高级模式。
+   客户端校验镜像服务端 DefaultPolicy，避免提交被策略拒绝后才返工；
+   提交即冻结（创建时完成确定性策略校验）。
    ============================================================ */
 
 const LIMITS = { budget: 1_000_000, max_nodes: 64, max_depth: 12, max_concurrency: 8, timeout: 24 * 60 * 60 };
@@ -168,7 +173,6 @@ interface NodeDraft {
 
 interface Draft {
   goal: string;
-  project_id: string;
   budget: string;
   max_nodes: string;
   max_depth: string;
@@ -182,7 +186,6 @@ function draftFromSpec(spec: WorkflowSpec): Draft {
   const limits = spec.limits || { budget: 0, max_nodes: 8, max_depth: 4, max_concurrency: 2 };
   return {
     goal: spec.goal || "",
-    project_id: spec.project_id > 0 ? String(spec.project_id) : "",
     budget: String(limits.budget),
     max_nodes: String(limits.max_nodes),
     max_depth: String(limits.max_depth),
@@ -206,9 +209,7 @@ function buildSpec(draft: Draft): WorkflowSpec {
   return {
     version: 1,
     goal: draft.goal.trim(),
-    project_id: Number(draft.project_id),
     created_by: "operator",
-    adoption_policy: "manual",
     limits: { budget: Number(draft.budget), max_nodes: Number(draft.max_nodes), max_depth: Number(draft.max_depth), max_concurrency: Number(draft.max_concurrency) },
     nodes: draft.nodes.map(node => ({
       id: node.id,
@@ -250,7 +251,6 @@ function validateDraft(draft: Draft): string[] {
   const errors: string[] = [];
   const toNum = (value: string) => (value.trim() === "" ? Number.NaN : Number(value));
   if (!draft.goal.trim()) errors.push("目标不能为空");
-  if (!draft.project_id) errors.push("请选择项目");
   const budget = toNum(draft.budget);
   if (!Number.isFinite(budget) || budget < 0 || budget > LIMITS.budget) errors.push(`总预算必须是 0–${LIMITS.budget} 的整数`);
   const maxNodes = toNum(draft.max_nodes);
@@ -301,7 +301,7 @@ function validateDraft(draft: Draft): string[] {
   return errors;
 }
 
-export function NewProposalDialog({ open, onOpenChange, projects, roles }: {
+export function NewWorkflowDialog({ open, onOpenChange, projects, roles }: {
   open: boolean;
   onOpenChange(open: boolean): void;
   projects?: Project[];
@@ -309,7 +309,7 @@ export function NewProposalDialog({ open, onOpenChange, projects, roles }: {
 }) {
   const qc = useQueryClient();
   const [mode, setMode] = useState<"form" | "json">("form");
-  const [draft, setDraft] = useState<Draft>(() => draftFromSpec(exampleSpec(0, 0)));
+  const [draft, setDraft] = useState<Draft>(() => draftFromSpec(exampleSpec(0)));
   const [json, setJson] = useState("");
   const [jsonError, setJsonError] = useState("");
   const [scheduled, setScheduled] = useState(false);
@@ -318,6 +318,7 @@ export function NewProposalDialog({ open, onOpenChange, projects, roles }: {
   const [monthday, setMonthday] = useState("1");
   const [time, setTime] = useState(SCHEDULE_TIME);
   const [enabled, setEnabled] = useState(true);
+  const [scheduledProject, setScheduledProject] = useState("");
   const didInit = useRef(false);
   const errors = useMemo(() => validateDraft(draft), [draft]);
   const create = useMutation({
@@ -325,16 +326,22 @@ export function NewProposalDialog({ open, onOpenChange, projects, roles }: {
       const spec = mode === "json" ? (JSON.parse(json) as WorkflowSpec) : buildSpec(draft);
       const cron = scheduled ? cronFromFields(frequency, weekday, monthday, time) : "";
       if (scheduled && !cron) throw new Error("请选择有效的执行时间");
+      if (scheduled && !scheduledProject) throw new Error("定时工作流必须选择目标项目");
       const body: Record<string, unknown> = { spec };
-      if (cron) { body.cron = cron; body.enabled = enabled; }
-      return api<Task>("/workflow-proposals", { method: "POST", body });
+      if (cron) {
+        body.cron = cron;
+        body.enabled = enabled;
+        body.project_id = Number(scheduledProject);
+      }
+      return api<Task>("/workflows", { method: "POST", body });
     },
-    onSuccess: () => { onOpenChange(false); qc.invalidateQueries({ queryKey: ["workflow-proposals"] }); },
+    onSuccess: () => { onOpenChange(false); qc.invalidateQueries({ queryKey: keys.workflows }); },
   });
+  const violations = (create.error instanceof APIError && (create.error.payload as { error?: { violations?: WorkflowViolation[] } } | undefined)?.error?.violations) || null;
   useEffect(() => {
     if (open && !didInit.current) {
       didInit.current = true;
-      const spec = exampleSpec(projects?.[0]?.id || 0, roles?.[0]?.id || 0);
+      const spec = exampleSpec(roles?.[0]?.id || 0);
       setDraft(draftFromSpec(spec));
       setJson(JSON.stringify(spec, null, 2));
       setMode("form");
@@ -345,6 +352,7 @@ export function NewProposalDialog({ open, onOpenChange, projects, roles }: {
       setMonthday("1");
       setTime(SCHEDULE_TIME);
       setEnabled(true);
+      setScheduledProject("");
     } else if (!open) {
       didInit.current = false;
     }
@@ -395,17 +403,14 @@ export function NewProposalDialog({ open, onOpenChange, projects, roles }: {
     return [...seen].filter(id => !dup.has(id));
   }, [draft.nodes]);
 
-  return <Dialog open={open} onOpenChange={onOpenChange} title="新建 Workflow Proposal" description="声明式描述工作流：目标、依赖与边界；节点不含可执行命令，提交后先经确定性策略校验。" wide>
+  return <Dialog open={open} onOpenChange={onOpenChange} title="新建工作流" description="声明式描述工作流：目标、依赖与边界；提交即完成确定性策略校验并冻结，启动 Run 时再绑定具体项目。" wide>
     <form className="grid gap-4" onSubmit={submit}>
       <div className="flex w-fit items-center gap-1 rounded-lg border border-line bg-elevated p-1 text-sm">
         <button type="button" onClick={switchForm} className={cn("flex items-center gap-1.5 rounded-md px-3 py-1.5 transition", mode === "form" ? "bg-surface font-medium text-ink shadow-sm" : "text-muted hover:text-ink")}><ListTree size={14} />表单</button>
         <button type="button" onClick={switchJson} className={cn("flex items-center gap-1.5 rounded-md px-3 py-1.5 transition", mode === "json" ? "bg-surface font-medium text-ink shadow-sm" : "text-muted hover:text-ink")}><Code2 size={14} />JSON</button>
       </div>
       {mode === "form" ? <>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="目标" hint="一句话说明这个工作流要交付什么。"><input className={inputClass} value={draft.goal} onChange={event => setDraft({ ...draft, goal: event.target.value })} placeholder="例如：交付一个经过验证的变更" autoFocus /></Field>
-          <Field label="项目"><select className={inputClass} value={draft.project_id} onChange={event => setDraft({ ...draft, project_id: event.target.value })}><option value="">选择项目</option>{projects?.filter(project => project.status === "active").map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field>
-        </div>
+        <Field label="目标" hint="一句话说明这个工作流要交付什么。"><input className={inputClass} value={draft.goal} onChange={event => setDraft({ ...draft, goal: event.target.value })} placeholder="例如：交付一个经过验证的变更" autoFocus /></Field>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="总预算" hint={`节点预算之和不能超过它（上限 ${LIMITS.budget}）`}><input type="number" min={0} max={LIMITS.budget} className={inputClass} value={draft.budget} onChange={event => setDraft({ ...draft, budget: event.target.value })} /></Field>
           <Field label="最大节点数" hint={`1–${LIMITS.max_nodes}`}><input type="number" min={1} max={LIMITS.max_nodes} className={inputClass} value={draft.max_nodes} onChange={event => setDraft({ ...draft, max_nodes: event.target.value })} /></Field>
@@ -418,17 +423,20 @@ export function NewProposalDialog({ open, onOpenChange, projects, roles }: {
           <button type="button" onClick={addNode} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line bg-surface/60 py-2.5 text-sm text-muted transition hover:border-brand/40 hover:text-ink"><CirclePlus size={15} />添加节点</button>
         </div>
         {errors.length > 0 && <div className="rounded-xl border border-danger/30 bg-danger/5 p-3"><h3 className="text-sm font-semibold text-danger">还有 {errors.length} 处需要修正</h3><ul className="mt-2 grid gap-1 text-sm leading-6 text-muted">{errors.map((error, i) => <li key={i}>{error}</li>)}</ul></div>}
-        {create.error instanceof Error && <p className="text-sm text-danger">{create.error.message}</p>}
+        {create.error instanceof Error && !violations && <p className="text-sm text-danger">{create.error.message}</p>}
+        {violations && <div className="rounded-xl border border-danger/30 bg-danger/5 p-3"><h3 className="text-sm font-semibold text-danger">策略拒绝，未创建</h3><ul className="mt-2 grid gap-1 text-sm leading-6 text-muted">{violations.map((v, i) => <li key={i}><code className="text-danger">{v.code}</code>{v.node_id ? ` · ${v.node_id}` : ""}：{v.message}</li>)}</ul></div>}
       </> : <>
         <Field label="Workflow Spec（JSON）" hint="仅表达声明式节点，不会直接执行命令。"><textarea className={inputClass + " min-h-[26rem] py-3 font-mono text-xs"} value={json} onChange={event => { setJson(event.target.value); setJsonError(""); }} /></Field>
         {jsonError && <p className="text-sm text-danger">{jsonError}</p>}
-        {create.error instanceof Error && <p className="text-sm text-danger">{create.error.message}</p>}
+        {create.error instanceof Error && !violations && <p className="text-sm text-danger">{create.error.message}</p>}
+        {violations && <div className="rounded-xl border border-danger/30 bg-danger/5 p-3"><h3 className="text-sm font-semibold text-danger">策略拒绝，未创建</h3><ul className="mt-2 grid gap-1 text-sm leading-6 text-muted">{violations.map((v, i) => <li key={i}><code className="text-danger">{v.code}</code>{v.node_id ? ` · ${v.node_id}` : ""}：{v.message}</li>)}</ul></div>}
       </>}
       <details className="rounded-xl border border-line bg-elevated p-3.5">
-        <summary className="flex cursor-pointer select-none items-center gap-2 text-sm font-medium"><Clock size={15} className="text-muted" />定时执行{scheduled ? (cronFromFields(frequency, weekday, monthday, time) ? <span className="ml-auto text-xs font-normal text-muted">{scheduleLabel(cronFromFields(frequency, weekday, monthday, time))}</span> : <span className="ml-auto text-xs font-normal text-danger">时间无效</span>) : <span className="ml-auto text-xs font-normal text-faint">关闭 · cron 为空 = 普通工作流</span>}</summary>
+        <summary className="flex cursor-pointer select-none items-center gap-2 text-sm font-medium"><Clock size={15} className="text-muted" />定时执行{scheduled ? (cronFromFields(frequency, weekday, monthday, time) ? <span className="ml-auto text-xs font-normal text-muted">{scheduleLabel(cronFromFields(frequency, weekday, monthday, time))}</span> : <span className="ml-auto text-xs font-normal text-danger">时间无效</span>) : <span className="ml-auto text-xs font-normal text-faint">关闭 · cron 为空 = 手动启动</span>}</summary>
         <div className="mt-3 grid gap-3">
-          <label className="flex min-h-11 items-center gap-3 rounded-xl border border-line bg-surface px-3 text-sm"><input type="checkbox" className="accent-brand" checked={scheduled} onChange={event => setScheduled(event.target.checked)} />按 cron 定时执行（不勾选 = 普通工作流，立即进入校验）</label>
+          <label className="flex min-h-11 items-center gap-3 rounded-xl border border-line bg-surface px-3 text-sm"><input type="checkbox" className="accent-brand" checked={scheduled} onChange={event => setScheduled(event.target.checked)} />按 cron 定时执行（不勾选 = 手动在工作流详情页创建 Run）</label>
           {scheduled && <>
+            <Field label="目标项目" hint="定时触发时在该项目下创建 Run；普通工作流不绑定项目，创建 Run 时再选择。"><select className={inputClass} value={scheduledProject} onChange={event => setScheduledProject(event.target.value)}><option value="">选择项目</option>{projects?.filter(project => project.status === "active").map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="频率"><select className={inputClass} value={frequency} onChange={event => setFrequency(event.target.value)}><option value="daily">每天</option><option value="weekdays">工作日</option><option value="weekly">每周</option><option value="monthly">每月</option></select></Field>
               <Field label="时间"><input type="time" className={inputClass} value={time} onChange={event => setTime(event.target.value)} /></Field>
@@ -440,7 +448,7 @@ export function NewProposalDialog({ open, onOpenChange, projects, roles }: {
           </>}
         </div>
       </details>
-      <div className="flex items-center gap-2"><span className="mr-auto text-xs leading-5 text-faint">提交后进入策略校验，通过后可在「审批」页采纳冻结为不可变 Plan。</span><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant="primary" disabled={create.isPending || (mode === "form" && errors.length > 0)}>提交 Proposal</Button></div>
+      <div className="flex items-center gap-2"><span className="mr-auto text-xs leading-5 text-faint">提交后立即完成策略校验并冻结；冻结后 spec 不可变，可多次创建 Run。</span><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant="primary" disabled={create.isPending || (mode === "form" && errors.length > 0)}>创建并冻结</Button></div>
     </form>
   </Dialog>;
 }
@@ -473,8 +481,8 @@ function NodeEditor({ node, index, roles, otherIds, onChange, onRemove }: {
   </div>;
 }
 
-function exampleSpec(projectID: number, roleID: number): WorkflowSpec {
-  return { version: 1, goal: "交付一个经过验证的变更", project_id: projectID, created_by: "operator", adoption_policy: "manual", limits: { budget: 100, max_nodes: 8, max_depth: 4, max_concurrency: 2 }, nodes: [
+function exampleSpec(roleID: number): WorkflowSpec {
+  return { version: 1, goal: "交付一个经过验证的变更", created_by: "operator", limits: { budget: 100, max_nodes: 8, max_depth: 4, max_concurrency: 2 }, nodes: [
     { id: "implement", intent: "实现目标并运行相关检查", role: { role_id: roleID, required_capabilities: ["batch"] }, permission: "full", approval_required: false, timeout_seconds: 3600, failure_policy: "stop", budget: 70 },
     { id: "review", intent: "独立复核实现与检查结果", role: { role_id: roleID, required_capabilities: ["batch"] }, depends_on: ["implement"], permission: "review", approval_required: true, input_refs: ["node:implement"], timeout_seconds: 1800, failure_policy: "stop", budget: 30 }
   ] };

@@ -303,9 +303,7 @@ export interface WorkflowNode {
 export interface WorkflowSpec {
   version?: number;
   goal: string;
-  project_id: ID;
   created_by: string;
-  adoption_policy?: string;
   limits: { budget: number; max_nodes: number; max_depth: number; max_concurrency: number };
   nodes: WorkflowNode[];
 }
@@ -313,6 +311,7 @@ export interface WorkflowSpec {
 export interface WorkflowRun {
   id: ID;
   workflow_id: ID;
+  project_id: ID;
   status: string;
   task_ids: Record<string, ID>;
   revision: number;

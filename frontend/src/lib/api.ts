@@ -1,7 +1,7 @@
 const API_ROOT = "/api/v1";
 
 export class APIError extends Error {
-  constructor(public status: number, public code: string, message: string) {
+  constructor(public status: number, public code: string, message: string, public payload?: unknown) {
     super(message);
   }
 }
@@ -41,16 +41,18 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   if (!response.ok) {
     let code = "request_failed";
     let message = `${response.status} ${response.statusText}`;
+    let payload: unknown;
     try {
-      const payload = await response.json();
-      const error = payload?.error;
+      const body = await response.json();
+      payload = body;
+      const error = body?.error;
       if (typeof error === "string") message = error;
       else if (error) {
         code = error.code || code;
         message = error.message || message;
       }
     } catch { /* response was not JSON */ }
-    throw new APIError(response.status, code, message);
+    throw new APIError(response.status, code, message, payload);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
