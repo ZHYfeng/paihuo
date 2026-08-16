@@ -68,8 +68,8 @@ const (
 	// proposed/validated/rejected 是旧版提案门禁遗留，不可启动。
 	WorkflowStatusFrozen = "adopted"
 	RunStatusCreated     = "created"
-	RunStatusRunning        = "running"
-	RunStatusSucceeded      = "succeeded"
-	RunStatusFailed         = "failed"
-	RunStatusCancelled      = "cancelled"
+	RunStatusRunning     = "running"
+	RunStatusSucceeded   = "succeeded"
+	RunStatusFailed      = "failed"
+	RunStatusCancelled   = "cancelled"
 )
