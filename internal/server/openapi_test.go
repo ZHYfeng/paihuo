@@ -11,7 +11,7 @@ func TestOpenAPIContractUsesCurrentVocabulary(t *testing.T) {
 		t.Fatal(err)
 	}
 	contract := string(body)
-	for _, required := range []string{"openapi: 3.1.0", "url: /api/v1", "/tasks:", "/roles:", "/runtimes:", "/workflow-proposals:", "Idempotency-Key", "If-Match", "role_id"} {
+	for _, required := range []string{"openapi: 3.1.0", "url: /api/v1", "/tasks:", "/roles:", "/runtimes:", "/workflows:", "Idempotency-Key", "If-Match", "role_id"} {
 		if !strings.Contains(contract, required) {
 			t.Fatalf("contract missing %q", required)
 		}

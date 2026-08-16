@@ -86,20 +86,13 @@ paths:
     post: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Delivered as task}}}
   /sessions/{id}/transcript:
     get: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Transcript page}}}
-  /workflow-proposals:
-    get: {tags: [Workflows], responses: {'200': {description: Proposals}}}
-    post: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Proposal created}}}
-  /workflow-proposals/{id}:
-    get: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Proposal}}}
-  /workflow-proposals/{id}/validate:
-    post: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Policy result}}}
-  /workflow-proposals/{id}/adopt:
-    post: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Frozen plan}}}
   /workflows:
-    get: {tags: [Workflows], responses: {'200': {description: Frozen plans}}}
+    get: {tags: [Workflows], responses: {'200': {description: Workflows}}}
+    post: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Workflow created and frozen}}}
   /workflows/{id}:
-    get: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Frozen plan}}}
+    get: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Workflow}}}
   /workflows/{id}/runs:
+    get: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Runs of a workflow}}}
     post: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Workflow run created atomically}}}
   /workflow-runs/{id}:
     get: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Workflow run}}}
@@ -166,7 +159,7 @@ components:
           properties:
             id: {type: integer, format: int64}
             type: {type: string, enum: [task, session, workflow], description: 任务形态：四种形态物理统一在 tasks 表}
-            status: {type: string, description: 按形态解释：task→queued/claimed/running/awaiting_review/succeeded/failed/cancelled；session→created/active/suspended/delivered/deleted；workflow→proposed/validated/rejected/adopted}
+            status: {type: string, description: 按形态解释：task→queued/claimed/running/awaiting_review/succeeded/failed/cancelled；session→created/active/suspended/delivered/deleted；workflow→adopted（创建即冻结）}
             role_name: {type: string}
             project_name: {type: string}
             session_id: {type: integer, format: int64}

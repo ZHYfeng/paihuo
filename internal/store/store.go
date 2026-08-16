@@ -124,6 +124,7 @@ CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id, seq);
 CREATE TABLE IF NOT EXISTS workflow_runs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   workflow_id INTEGER NOT NULL REFERENCES tasks(id), -- 冻结的工作流任务（type=workflow, status=adopted）
+  project_id  INTEGER NOT NULL REFERENCES projects(id), -- 本次 Run 绑定的具体项目
   status      TEXT NOT NULL DEFAULT 'created',
   task_ids    TEXT NOT NULL DEFAULT '{}',
   revision    INTEGER NOT NULL DEFAULT 1,
@@ -133,6 +134,7 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
   updated_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_plan ON workflow_runs(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_project ON workflow_runs(project_id);
 
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
@@ -195,6 +197,8 @@ PRAGMA user_version=1;
 `
 
 // 当前 schema 是唯一受支持的数据库形态；不包含历史迁移路径。
+// 唯一例外：workflow_runs.project_id 为存量库提供单点幂等迁移
+// （migrateWorkflowRunsProjectColumn），其余结构变更仍需全新数据库。
 
 // Store 封装 SQLite 访问。SetMaxOpenConns(1) 保证读写顺序一致（WAL 下单写者足够）。
 type Store struct {
@@ -218,6 +222,11 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("初始化数据库失败: %w", err)
 		}
 	} else {
+		// 迁移必须在任何 schema 语句执行前完成，且不留半迁移状态。
+		if err := migrateWorkflowRunsProjectColumn(db); err != nil {
+			db.Close()
+			return nil, err
+		}
 		// Unsupported databases are inspected before any schema statement runs.
 		// Rejection must not leave current-version tables or indexes behind.
 		if err := verifyCurrentSchema(db); err != nil {
@@ -245,6 +254,27 @@ func databaseIsEmpty(db *sql.DB) (bool, error) {
 	return count == 0, err
 }
 
+// migrateWorkflowRunsProjectColumn 为存量库补 workflow_runs.project_id 列
+// （幂等）：新库由 schema 直接建出该列；旧库先加列，再用节点任务的
+// project_id 回填存量 Run（旧版 Run 的节点任务都带 spec.ProjectID）。
+func migrateWorkflowRunsProjectColumn(db *sql.DB) error {
+	var has int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('workflow_runs') WHERE name='project_id'`).Scan(&has); err != nil {
+		return fmt.Errorf("检查 workflow_runs 结构失败: %w", err)
+	}
+	if has > 0 {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE workflow_runs ADD COLUMN project_id INTEGER REFERENCES projects(id)`); err != nil {
+		return fmt.Errorf("迁移 workflow_runs.project_id 失败: %w", err)
+	}
+	if _, err := db.Exec(`UPDATE workflow_runs SET project_id = COALESCE(
+		(SELECT project_id FROM tasks WHERE workflow_run_id = workflow_runs.id AND project_id IS NOT NULL LIMIT 1), 0)`); err != nil {
+		return fmt.Errorf("回填 workflow_runs.project_id 失败: %w", err)
+	}
+	return nil
+}
+
 func verifyCurrentSchema(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
@@ -257,7 +287,7 @@ func verifyCurrentSchema(db *sql.DB) error {
 		"SELECT task_id, depends_on, on_failure FROM task_dependencies LIMIT 0",
 		"SELECT role_id FROM templates LIMIT 0",
 		"SELECT seq, event_type, role_id, payload FROM event_log LIMIT 0",
-		"SELECT revision, workflow_id, task_ids FROM workflow_runs LIMIT 0",
+		"SELECT revision, workflow_id, project_id, task_ids FROM workflow_runs LIMIT 0",
 		"SELECT key, method, path, status_code FROM idempotency_records LIMIT 0",
 		"SELECT task_id, run_id, content_hash, locator FROM artifacts LIMIT 0",
 	} {

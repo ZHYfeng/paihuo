@@ -4,7 +4,7 @@ import "testing"
 
 func validSpec() Spec {
 	return Spec{
-		Version: 1, Goal: "交付功能", ProjectID: 1, CreatedBy: "test", AdoptionPolicy: "manual",
+		Version: 1, Goal: "交付功能", CreatedBy: "test",
 		Limits: Limits{Budget: 100, MaxNodes: 4, MaxDepth: 3, MaxConcurrency: 2},
 		Nodes: []Node{
 			{ID: "design", Intent: "设计", Role: RoleSelector{RoleID: 1}, Permission: "review", TimeoutSeconds: 60, FailurePolicy: "stop", Budget: 20},

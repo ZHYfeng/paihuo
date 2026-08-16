@@ -67,6 +67,81 @@ func mustTask(t *testing.T, s *Store, title string, agentID *int64, status strin
 	return id
 }
 
+// 旧版 schema（workflow_runs 无 project_id 列）必须被幂等迁移：加列后用
+// 节点任务的 project_id 回填存量 Run。
+func TestMigrateWorkflowRunsProjectColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.Replace(schema,
+		`CREATE TABLE IF NOT EXISTS workflow_runs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  workflow_id INTEGER NOT NULL REFERENCES tasks(id), -- 冻结的工作流任务（type=workflow, status=adopted）
+  project_id  INTEGER NOT NULL REFERENCES projects(id), -- 本次 Run 绑定的具体项目
+  status      TEXT NOT NULL DEFAULT 'created',
+  task_ids    TEXT NOT NULL DEFAULT '{}',
+  revision    INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL,
+  started_at  TEXT,
+  finished_at TEXT,
+  updated_at  TEXT NOT NULL
+);`,
+		`CREATE TABLE IF NOT EXISTS workflow_runs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  workflow_id INTEGER NOT NULL REFERENCES tasks(id),
+  status      TEXT NOT NULL DEFAULT 'created',
+  task_ids    TEXT NOT NULL DEFAULT '{}',
+  revision    INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL,
+  started_at  TEXT,
+  finished_at TEXT,
+  updated_at  TEXT NOT NULL
+);`, 1)
+	legacy = strings.Replace(legacy, "CREATE INDEX IF NOT EXISTS idx_workflow_runs_project ON workflow_runs(project_id);\n", "", 1)
+	if _, err := db.Exec(legacy); err != nil {
+		t.Fatal(err)
+	}
+	now := Now()
+	if _, err := db.Exec(`INSERT INTO projects (name, description, status, project_dir, revision, created_at, updated_at)
+		VALUES ('legacy', '', 'active', '/tmp/legacy', 1, ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO tasks (type, title, body, status, perm, run_mode, concurrent, dependency_mode, block_on_failure, spec, revision, created_at, updated_at)
+		VALUES ('workflow', 'legacy-wf', 'legacy-wf', 'adopted', 'full', 'batch', 0, 'none', 0, '{}', 1, ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO workflow_runs (workflow_id, status, task_ids, revision, created_at, updated_at)
+		VALUES (1, 'running', '{"a":2}', 1, ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO tasks (type, title, body, status, project_id, workflow_run_id, spec, revision, created_at, updated_at)
+		VALUES ('task', 'node', 'node', 'queued', 1, 1, '', 1, ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	run, err := s.GetWorkflowRun(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.ProjectID != 1 {
+		t.Fatalf("migrated run must backfill project from node task: %+v", run)
+	}
+	// 幂等：再次打开不应报错。
+	if _, err := Open(path); err != nil {
+		t.Fatalf("reopen after migration must succeed: %v", err)
+	}
+}
+
 // 新库会预置一个通用模板，用于让会话中的 agent 把上下文整理成当前项目任务。
 func TestOpenSeedsCreateTasksTemplate(t *testing.T) {
 	s := openTest(t)

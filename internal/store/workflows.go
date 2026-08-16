@@ -11,24 +11,25 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 工作流任务（type=workflow）：提案→校验→冻结 折叠为任务状态 + 字段。
-// spec/violations/spec_hash 三列承载工作流载荷；冻结后任务不可变。
+// 工作流任务（type=workflow）：创建即冻结为 adopted，spec/spec_hash 承载
+// 冻结载荷；spec 不绑定项目，启动 Run 时按项目实例化节点任务。
 
-// CreateWorkflowTask 创建工作流任务（type=workflow, status=proposed）。
-// spec.ProjectID 同步写入任务 project_id；cron 非空时是定时工作流定义。
-func (s *Store) CreateWorkflowTask(spec workflow.Spec, cron string, enabled bool) (int64, error) {
+// CreateWorkflowTask 创建工作流任务（type=workflow, status=adopted），
+// 写入 spec_hash 冻结。projectID 仅定时工作流（cron 非空）必填：定时触发
+// 启动 Run 时需要确定目标项目；普通工作流由启动 Run 时选择项目。
+func (s *Store) CreateWorkflowTask(spec workflow.Spec, cron string, enabled bool, projectID *int64, specHash string) (int64, error) {
 	data, err := json.Marshal(spec)
 	if err != nil {
 		return 0, err
 	}
-	projectID := spec.ProjectID
 	tk := Task{
 		Type:      TaskTypeWorkflow,
 		Title:     spec.Goal,
 		Body:      spec.Goal,
-		Status:    workflow.ProposalStatusProposed,
-		ProjectID: &projectID,
+		Status:    workflow.WorkflowStatusFrozen,
+		ProjectID: projectID,
 		Spec:      string(data),
+		SpecHash:  specHash,
 		Cron:      cron,
 		Enabled:   enabled,
 	}
@@ -52,53 +53,11 @@ func (s *Store) ListWorkflowTasks() ([]Task, error) {
 	return s.ListTasksFiltered(TaskFilter{Type: TaskTypeWorkflow})
 }
 
-// RecordWorkflowValidation 记录策略校验结果：无违规 → validated，有违规 → rejected。
-func (s *Store) RecordWorkflowValidation(id, expected int64, violations []workflow.Violation) error {
-	data, err := json.Marshal(violations)
-	if err != nil {
-		return err
-	}
-	// json.Marshal(nil) 输出 "null"；空违规统一存 "[]"，采纳时的 WHERE 依赖它。
-	if string(data) == "null" {
-		data = []byte("[]")
-	}
-	status := workflow.ProposalStatusValidated
-	if len(violations) > 0 {
-		status = workflow.ProposalStatusRejected
-	}
-	res, err := s.db.Exec(`UPDATE tasks
-		SET status=?, violations=?, revision=revision+1, updated_at=?
-		WHERE id=? AND revision=? AND status<>?`, status, string(data), Now(), id, expected, workflow.ProposalStatusAdopted)
-	if err != nil {
-		return err
-	}
-	changed, _ := res.RowsAffected()
-	if changed != 1 {
-		return ErrRevisionConflict
-	}
-	return nil
-}
-
-// AdoptWorkflowTask 采纳工作流任务：只接受 validated 且零违规，写入 spec_hash 冻结。
-func (s *Store) AdoptWorkflowTask(id, expected int64, specHash string) (*Task, error) {
-	res, err := s.db.Exec(`UPDATE tasks
-		SET status=?, spec_hash=?, violations='[]', revision=revision+1, updated_at=?
-		WHERE id=? AND revision=? AND status=? AND violations='[]'`,
-		workflow.ProposalStatusAdopted, specHash, Now(), id, expected, workflow.ProposalStatusValidated)
-	if err != nil {
-		return nil, err
-	}
-	if changed, _ := res.RowsAffected(); changed != 1 {
-		return nil, ErrRevisionConflict
-	}
-	return s.GetWorkflowTask(id)
-}
-
 // InstantiateWorkflow is one transaction from an adopted workflow task to
 // persisted Run and Tasks. Every dependency edge is stored before any Task can
-// be claimed. 工作流任务采纳后保持 adopted（冻结）不变，可被多次 run；
-// Run 之间彼此独立，任务状态由 reconcileRuns 聚合。
-func (s *Store) InstantiateWorkflow(tk Task) (*workflow.Run, error) {
+// be claimed. 工作流任务创建后保持 adopted（冻结）不变，可被多次 run；
+// 每次 Run 绑定调用方指定的 projectID，节点任务创建在该项目下，
+func (s *Store) InstantiateWorkflow(tk Task, projectID int64) (*workflow.Run, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
@@ -109,7 +68,7 @@ func (s *Store) InstantiateWorkflow(tk Task) (*workflow.Run, error) {
 	if err := tx.QueryRow("SELECT status, revision FROM tasks WHERE id=?", tk.ID).Scan(&status, &revision); err != nil {
 		return nil, err
 	}
-	if status != workflow.ProposalStatusAdopted || revision != tk.Revision {
+	if status != workflow.WorkflowStatusFrozen || revision != tk.Revision {
 		return nil, ErrRevisionConflict
 	}
 	var spec workflow.Spec
@@ -117,13 +76,13 @@ func (s *Store) InstantiateWorkflow(tk Task) (*workflow.Run, error) {
 		return nil, err
 	}
 	var projectDir string
-	if err := tx.QueryRow("SELECT project_dir FROM projects WHERE id=? AND status='active'", spec.ProjectID).Scan(&projectDir); err != nil {
+	if err := tx.QueryRow("SELECT project_dir FROM projects WHERE id=? AND status='active'", projectID).Scan(&projectDir); err != nil {
 		return nil, fmt.Errorf("Workflow Project 不可用: %w", err)
 	}
 	now := Now()
 	emptyTaskIDs, _ := json.Marshal(map[string]int64{})
-	res, err := tx.Exec(`INSERT INTO workflow_runs(workflow_id, status, task_ids, created_at, started_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?)`, tk.ID, workflow.RunStatusRunning, emptyTaskIDs, now, now, now)
+	res, err := tx.Exec(`INSERT INTO workflow_runs(workflow_id, project_id, status, task_ids, created_at, started_at, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?)`, tk.ID, projectID, workflow.RunStatusRunning, emptyTaskIDs, now, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +99,7 @@ func (s *Store) InstantiateWorkflow(tk Task) (*workflow.Run, error) {
 		task := Task{
 			Title: node.Intent, Body: node.Intent, Status: StatusQueued, Perm: node.Permission,
 			RunMode: RunModeBatch, Concurrent: spec.Limits.MaxConcurrency > 1,
-			RoleID: &roleID, ProjectID: &spec.ProjectID, ProjectDir: projectDir,
+			RoleID: &roleID, ProjectID: &projectID, ProjectDir: projectDir,
 			WorkflowRunID:  &runID,
 			DependencyMode: DependencyNone, BlockOnFailure: node.FailurePolicy == "stop",
 		}
@@ -181,7 +140,7 @@ func (s *Store) InstantiateWorkflow(tk Task) (*workflow.Run, error) {
 		return nil, err
 	}
 	started := now
-	return &workflow.Run{ID: runID, WorkflowID: tk.ID, Status: workflow.RunStatusRunning,
+	return &workflow.Run{ID: runID, WorkflowID: tk.ID, ProjectID: projectID, Status: workflow.RunStatusRunning,
 		TaskIDs: taskIDs, Revision: 1, CreatedAt: now, StartedAt: &started, UpdatedAt: now}, nil
 }
 
@@ -207,7 +166,8 @@ func scanWorkflowRun(row scanner) (workflow.Run, error) {
 	var item workflow.Run
 	var taskIDs []byte
 	var started, finished sql.NullString
-	err := row.Scan(&item.ID, &item.WorkflowID, &item.Status, &taskIDs, &item.Revision,
+	var projectID sql.NullInt64 // 迁移后的存量 Run 可能无项目（0）
+	err := row.Scan(&item.ID, &item.WorkflowID, &projectID, &item.Status, &taskIDs, &item.Revision,
 		&item.CreatedAt, &started, &finished, &item.UpdatedAt)
 	if err != nil {
 		return item, err
@@ -215,13 +175,14 @@ func scanWorkflowRun(row scanner) (workflow.Run, error) {
 	if err := json.Unmarshal(taskIDs, &item.TaskIDs); err != nil {
 		return item, err
 	}
+	item.ProjectID = projectID.Int64
 	item.StartedAt = strPtr(started)
 	item.FinishedAt = strPtr(finished)
 	return item, nil
 }
 
 func (s *Store) GetWorkflowRun(id int64) (*workflow.Run, error) {
-	item, err := scanWorkflowRun(s.db.QueryRow(`SELECT id, workflow_id, status, task_ids, revision,
+	item, err := scanWorkflowRun(s.db.QueryRow(`SELECT id, workflow_id, project_id, status, task_ids, revision,
 		created_at, started_at, finished_at, updated_at FROM workflow_runs WHERE id=?`, id))
 	if err != nil {
 		return nil, err
@@ -230,7 +191,7 @@ func (s *Store) GetWorkflowRun(id int64) (*workflow.Run, error) {
 }
 
 func (s *Store) ListActiveWorkflowRuns() ([]workflow.Run, error) {
-	rows, err := s.db.Query(`SELECT id, workflow_id, status, task_ids, revision,
+	rows, err := s.db.Query(`SELECT id, workflow_id, project_id, status, task_ids, revision,
 		created_at, started_at, finished_at, updated_at FROM workflow_runs WHERE status=? ORDER BY id`, workflow.RunStatusRunning)
 	if err != nil {
 		return nil, err
@@ -250,7 +211,7 @@ func (s *Store) ListActiveWorkflowRuns() ([]workflow.Run, error) {
 // ListWorkflowRunsByWorkflow 返回某个工作流任务的全部 Run（新→旧）。工作流
 // 页用它恢复最近一次启动的 Run：刷新页面后也能继续看到聚合状态与节点任务。
 func (s *Store) ListWorkflowRunsByWorkflow(workflowID int64) ([]workflow.Run, error) {
-	rows, err := s.db.Query(`SELECT id, workflow_id, status, task_ids, revision,
+	rows, err := s.db.Query(`SELECT id, workflow_id, project_id, status, task_ids, revision,
 		created_at, started_at, finished_at, updated_at FROM workflow_runs WHERE workflow_id=? ORDER BY id DESC`, workflowID)
 	if err != nil {
 		return nil, err

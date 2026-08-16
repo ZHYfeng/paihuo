@@ -41,9 +41,6 @@ func (p Policy) Validate(spec Spec) []Violation {
 	if strings.TrimSpace(spec.Goal) == "" {
 		add("goal_required", "", "Workflow goal 不能为空")
 	}
-	if spec.ProjectID < 1 {
-		add("project_required", "", "Workflow 必须绑定 Project")
-	}
 	if spec.Limits.MaxNodes < 1 || spec.Limits.MaxNodes > p.MaxNodes {
 		add("max_nodes", "", fmt.Sprintf("max_nodes 必须在 1-%d 之间", p.MaxNodes))
 	}

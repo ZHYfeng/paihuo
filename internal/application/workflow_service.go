@@ -20,8 +20,9 @@ import (
 	"paihuo/internal/workflow"
 )
 
-// WorkflowService 管理工作流任务（type=workflow）的提案门禁与 Run 实例化。
-// Proposal/Plan 折叠为任务状态与字段：proposed → validated/rejected → adopted。
+// WorkflowService 管理工作流任务（type=workflow）：创建即冻结（adopted），
+// 启动 Run 时绑定具体项目实例化节点任务。Proposal/Plan 概念已折叠：
+// 创建工作流时同步完成策略校验，通过即冻结可用。
 type WorkflowService struct {
 	store    *store.Store
 	runtimes *paiexec.RuntimeService
@@ -49,8 +50,22 @@ func (s *WorkflowService) resolveRole(roleID int64) workflow.RoleCapabilities {
 	return workflow.RoleCapabilities{Exists: true, Enabled: role.Enabled, Capabilities: capabilities}
 }
 
-// CreateProposal 创建工作流任务（proposed）。cron 非空时是定时工作流定义。
-func (s *WorkflowService) CreateProposal(spec workflow.Spec, cron string, enabled bool) (*store.Task, error) {
+// WorkflowValidationError 携带策略校验违规列表，供 API 返回 422 + 明细。
+type WorkflowValidationError struct {
+	Violations []workflow.Violation
+}
+
+func (e *WorkflowValidationError) Error() string {
+	if len(e.Violations) == 0 {
+		return "Workflow 策略校验失败"
+	}
+	return "Workflow 策略校验失败: " + e.Violations[0].Message
+}
+
+// CreateWorkflow 创建工作流任务并立即冻结（status=adopted + spec_hash）。
+// spec 不绑定项目；定时工作流（cron 非空）必须绑定目标项目，供定时触发
+// 启动 Run 时使用。策略校验失败返回 WorkflowValidationError，不落库。
+func (s *WorkflowService) CreateWorkflow(spec workflow.Spec, cron string, enabled bool, projectID *int64) (*store.Task, error) {
 	if spec.Version == 0 {
 		spec.Version = 1
 	}
@@ -63,78 +78,42 @@ func (s *WorkflowService) CreateProposal(spec workflow.Spec, cron string, enable
 	if spec.Limits.MaxConcurrency == 0 {
 		spec.Limits.MaxConcurrency = 2
 	}
-	if spec.AdoptionPolicy == "" {
-		spec.AdoptionPolicy = "manual"
+	if violations := s.policy.Validate(spec); len(violations) > 0 {
+		return nil, &WorkflowValidationError{Violations: violations}
 	}
-	id, err := s.store.CreateWorkflowTask(spec, cron, enabled)
-	if err != nil {
-		return nil, err
+	if cron != "" && projectID == nil {
+		return nil, fmt.Errorf("定时工作流必须绑定目标项目")
 	}
-	proposal, err := s.store.GetWorkflowTask(id)
-	if err == nil {
-		s.events.Publish(events.Event{Type: "workflow.proposal.created", Payload: proposal})
-	}
-	return proposal, err
-}
-
-// ValidateProposal 运行确定性策略校验并记录结果（validated / rejected）。
-func (s *WorkflowService) ValidateProposal(id, expectedRevision int64) (*store.Task, error) {
-	proposal, err := s.store.GetWorkflowTask(id)
-	if err != nil {
-		return nil, err
-	}
-	if proposal == nil {
-		return nil, sql.ErrNoRows
-	}
-	if proposal.Revision != expectedRevision {
-		return nil, store.ErrRevisionConflict
-	}
-	spec, err := specOf(proposal)
-	if err != nil {
-		return nil, err
-	}
-	violations := s.policy.Validate(spec)
-	if _, err := s.store.GetProject(spec.ProjectID); err != nil {
-		violations = append(violations, workflow.Violation{Code: "project_unavailable", Message: "Project 不存在"})
-	}
-	if err := s.store.RecordWorkflowValidation(id, expectedRevision, violations); err != nil {
-		return nil, err
-	}
-	validated, err := s.store.GetWorkflowTask(id)
-	if err == nil {
-		s.events.Publish(events.Event{Type: "workflow.proposal.validated", Payload: validated})
-	}
-	return validated, err
-}
-
-// AdoptProposal 采纳工作流任务：只接受 validated 且零违规，写入 spec_hash 冻结。
-func (s *WorkflowService) AdoptProposal(id, expectedRevision int64) (*store.Task, error) {
-	proposal, err := s.ValidateProposal(id, expectedRevision)
-	if err != nil {
-		return nil, err
-	}
-	spec, err := specOf(proposal)
-	if err != nil {
-		return nil, err
-	}
-	var violations []workflow.Violation
-	if err := json.Unmarshal([]byte(proposal.Violations), &violations); err == nil && len(violations) > 0 {
-		return nil, fmt.Errorf("Workflow Proposal 未通过策略校验")
+	if projectID != nil {
+		project, err := s.store.GetProject(*projectID)
+		if err != nil {
+			return nil, fmt.Errorf("项目不存在")
+		}
+		if project.Status != "active" {
+			return nil, fmt.Errorf("项目不可用")
+		}
 	}
 	canonical, err := json.Marshal(spec)
 	if err != nil {
 		return nil, err
 	}
 	hash := sha256.Sum256(canonical)
-	adopted, err := s.store.AdoptWorkflowTask(id, proposal.Revision, hex.EncodeToString(hash[:]))
-	if err == nil {
-		s.events.Publish(events.Event{Type: "workflow.plan.frozen", Payload: adopted})
+	id, err := s.store.CreateWorkflowTask(spec, cron, enabled, projectID, hex.EncodeToString(hash[:]))
+	if err != nil {
+		return nil, err
 	}
-	return adopted, err
+	created, err := s.store.GetWorkflowTask(id)
+	if err == nil {
+		s.events.Publish(events.Event{Type: "workflow.created", Payload: created})
+	}
+	return created, err
 }
 
-// StartPlan 从已采纳（冻结）的工作流任务原子实例化一次 Run。
-func (s *WorkflowService) StartPlan(id, expectedRevision int64) (*workflow.Run, error) {
+// StartPlan 从冻结的工作流任务原子实例化一次 Run，绑定 projectID 项目。
+func (s *WorkflowService) StartPlan(id, expectedRevision, projectID int64) (*workflow.Run, error) {
+	if projectID < 1 {
+		return nil, fmt.Errorf("启动 Run 必须指定项目")
+	}
 	tk, err := s.store.GetWorkflowTask(id)
 	if err != nil {
 		return nil, err
@@ -145,14 +124,17 @@ func (s *WorkflowService) StartPlan(id, expectedRevision int64) (*workflow.Run, 
 	if tk.Revision != expectedRevision {
 		return nil, store.ErrRevisionConflict
 	}
+	if tk.Status != workflow.WorkflowStatusFrozen {
+		return nil, fmt.Errorf("工作流未冻结，无法启动")
+	}
 	spec, err := specOf(tk)
 	if err != nil {
 		return nil, err
 	}
 	if violations := s.policy.Validate(spec); len(violations) > 0 {
-		return nil, fmt.Errorf("Workflow Plan 当前不可运行: %s", violations[0].Message)
+		return nil, fmt.Errorf("Workflow 当前不可运行: %s", violations[0].Message)
 	}
-	run, err := s.store.InstantiateWorkflow(*tk)
+	run, err := s.store.InstantiateWorkflow(*tk, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -163,31 +145,12 @@ func (s *WorkflowService) StartPlan(id, expectedRevision int64) (*workflow.Run, 
 	return run, nil
 }
 
-// ListProposals 返回全部工作流任务（新→旧）。
-func (s *WorkflowService) ListProposals() ([]store.Task, error) {
+// ListWorkflows 返回全部工作流任务（新→旧）。
+func (s *WorkflowService) ListWorkflows() ([]store.Task, error) {
 	return s.store.ListWorkflowTasks()
 }
 
-func (s *WorkflowService) GetProposal(id int64) (*store.Task, error) {
-	return s.store.GetWorkflowTask(id)
-}
-
-// ListPlans 返回已采纳（冻结）的工作流任务。
-func (s *WorkflowService) ListPlans() ([]store.Task, error) {
-	all, err := s.store.ListWorkflowTasks()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]store.Task, 0, len(all))
-	for _, tk := range all {
-		if tk.Status == workflow.ProposalStatusAdopted {
-			out = append(out, tk)
-		}
-	}
-	return out, nil
-}
-
-func (s *WorkflowService) GetPlan(id int64) (*store.Task, error) {
+func (s *WorkflowService) GetWorkflow(id int64) (*store.Task, error) {
 	return s.store.GetWorkflowTask(id)
 }
 

@@ -211,14 +211,18 @@ func (j *scheduleJob) dispatchSession(now string) bool {
 	return true
 }
 
-// dispatchWorkflow 从冻结的工作流任务启动一次 Run（未冻结则跳过并提示）。
+// dispatchWorkflow 从冻结的工作流任务启动一次 Run（未冻结或未绑定项目则跳过并提示）。
 func (j *scheduleJob) dispatchWorkflow(now string) bool {
 	tk := j.tk
-	if tk.Status != workflow.ProposalStatusAdopted {
+	if tk.Status != workflow.WorkflowStatusFrozen {
 		log.Printf("定时工作流 %s 尚未冻结（status=%s），跳过本次触发", tk.Title, tk.Status)
 		return false
 	}
-	run, err := j.s.wf.StartPlan(tk.ID, tk.Revision)
+	if tk.ProjectID == nil {
+		log.Printf("定时工作流 %s 未绑定目标项目，跳过本次触发", tk.Title)
+		return false
+	}
+	run, err := j.s.wf.StartPlan(tk.ID, tk.Revision, *tk.ProjectID)
 	if err != nil {
 		log.Printf("定时工作流 %s 启动 Run 失败: %v", tk.Title, err)
 		return false
