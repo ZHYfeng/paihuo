@@ -139,7 +139,7 @@ func (s *Server) validSession(r *http.Request) bool {
 	return subtle.ConstantTimeCompare(got, mac.Sum(nil)) == 1
 }
 
-func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.Scheduler, token, skillsDir string) *Server {
+func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.Scheduler, sess *session.Manager, workflows *application.WorkflowService, token, skillsDir string) *Server {
 	runtimes := exec.NewDefaultRuntimeService()
 	if ex != nil {
 		runtimes = ex.RuntimeService()
@@ -148,9 +148,9 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.
 		st:           st,
 		hub:          hub,
 		ex:           ex,
-		sess:         session.New(st, hub, ex, filepath.Join(filepath.Dir(skillsDir), "sessions"), filepath.Dir(skillsDir)),
+		sess:         sess,
 		sched:        sc,
-		workflows:    application.NewWorkflowService(st, runtimes, ex, hub),
+		workflows:    workflows,
 		tasks:        application.NewTaskLifecycle(st, runtimes, ex),
 		token:        token,
 		skillsDir:    skillsDir,
@@ -259,10 +259,6 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.
 	m.HandleFunc("GET /api/v1/stats/roles/{id}", s.roleStats)
 	m.HandleFunc("GET /api/v1/stats/project/{id}", s.projectStats)
 
-	m.HandleFunc("GET /api/v1/schedules", s.listSchedules)
-	m.HandleFunc("POST /api/v1/schedules", s.createSchedule)
-	m.HandleFunc("PATCH /api/v1/schedules/{id}", s.patchSchedule)
-	m.HandleFunc("DELETE /api/v1/schedules/{id}", s.deleteSchedule)
 	m.HandleFunc("GET /api/v1/openapi.yaml", s.openAPISpec)
 	s.artifactRoutes(m)
 

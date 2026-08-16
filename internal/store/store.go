@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS projects (
 
 CREATE TABLE IF NOT EXISTS tasks (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  type        TEXT NOT NULL DEFAULT 'task', -- task | session | workflow（TaskType*）
   title       TEXT NOT NULL,
   body        TEXT NOT NULL DEFAULT '',
   status      TEXT NOT NULL DEFAULT 'queued',
@@ -55,7 +56,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   depends_on  INTEGER REFERENCES tasks(id),
   dependency_mode TEXT NOT NULL DEFAULT 'none',
   block_on_failure INTEGER NOT NULL DEFAULT 0,
-  schedule_id INTEGER,
+  schedule_id INTEGER, -- 定时触发的实例：指向定义任务 id（无 FK，自引用）
   error       TEXT NOT NULL DEFAULT '',
   exit_code   INTEGER,
   review_note TEXT NOT NULL DEFAULT '',
@@ -68,8 +69,24 @@ CREATE TABLE IF NOT EXISTS tasks (
   sort_order    INTEGER NOT NULL DEFAULT 0,
   terminal_cols INTEGER NOT NULL DEFAULT 0,
   terminal_rows INTEGER NOT NULL DEFAULT 0,
-  session_id    INTEGER REFERENCES sessions(id),
+  session_id    INTEGER REFERENCES tasks(id), -- 会话交付的收编任务回链
   workflow_run_id INTEGER REFERENCES workflow_runs(id) ON DELETE CASCADE,
+  -- 定时属性（正交：任何形态可挂；cron 非空 = 定时定义，永不直接执行）
+  cron            TEXT NOT NULL DEFAULT '',
+  enabled         INTEGER NOT NULL DEFAULT 1,
+  last_run_at     TEXT,
+  next_run_at     TEXT,
+  -- 会话字段（type=session）
+  worktree_path   TEXT NOT NULL DEFAULT '',
+  session_dir     TEXT NOT NULL DEFAULT '',
+  last_message_at TEXT NOT NULL DEFAULT '',
+  message_count   INTEGER NOT NULL DEFAULT 0,
+  suspended_at    TEXT,
+  delivered_at    TEXT,
+  -- 工作流字段（type=workflow）
+  spec            TEXT NOT NULL DEFAULT '',
+  violations      TEXT NOT NULL DEFAULT '[]',
+  spec_hash       TEXT NOT NULL DEFAULT '',
   revision      INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL,
   started_at  TEXT,
@@ -104,28 +121,23 @@ CREATE TABLE IF NOT EXISTS task_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id, seq);
 
-CREATE TABLE IF NOT EXISTS schedules (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  name           TEXT NOT NULL,
-  cron           TEXT NOT NULL,
-  title_template TEXT NOT NULL,
-  body_template  TEXT NOT NULL DEFAULT '',
-  role_id       INTEGER NOT NULL REFERENCES roles(id),
-  project_id     INTEGER REFERENCES projects(id) ON DELETE SET NULL,
-  perm           TEXT NOT NULL DEFAULT 'full',
-  block_on_failure INTEGER NOT NULL DEFAULT 0,
-  enabled        INTEGER NOT NULL DEFAULT 1,
-  revision       INTEGER NOT NULL DEFAULT 1,
-  last_run_at    TEXT,
-  next_run_at    TEXT,
-  created_at     TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS workflow_runs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  workflow_id INTEGER NOT NULL REFERENCES tasks(id), -- 冻结的工作流任务（type=workflow, status=adopted）
+  status      TEXT NOT NULL DEFAULT 'created',
+  task_ids    TEXT NOT NULL DEFAULT '{}',
+  revision    INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL,
+  started_at  TEXT,
+  finished_at TEXT,
+  updated_at  TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_plan ON workflow_runs(workflow_id);
 
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX IF NOT EXISTS idx_schedules_project ON schedules(project_id);
 
 CREATE TABLE IF NOT EXISTS templates (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,31 +157,6 @@ CREATE TABLE IF NOT EXISTS skills (
   created_at  TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS sessions (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  project_id  INTEGER REFERENCES projects(id),
-  role_id    INTEGER NOT NULL REFERENCES roles(id),
-  title       TEXT NOT NULL,
-  status      TEXT NOT NULL DEFAULT 'created', -- created|active|suspended|delivered|deleted
-  runtime_id  TEXT NOT NULL DEFAULT '',
-  worktree_branch TEXT NOT NULL DEFAULT '',
-  worktree_path   TEXT NOT NULL DEFAULT '',
-  base_commit     TEXT NOT NULL DEFAULT '',
-  session_dir     TEXT NOT NULL DEFAULT '',
-  task_id     INTEGER REFERENCES tasks(id),
-  last_message_at TEXT NOT NULL DEFAULT '',
-  message_count INTEGER NOT NULL DEFAULT 0,
-  revision    INTEGER NOT NULL DEFAULT 1,
-  created_at  TEXT NOT NULL,
-  started_at  TEXT,
-  suspended_at TEXT,
-  delivered_at TEXT,
-  updated_at  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
-CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_role ON sessions(role_id);
-
 CREATE TABLE IF NOT EXISTS event_log (
   seq        INTEGER PRIMARY KEY AUTOINCREMENT,
   event_type TEXT NOT NULL,
@@ -179,41 +166,6 @@ CREATE TABLE IF NOT EXISTS event_log (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_event_log_created ON event_log(created_at);
-
-CREATE TABLE IF NOT EXISTS workflow_proposals (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  spec        TEXT NOT NULL,
-  status      TEXT NOT NULL DEFAULT 'proposed',
-  violations  TEXT NOT NULL DEFAULT '[]',
-  revision    INTEGER NOT NULL DEFAULT 1,
-  created_at  TEXT NOT NULL,
-  updated_at  TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workflow_plans (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  version     INTEGER NOT NULL DEFAULT 1,
-  spec        TEXT NOT NULL,
-  spec_hash   TEXT NOT NULL,
-  status      TEXT NOT NULL DEFAULT 'frozen',
-  proposal_id INTEGER REFERENCES workflow_proposals(id),
-  revision    INTEGER NOT NULL DEFAULT 1,
-  created_at  TEXT NOT NULL,
-  updated_at  TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workflow_runs (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  plan_id     INTEGER NOT NULL REFERENCES workflow_plans(id),
-  status      TEXT NOT NULL DEFAULT 'created',
-  task_ids    TEXT NOT NULL DEFAULT '{}',
-  revision    INTEGER NOT NULL DEFAULT 1,
-  created_at  TEXT NOT NULL,
-  started_at  TEXT,
-  finished_at TEXT,
-  updated_at  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_workflow_runs_plan ON workflow_runs(plan_id);
 
 CREATE TABLE IF NOT EXISTS idempotency_records (
   key         TEXT NOT NULL,
@@ -301,15 +253,11 @@ func verifyCurrentSchema(db *sql.DB) error {
 	for _, query := range []string{
 		"SELECT revision, runtime_id FROM roles LIMIT 0",
 		"SELECT revision, project_dir FROM projects LIMIT 0",
-		"SELECT revision, role_id, project_id, terminal_cols, terminal_rows, session_id, workflow_run_id FROM tasks LIMIT 0",
+		"SELECT revision, type, cron, enabled, role_id, project_id, terminal_cols, terminal_rows, session_id, workflow_run_id, spec, spec_hash FROM tasks LIMIT 0",
 		"SELECT task_id, depends_on, on_failure FROM task_dependencies LIMIT 0",
-		"SELECT revision, role_id, project_id FROM schedules LIMIT 0",
 		"SELECT role_id FROM templates LIMIT 0",
-		"SELECT revision, role_id, runtime_id FROM sessions LIMIT 0",
 		"SELECT seq, event_type, role_id, payload FROM event_log LIMIT 0",
-		"SELECT revision, spec, violations FROM workflow_proposals LIMIT 0",
-		"SELECT revision, spec_hash, proposal_id FROM workflow_plans LIMIT 0",
-		"SELECT revision, plan_id, task_ids FROM workflow_runs LIMIT 0",
+		"SELECT revision, workflow_id, task_ids FROM workflow_runs LIMIT 0",
 		"SELECT key, method, path, status_code FROM idempotency_records LIMIT 0",
 		"SELECT task_id, run_id, content_hash, locator FROM artifacts LIMIT 0",
 	} {
@@ -495,16 +443,26 @@ func revisionTable(resource string) (string, bool) {
 		return "tasks", true
 	case "project":
 		return "projects", true
-	case "session":
-		return "sessions", true
-	case "schedule":
-		return "schedules", false
 	default:
 		return "", false
 	}
 }
 
 func nullInt64(p *int64) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func nullStrPtr(p *string) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func nullIntPtr(p *int) any {
 	if p == nil {
 		return nil
 	}
@@ -615,14 +573,15 @@ func (s *Store) DeleteRole(id int64) error {
 		return err
 	}
 	defer tx.Rollback()
-	// 历史任务与模板解除指派（保留记录），定时任务随角色一并删除（role_id NOT NULL）。
-	if _, err := tx.Exec("UPDATE tasks SET role_id=NULL, updated_at=?, revision=revision+1 WHERE role_id=?", Now(), id); err != nil {
+	// 历史任务与模板解除指派（保留记录），定时定义任务随角色一并删除
+	// （定时定义必须绑定角色，与旧 schedules 表语义一致）。
+	if _, err := tx.Exec("UPDATE tasks SET role_id=NULL, updated_at=?, revision=revision+1 WHERE role_id=? AND cron=''", Now(), id); err != nil {
 		return err
 	}
 	if _, err := tx.Exec("UPDATE templates SET role_id=NULL WHERE role_id=?", id); err != nil {
 		return err
 	}
-	if _, err := tx.Exec("DELETE FROM schedules WHERE role_id=?", id); err != nil {
+	if _, err := tx.Exec("DELETE FROM tasks WHERE role_id=? AND cron<>''", id); err != nil {
 		return err
 	}
 	if _, err := tx.Exec("DELETE FROM roles WHERE id=?", id); err != nil {
@@ -635,28 +594,38 @@ func (s *Store) DeleteRole(id int64) error {
 // 任务
 
 // taskCols 完整列（详情页用：含完整 body，驳回重做会追加修改意见）。
-const taskCols = `t.id, t.title, t.body, t.status, t.perm, t.run_mode, t.concurrent, t.role_id, COALESCE(a.name, ''),
+const taskCols = `t.id, t.type, t.title, t.body, t.status, t.perm, t.run_mode, t.concurrent, t.role_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows, t.revision`
+	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.sort_order,
+	t.cron, t.enabled, t.last_run_at, t.next_run_at, t.worktree_path, t.session_dir, t.last_message_at, t.message_count, t.suspended_at, t.delivered_at, t.spec, t.violations, t.spec_hash,
+	t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows, t.revision`
 
 // taskColsBrief 列表列（看板/历史/项目页用）：body 截断到 400 字符，
 // 避免大提示词把列表接口载荷撑爆。列序与 taskCols 完全一致（scanTask 共用）。
-const taskColsBrief = `t.id, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.run_mode, t.concurrent, t.role_id, COALESCE(a.name, ''),
+const taskColsBrief = `t.id, t.type, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.run_mode, t.concurrent, t.role_id, COALESCE(a.name, ''),
 	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.sort_order, t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows, t.revision`
+	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.sort_order,
+	t.cron, t.enabled, t.last_run_at, t.next_run_at, t.worktree_path, t.session_dir, t.last_message_at, t.message_count, t.suspended_at, t.delivered_at, t.spec, t.violations, t.spec_hash,
+	t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows, t.revision`
 
 func scanTask(rows scanner) (Task, error) {
 	var tk Task
 	var roleID, projectID, parentID, dependsOn, scheduleID, exitCode sql.NullInt64
 	var roleName, projectName string
 	var concurrent, blockOnFailure int64
-	var started, finished sql.NullString
+	var started, finished, lastRun, nextRun, suspendedAt, deliveredAt sql.NullString
 	var resumeOf, mergeOf, sessionID, workflowRunID sql.NullInt64
-	err := rows.Scan(&tk.ID, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &tk.RunMode, &concurrent, &roleID, &roleName,
+	var enabled, messageCount int64
+	err := rows.Scan(&tk.ID, &tk.Type, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &tk.RunMode, &concurrent, &roleID, &roleName,
 		&projectID, &projectName, &tk.ProjectDir, &parentID, &dependsOn, &tk.DependencyMode, &blockOnFailure, &scheduleID, &tk.Error, &exitCode,
-		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &sessionID, &workflowRunID, &tk.SortOrder, &tk.CreatedAt, &started, &finished, &tk.UpdatedAt, &tk.TerminalCols, &tk.TerminalRows, &tk.Revision)
+		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &sessionID, &workflowRunID, &tk.SortOrder,
+		&tk.Cron, &enabled, &lastRun, &nextRun, &tk.WorktreePath, &tk.SessionDir, &tk.LastMessageAt, &messageCount, &suspendedAt, &deliveredAt, &tk.Spec, &tk.Violations, &tk.SpecHash,
+		&tk.CreatedAt, &started, &finished, &tk.UpdatedAt, &tk.TerminalCols, &tk.TerminalRows, &tk.Revision)
 	if err != nil {
 		return tk, err
+	}
+	if tk.Type == "" {
+		tk.Type = TaskTypeTask
 	}
 	if tk.RunMode == "" {
 		tk.RunMode = RunModeBatch
@@ -666,6 +635,8 @@ func scanTask(rows scanner) (Task, error) {
 	}
 	tk.Concurrent = concurrent != 0
 	tk.BlockOnFailure = blockOnFailure != 0
+	tk.Enabled = enabled != 0
+	tk.MessageCount = int(messageCount)
 	if roleID.Valid {
 		tk.RoleID = &roleID.Int64
 	}
@@ -701,6 +672,10 @@ func scanTask(rows scanner) (Task, error) {
 	}
 	tk.StartedAt = strPtr(started)
 	tk.FinishedAt = strPtr(finished)
+	tk.LastRunAt = strPtr(lastRun)
+	tk.NextRunAt = strPtr(nextRun)
+	tk.SuspendedAt = strPtr(suspendedAt)
+	tk.DeliveredAt = strPtr(deliveredAt)
 	return tk, nil
 }
 
@@ -715,6 +690,8 @@ type TaskFilter struct {
 	RoleID    *int64
 	ProjectID *int64
 	Status    string
+	Type      string // 形态过滤：task | session | workflow；空 = 不过滤
+	Scheduled *bool  // nil=不过滤；true=只返回定时定义（cron 非空）；false=排除定时定义
 	Limit     int
 }
 
@@ -732,6 +709,17 @@ func (s *Store) ListTasksFiltered(f TaskFilter) ([]Task, error) {
 	if f.Status != "" {
 		q += " AND t.status=?"
 		args = append(args, f.Status)
+	}
+	if f.Type != "" {
+		q += " AND t.type=?"
+		args = append(args, f.Type)
+	}
+	if f.Scheduled != nil {
+		if *f.Scheduled {
+			q += " AND t.cron<>''"
+		} else {
+			q += " AND t.cron=''"
+		}
 	}
 	if f.ProjectID != nil {
 		// 项目详情按执行顺序展示；合并任务排在实现任务之后的独立分组中，
@@ -767,7 +755,7 @@ func (s *Store) ListQueuedTasks() ([]Task, error) {
 	// 否则后项会从尚未写入源代码的主分支建立 worktree。跨项目公平性在
 	// queuedTaskLess 中处理（按项目最早排队任务竞争，合并任务不插队到
 	// 其他项目的实现任务前）。
-	rows, err := s.db.Query("SELECT " + taskColsBrief + taskFrom + " WHERE t.status='queued' AND t.role_id IS NOT NULL AND a.enabled=1 ORDER BY t.created_at, t.id")
+	rows, err := s.db.Query("SELECT " + taskColsBrief + taskFrom + " WHERE t.status='queued' AND t.type='task' AND t.cron='' AND t.role_id IS NOT NULL AND a.enabled=1 ORDER BY t.created_at, t.id")
 	if err != nil {
 		return nil, err
 	}
@@ -893,18 +881,31 @@ func prepareTaskForInsert(t *Task) {
 	if t.UpdatedAt == "" {
 		t.UpdatedAt = t.CreatedAt
 	}
+	if t.Type == "" {
+		t.Type = TaskTypeTask
+	}
 	if t.RunMode == "" {
+		t.RunMode = RunModeBatch
+	}
+	// 定时定义任务永不参与执行链：不设前置、不排队。
+	if t.Cron != "" {
+		t.DependencyMode = DependencyNone
+		t.DependsOn = nil
 		t.RunMode = RunModeBatch
 	}
 	normalizeDependencyMode(t)
 }
 
 func insertTask(execer sqlExecer, t Task) (int64, error) {
-	res, err := execer.Exec(`INSERT INTO tasks (title, body, status, perm, run_mode, concurrent, role_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, session_id, workflow_run_id, worktree_branch, base_commit, review_rounds, finished_at, exit_code, sort_order, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.Title, t.Body, t.Status, t.Perm, t.RunMode, boolInt(t.Concurrent), nullInt64(t.RoleID), nullInt64(t.ProjectID), t.ProjectDir,
+	res, err := execer.Exec(`INSERT INTO tasks (type, title, body, status, perm, run_mode, concurrent, role_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, session_id, workflow_run_id, worktree_branch, base_commit, review_rounds, finished_at, exit_code, sort_order,
+		cron, enabled, last_run_at, next_run_at, worktree_path, session_dir, last_message_at, message_count, suspended_at, delivered_at, spec, violations, spec_hash,
+		created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.Type, t.Title, t.Body, t.Status, t.Perm, t.RunMode, boolInt(t.Concurrent), nullInt64(t.RoleID), nullInt64(t.ProjectID), t.ProjectDir,
 		nullInt64(t.ParentID), nullInt64(t.DependsOn), t.DependencyMode, boolInt(t.BlockOnFailure), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), nullInt64(t.SessionID), nullInt64(t.WorkflowRunID), t.WorktreeBranch, t.BaseCommit,
-		t.ReviewRounds, nullStrPtr(t.FinishedAt), nullIntPtr(t.ExitCode), t.SortOrder, t.CreatedAt, t.UpdatedAt)
+		t.ReviewRounds, nullStrPtr(t.FinishedAt), nullIntPtr(t.ExitCode), t.SortOrder,
+		t.Cron, boolInt(t.Enabled), nullStrPtr(t.LastRunAt), nullStrPtr(t.NextRunAt), t.WorktreePath, t.SessionDir, t.LastMessageAt, t.MessageCount, nullStrPtr(t.SuspendedAt), nullStrPtr(t.DeliveredAt), t.Spec, t.Violations, t.SpecHash,
+		t.CreatedAt, t.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -1015,7 +1016,7 @@ func resolveNewTaskDependency(tx *sql.Tx, t *Task) error {
 		t.DependsOn = nil
 		var predecessor int64
 		err := tx.QueryRow(`SELECT id FROM tasks
-			WHERE project_id=? AND merge_of IS NULL
+			WHERE project_id=? AND merge_of IS NULL AND cron=''
 			ORDER BY sort_order DESC, created_at DESC, id DESC LIMIT 1`, *t.ProjectID).Scan(&predecessor)
 		if err == sql.ErrNoRows {
 			return nil
@@ -1287,7 +1288,7 @@ func (s *Store) ReorderProjectTasks(projectID int64, orderedIDs []int64) error {
 	}
 	rows, err := tx.Query(`SELECT id, status, dependency_mode, sort_order
 		FROM tasks
-		WHERE project_id=? AND merge_of IS NULL
+		WHERE project_id=? AND merge_of IS NULL AND cron=''
 		ORDER BY CASE WHEN sort_order > 0 THEN sort_order ELSE 9223372036854775807 END,
 			created_at, id`, projectID)
 	if err != nil {
@@ -1354,7 +1355,7 @@ func (s *Store) ReorderProjectTasks(projectID int64, orderedIDs []int64) error {
 func rebuildQueuedWeakDependencies(tx *sql.Tx, projectID int64, now string) error {
 	rows, err := tx.Query(`SELECT id, status, dependency_mode
 		FROM tasks
-		WHERE project_id=? AND merge_of IS NULL
+		WHERE project_id=? AND merge_of IS NULL AND cron=''
 		ORDER BY CASE WHEN sort_order > 0 THEN sort_order ELSE 9223372036854775807 END,
 			created_at, id`, projectID)
 	if err != nil {
@@ -1823,37 +1824,6 @@ func (s *Store) DeleteTask(id int64) error {
 	return tx.Commit()
 }
 
-// DetachTaskFromSessions 解除所有会话对该任务的引用（sessions.task_id=NULL），
-// 返回受影响会话 id。任务硬删前必须调用：sessions.task_id 的外键（无 ON
-// DELETE 动作）会阻止删除交付任务，且任务删除后交付会话失去冻结对象，
-// 应解冻回可丢弃状态。
-func (s *Store) DetachTaskFromSessions(taskID int64) ([]int64, error) {
-	rows, err := s.db.Query("SELECT id FROM sessions WHERE task_id=?", taskID)
-	if err != nil {
-		return nil, err
-	}
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	if _, err := s.db.Exec("UPDATE sessions SET task_id=NULL, updated_at=?, revision=revision+1 WHERE task_id=?", Now(), taskID); err != nil {
-		return nil, err
-	}
-	return ids, nil
-}
-
 // collectTaskTreeIDs 收集级联删除的任务树。依赖关系不是父子关系，只有
 // parent_id/merge_of 指向的任务才会随根任务一起删除。
 func collectTaskTreeIDs(tx *sql.Tx, id int64, seen map[int64]bool) error {
@@ -2175,87 +2145,25 @@ func (s *Store) ListLogsPage(taskID, beforeSeq int64, limit int) (logs []TaskLog
 }
 
 // ---------------------------------------------------------------------------
-// 定时任务
+// ---------------------------------------------------------------------------
+// 定时定义（定时属性已并入 tasks 表：cron 非空 = 定时定义）
 
-const schedCols = `s.id, s.name, s.cron, s.title_template, s.body_template, s.role_id, s.project_id,
-	s.perm, s.block_on_failure, s.enabled, s.last_run_at, s.next_run_at, s.created_at, s.revision, a.name, COALESCE(p.name, '')`
-
-func (s *Store) ListSchedules() ([]Schedule, error) {
-	rows, err := s.db.Query("SELECT " + schedCols + " FROM schedules s JOIN roles a ON a.id=s.role_id LEFT JOIN projects p ON p.id=s.project_id ORDER BY s.id")
+// ListScheduledTasks 返回全部定时定义任务（调度器重载用）。
+func (s *Store) ListScheduledTasks() ([]Task, error) {
+	rows, err := s.db.Query("SELECT " + taskColsBrief + taskFrom + " WHERE t.cron<>'' ORDER BY t.id")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out = make([]Schedule, 0)
+	var out = make([]Task, 0)
 	for rows.Next() {
-		var sc Schedule
-		var projectID sql.NullInt64
-		var lastRun, nextRun sql.NullString
-		if err := rows.Scan(&sc.ID, &sc.Name, &sc.Cron, &sc.TitleTemplate, &sc.BodyTemplate,
-			&sc.RoleID, &projectID, &sc.Perm, &sc.BlockOnFailure, &sc.Enabled, &lastRun, &nextRun, &sc.CreatedAt, &sc.Revision, &sc.RoleName, &sc.ProjectName); err != nil {
+		tk, err := scanTask(rows)
+		if err != nil {
 			return nil, err
 		}
-		if projectID.Valid {
-			sc.ProjectID = &projectID.Int64
-		}
-		sc.LastRunAt = strPtr(lastRun)
-		sc.NextRunAt = strPtr(nextRun)
-		out = append(out, sc)
+		out = append(out, tk)
 	}
 	return out, rows.Err()
-}
-
-func (s *Store) GetSchedule(id int64) (*Schedule, error) {
-	row := s.db.QueryRow("SELECT "+schedCols+" FROM schedules s JOIN roles a ON a.id=s.role_id LEFT JOIN projects p ON p.id=s.project_id WHERE s.id=?", id)
-	var sc Schedule
-	var projectID sql.NullInt64
-	var lastRun, nextRun sql.NullString
-	if err := row.Scan(&sc.ID, &sc.Name, &sc.Cron, &sc.TitleTemplate, &sc.BodyTemplate,
-		&sc.RoleID, &projectID, &sc.Perm, &sc.BlockOnFailure, &sc.Enabled, &lastRun, &nextRun, &sc.CreatedAt, &sc.Revision, &sc.RoleName, &sc.ProjectName); err != nil {
-		return nil, err
-	}
-	if projectID.Valid {
-		sc.ProjectID = &projectID.Int64
-	}
-	sc.LastRunAt = strPtr(lastRun)
-	sc.NextRunAt = strPtr(nextRun)
-	return &sc, nil
-}
-
-func (s *Store) CreateSchedule(sc Schedule) (int64, error) {
-	if sc.CreatedAt == "" {
-		sc.CreatedAt = Now()
-	}
-	if sc.Perm == "" {
-		sc.Perm = PermFull
-	}
-	res, err := s.db.Exec(`INSERT INTO schedules (name, cron, title_template, body_template, role_id, project_id, perm, block_on_failure, enabled, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sc.Name, sc.Cron, sc.TitleTemplate, sc.BodyTemplate, sc.RoleID, nullInt64(sc.ProjectID), sc.Perm, boolInt(sc.BlockOnFailure), sc.Enabled, sc.CreatedAt)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
-}
-
-func (s *Store) UpdateSchedule(id int64, set map[string]any) error {
-	if len(set) == 0 {
-		return nil
-	}
-	cols := make([]string, 0, len(set))
-	vals := make([]any, 0, len(set)+1)
-	for k, v := range set {
-		cols = append(cols, k+"=?")
-		vals = append(vals, v)
-	}
-	vals = append(vals, id)
-	_, err := s.db.Exec(fmt.Sprintf("UPDATE schedules SET %s, revision=revision+1 WHERE id=?", strings.Join(cols, ", ")), vals...)
-	return err
-}
-
-func (s *Store) DeleteSchedule(id int64) error {
-	_, err := s.db.Exec("DELETE FROM schedules WHERE id=?", id)
-	return err
 }
 
 // ---------------------------------------------------------------------------
@@ -2503,7 +2411,8 @@ func (s *Store) DeleteProject(id int64) error {
 
 // statusCountsOf 按状态聚合计数。
 func (s *Store) statusCountsOf(where string, args ...any) ([]StatusCount, int, error) {
-	q := "SELECT status, COUNT(*) FROM tasks t WHERE " + where + " GROUP BY status"
+	// 统计只覆盖可执行交付（type=task 且非定时定义）。
+	q := "SELECT status, COUNT(*) FROM tasks t WHERE " + where + " AND t.type='task' AND t.cron='' GROUP BY status"
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, 0, err
@@ -2539,7 +2448,7 @@ func (s *Store) dailySucceeded(where string, days int, args ...any) ([]DailyCoun
 	since := time.Now().UTC().AddDate(0, 0, -(days - 1)).Format("2006-01-02")
 	rows, err := s.db.Query(
 		"SELECT substr(t.finished_at,1,10) AS d, COUNT(*) FROM tasks t WHERE "+where+
-			" AND t.status='succeeded' AND t.finished_at >= ? GROUP BY d", append(args, since)...)
+			" AND t.type='task' AND t.cron='' AND t.status='succeeded' AND t.finished_at >= ? GROUP BY d", append(args, since)...)
 	if err != nil {
 		return nil, err
 	}
@@ -2560,7 +2469,7 @@ func (s *Store) terminalSummary(where string, args ...any) (total, done, fail, r
 	q := "SELECT COUNT(*), COALESCE(SUM(CASE WHEN t.status='succeeded' THEN 1 ELSE 0 END),0), " +
 		"COALESCE(SUM(CASE WHEN t.status='failed' THEN 1 ELSE 0 END),0), COALESCE(SUM(t.review_rounds),0), " +
 		"COALESCE(SUM(CASE WHEN t.status IN ('succeeded','failed') THEN (julianday(t.finished_at)-julianday(t.started_at)) ELSE 0 END),0) " +
-		"FROM tasks t WHERE " + where
+		"FROM tasks t WHERE " + where + " AND t.type='task' AND t.cron=''"
 	row := s.db.QueryRow(q, args...)
 	var durDays float64
 	if err := row.Scan(&total, &done, &fail, &reviews, &durDays); err != nil {
@@ -2611,7 +2520,7 @@ func (s *Store) RoleStatsOf(roleID int64) (*RoleStats, error) {
 		COALESCE(SUM(t.review_rounds),0),
 		COALESCE(SUM(CASE WHEN t.status IN ('succeeded','failed') THEN (julianday(t.finished_at)-julianday(t.started_at)) ELSE 0 END),0)
 		FROM tasks t LEFT JOIN projects p ON p.id=t.project_id
-		WHERE t.role_id=? GROUP BY t.project_id, p.name ORDER BY COUNT(*) DESC`, roleID)
+		WHERE t.role_id=? AND t.type='task' AND t.cron='' GROUP BY t.project_id, p.name ORDER BY COUNT(*) DESC`, roleID)
 	if err != nil {
 		return nil, err
 	}
@@ -2692,7 +2601,7 @@ func (s *Store) ProjectStatsOf(projectID int64) (*ProjectStats, error) {
 		COALESCE(SUM(t.review_rounds),0),
 		COALESCE(SUM(CASE WHEN t.status IN ('succeeded','failed') THEN (julianday(t.finished_at)-julianday(t.started_at)) ELSE 0 END),0)
 		FROM tasks t LEFT JOIN roles a ON a.id=t.role_id LEFT JOIN projects p ON p.id=t.project_id
-		WHERE t.project_id=? GROUP BY t.role_id, a.name ORDER BY COUNT(*) DESC`, projectID)
+		WHERE t.project_id=? AND t.type='task' AND t.cron='' GROUP BY t.role_id, a.name ORDER BY COUNT(*) DESC`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -2927,117 +2836,83 @@ func (s *Store) ListTasksForCleanup() ([]Task, error) {
 // ---------------------------------------------------------------------------
 // 会话（Session）
 
-const sessionCols = `s.id, s.project_id, COALESCE(p.name, ''), s.role_id, COALESCE(a.name, ''), s.runtime_id,
-	s.title, s.status, s.worktree_branch, s.worktree_path, s.base_commit, s.session_dir, s.task_id, s.last_message_at, s.message_count,
-	s.revision, s.created_at, s.started_at, s.suspended_at, s.delivered_at, s.updated_at`
-const sessionFrom = " FROM sessions s LEFT JOIN projects p ON p.id=s.project_id LEFT JOIN roles a ON a.id=s.role_id"
+// ---------------------------------------------------------------------------
+// 会话（type=session 的任务；生命周期由 internal/session 管理）
 
-func scanSession(rows scanner) (Session, error) {
-	var ss Session
-	var projectID, taskID sql.NullInt64
-	var started, suspended, delivered sql.NullString
-	err := rows.Scan(&ss.ID, &projectID, &ss.ProjectName, &ss.RoleID, &ss.RoleName, &ss.RuntimeID,
-		&ss.Title, &ss.Status, &ss.WorktreeBranch, &ss.WorktreePath, &ss.BaseCommit, &ss.SessionDir, &taskID, &ss.LastMessageAt, &ss.MessageCount,
-		&ss.Revision, &ss.CreatedAt, &started, &suspended, &delivered, &ss.UpdatedAt)
-	if err != nil {
-		return ss, err
+// CreateSessionTask 创建会话任务记录。projectID 可为 nil（无项目）。roleID 必须存在。
+func (s *Store) CreateSessionTask(ss Task) (int64, error) {
+	if ss.Type == "" {
+		ss.Type = TaskTypeSession
 	}
-	if projectID.Valid {
-		ss.ProjectID = &projectID.Int64
-	}
-	if taskID.Valid {
-		ss.TaskID = &taskID.Int64
-	}
-	ss.StartedAt = strPtr(started)
-	ss.SuspendedAt = strPtr(suspended)
-	ss.DeliveredAt = strPtr(delivered)
-	return ss, nil
-}
-
-// CreateSession 创建会话记录。projectID 可为 nil（无项目）。roleID 必须存在。
-func (s *Store) CreateSession(ss Session) (int64, error) {
 	if ss.Status == "" {
 		ss.Status = SessionStatusCreated
 	}
-	if ss.CreatedAt == "" {
-		ss.CreatedAt = Now()
+	return s.CreateTask(ss)
+}
+
+// ListSessionTasks 列出会话任务实例（默认不含 deleted 与定时定义——定时
+// 定义只需在定时页管理；status 空 = 全部非删除）。排序与会话页一致：最近消息优先。
+func (s *Store) ListSessionTasks(projectID *int64, roleID *int64, status string, includeDeleted bool) ([]Task, error) {
+	q := "SELECT " + taskColsBrief + taskFrom + " WHERE t.type='session' AND t.cron=''"
+	args := []any{}
+	if projectID != nil {
+		q += " AND t.project_id=?"
+		args = append(args, *projectID)
 	}
-	if ss.UpdatedAt == "" {
-		ss.UpdatedAt = ss.CreatedAt
+	if roleID != nil {
+		q += " AND t.role_id=?"
+		args = append(args, *roleID)
 	}
-	res, err := s.db.Exec(`INSERT INTO sessions (project_id, role_id, title, status, runtime_id, worktree_branch, worktree_path, base_commit, session_dir, task_id, last_message_at, created_at, started_at, suspended_at, delivered_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		nullInt64(ss.ProjectID), ss.RoleID, ss.Title, ss.Status, ss.RuntimeID, ss.WorktreeBranch, ss.WorktreePath, ss.BaseCommit, ss.SessionDir,
-		nullInt64(ss.TaskID), ss.LastMessageAt, ss.CreatedAt, nullStrPtr(ss.StartedAt), nullStrPtr(ss.SuspendedAt), nullStrPtr(ss.DeliveredAt), ss.UpdatedAt)
+	if status != "" {
+		q += " AND t.status=?"
+		args = append(args, status)
+	} else if !includeDeleted {
+		q += " AND t.status<>'deleted'"
+	}
+	q += " ORDER BY COALESCE(NULLIF(t.last_message_at,''), t.created_at) DESC, t.id DESC"
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return res.LastInsertId()
+	defer rows.Close()
+	out := make([]Task, 0) // 空列表返回 [] 而非 null（前端 .length 直接可用）
+	for rows.Next() {
+		tk, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, tk)
+	}
+	return out, rows.Err()
 }
 
-func nullStrPtr(p *string) any {
-	if p == nil {
-		return nil
-	}
-	return *p
-}
-
-func nullIntPtr(p *int) any {
-	if p == nil {
-		return nil
-	}
-	return *p
-}
-
-// GetSession 返回单个会话；不存在时返回 nil。
-func (s *Store) GetSession(id int64) (*Session, error) {
-	row := s.db.QueryRow("SELECT "+sessionCols+sessionFrom+" WHERE s.id=?", id)
-	ss, err := scanSession(row)
+// GetSessionTask 返回单个会话任务；不存在时返回 (nil, nil)。
+func (s *Store) GetSessionTask(id int64) (*Task, error) {
+	tk, err := s.GetTask(id)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &ss, nil
+	return tk, nil
 }
 
-// ListSessions 列出会话（默认不含 deleted；filter.Status 空 = 全部非删除）。
-func (s *Store) ListSessions(f SessionFilter) ([]Session, error) {
-	q := "SELECT " + sessionCols + sessionFrom + " WHERE 1=1"
-	var args []any
-	if f.ProjectID != nil {
-		q += " AND s.project_id=?"
-		args = append(args, *f.ProjectID)
-	}
-	if f.RoleID != nil {
-		q += " AND s.role_id=?"
-		args = append(args, *f.RoleID)
-	}
-	if f.Status != "" {
-		q += " AND s.status=?"
-		args = append(args, f.Status)
-	} else if !f.IncludeDeleted {
-		q += " AND s.status<>'deleted'"
-	}
-	q += " ORDER BY COALESCE(NULLIF(s.last_message_at,''), s.created_at) DESC, s.id DESC"
-	rows, err := s.db.Query(q, args...)
+// ListSessionsForTask 返回引用了指定收编任务（tasks.session_id=taskID）的
+// 会话任务 id（删除收编任务时联动清理其交付会话）。
+func (s *Store) ListSessionsForTask(taskID int64) ([]int64, error) {
+	rows, err := s.db.Query("SELECT id FROM tasks WHERE session_id=?", taskID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]Session, 0) // 空列表返回 [] 而非 null（前端 .length 直接可用）
+	var ids []int64
 	for rows.Next() {
-		ss, err := scanSession(rows)
-		if err != nil {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-		out = append(out, ss)
+		ids = append(ids, id)
 	}
-	return out, rows.Err()
-}
-
-// UpdateSession 按字段更新会话（updateOne 的 set 语义：key=列名）。
-func (s *Store) UpdateSession(id int64, set map[string]any) error {
-	return updateOne(s.db, "sessions", id, set)
+	return ids, rows.Err()
 }

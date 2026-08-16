@@ -128,9 +128,6 @@ paths:
   /templates:
     get: {tags: [Management], responses: {'200': {description: Task templates}}}
     post: {tags: [Management], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Template created}}}
-  /schedules:
-    get: {tags: [Management], responses: {'200': {description: Schedules}}}
-    post: {tags: [Management], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Schedule created}}}
   /settings:
     get: {tags: [Management], responses: {'200': {description: Settings}}}
     put: {tags: [Management], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Settings saved}}}
@@ -159,17 +156,28 @@ components:
         perm: {type: string, enum: [full, review], default: full}
         run_mode: {type: string, enum: [batch, interactive], default: batch}
         concurrent: {type: boolean, default: false}
+        cron: {type: string, description: 定时属性（正交）：非空时创建定时定义任务，永不直接执行}
+        enabled: {type: boolean, default: true}
     Task:
       allOf:
         - {$ref: '#/components/schemas/TaskInput'}
         - type: object
-          required: [id, status, revision, created_at, updated_at]
+          required: [id, type, status, revision, created_at, updated_at]
           properties:
             id: {type: integer, format: int64}
-            status: {type: string, enum: [queued, claimed, running, awaiting_review, succeeded, failed, cancelled]}
+            type: {type: string, enum: [task, session, workflow], description: 任务形态：四种形态物理统一在 tasks 表}
+            status: {type: string, description: 按形态解释：task→queued/claimed/running/awaiting_review/succeeded/failed/cancelled；session→created/active/suspended/delivered/deleted；workflow→proposed/validated/rejected/adopted}
             role_name: {type: string}
             project_name: {type: string}
+            session_id: {type: integer, format: int64}
             workflow_run_id: {type: integer, format: int64}
+            schedule_id: {type: integer, format: int64}
+            last_run_at: {type: string, format: date-time}
+            next_run_at: {type: string, format: date-time}
+            last_message_at: {type: string}
+            message_count: {type: integer}
+            spec: {type: string, description: workflow.Spec JSON（type=workflow）}
+            spec_hash: {type: string}
             revision: {type: integer, format: int64, minimum: 1}
             created_at: {type: string, format: date-time}
             updated_at: {type: string, format: date-time}

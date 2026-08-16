@@ -11,9 +11,11 @@ import (
 	"strings"
 	"testing"
 
+	"paihuo/internal/application"
 	"paihuo/internal/events"
 	paiexec "paihuo/internal/exec"
 	"paihuo/internal/sched"
+	"paihuo/internal/session"
 	"paihuo/internal/store"
 	"paihuo/internal/workspace"
 )
@@ -51,7 +53,10 @@ func TestApproveReviewTaskSnapshotsChangesAndQueuesMergeAgent(t *testing.T) {
 	hub := events.NewEventStream()
 	sessionsRoot := filepath.Join(base, "sessions")
 	executor := paiexec.NewForTest(st, hub, sessionsRoot, "review-merge-test.db", "review-merge-test")
-	s := New(st, hub, executor, sched.New(st, hub, executor), "", filepath.Join(base, "skills"))
+	sess := session.New(st, hub, executor, sessionsRoot, t.TempDir())
+	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
+	sc := sched.New(st, hub, executor, sess, wf)
+	s := New(st, hub, executor, sc, sess, wf, "", filepath.Join(base, "skills"))
 	agentID, err := st.CreateRole(store.Role{Name: "pi", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +140,10 @@ func TestDeleteTaskRemovesTaskTreeWorktrees(t *testing.T) {
 	hub := events.NewEventStream()
 	sessionsRoot := filepath.Join(base, "sessions")
 	executor := paiexec.NewForTest(st, hub, sessionsRoot, "delete-worktree-test.db", "delete-worktree-test")
-	s := New(st, hub, executor, sched.New(st, hub, executor), "", filepath.Join(base, "skills"))
+	sess := session.New(st, hub, executor, sessionsRoot, t.TempDir())
+	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
+	sc := sched.New(st, hub, executor, sess, wf)
+	s := New(st, hub, executor, sc, sess, wf, "", filepath.Join(base, "skills"))
 	agentID, err := st.CreateRole(store.Role{Name: "pi", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -214,7 +222,10 @@ func TestWorkspaceMergeGuards(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewEventStream()
 	executor := paiexec.NewForTest(st, hub, t.TempDir(), "workspace-merge-guard-test.db", "workspace-merge-guard-test")
-	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
+	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
+	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
+	sc := sched.New(st, hub, executor, sess, wf)
+	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
 	taskID, err := st.CreateTask(store.Task{Title: "ordinary", Status: store.StatusSucceeded, Perm: store.PermFull})
 	if err != nil {
 		t.Fatal(err)
@@ -284,7 +295,10 @@ func TestPatchMergeTaskRoleGuards(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewEventStream()
 	executor := paiexec.NewForTest(st, hub, t.TempDir(), "merge-role-guard-test.db", "merge-role-guard-test")
-	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
+	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
+	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
+	sc := sched.New(st, hub, executor, sess, wf)
+	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
 	agentA, err := st.CreateRole(store.Role{Name: "a", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)

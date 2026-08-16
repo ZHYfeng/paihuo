@@ -10,9 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"paihuo/internal/application"
 	"paihuo/internal/events"
 	execpkg "paihuo/internal/exec"
 	"paihuo/internal/sched"
+	"paihuo/internal/session"
 	"paihuo/internal/store"
 )
 
@@ -27,7 +29,11 @@ func TestCreateSessionUsesRoleNameAsTitle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(st, events.NewEventStream(), nil, nil, "", filepath.Join(t.TempDir(), "skills"))
+	hub := events.NewEventStream()
+	sess := session.New(st, hub, nil, t.TempDir(), t.TempDir())
+	wf := application.NewWorkflowService(st, execpkg.NewDefaultRuntimeService(), nil, hub)
+	sc := sched.New(st, hub, nil, sess, wf)
+	s := New(st, hub, nil, sc, sess, wf, "", filepath.Join(t.TempDir(), "skills"))
 	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"role_id":`+itoa(aid)+`}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
@@ -35,7 +41,7 @@ func TestCreateSessionUsesRoleNameAsTitle(t *testing.T) {
 	if resp.Code != 201 {
 		t.Fatalf("create: %d %s", resp.Code, resp.Body.String())
 	}
-	var created store.Session
+	var created store.Task
 	if err := json.Unmarshal(resp.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +93,10 @@ func TestSessionAPI(t *testing.T) {
 	hub := events.NewEventStream()
 	sessionsRoot := filepath.Join(root, "sessions")
 	executor := execpkg.NewForTest(st, hub, sessionsRoot, filepath.Join(root, "db"), "sess-api")
-	s := New(st, hub, executor, sched.New(st, hub, executor), "", filepath.Join(root, "skills"))
+	sess := session.New(st, hub, executor, sessionsRoot, t.TempDir())
+	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
+	sc := sched.New(st, hub, executor, sess, wf)
+	s := New(st, hub, executor, sc, sess, wf, "", filepath.Join(root, "skills"))
 	mux := s.Handler()
 
 	do := func(method, path, body string) (int, map[string]any) {

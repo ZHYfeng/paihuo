@@ -7,9 +7,11 @@ import (
 	"strings"
 	"testing"
 
+	"paihuo/internal/application"
 	"paihuo/internal/events"
 	"paihuo/internal/exec"
 	"paihuo/internal/sched"
+	"paihuo/internal/session"
 	"paihuo/internal/store"
 )
 
@@ -21,7 +23,10 @@ func TestRoleMaxConcurrencyDefaultsValidatesAndUpdates(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewEventStream()
 	executor := exec.NewForTest(st, hub, t.TempDir(), "server-agent-concurrency-test.db", "server-agent-concurrency-test")
-	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
+	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
+	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
+	sc := sched.New(st, hub, executor, sess, wf)
+	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
 
 	create := func(body string) (*httptest.ResponseRecorder, store.Role) {
 		t.Helper()

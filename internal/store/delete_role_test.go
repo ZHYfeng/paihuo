@@ -10,7 +10,7 @@ func TestDeleteRoleWithReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateSchedule(Schedule{Name: "s1", Cron: "0 * * * * *", TitleTemplate: "t", RoleID: aid}); err != nil {
+	if _, err := s.CreateTask(Task{Title: "s1", Cron: "0 * * * * *", Body: "t", RoleID: &aid}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.CreateTemplate(Template{Name: "tpl1", Body: "b", RoleID: &aid}); err != nil {
@@ -22,8 +22,8 @@ func TestDeleteRoleWithReferences(t *testing.T) {
 		t.Fatalf("DeleteRole: %v", err)
 	}
 
-	// 定时任务已随角色删除
-	scs, err := s.ListSchedules()
+	// 定时定义任务已随角色删除
+	scs, err := s.ListScheduledTasks()
 	if err != nil {
 		t.Fatal(err)
 	}

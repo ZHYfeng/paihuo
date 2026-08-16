@@ -1,5 +1,6 @@
-// Package workflow defines deterministic Workflow Plan, Proposal, Policy and
-// Run state. It contains no process, HTTP or database code.
+// Package workflow defines deterministic Workflow Spec, Policy and Run state.
+// Proposal/Plan 物理上折叠为 type=workflow 的任务（spec/violations/spec_hash
+// 字段 + 提案状态机）；本包只保留纯逻辑，不含进程、HTTP 或数据库代码。
 package workflow
 
 type Limits struct {
@@ -47,31 +48,11 @@ type Violation struct {
 	Message string `json:"message"`
 }
 
-type Proposal struct {
-	ID         int64       `json:"id"`
-	Spec       Spec        `json:"spec"`
-	Status     string      `json:"status"`
-	Violations []Violation `json:"violations"`
-	Revision   int64       `json:"revision"`
-	CreatedAt  string      `json:"created_at"`
-	UpdatedAt  string      `json:"updated_at"`
-}
-
-type Plan struct {
-	ID         int64  `json:"id"`
-	Version    int64  `json:"version"`
-	Spec       Spec   `json:"spec"`
-	SpecHash   string `json:"spec_hash"`
-	Status     string `json:"status"`
-	ProposalID *int64 `json:"proposal_id,omitempty"`
-	Revision   int64  `json:"revision"`
-	CreatedAt  string `json:"created_at"`
-	UpdatedAt  string `json:"updated_at"`
-}
-
+// Run 是一次冻结工作流任务的执行实例（实例书签，非实体）：
+// 原子实例化节点子任务，task_ids 是节点 ID → 任务 ID 的稳定映射。
 type Run struct {
 	ID         int64            `json:"id"`
-	PlanID     int64            `json:"plan_id"`
+	WorkflowID int64            `json:"workflow_id"`
 	Status     string           `json:"status"`
 	TaskIDs    map[string]int64 `json:"task_ids"`
 	Revision   int64            `json:"revision"`
@@ -82,15 +63,11 @@ type Run struct {
 }
 
 const (
+	// 工作流任务（type=workflow）的状态：提案门禁。
 	ProposalStatusProposed  = "proposed"
 	ProposalStatusValidated = "validated"
 	ProposalStatusRejected  = "rejected"
-	ProposalStatusAdopted   = "adopted"
-	PlanStatusFrozen        = "frozen"
-	PlanStatusRunning       = "running"
-	PlanStatusSucceeded     = "succeeded"
-	PlanStatusFailed        = "failed"
-	PlanStatusCancelled     = "cancelled"
+	ProposalStatusAdopted   = "adopted" // 冻结：spec_hash 写入，之后不可变，可被多次 run
 	RunStatusCreated        = "created"
 	RunStatusRunning        = "running"
 	RunStatusSucceeded      = "succeeded"

@@ -8,9 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"paihuo/internal/application"
 	"paihuo/internal/events"
 	paiexec "paihuo/internal/exec"
 	"paihuo/internal/sched"
+	"paihuo/internal/session"
 	"paihuo/internal/store"
 )
 
@@ -25,7 +27,10 @@ func newSecurityTestServer(t *testing.T, token string) *Server {
 	root := t.TempDir()
 	hub := events.NewEventStream()
 	executor := paiexec.NewForTest(st, hub, filepath.Join(root, "sessions"), filepath.Join(root, "paihuo.db"), "paihuo-security-test")
-	return New(st, hub, executor, sched.New(st, hub, executor), token, filepath.Join(root, "skills"))
+	sess := session.New(st, hub, executor, filepath.Join(root, "sessions"), t.TempDir())
+	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
+	sc := sched.New(st, hub, executor, sess, wf)
+	return New(st, hub, executor, sc, sess, wf, token, filepath.Join(root, "skills"))
 }
 
 func TestHandlerAuthenticationAndSecurityHeaders(t *testing.T) {

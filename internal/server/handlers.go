@@ -48,6 +48,23 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	f.Status = q.Get("status")
+	// 形态过滤：task（默认）/ session / workflow；定时页用 scheduled=1 汇总
+	// 所有形态的定时定义（cron 非空），不限制 type。
+	switch q.Get("type") {
+	case store.TaskTypeSession, store.TaskTypeWorkflow, store.TaskTypeTask:
+		f.Type = q.Get("type")
+	default:
+		if q.Get("scheduled") != "1" {
+			f.Type = store.TaskTypeTask
+		}
+	}
+	if q.Get("scheduled") == "1" {
+		only := true
+		f.Scheduled = &only
+	} else {
+		exclude := false
+		f.Scheduled = &exclude
+	}
 	if v := q.Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			f.Limit = n
@@ -70,6 +87,9 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if in.Cron != "" {
+		s.sched.Reload()
 	}
 	writeResource(w, http.StatusCreated, task.Revision, task)
 }
@@ -251,9 +271,30 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "title", "body", "role_id", "perm", "status", "review_note", "parent_id", "project_id", "concurrent", "block_on_failure")
+	set, ok := patchMap(w, r, "title", "body", "role_id", "perm", "status", "review_note", "parent_id", "project_id", "concurrent", "block_on_failure", "cron", "enabled")
 	if !ok {
 		return
+	}
+	// 定时属性（正交）：cron/enabled 只对定时定义（cron 非空）有意义；
+	// 修改后调度器立即重载。cron 非空时任务成为定时定义，永不直接执行。
+	scheduleChanged := false
+	if v, ok := set["cron"]; ok {
+		cron, isString := v.(string)
+		if !isString {
+			writeErr(w, http.StatusBadRequest, "cron 必须是字符串")
+			return
+		}
+		set["cron"] = cron
+		scheduleChanged = true
+	}
+	if v, ok := set["enabled"]; ok {
+		b, isBool := v.(bool)
+		if !isBool {
+			writeErr(w, http.StatusBadRequest, "enabled 必须是布尔值")
+			return
+		}
+		set["enabled"] = b
+		scheduleChanged = true
 	}
 	cur, err := s.st.GetTask(id)
 	if err != nil {
@@ -442,6 +483,9 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if scheduleChanged {
+		s.sched.Reload()
+	}
 	if v, ok := set["status"]; ok && v == store.StatusQueued {
 		s.ex.Wake()
 	}
@@ -572,8 +616,10 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// 交付任务：解除会话引用（sessions.task_id 外键会阻止硬删）。
-	affected, err := s.st.DetachTaskFromSessions(id)
+	// 交付即终态：被删任务关联的 delivered 会话不再解冻（否则可恢复修改后
+	// 反复交付、反复创建合并任务），直接联动清理（终止进程、清理 worktree、
+	// 记录 → deleted）。
+	deliveredSessions, err := s.st.ListSessionsForTask(id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -587,10 +633,7 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// 交付即终态：被删任务关联的 delivered 会话不再解冻（否则可恢复修改后
-	// 反复交付、反复创建合并任务），直接联动清理（终止进程、清理 worktree、
-	// 记录 → deleted）。
-	for _, sid := range affected {
+	for _, sid := range deliveredSessions {
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		err := s.sess.Delete(ctx, sid)
 		cancel()
@@ -599,6 +642,7 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	s.sched.Reload()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1068,161 +1112,6 @@ func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
-// 定时任务（M5：调度器接入）
-
-func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
-	schedules, err := s.st.ListSchedules()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, schedules)
-}
-
-func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {
-	var in store.Schedule
-	if !readJSON(w, r, &in) {
-		return
-	}
-	if in.Name == "" || in.Cron == "" || in.TitleTemplate == "" {
-		writeErr(w, http.StatusBadRequest, "名称、cron 表达式、标题模板不能为空")
-		return
-	}
-	if _, err := s.st.GetRole(in.RoleID); err != nil {
-		writeErr(w, http.StatusBadRequest, "角色不存在")
-		return
-	}
-	if err := s.validateScheduleProject(in.ProjectID); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if in.Perm == "" {
-		in.Perm = store.PermFull
-	}
-	if !validPerms[in.Perm] {
-		writeErr(w, http.StatusBadRequest, "非法权限模式: "+in.Perm)
-		return
-	}
-	id, err := s.st.CreateSchedule(in)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	s.sched.Reload()
-	sc, err := s.st.GetSchedule(id)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, sc)
-}
-
-func (s *Server) patchSchedule(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r)
-	if !ok {
-		return
-	}
-	revision, ok := requiredRevision(w, r)
-	if !ok {
-		return
-	}
-	set, ok := patchMap(w, r, "name", "cron", "title_template", "body_template", "role_id", "project_id", "perm", "block_on_failure", "enabled", "next_run_at", "last_run_at")
-	if !ok {
-		return
-	}
-	if v, ok := set["role_id"]; ok {
-		if aid, isNum := v.(float64); isNum && aid > 0 {
-			if _, err := s.st.GetRole(int64(aid)); err != nil {
-				writeErr(w, http.StatusBadRequest, "角色不存在")
-				return
-			}
-			set["role_id"] = int64(aid)
-		} else {
-			writeErr(w, http.StatusBadRequest, "role_id 非法")
-			return
-		}
-	}
-	if v, ok := set["perm"]; ok {
-		perm, isString := v.(string)
-		if !isString || !validPerms[perm] {
-			writeErr(w, http.StatusBadRequest, "非法权限模式")
-			return
-		}
-	}
-	if v, ok := set["project_id"]; ok {
-		if v == nil {
-			set["project_id"] = nil
-		} else if pid, isNum := v.(float64); isNum && pid > 0 {
-			projectID := int64(pid)
-			if err := s.validateScheduleProject(&projectID); err != nil {
-				writeErr(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			set["project_id"] = projectID
-		} else {
-			writeErr(w, http.StatusBadRequest, "project_id 非法")
-			return
-		}
-	}
-	if v, ok := set["block_on_failure"]; ok {
-		b, isBool := v.(bool)
-		if !isBool {
-			writeErr(w, http.StatusBadRequest, "block_on_failure 必须是布尔值")
-			return
-		}
-		set["block_on_failure"] = b
-	}
-	if err := s.st.UpdateAtRevision("schedule", id, revision, set); err != nil {
-		if errors.Is(err, store.ErrRevisionConflict) {
-			writeErr(w, http.StatusConflict, err.Error())
-		} else {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-		}
-		return
-	}
-	s.sched.Reload()
-	sc, err := s.st.GetSchedule(id)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, sc)
-}
-
-func (s *Server) validateScheduleProject(projectID *int64) error {
-	if projectID == nil {
-		return nil
-	}
-	if *projectID <= 0 {
-		return fmt.Errorf("project_id 非法")
-	}
-	if _, err := s.st.GetProject(*projectID); err != nil {
-		return fmt.Errorf("项目不存在")
-	}
-	return nil
-}
-
-func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r)
-	if !ok {
-		return
-	}
-	revision, ok := requiredRevision(w, r)
-	if !ok {
-		return
-	}
-	if err := s.st.AssertRevision("schedule", id, revision); err != nil {
-		writeErr(w, http.StatusConflict, err.Error())
-		return
-	}
-	if err := s.st.DeleteSchedule(id); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	s.sched.Reload()
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // ---------------------------------------------------------------------------
 // 项目（维度二：任务管理的项目载体）
 

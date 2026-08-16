@@ -558,7 +558,7 @@ func TestDeliverTaskAndCreateMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sid, err := s.CreateSession(Session{Title: "s", RoleID: agentID, Status: SessionStatusDelivered})
+	sid, err := s.CreateSessionTask(Task{Title: "s", RoleID: &agentID, Status: SessionStatusDelivered})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -956,9 +956,10 @@ func TestDeleteTaskRewiresWeakDependents(t *testing.T) {
 	}
 }
 
-// TestDetachTaskFromSessions 交付任务硬删前解除会话引用：
-// task_id 清空、只影响引用该任务的会话、引用其他任务的会话不动。
-func TestDetachTaskFromSessions(t *testing.T) {
+// TestListSessionsForTask 交付任务硬删前解除会话引用：
+// 被删收编任务关联的交付会话由 ListSessionsForTask 查询——只返回引用该
+// 任务的会话，引用其他任务的会话不动。
+func TestListSessionsForTask(t *testing.T) {
 	s := openTest(t)
 	agentID := mustRole(t, s, "detach-agent", true)
 	taskID, err := s.CreateTask(Task{Title: "delivered", RoleID: &agentID})
@@ -970,37 +971,53 @@ func TestDetachTaskFromSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	tid := taskID
-	sid1, err := s.CreateSession(Session{Title: "s1", RoleID: agentID, Status: SessionStatusDelivered, TaskID: &tid})
+	sid1, err := s.CreateSessionTask(Task{Title: "s1", RoleID: &agentID, Status: SessionStatusDelivered, SessionID: &tid})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sid2, err := s.CreateSession(Session{Title: "s2", RoleID: agentID, Status: SessionStatusDelivered, TaskID: &tid})
+	sid2, err := s.CreateSessionTask(Task{Title: "s2", RoleID: &agentID, Status: SessionStatusDelivered, SessionID: &tid})
 	if err != nil {
 		t.Fatal(err)
 	}
 	oid := otherID
-	if _, err := s.CreateSession(Session{Title: "s3", RoleID: agentID, Status: SessionStatusDelivered, TaskID: &oid}); err != nil {
+	if _, err := s.CreateSessionTask(Task{Title: "s3", RoleID: &agentID, Status: SessionStatusDelivered, SessionID: &oid}); err != nil {
 		t.Fatal(err)
 	}
 
-	affected, err := s.DetachTaskFromSessions(taskID)
+	affected, err := s.ListSessionsForTask(taskID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(affected) != 2 || affected[0] != sid1 || affected[1] != sid2 {
 		t.Fatalf("应返回引用该任务的两个会话: %v", affected)
 	}
-	for _, sid := range []int64{sid1, sid2} {
-		ss, err := s.GetSession(sid)
-		if err != nil || ss.TaskID != nil {
-			t.Fatalf("会话 %d 的 task_id 应被清空: %+v err=%v", sid, ss, err)
-		}
+	// 引用其他任务的会话不在结果中（不被波及）。
+	affected3, err := s.ListSessionsForTask(otherID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	ss3, err := s.GetSession(sid2 + 1)
-	if err != nil || ss3.TaskID == nil || *ss3.TaskID != otherID {
+	if len(affected3) != 1 || affected3[0] != sid2+1 {
+		t.Fatalf("应只返回引用 other 任务的会话: %v", affected3)
+	}
+	// 会话引用的是收编任务（tasks.session_id 回链），与旧 task_id 语义一致。
+	ss, err := s.GetSessionTask(sid1)
+	if err != nil || ss.SessionID == nil || *ss.SessionID != taskID {
+		t.Fatalf("会话 %d 应回链到被删任务: %+v err=%v", sid1, ss, err)
+	}
+	ss2, err := s.GetSessionTask(sid2)
+	if err != nil || ss2.SessionID == nil || *ss2.SessionID != taskID {
+		t.Fatalf("会话 %d 应回链到被删任务: %+v err=%v", sid2, ss2, err)
+	}
+	ss3, err := s.GetSessionTask(sid2 + 1)
+	if err != nil || ss3.SessionID == nil || *ss3.SessionID != otherID {
 		t.Fatalf("引用其他任务的会话不应被波及: %+v err=%v", ss3, err)
 	}
-	// 解除引用后硬删不应再触发外键约束。
+	// 会话引用解除（会话任务先删除）后硬删不应再触发外键约束。
+	for _, sid := range []int64{sid1, sid2} {
+		if err := s.DeleteTask(sid); err != nil {
+			t.Fatalf("删除会话任务 %d 应成功: %v", sid, err)
+		}
+	}
 	if err := s.DeleteTask(taskID); err != nil {
 		t.Fatalf("解除引用后删除任务应成功: %v", err)
 	}
@@ -1108,19 +1125,19 @@ func TestScheduleProjectAndFailurePolicyRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := s.CreateSchedule(Schedule{
-		Name: "project schedule", Cron: "0 0 * * * *", TitleTemplate: "tick", RoleID: roleID,
+	id, err := s.CreateTask(Task{
+		Title: "project schedule", Cron: "0 0 * * * *", Body: "tick", RoleID: &roleID,
 		ProjectID: &projectID, BlockOnFailure: true, Enabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sc, err := s.GetSchedule(id)
+	sc, err := s.GetTask(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sc.ProjectID == nil || *sc.ProjectID != projectID || !sc.BlockOnFailure || sc.ProjectName != "schedule-project" {
-		t.Fatalf("项目定时任务字段未完整往返: %+v", sc)
+	if sc.Cron != "0 0 * * * *" || !sc.Enabled || sc.ProjectID == nil || *sc.ProjectID != projectID || !sc.BlockOnFailure || sc.ProjectName != "schedule-project" {
+		t.Fatalf("项目定时定义任务字段未完整往返: %+v", sc)
 	}
 }
 

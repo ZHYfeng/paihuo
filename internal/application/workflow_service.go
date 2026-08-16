@@ -20,6 +20,8 @@ import (
 	"paihuo/internal/workflow"
 )
 
+// WorkflowService 管理工作流任务（type=workflow）的提案门禁与 Run 实例化。
+// Proposal/Plan 折叠为任务状态与字段：proposed → validated/rejected → adopted。
 type WorkflowService struct {
 	store    *store.Store
 	runtimes *paiexec.RuntimeService
@@ -47,7 +49,8 @@ func (s *WorkflowService) resolveRole(roleID int64) workflow.RoleCapabilities {
 	return workflow.RoleCapabilities{Exists: true, Enabled: role.Enabled, Capabilities: capabilities}
 }
 
-func (s *WorkflowService) CreateProposal(spec workflow.Spec) (*workflow.Proposal, error) {
+// CreateProposal 创建工作流任务（proposed）。cron 非空时是定时工作流定义。
+func (s *WorkflowService) CreateProposal(spec workflow.Spec, cron string, enabled bool) (*store.Task, error) {
 	if spec.Version == 0 {
 		spec.Version = 1
 	}
@@ -63,71 +66,93 @@ func (s *WorkflowService) CreateProposal(spec workflow.Spec) (*workflow.Proposal
 	if spec.AdoptionPolicy == "" {
 		spec.AdoptionPolicy = "manual"
 	}
-	id, err := s.store.CreateWorkflowProposal(spec)
+	id, err := s.store.CreateWorkflowTask(spec, cron, enabled)
 	if err != nil {
 		return nil, err
 	}
-	proposal, err := s.store.GetWorkflowProposal(id)
+	proposal, err := s.store.GetWorkflowTask(id)
 	if err == nil {
 		s.events.Publish(events.Event{Type: "workflow.proposal.created", Payload: proposal})
 	}
 	return proposal, err
 }
 
-func (s *WorkflowService) ValidateProposal(id, expectedRevision int64) (*workflow.Proposal, error) {
-	proposal, err := s.store.GetWorkflowProposal(id)
+// ValidateProposal 运行确定性策略校验并记录结果（validated / rejected）。
+func (s *WorkflowService) ValidateProposal(id, expectedRevision int64) (*store.Task, error) {
+	proposal, err := s.store.GetWorkflowTask(id)
 	if err != nil {
 		return nil, err
+	}
+	if proposal == nil {
+		return nil, sql.ErrNoRows
 	}
 	if proposal.Revision != expectedRevision {
 		return nil, store.ErrRevisionConflict
 	}
-	violations := s.policy.Validate(proposal.Spec)
-	if _, err := s.store.GetProject(proposal.Spec.ProjectID); err != nil {
+	spec, err := specOf(proposal)
+	if err != nil {
+		return nil, err
+	}
+	violations := s.policy.Validate(spec)
+	if _, err := s.store.GetProject(spec.ProjectID); err != nil {
 		violations = append(violations, workflow.Violation{Code: "project_unavailable", Message: "Project 不存在"})
 	}
 	if err := s.store.RecordWorkflowValidation(id, expectedRevision, violations); err != nil {
 		return nil, err
 	}
-	validated, err := s.store.GetWorkflowProposal(id)
+	validated, err := s.store.GetWorkflowTask(id)
 	if err == nil {
 		s.events.Publish(events.Event{Type: "workflow.proposal.validated", Payload: validated})
 	}
 	return validated, err
 }
 
-func (s *WorkflowService) AdoptProposal(id, expectedRevision int64) (*workflow.Plan, error) {
+// AdoptProposal 采纳工作流任务：只接受 validated 且零违规，写入 spec_hash 冻结。
+func (s *WorkflowService) AdoptProposal(id, expectedRevision int64) (*store.Task, error) {
 	proposal, err := s.ValidateProposal(id, expectedRevision)
 	if err != nil {
 		return nil, err
 	}
-	if len(proposal.Violations) > 0 {
+	spec, err := specOf(proposal)
+	if err != nil {
+		return nil, err
+	}
+	var violations []workflow.Violation
+	if err := json.Unmarshal([]byte(proposal.Violations), &violations); err == nil && len(violations) > 0 {
 		return nil, fmt.Errorf("Workflow Proposal 未通过策略校验")
 	}
-	canonical, err := json.Marshal(proposal.Spec)
+	canonical, err := json.Marshal(spec)
 	if err != nil {
 		return nil, err
 	}
 	hash := sha256.Sum256(canonical)
-	plan, err := s.store.AdoptWorkflowProposal(id, proposal.Revision, hex.EncodeToString(hash[:]))
+	adopted, err := s.store.AdoptWorkflowTask(id, proposal.Revision, hex.EncodeToString(hash[:]))
 	if err == nil {
-		s.events.Publish(events.Event{Type: "workflow.plan.frozen", Payload: plan})
+		s.events.Publish(events.Event{Type: "workflow.plan.frozen", Payload: adopted})
 	}
-	return plan, err
+	return adopted, err
 }
 
+// StartPlan 从已采纳（冻结）的工作流任务原子实例化一次 Run。
 func (s *WorkflowService) StartPlan(id, expectedRevision int64) (*workflow.Run, error) {
-	plan, err := s.store.GetWorkflowPlan(id)
+	tk, err := s.store.GetWorkflowTask(id)
 	if err != nil {
 		return nil, err
 	}
-	if plan.Revision != expectedRevision {
+	if tk == nil {
+		return nil, sql.ErrNoRows
+	}
+	if tk.Revision != expectedRevision {
 		return nil, store.ErrRevisionConflict
 	}
-	if violations := s.policy.Validate(plan.Spec); len(violations) > 0 {
+	spec, err := specOf(tk)
+	if err != nil {
+		return nil, err
+	}
+	if violations := s.policy.Validate(spec); len(violations) > 0 {
 		return nil, fmt.Errorf("Workflow Plan 当前不可运行: %s", violations[0].Message)
 	}
-	run, err := s.store.InstantiateWorkflow(*plan)
+	run, err := s.store.InstantiateWorkflow(*tk)
 	if err != nil {
 		return nil, err
 	}
@@ -138,30 +163,42 @@ func (s *WorkflowService) StartPlan(id, expectedRevision int64) (*workflow.Run, 
 	return run, nil
 }
 
-func (s *WorkflowService) ListProposals() ([]workflow.Proposal, error) {
-	return s.store.ListWorkflowProposals()
+// ListProposals 返回全部工作流任务（新→旧）。
+func (s *WorkflowService) ListProposals() ([]store.Task, error) {
+	return s.store.ListWorkflowTasks()
 }
 
-func (s *WorkflowService) GetProposal(id int64) (*workflow.Proposal, error) {
-	return s.store.GetWorkflowProposal(id)
+func (s *WorkflowService) GetProposal(id int64) (*store.Task, error) {
+	return s.store.GetWorkflowTask(id)
 }
 
-func (s *WorkflowService) ListPlans() ([]workflow.Plan, error) {
-	return s.store.ListWorkflowPlans()
+// ListPlans 返回已采纳（冻结）的工作流任务。
+func (s *WorkflowService) ListPlans() ([]store.Task, error) {
+	all, err := s.store.ListWorkflowTasks()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]store.Task, 0, len(all))
+	for _, tk := range all {
+		if tk.Status == workflow.ProposalStatusAdopted {
+			out = append(out, tk)
+		}
+	}
+	return out, nil
 }
 
-func (s *WorkflowService) GetPlan(id int64) (*workflow.Plan, error) {
-	return s.store.GetWorkflowPlan(id)
+func (s *WorkflowService) GetPlan(id int64) (*store.Task, error) {
+	return s.store.GetWorkflowTask(id)
 }
 
 func (s *WorkflowService) GetRun(id int64) (*workflow.Run, error) {
 	return s.store.GetWorkflowRun(id)
 }
 
-// ListRunsByPlan 返回某个 Plan 的全部 Run（新→旧），供 Plan 页恢复并
-// 展示最近一次启动的聚合状态。
-func (s *WorkflowService) ListRunsByPlan(planID int64) ([]workflow.Run, error) {
-	return s.store.ListWorkflowRunsByPlan(planID)
+// ListRunsByWorkflow 返回某个工作流任务的全部 Run（新→旧），供工作流页
+// 恢复并展示最近一次启动的聚合状态。
+func (s *WorkflowService) ListRunsByWorkflow(workflowID int64) ([]workflow.Run, error) {
+	return s.store.ListWorkflowRunsByWorkflow(workflowID)
 }
 
 func (s *WorkflowService) StartMonitor(ctx context.Context) {
@@ -250,4 +287,16 @@ func (s *WorkflowService) runStatus(run workflow.Run) (status string, blocked bo
 		return workflow.RunStatusFailed, false
 	}
 	return workflow.RunStatusSucceeded, false
+}
+
+// specOf 解析工作流任务的 spec JSON。
+func specOf(tk *store.Task) (workflow.Spec, error) {
+	var spec workflow.Spec
+	if tk == nil || tk.Spec == "" {
+		return spec, errors.New("工作流任务缺少 spec")
+	}
+	if err := json.Unmarshal([]byte(tk.Spec), &spec); err != nil {
+		return spec, fmt.Errorf("工作流 spec 解析失败: %w", err)
+	}
+	return spec, nil
 }

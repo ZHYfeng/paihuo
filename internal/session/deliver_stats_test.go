@@ -38,7 +38,7 @@ func TestDeliveredTaskCountsInProjectStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpdateSession(ss.ID, map[string]any{"status": store.SessionStatusSuspended}); err != nil {
+	if err := st.UpdateTask(ss.ID, map[string]any{"status": store.SessionStatusSuspended}); err != nil {
 		t.Fatal(err)
 	}
 	tk, err := m.Deliver(context.Background(), ss.ID, "交付任务", "", store.PermFull)
@@ -69,8 +69,10 @@ func TestDeliveredTaskCountsInProjectStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tasks) != 3 {
-		t.Fatalf("项目任务列表 len=%d, want 3", len(tasks))
+	// 四形态统一后会话也是任务（type=session，project_id=pid），因此项目
+	// 任务列表 = 普通 + 会话 + 交付 + 合并 = 4；交付任务必须在列表中。
+	if len(tasks) != 4 {
+		t.Fatalf("项目任务列表 len=%d, want 4（普通+会话+交付+合并）", len(tasks))
 	}
 	var found bool
 	for _, x := range tasks {
@@ -93,7 +95,7 @@ func TestDeliveredSessionDiscardableNotReusable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpdateSession(ss.ID, map[string]any{"status": store.SessionStatusSuspended}); err != nil {
+	if err := st.UpdateTask(ss.ID, map[string]any{"status": store.SessionStatusSuspended}); err != nil {
 		t.Fatal(err)
 	}
 	tk, err := m.Deliver(context.Background(), ss.ID, "交付归档", "", store.PermReview)
@@ -133,7 +135,7 @@ func TestOverviewInFlightCountsOnlyActive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sid, err := st.CreateSession(store.Session{Title: "s", RoleID: agentID, Status: store.SessionStatusDelivered})
+	sid, err := st.CreateSessionTask(store.Task{Title: "s", RoleID: &agentID, Status: store.SessionStatusDelivered})
 	if err != nil {
 		t.Fatal(err)
 	}

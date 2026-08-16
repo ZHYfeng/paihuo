@@ -48,7 +48,7 @@ const (
 //
 //	created ──start──> active ──suspend──> suspended ──resume──> active
 //	   │                  │                                       │
-//	   ├──discard─────────┼──deliver──> delivered（冻结，关联 task_id）│
+//	   ├──discard─────────┼──deliver──> delivered（冻结，关联收编任务）│
 //	   │                  └───────────────┬────────────────────────┘
 //	   └──────────────deleted─────────────┘（清理 worktree）
 const (
@@ -59,34 +59,15 @@ const (
 	SessionStatusDeleted   = "deleted"
 )
 
-// Session 是与任务平行的一等公民：复杂问题的常驻交互会话。
-// 无执行-结算语义：挂起只释放进程/槽位，transcript 由 pi 会话文件持久化；
-// 交付时才创建任务（复用会话 worktree，见 Task.SessionID）走审批→合并流程。
-type Session struct {
-	ID             int64   `json:"id"`
-	ProjectID      *int64  `json:"project_id"`
-	ProjectName    string  `json:"project_name,omitempty"`
-	RoleID         int64   `json:"role_id"`
-	RoleName       string  `json:"role_name,omitempty"`
-	Title          string  `json:"title"`
-	Status         string  `json:"status"`
-	RuntimeID      string  `json:"runtime_id"` // 冗余自角色，前端展示用：pi | omp
-	WorktreeBranch string  `json:"worktree_branch"`
-	WorktreePath   string  `json:"worktree_path"`
-	BaseCommit     string  `json:"base_commit"` // 创建 worktree 时主分支 HEAD
-	SessionDir     string  `json:"session_dir"` // pi 会话文件目录
-	TaskID         *int64  `json:"task_id"`     // 交付后关联
-	LastMessageAt  string  `json:"last_message_at"`
-	MessageCount   int     `json:"message_count"`
-	Revision       int64   `json:"revision"`
-	CreatedAt      string  `json:"created_at"`
-	StartedAt      *string `json:"started_at"`
-	SuspendedAt    *string `json:"suspended_at"`
-	DeliveredAt    *string `json:"delivered_at"`
-	UpdatedAt      string  `json:"updated_at"`
-}
+// 任务形态。四种形态物理统一在 tasks 表：task/session/workflow 是基础形态，
+// 定时是正交属性（任何形态可挂 cron，见 Task.Cron）。
+const (
+	TaskTypeTask     = "task"     // 单任务：一次 batch/interactive 执行
+	TaskTypeSession  = "session"  // 会话：常驻交互协作，交付后形成收编任务
+	TaskTypeWorkflow = "workflow" // 复合任务：提案→校验→冻结，实例化为子任务树
+)
 
-// SessionFilter 是会话列表过滤条件。
+// SessionFilter 是会话列表过滤条件（会话 = type=session 的任务）。
 type SessionFilter struct {
 	ProjectID      *int64
 	Status         string
@@ -132,42 +113,59 @@ func (a Role) ConcurrencyLimit() int {
 }
 
 type Task struct {
-	ID             int64   `json:"id"`
-	Title          string  `json:"title"`
-	Body           string  `json:"body"`
-	Status         string  `json:"status"`
-	Perm           string  `json:"perm"`
-	RunMode        string  `json:"run_mode"`
-	Concurrent     bool    `json:"concurrent"` // 是否并发执行：默认串行（同一项目同时只执行一个任务）
-	RoleID         *int64  `json:"role_id"`
-	RoleName       string  `json:"role_name,omitempty"`
-	ProjectID      *int64  `json:"project_id"`
-	ProjectName    string  `json:"project_name,omitempty"`
-	ProjectDir     string  `json:"project_dir"`
-	ParentID       *int64  `json:"parent_id"`
-	DependsOn      *int64  `json:"depends_on"`       // 前置实现任务（不直接指向合并子任务）
-	DependencyMode string  `json:"dependency_mode"`  // none | weak（自动顺序）| strong（明确前置）
-	BlockOnFailure bool    `json:"block_on_failure"` // 本交付失败时是否阻塞其弱依赖后项
-	ScheduleID     *int64  `json:"schedule_id"`
-	Error          string  `json:"error"`
-	ExitCode       *int    `json:"exit_code"`
-	ReviewNote     string  `json:"review_note"`
-	ReviewRounds   int     `json:"review_rounds"`
-	TmuxLogOffset  int64   `json:"-"`                       // 已从专用 tmux 原始日志同步到 SQLite 的字节偏移
-	WorktreeBranch string  `json:"worktree_branch"`         // 任务隔离 worktree 分支（paihuo/task-<id>）
-	BaseCommit     string  `json:"base_commit"`             // 创建 worktree 时主分支 HEAD
-	ResumeOf       *int64  `json:"resume_of"`               // 续跑自哪个任务（复用其会话目录）
-	MergeOf        *int64  `json:"merge_of"`                // 合并任务整合自哪个源任务
-	SessionID      *int64  `json:"session_id"`              // 会话交付创建（复用会话 worktree/分支）
-	WorkflowRunID  *int64  `json:"workflow_run_id"`         // Workflow Run 原子实例化的归属
-	SortOrder      int64   `json:"sort_order"`              // 项目内执行顺序（合并任务不参与排序）
-	TerminalCols   int     `json:"terminal_cols,omitempty"` // 交互终端最近同步尺寸（列）；0=未同步（默认 80）
-	TerminalRows   int     `json:"terminal_rows,omitempty"` // 交互终端最近同步尺寸（行）；0=未同步（默认 24）
-	Revision       int64   `json:"revision"`
-	CreatedAt      string  `json:"created_at"`
-	StartedAt      *string `json:"started_at"`
-	FinishedAt     *string `json:"finished_at"`
-	UpdatedAt      string  `json:"updated_at"`
+	ID             int64  `json:"id"`
+	Type           string `json:"type"` // task | session | workflow（TaskType*）
+	Title          string `json:"title"`
+	Body           string `json:"body"`
+	Status         string `json:"status"`
+	Perm           string `json:"perm"`
+	RunMode        string `json:"run_mode"`
+	Concurrent     bool   `json:"concurrent"` // 是否并发执行：默认串行（同一项目同时只执行一个任务）
+	RoleID         *int64 `json:"role_id"`
+	RoleName       string `json:"role_name,omitempty"`
+	ProjectID      *int64 `json:"project_id"`
+	ProjectName    string `json:"project_name,omitempty"`
+	ProjectDir     string `json:"project_dir"`
+	ParentID       *int64 `json:"parent_id"`
+	DependsOn      *int64 `json:"depends_on"`       // 前置实现任务（不直接指向合并子任务）
+	DependencyMode string `json:"dependency_mode"`  // none | weak（自动顺序）| strong（明确前置）
+	BlockOnFailure bool   `json:"block_on_failure"` // 本交付失败时是否阻塞其弱依赖后项
+	ScheduleID     *int64 `json:"schedule_id"`      // 定时触发的实例：指向定义任务 id
+	Error          string `json:"error"`
+	ExitCode       *int   `json:"exit_code"`
+	ReviewNote     string `json:"review_note"`
+	ReviewRounds   int    `json:"review_rounds"`
+	TmuxLogOffset  int64  `json:"-"`                       // 已从专用 tmux 原始日志同步到 SQLite 的字节偏移
+	WorktreeBranch string `json:"worktree_branch"`         // 任务隔离 worktree 分支（paihuo/task-<id>）
+	BaseCommit     string `json:"base_commit"`             // 创建 worktree 时主分支 HEAD
+	ResumeOf       *int64 `json:"resume_of"`               // 续跑自哪个任务（复用其会话目录）
+	MergeOf        *int64 `json:"merge_of"`                // 合并任务整合自哪个源任务
+	SessionID      *int64 `json:"session_id"`              // 会话交付创建的收编任务回链（指向 type=session 的任务）
+	WorkflowRunID  *int64 `json:"workflow_run_id"`         // Workflow Run 原子实例化的归属
+	SortOrder      int64  `json:"sort_order"`              // 项目内执行顺序（合并任务不参与排序）
+	TerminalCols   int    `json:"terminal_cols,omitempty"` // 交互终端最近同步尺寸（列）；0=未同步（默认 80）
+	TerminalRows   int    `json:"terminal_rows,omitempty"` // 交互终端最近同步尺寸（行）；0=未同步（默认 24）
+	// 定时属性（正交：任何形态可挂；cron 为空 = 非定时）
+	Cron      string  `json:"cron,omitempty"` // 六段 cron 表达式；非空时本任务为定时定义，永不直接执行
+	Enabled   bool    `json:"enabled"`        // 定时启停（cron 为空时忽略）
+	LastRunAt *string `json:"last_run_at"`
+	NextRunAt *string `json:"next_run_at"`
+	// 会话字段（type=session）
+	WorktreePath  string  `json:"worktree_path,omitempty"` // 会话 worktree（非 git/无项目时）
+	SessionDir    string  `json:"session_dir,omitempty"`   // pi 会话文件目录
+	LastMessageAt string  `json:"last_message_at,omitempty"`
+	MessageCount  int     `json:"message_count,omitempty"`
+	SuspendedAt   *string `json:"suspended_at"`
+	DeliveredAt   *string `json:"delivered_at"`
+	// 工作流字段（type=workflow）
+	Spec       string  `json:"spec,omitempty"`       // workflow.Spec JSON（提案/冻结共用）
+	Violations string  `json:"violations,omitempty"` // 校验结果 JSON（workflow.Violation[]）
+	SpecHash   string  `json:"spec_hash,omitempty"`  // 采纳（冻结）时写入，之后不可变
+	Revision   int64   `json:"revision"`
+	CreatedAt  string  `json:"created_at"`
+	StartedAt  *string `json:"started_at"`
+	FinishedAt *string `json:"finished_at"`
+	UpdatedAt  string  `json:"updated_at"`
 }
 
 // NewMergeTask 创建用于整合 source 代码的专属子任务。它自身带有 MergeOf，
@@ -341,23 +339,4 @@ type EventRecord struct {
 	RoleID    int64  `json:"role_id,omitempty"`
 	Payload   []byte `json:"-"`
 	CreatedAt string `json:"created_at"`
-}
-
-type Schedule struct {
-	ID             int64   `json:"id"`
-	Name           string  `json:"name"`
-	Cron           string  `json:"cron"`
-	TitleTemplate  string  `json:"title_template"`
-	BodyTemplate   string  `json:"body_template"`
-	RoleID         int64   `json:"role_id"`
-	RoleName       string  `json:"role_name,omitempty"`
-	ProjectID      *int64  `json:"project_id"`
-	ProjectName    string  `json:"project_name,omitempty"`
-	Perm           string  `json:"perm"` // 每次触发时写入新建任务的权限模式
-	BlockOnFailure bool    `json:"block_on_failure"`
-	Enabled        bool    `json:"enabled"`
-	Revision       int64   `json:"revision"`
-	LastRunAt      *string `json:"last_run_at"`
-	NextRunAt      *string `json:"next_run_at"`
-	CreatedAt      string  `json:"created_at"`
 }

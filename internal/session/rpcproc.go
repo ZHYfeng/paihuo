@@ -337,5 +337,5 @@ func broadcastEvent(hub *events.EventStream, typ string, payload any) {
 
 // touchSession 更新会话的 last_message_at（消息事件时）。
 func touchSession(st *store.Store, id int64, ts string) {
-	_ = st.UpdateSession(id, map[string]any{"last_message_at": ts, "updated_at": ts})
+	_ = st.UpdateTask(id, map[string]any{"last_message_at": ts, "updated_at": ts})
 }

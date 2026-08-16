@@ -36,7 +36,7 @@ func TestWorkflowProposalFreezesAndInstantiatesDependencyGraph(t *testing.T) {
 			{ID: "build", Intent: "构建", Role: workflow.RoleSelector{RoleID: roleID}, Permission: store.PermFull, TimeoutSeconds: 60, FailurePolicy: "stop", Budget: 40},
 			{ID: "verify", Intent: "验证", Role: workflow.RoleSelector{RoleID: roleID}, DependsOn: []string{"build"}, Permission: store.PermReview, TimeoutSeconds: 60, FailurePolicy: "stop", Budget: 20},
 		},
-	})
+	}, "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,12 +44,19 @@ func TestWorkflowProposalFreezesAndInstantiatesDependencyGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.SpecHash == "" || plan.Status != workflow.PlanStatusFrozen {
+	if plan.SpecHash == "" || plan.Status != workflow.ProposalStatusAdopted {
 		t.Fatalf("plan not frozen: %+v", plan)
 	}
 	run, err := service.StartPlan(plan.ID, plan.Revision)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if run.WorkflowID != plan.ID {
+		t.Fatalf("run.WorkflowID=%d, want plan id %d", run.WorkflowID, plan.ID)
+	}
+	// 采纳后工作流任务保持 adopted（冻结态），run 不应再改动其状态，可多次 run。
+	if tk, err := st.GetWorkflowTask(plan.ID); err != nil || tk == nil || tk.Status != workflow.ProposalStatusAdopted {
+		t.Fatalf("工作流任务采纳后应保持 adopted: %+v %v", tk, err)
 	}
 	build, _ := st.GetTask(run.TaskIDs["build"])
 	verify, _ := st.GetTask(run.TaskIDs["verify"])

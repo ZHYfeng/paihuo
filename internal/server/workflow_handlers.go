@@ -24,14 +24,21 @@ func (s *Server) workflowRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) createWorkflowProposal(w http.ResponseWriter, r *http.Request) {
-	var spec workflow.Spec
-	if !readJSON(w, r, &spec) {
+	var in struct {
+		Spec    workflow.Spec `json:"spec"`
+		Cron    string        `json:"cron"`
+		Enabled bool          `json:"enabled"`
+	}
+	if !readJSON(w, r, &in) {
 		return
 	}
-	item, err := s.workflows.CreateProposal(spec)
+	item, err := s.workflows.CreateProposal(in.Spec, in.Cron, in.Enabled)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if in.Cron != "" {
+		s.sched.Reload()
 	}
 	writeResource(w, http.StatusCreated, item.Revision, item)
 }
@@ -136,7 +143,7 @@ func (s *Server) listWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := s.workflows.ListRunsByPlan(id)
+	items, err := s.workflows.ListRunsByWorkflow(id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

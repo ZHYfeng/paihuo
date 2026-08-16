@@ -8,9 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"paihuo/internal/application"
 	"paihuo/internal/events"
 	"paihuo/internal/exec"
 	"paihuo/internal/sched"
+	"paihuo/internal/session"
 	"paihuo/internal/store"
 )
 
@@ -24,7 +26,10 @@ func TestCreateInteractiveTaskOnlySupportsPiAndOmpAgents(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewEventStream()
 	executor := exec.NewForTest(st, hub, t.TempDir(), "server-input-test.db", "server-input-test")
-	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
+	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
+	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
+	sc := sched.New(st, hub, executor, sess, wf)
+	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
 
 	agentIDs := make(map[string]int64)
 	for _, cli := range []string{"omp", "opencode", "pi", "claude", "codex"} {
@@ -129,7 +134,10 @@ func TestInteractiveInputRequiresExactlyOnePayloadMode(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewEventStream()
 	executor := exec.NewForTest(st, hub, t.TempDir(), "server-input-payload-test.db", "server-input-payload-test")
-	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
+	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
+	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
+	sc := sched.New(st, hub, executor, sess, wf)
+	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
 	agentID, err := st.CreateRole(store.Role{Name: "pi", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +170,10 @@ func TestPatchTaskChangesAssignedAgent(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewEventStream()
 	executor := exec.NewForTest(st, hub, t.TempDir(), "server-task-agent-patch-test.db", "server-task-agent-patch-test")
-	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
+	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
+	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
+	sc := sched.New(st, hub, executor, sess, wf)
+	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
 
 	fromID, err := st.CreateRole(store.Role{Name: "from", RuntimeID: "pi", Enabled: true})
 	if err != nil {
@@ -258,7 +269,10 @@ func TestResumeTaskRequeuesOriginalTask(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewEventStream()
 	executor := exec.NewForTest(st, hub, t.TempDir(), "server-resume-test.db", "server-resume-test")
-	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
+	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
+	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
+	sc := sched.New(st, hub, executor, sess, wf)
+	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
 
 	agentID, err := st.CreateRole(store.Role{Name: "pi", RuntimeID: "pi", Enabled: true})
 	if err != nil {
@@ -329,7 +343,10 @@ func TestResumeTaskDoesNotBypassExistingMergeTask(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewEventStream()
 	executor := exec.NewForTest(st, hub, t.TempDir(), "server-resume-merge-test.db", "server-resume-merge-test")
-	s := New(st, hub, executor, sched.New(st, hub, executor), "", t.TempDir())
+	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
+	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
+	sc := sched.New(st, hub, executor, sess, wf)
+	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
 	agentID, err := st.CreateRole(store.Role{Name: "pi", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)

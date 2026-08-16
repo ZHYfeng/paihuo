@@ -27,6 +27,9 @@ type CreateTaskRequest struct {
 	BlockOnFailure bool   `json:"block_on_failure"`
 	ParentID       *int64 `json:"parent_id"`
 	ResumeOf       *int64 `json:"resume_of,omitempty"`
+	// 定时属性（正交）：cron 非空时创建定时定义任务，永不直接执行。
+	Cron    string `json:"cron"`
+	Enabled bool   `json:"enabled"`
 }
 
 func NewTaskLifecycle(st *store.Store, runtimes *paiexec.RuntimeService, executor *paiexec.Executor) *TaskLifecycle {
@@ -52,7 +55,8 @@ func (s *TaskLifecycle) Create(request CreateTaskRequest) (*store.Task, error) {
 	}
 	task := store.Task{Title: request.Title, Body: request.Body, Status: store.StatusQueued, Perm: request.Permission, RunMode: request.RunMode,
 		Concurrent: request.Concurrent, RoleID: request.RoleID, ProjectID: request.ProjectID, ParentID: request.ParentID, ResumeOf: request.ResumeOf,
-		DependencyMode: request.DependencyMode, DependsOn: request.DependsOn, BlockOnFailure: request.BlockOnFailure}
+		DependencyMode: request.DependencyMode, DependsOn: request.DependsOn, BlockOnFailure: request.BlockOnFailure,
+		Cron: request.Cron, Enabled: request.Enabled}
 	if request.ProjectID != nil {
 		project, err := s.store.GetProject(*request.ProjectID)
 		if err != nil {
@@ -81,7 +85,7 @@ func (s *TaskLifecycle) Create(request CreateTaskRequest) (*store.Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	if s.executor != nil {
+	if s.executor != nil && task.Cron == "" {
 		s.executor.Wake()
 	}
 	return s.store.GetTask(id)

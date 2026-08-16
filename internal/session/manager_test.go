@@ -161,8 +161,9 @@ func TestStartRejectsLegacyNonPiOmpSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := st.CreateSession(store.Session{
-		RoleID: cxID, Title: "遗留", Status: store.SessionStatusCreated, RuntimeID: "codex",
+	// 绕过创建校验直接落库（Runtime 能力由角色 runtime_id 决定，启动时校验）。
+	id, err := st.CreateSessionTask(store.Task{
+		RoleID: &cxID, Title: "遗留", Status: store.SessionStatusCreated,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -231,13 +232,17 @@ func TestDeliverReusesWorktree(t *testing.T) {
 	if branch != ss.WorktreeBranch {
 		t.Errorf("ensure branch=%s want %s", branch, ss.WorktreeBranch)
 	}
-	// 会话已冻结。
+	// 会话已冻结；收编任务回链会话（tasks.session_id 指向会话 id）。
 	got, _ := m.Get(ss.ID)
 	if got.Status != store.SessionStatusDelivered {
 		t.Errorf("status=%s", got.Status)
 	}
-	if got.TaskID == nil || *got.TaskID != tk.ID {
-		t.Errorf("session.task_id=%v", got.TaskID)
+	delivered, err := st.GetTask(tk.ID)
+	if err != nil {
+		t.Fatalf("get delivered task: %v", err)
+	}
+	if delivered.SessionID == nil || *delivered.SessionID != ss.ID {
+		t.Errorf("delivered task session_id=%v, want %d", delivered.SessionID, ss.ID)
 	}
 }
 
@@ -251,7 +256,7 @@ func TestDeliverReviewSkipsExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := st.UpdateSession(ss.ID, map[string]any{"status": store.SessionStatusSuspended}); err != nil {
+	if err := st.UpdateTask(ss.ID, map[string]any{"status": store.SessionStatusSuspended}); err != nil {
 		t.Fatalf("suspend via store: %v", err)
 	}
 	tk, err := m.Deliver(context.Background(), ss.ID, "交付审查", "", store.PermReview)
@@ -275,10 +280,14 @@ func TestDeliverReviewSkipsExecution(t *testing.T) {
 	if len(kids) != 0 {
 		t.Fatalf("review 交付不应有合并子任务: %+v", kids)
 	}
-	// 会话冻结。
+	// 会话冻结；收编任务回链会话。
 	got, _ := m.Get(ss.ID)
-	if got.Status != store.SessionStatusDelivered || got.TaskID == nil || *got.TaskID != tk.ID {
+	if got.Status != store.SessionStatusDelivered {
 		t.Fatalf("会话未冻结: %+v", got)
+	}
+	delivered, err := st.GetTask(tk.ID)
+	if err != nil || delivered.SessionID == nil || *delivered.SessionID != ss.ID {
+		t.Fatalf("收编任务未回链会话: %+v err=%v", delivered, err)
 	}
 }
 
@@ -302,7 +311,7 @@ func TestDeliverFullNonGitCompletesWithoutMerge(t *testing.T) {
 	if ss.WorktreeBranch != "" {
 		t.Fatalf("非 git 会话不应有分支: %q", ss.WorktreeBranch)
 	}
-	if err := st.UpdateSession(ss.ID, map[string]any{"status": store.SessionStatusSuspended}); err != nil {
+	if err := st.UpdateTask(ss.ID, map[string]any{"status": store.SessionStatusSuspended}); err != nil {
 		t.Fatalf("suspend via store: %v", err)
 	}
 	tk, err := m.Deliver(context.Background(), ss.ID, "交付普通", "", store.PermFull)
@@ -469,8 +478,9 @@ func TestTranscriptPagination(t *testing.T) {
 		[]byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sid, err := st.CreateSession(store.Session{
-		RoleID: 1, Title: "pagination", Status: store.SessionStatusDelivered,
+	roleID := int64(1) // newTestEnv 创建的最小角色
+	sid, err := st.CreateSessionTask(store.Task{
+		RoleID: &roleID, Title: "pagination", Status: store.SessionStatusDelivered,
 		SessionDir: dir, CreatedAt: store.Now(), UpdatedAt: store.Now(),
 	})
 	if err != nil {

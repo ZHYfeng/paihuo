@@ -76,7 +76,7 @@ func (m *Manager) stderrPathOf(id int64) string {
 // Create 创建会话，标题自动使用对应角色名称：git 项目建隔离 worktree
 // （sessions/<project>/session-<id>），非 git 项目复制到专属会话目录，无项目时使用独立空目录
 // （sessions/session-<id>，不关联任何项目）。
-func (m *Manager) Create(projectID *int64, roleID int64) (*store.Session, error) {
+func (m *Manager) Create(projectID *int64, roleID int64) (*store.Task, error) {
 	agent, err := m.st.GetRole(roleID)
 	if err != nil {
 		return nil, err
@@ -97,20 +97,19 @@ func (m *Manager) Create(projectID *int64, roleID int64) (*store.Session, error)
 	if err := m.validateCreate(*agent); err != nil {
 		return nil, err
 	}
-	// 先建记录拿 id，再建 worktree（路径含 session id）。
-	ss := store.Session{
+	// 先建记录拿 id，再建 worktree（路径含会话 id）。
+	ss := store.Task{
 		ProjectID: projectID,
-		RoleID:    roleID,
+		RoleID:    &roleID,
 		Title:     agent.Name,
 		Status:    store.SessionStatusCreated,
-		RuntimeID: agent.RuntimeID,
 	}
-	id, err := m.st.CreateSession(ss)
+	id, err := m.st.CreateSessionTask(ss)
 	if err != nil {
 		return nil, fmt.Errorf("创建会话失败: %w", err)
 	}
-	// 重新读取（CreateSession 内部补齐时间戳，值拷贝不回传）。
-	ss2, err := m.st.GetSession(id)
+	// 重新读取（CreateSessionTask 内部补齐时间戳，值拷贝不回传）。
+	ss2, err := m.st.GetSessionTask(id)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +130,7 @@ func (m *Manager) Create(projectID *int64, roleID int64) (*store.Session, error)
 		"worktree_path": dir, "worktree_branch": branch, "base_commit": base,
 		"session_dir": m.sessionDirOf(id), "updated_at": store.Now(),
 	}
-	if err := m.st.UpdateSession(id, set); err != nil {
+	if err := m.st.UpdateTask(id, set); err != nil {
 		return nil, err
 	}
 	ss.WorktreePath, ss.WorktreeBranch, ss.BaseCommit, ss.SessionDir = dir, branch, base, m.sessionDirOf(id)
@@ -140,13 +139,13 @@ func (m *Manager) Create(projectID *int64, roleID int64) (*store.Session, error)
 }
 
 // Get 返回单个会话。
-func (m *Manager) Get(id int64) (*store.Session, error) {
-	return m.st.GetSession(id)
+func (m *Manager) Get(id int64) (*store.Task, error) {
+	return m.st.GetSessionTask(id)
 }
 
 // List 列出会话（默认不含 deleted）。
-func (m *Manager) List(f store.SessionFilter) ([]store.Session, error) {
-	return m.st.ListSessions(f)
+func (m *Manager) List(f store.SessionFilter) ([]store.Task, error) {
+	return m.st.ListSessionTasks(f.ProjectID, f.RoleID, f.Status, f.IncludeDeleted)
 }
 
 // ---------------------------------------------------------------------------
@@ -156,7 +155,7 @@ func (m *Manager) List(f store.SessionFilter) ([]store.Session, error) {
 // 文件，spawn 后 switch_session 接续原会话。
 func (m *Manager) Start(ctx context.Context, id int64) error {
 	_ = ctx // 进程生命周期独立于请求：spawn 不绑定请求 ctx
-	ss, err := m.st.GetSession(id)
+	ss, err := m.st.GetSessionTask(id)
 	if err != nil {
 		return err
 	}
@@ -167,7 +166,7 @@ func (m *Manager) Start(ctx context.Context, id int64) error {
 		log.Printf("⚠ DEBUG start(%d): status=%q", id, ss.Status)
 		return transitionErr(ss.Status, store.SessionStatusActive)
 	}
-	agent, err := m.st.GetRole(ss.RoleID)
+	agent, err := m.st.GetRole(*ss.RoleID)
 	if err != nil {
 		return err
 	}
@@ -198,7 +197,7 @@ func (m *Manager) Start(ctx context.Context, id int64) error {
 
 	now := store.Now()
 	set := map[string]any{"status": store.SessionStatusActive, "started_at": now, "updated_at": now}
-	if err := m.st.UpdateSession(id, set); err != nil {
+	if err := m.st.UpdateTask(id, set); err != nil {
 		m.stopChannel(id)
 		return err
 	}
@@ -207,7 +206,7 @@ func (m *Manager) Start(ctx context.Context, id int64) error {
 }
 
 // startRPC 启动 pi/omp RPC 会话进程（恢复时 switch_session 接续）。
-func (m *Manager) startRPC(ss *store.Session, agent store.Role, dir string) error {
+func (m *Manager) startRPC(ss *store.Task, agent store.Role, dir string) error {
 	proc, err := m.spawn(ss, agent, dir)
 	if err != nil {
 		return err
@@ -233,7 +232,7 @@ func (m *Manager) stopChannel(id int64) {
 }
 
 // spawn 启动 pi/omp RPC 进程并注入事件/退出回调。
-func (m *Manager) spawn(ss *store.Session, agent store.Role, cwd string) (*rpcProc, error) {
+func (m *Manager) spawn(ss *store.Task, agent store.Role, cwd string) (*rpcProc, error) {
 	driver, ok := m.runtimes.Session(agent.RuntimeID)
 	if !ok {
 		return nil, fmt.Errorf("Runtime %s 不提供结构化会话能力", agent.RuntimeID)
@@ -273,7 +272,7 @@ func (m *Manager) detach(id int64) *rpcProc {
 // Suspend 挂起会话：杀进程、释放槽位、状态 → suspended。transcript 由 pi
 // 会话文件持久化，随时可恢复。
 func (m *Manager) Suspend(ctx context.Context, id int64) error {
-	ss, err := m.st.GetSession(id)
+	ss, err := m.st.GetSessionTask(id)
 	if err != nil {
 		return err
 	}
@@ -284,11 +283,11 @@ func (m *Manager) Suspend(ctx context.Context, id int64) error {
 		return transitionErr(ss.Status, store.SessionStatusSuspended)
 	}
 	m.stopChannel(id)
-	if agent, err := m.st.GetRole(ss.RoleID); err == nil && agent != nil {
+	if agent, err := m.st.GetRole(*ss.RoleID); err == nil && agent != nil {
 		m.ex.ReleaseRoleSlot(agent.ID)
 	}
 	now := store.Now()
-	if err := m.st.UpdateSession(id, map[string]any{
+	if err := m.st.UpdateTask(id, map[string]any{
 		"status": store.SessionStatusSuspended, "suspended_at": now, "updated_at": now,
 	}); err != nil {
 		return err
@@ -305,7 +304,7 @@ func (m *Manager) Suspend(ctx context.Context, id int64) error {
 //
 // active 时先终止进程并释放槽位。任务 body 在调用方未提供时预填会话摘要。
 func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, perm string) (*store.Task, error) {
-	ss, err := m.st.GetSession(id)
+	ss, err := m.st.GetSessionTask(id)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +314,7 @@ func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, pe
 	if !CanTransition(ss.Status, store.SessionStatusDelivered) {
 		return nil, transitionErr(ss.Status, store.SessionStatusDelivered)
 	}
-	agent, err := m.st.GetRole(ss.RoleID)
+	agent, err := m.st.GetRole(*ss.RoleID)
 	if err != nil {
 		return nil, err
 	}
@@ -401,9 +400,8 @@ func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, pe
 		}
 	}
 
-	if err := m.st.UpdateSession(id, map[string]any{
-		"status": store.SessionStatusDelivered, "task_id": taskID,
-		"delivered_at": now, "updated_at": now,
+	if err := m.st.UpdateTask(id, map[string]any{
+		"status": store.SessionStatusDelivered, "delivered_at": now, "updated_at": now,
 	}); err != nil {
 		return nil, err
 	}
@@ -418,7 +416,7 @@ func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, pe
 }
 
 // deliverBody 生成交付任务的默认正文：会话摘要（调用方未提供说明时使用）。
-func deliverBody(ss *store.Session, agent *store.Role, projectName string) string {
+func deliverBody(ss *store.Task, agent *store.Role, projectName string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "会话 #%d「%s」的交付成果，已转为任务进入审批/合并流程。\n\n", ss.ID, ss.Title)
 	fmt.Fprintf(&b, "- 角色：%s（%s）\n", agent.Name, agent.RuntimeID)
@@ -439,7 +437,7 @@ func deliverBody(ss *store.Session, agent *store.Role, projectName string) strin
 // Delete 丢弃会话：终止进程、清理 worktree、状态 → deleted。
 // 已交付会话不可删除（worktree 归任务管理）。
 func (m *Manager) Delete(ctx context.Context, id int64) error {
-	ss, err := m.st.GetSession(id)
+	ss, err := m.st.GetSessionTask(id)
 	if err != nil {
 		return err
 	}
@@ -450,14 +448,14 @@ func (m *Manager) Delete(ctx context.Context, id int64) error {
 		return transitionErr(ss.Status, store.SessionStatusDeleted)
 	}
 	m.stopChannel(id)
-	if agent, err := m.st.GetRole(ss.RoleID); err == nil && agent != nil {
+	if agent, err := m.st.GetRole(*ss.RoleID); err == nil && agent != nil {
 		m.ex.ReleaseRoleSlot(agent.ID)
 	}
 	// 清理 worktree（非 git 或已丢失时静默）。
 	if err := workspace.DiscardSessionWorktree(m.projectDir(ss), m.sessionsRoot, m.projectName(ss), id); err != nil {
 		log.Printf("⚠ 会话 %d worktree 清理失败: %v", id, err)
 	}
-	if err := m.st.UpdateSession(id, map[string]any{
+	if err := m.st.UpdateTask(id, map[string]any{
 		"status": store.SessionStatusDeleted, "updated_at": store.Now(),
 	}); err != nil {
 		return err
@@ -500,7 +498,7 @@ func (m *Manager) Prompt(ctx context.Context, id int64, message string, images [
 // autoStart 在会话为 created/suspended 时自动启动进程（pi-web 行为：
 // 发送消息即恢复）。其他状态返回错误。
 func (m *Manager) autoStart(ctx context.Context, id int64) error {
-	ss, err := m.st.GetSession(id)
+	ss, err := m.st.GetSessionTask(id)
 	if err != nil {
 		return err
 	}
@@ -612,7 +610,7 @@ func (m *Manager) State(ctx context.Context, id int64) (json.RawMessage, error) 
 // limit <= 0 表示全量；before 是分页游标（返回该 entry 之前的 limit 条，
 // 不含该条，即「上一页」）。返回 (entries, total, err)——total 为全部条目数（分页指示用）。
 func (m *Manager) Transcript(ctx context.Context, id int64, limit int, before string) ([]map[string]any, int, error) {
-	ss, err := m.st.GetSession(id)
+	ss, err := m.st.GetSessionTask(id)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -665,7 +663,7 @@ func (m *Manager) Transcript(ctx context.Context, id int64, limit int, before st
 
 // increment 返回会话消息数 +1（并发安全：SQLite 单写者）。
 func increment(st *store.Store, id int64) int {
-	ss, err := st.GetSession(id)
+	ss, err := st.GetSessionTask(id)
 	if err != nil || ss == nil {
 		return 0
 	}
@@ -686,7 +684,7 @@ func (m *Manager) handleEvent(id int64, ev rpcEvent) {
 		} else {
 			ts = store.Now()
 		}
-		_ = m.st.UpdateSession(id, map[string]any{
+		_ = m.st.UpdateTask(id, map[string]any{
 			"last_message_at": ts, "message_count": increment(m.st, id), "updated_at": store.Now(),
 		})
 	case "agent_settled":
@@ -704,7 +702,7 @@ func (m *Manager) handleExit(id int64) {
 	if proc == nil {
 		return
 	}
-	ss, err := m.st.GetSession(id)
+	ss, err := m.st.GetSessionTask(id)
 	if err != nil || ss == nil {
 		return
 	}
@@ -712,13 +710,13 @@ func (m *Manager) handleExit(id int64) {
 		return // 主动挂起/交付已处理
 	}
 	now := store.Now()
-	if err := m.st.UpdateSession(id, map[string]any{
+	if err := m.st.UpdateTask(id, map[string]any{
 		"status": store.SessionStatusSuspended, "suspended_at": now, "updated_at": now,
 	}); err != nil {
 		log.Printf("⚠ 会话 %d 崩溃状态更新失败: %v", id, err)
 		return
 	}
-	if agent, err := m.st.GetRole(ss.RoleID); err == nil && agent != nil {
+	if agent, err := m.st.GetRole(*ss.RoleID); err == nil && agent != nil {
 		m.ex.ReleaseRoleSlot(agent.ID)
 	}
 	m.publishUpdated(*ss)
@@ -727,14 +725,14 @@ func (m *Manager) handleExit(id int64) {
 // Recover 服务重启时把遗留的 active 会话置为 suspended（进程已随服务退出
 // 丢失，transcript 由 pi 会话文件持久化，随时可恢复）。启动时调用。
 func (m *Manager) Recover() {
-	list, err := m.st.ListSessions(store.SessionFilter{Status: store.SessionStatusActive})
+	list, err := m.st.ListSessionTasks(nil, nil, store.SessionStatusActive, true)
 	if err != nil {
 		log.Printf("⚠ 扫描遗留会话失败: %v", err)
 		return
 	}
 	for _, ss := range list {
 		now := store.Now()
-		if err := m.st.UpdateSession(ss.ID, map[string]any{
+		if err := m.st.UpdateTask(ss.ID, map[string]any{
 			"status": store.SessionStatusSuspended, "suspended_at": now, "updated_at": now,
 		}); err != nil {
 			log.Printf("⚠ 会话 %d 状态恢复失败: %v", ss.ID, err)
@@ -765,7 +763,7 @@ func (m *Manager) activeProc(id int64) (*rpcProc, error) {
 	proc := m.procs[id]
 	m.mu.Unlock()
 	if proc == nil {
-		ss, err := m.st.GetSession(id)
+		ss, err := m.st.GetSessionTask(id)
 		if err != nil {
 			return nil, err
 		}
@@ -780,7 +778,7 @@ func (m *Manager) activeProc(id int64) (*rpcProc, error) {
 	return proc, nil
 }
 
-func (m *Manager) publishUpdated(ss store.Session) {
+func (m *Manager) publishUpdated(ss store.Task) {
 	m.hub.Publish(events.Event{Type: "session.updated", Payload: ss})
 }
 
@@ -821,7 +819,7 @@ func (m *Manager) StartIdleMonitor(idle time.Duration) {
 				}
 				m.mu.Unlock()
 				for _, id := range idleIDs {
-					ss, err := m.st.GetSession(id)
+					ss, err := m.st.GetSessionTask(id)
 					if err != nil || ss == nil || ss.Status != store.SessionStatusActive {
 						continue
 					}
@@ -865,7 +863,7 @@ func projectNameOf(project *store.Project) string {
 }
 
 // projectDir / projectName 基于会话关联的项目记录（无项目时为空串）。
-func (m *Manager) projectDir(ss *store.Session) string {
+func (m *Manager) projectDir(ss *store.Task) string {
 	if ss.ProjectID == nil {
 		return ""
 	}
@@ -873,7 +871,7 @@ func (m *Manager) projectDir(ss *store.Session) string {
 	return projectDirOf(proj)
 }
 
-func (m *Manager) projectName(ss *store.Session) string {
+func (m *Manager) projectName(ss *store.Task) string {
 	if ss.ProjectID == nil {
 		return ""
 	}

@@ -17,11 +17,13 @@ import (
 	"syscall"
 	"time"
 
+	"paihuo/internal/application"
 	"paihuo/internal/artifact"
 	"paihuo/internal/events"
 	"paihuo/internal/exec"
 	"paihuo/internal/sched"
 	"paihuo/internal/server"
+	"paihuo/internal/session"
 	"paihuo/internal/store"
 	"paihuo/internal/workspace"
 )
@@ -62,7 +64,9 @@ func main() {
 	hub := events.NewEventStream(st)
 	sessionsRoot := filepath.Join(filepath.Dir(db), "sessions")
 	ex := exec.New(st, hub, sessionsRoot, db)
-	sc := sched.New(st, hub, ex)
+	sess := session.New(st, hub, ex, sessionsRoot, filepath.Dir(db))
+	wf := application.NewWorkflowService(st, ex.RuntimeService(), ex, hub)
+	sc := sched.New(st, hub, ex, sess, wf)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -70,7 +74,7 @@ func main() {
 	sc.Start(ctx)
 	go autoCleanup(ctx, st, ex, sessionsRoot)
 
-	srv := server.New(st, hub, ex, sc, token, filepath.Join(filepath.Dir(db), "skills"))
+	srv := server.New(st, hub, ex, sc, sess, wf, token, filepath.Join(filepath.Dir(db), "skills"))
 	srv.SetSecureCookies(secureCookie)
 	srv.Start(ctx)
 	// 不设置 WriteTimeout：SSE 是长连接，写超时会中断正常的实时日志流。

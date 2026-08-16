@@ -10,8 +10,12 @@ import (
 	"strconv"
 	"testing"
 
+	"paihuo/internal/application"
 	"paihuo/internal/artifact"
 	"paihuo/internal/events"
+	"paihuo/internal/exec"
+	"paihuo/internal/sched"
+	"paihuo/internal/session"
 	"paihuo/internal/store"
 )
 
@@ -26,7 +30,11 @@ func TestArtifactAPIStoresListsDownloadsAndDeletesContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	s := New(st, events.NewEventStream(st), nil, nil, "", filepath.Join(root, "skills"))
+	hub := events.NewEventStream(st)
+	sess := session.New(st, hub, nil, t.TempDir(), t.TempDir())
+	wf := application.NewWorkflowService(st, exec.NewDefaultRuntimeService(), nil, hub)
+	sc := sched.New(st, hub, nil, sess, wf)
+	s := New(st, hub, nil, sc, sess, wf, "", filepath.Join(root, "skills"))
 
 	payload := []byte("immutable result\n")
 	requestBody, err := json.Marshal(map[string]any{

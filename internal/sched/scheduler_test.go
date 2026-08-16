@@ -3,13 +3,17 @@ package sched
 import (
 	"testing"
 
+	"paihuo/internal/application"
 	"paihuo/internal/events"
 	paiexec "paihuo/internal/exec"
+	"paihuo/internal/session"
 	"paihuo/internal/store"
 )
 
 // 定时任务只负责按时创建普通任务；绑定项目后，新任务必须和手工创建的
-// 任务一样进入创建时间弱依赖链，而不是绕过项目代码基线。
+// 任务一样进入创建时间弱依赖链，而不是绕过项目代码基线。定时定义任务
+// （cron 非空）本身不参与弱依赖链，触发产生的实例（schedule_id 指向定义、
+// cron 为空）仍按项目执行顺序排队。
 func TestProjectScheduleCreatesWeakDependentTask(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
@@ -18,7 +22,9 @@ func TestProjectScheduleCreatesWeakDependentTask(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewEventStream()
 	executor := paiexec.New(st, hub, t.TempDir(), "schedule-dependency-test.db")
-	s := New(st, hub, executor)
+	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
+	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
+	s := New(st, hub, executor, sess, wf)
 	agentID, err := st.CreateRole(store.Role{Name: "scheduled-agent", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -34,18 +40,20 @@ func TestProjectScheduleCreatesWeakDependentTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scheduleID, err := st.CreateSchedule(store.Schedule{
-		Name: "project cron", Cron: "0 0 * * * *", TitleTemplate: "generated", BodyTemplate: "body",
-		RoleID: agentID, ProjectID: &projectID, BlockOnFailure: true, Enabled: true,
+	// 定时定义 = cron 非空的任务（永不直接执行，也不参与弱依赖链）。
+	scheduleID, err := st.CreateTask(store.Task{
+		Title: "project cron", Cron: "0 0 * * * *", Body: "body",
+		RoleID: &agentID, ProjectID: &projectID, BlockOnFailure: true, Enabled: true,
+		Perm: store.PermFull,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sc, err := st.GetSchedule(scheduleID)
+	sc, err := st.GetTask(scheduleID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	(&scheduleJob{s: s, sc: sc}).Run()
+	(&scheduleJob{s: s, tk: sc}).Run()
 
 	tasks, err := st.ListTasks()
 	if err != nil {
@@ -74,7 +82,9 @@ func TestReloadAcceptsOnlySixFieldCronRules(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	hub := events.NewEventStream()
 	executor := paiexec.New(st, hub, t.TempDir(), "schedule-parser-test.db")
-	s := New(st, hub, executor)
+	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
+	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
+	s := New(st, hub, executor, sess, wf)
 	agentID, err := st.CreateRole(store.Role{Name: "parser-agent", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -83,8 +93,8 @@ func TestReloadAcceptsOnlySixFieldCronRules(t *testing.T) {
 		{name: "invalid-five-fields", expression: "0 9 * * *"},
 		{name: "valid-six-fields", expression: "0 30 14 * * 3"},
 	} {
-		if _, err := st.CreateSchedule(store.Schedule{
-			Name: item.name, Cron: item.expression, TitleTemplate: "title", RoleID: agentID, Enabled: true,
+		if _, err := st.CreateTask(store.Task{
+			Title: item.name, Cron: item.expression, RoleID: &agentID, Enabled: true,
 		}); err != nil {
 			t.Fatal(err)
 		}

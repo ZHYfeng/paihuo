@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"paihuo/internal/session"
@@ -17,6 +18,10 @@ import (
 type sessionIn struct {
 	ProjectID *int64 `json:"project_id"`
 	RoleID    int64  `json:"role_id"`
+	Title     string `json:"title"` // 可选：会话/定时定义标题（默认角色名）
+	Body      string `json:"body"`  // 可选：初始指令（定时会话定义 = seed 模板）
+	Cron      string `json:"cron"`  // 可选：cron 非空时创建定时会话定义（不建 worktree，永不启动）
+	Enabled   bool   `json:"enabled"`
 }
 
 type deliverIn struct {
@@ -74,10 +79,59 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "请选择角色"})
 		return
 	}
+	// 定时会话定义：直接创建 type=session 的定时定义任务（cron 非空），
+	// 到点由调度器创建真实会话实例。不建 worktree、永不启动。
+	if in.Cron != "" {
+		role, err := s.st.GetRole(in.RoleID)
+		if err != nil {
+			writeJSON(w, 400, map[string]any{"error": "角色不存在"})
+			return
+		}
+		if !role.Enabled {
+			writeJSON(w, 400, map[string]any{"error": "角色未启用"})
+			return
+		}
+		if in.ProjectID != nil {
+			if _, err := s.st.GetProject(*in.ProjectID); err != nil {
+				writeJSON(w, 400, map[string]any{"error": "项目不存在"})
+				return
+			}
+		}
+		title := strings.TrimSpace(in.Title)
+		if title == "" {
+			title = role.Name
+		}
+		roleID := in.RoleID
+		tk := store.Task{
+			Type: store.TaskTypeSession, Title: title, Body: in.Body,
+			Status: store.SessionStatusCreated, RoleID: &roleID, ProjectID: in.ProjectID,
+			Cron: in.Cron, Enabled: in.Enabled,
+		}
+		id, err := s.st.CreateTask(tk)
+		if err != nil {
+			writeJSON(w, 400, map[string]any{"error": err.Error()})
+			return
+		}
+		s.sched.Reload()
+		created, err := s.st.GetTask(id)
+		if err != nil {
+			writeJSON(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 201, created)
+		return
+	}
 	ss, err := s.sess.Create(in.ProjectID, in.RoleID)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
+	}
+	if title := strings.TrimSpace(in.Title); title != "" && title != ss.Title {
+		if err := s.st.UpdateTask(ss.ID, map[string]any{"title": title, "updated_at": store.Now()}); err != nil {
+			writeJSON(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
+		ss, _ = s.sess.Get(ss.ID)
 	}
 	writeJSON(w, 201, ss)
 }
