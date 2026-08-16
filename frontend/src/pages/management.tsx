@@ -5,7 +5,8 @@ import { Markdown } from "../components/markdown";
 import { PageHeader } from "../components/shell";
 import { Badge, Button, Card, cn, Dialog, Empty, Field, inputClass, Spinner, useToast } from "../components/ui";
 import { api, keys } from "../lib/api";
-import type { ExtensionOutput, Project, Role, Schedule, Skill, TaskTemplate } from "../types";
+import type { ExtensionOutput, Project, Role, Skill, Task, TaskTemplate } from "../types";
+import { NewTaskDialog } from "./tasks";
 
 export function SkillsPage() {
   const skills = useQuery({ queryKey: keys.skills, queryFn: () => api<Skill[]>("/skills") });
@@ -163,7 +164,10 @@ export function SkillsPage() {
   </>;
 }
 
-type ScheduleDraft = Partial<Schedule>;
+type ScheduleDraft = Partial<Task>;
+
+const TYPE_LABEL: Record<string, string> = { task: "任务", session: "会话", workflow: "工作流" };
+const TYPE_TONE: Record<string, "neutral" | "info" | "warn"> = { task: "neutral", session: "info", workflow: "warn" };
 
 const WEEKDAYS = ["", "周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 const DEFAULT_TIME = "09:00";
@@ -219,11 +223,12 @@ function cronFromFields(frequency: string, weekday: string, monthday: string, ti
 }
 
 export function SchedulesPage() {
-  const schedules = useQuery({ queryKey: ["schedules"], queryFn: () => api<Schedule[]>("/schedules") });
+  const schedules = useQuery({ queryKey: ["tasks", "scheduled"], queryFn: () => api<Task[]>("/tasks?scheduled=1") });
   const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
   const projects = useQuery({ queryKey: keys.projects, queryFn: () => api<Project[]>("/projects") });
   const qc = useQueryClient();
   const toast = useToast();
+  const [createOpen, setCreateOpen] = useState(false);
   const [draft, setDraft] = useState<ScheduleDraft | null>(null);
   const [frequency, setFrequency] = useState("daily");
   const [weekday, setWeekday] = useState("1");
@@ -235,72 +240,84 @@ export function SchedulesPage() {
     mutationFn: (value: ScheduleDraft) => {
       const cron = unsupported && !dirty ? value.cron : cronFromFields(frequency, weekday, monthday, time);
       if (!cron) throw new Error("请选择有效的执行时间");
-      const body = { ...schedulePayload(value), cron };
-      return value.id ? api(`/schedules/${value.id}`, { method: "PATCH", revision: value.revision, body }) : api("/schedules", { method: "POST", body });
+      const base = { cron, enabled: value.enabled ?? true };
+      // 工作流定时定义基于冻结 spec，仅允许调整周期与启停；其余形态可编辑各自专属字段。
+      const body = value.type === "workflow" ? base : {
+        ...base,
+        title: value.title || "",
+        body: value.body || "",
+        role_id: value.role_id ?? null,
+        project_id: value.project_id ?? null,
+        ...(value.type === "task" ? { perm: value.perm || "full", block_on_failure: value.block_on_failure ?? true } : {})
+      };
+      return api(`/tasks/${value.id}`, { method: "PATCH", revision: value.revision, body });
     },
-    onSuccess: () => { setDraft(null); qc.invalidateQueries({ queryKey: ["schedules"] }); toast("已保存"); },
+    onSuccess: () => { setDraft(null); qc.invalidateQueries({ queryKey: ["tasks", "scheduled"] }); toast("已保存"); },
     onError: error => toast((error as Error).message, "bad")
   });
-  const remove = useMutation({ mutationFn: (value: Schedule) => api(`/schedules/${value.id}`, { method: "DELETE", revision: value.revision }), onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }) });
+  const remove = useMutation({ mutationFn: (value: Task) => api(`/tasks/${value.id}`, { method: "DELETE", revision: value.revision }), onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks", "scheduled"] }) });
   const toggle = useMutation({
-    mutationFn: (value: Schedule) => api(`/schedules/${value.id}`, { method: "PATCH", revision: value.revision, body: { enabled: !value.enabled } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
+    mutationFn: (value: Task) => api(`/tasks/${value.id}`, { method: "PATCH", revision: value.revision, body: { enabled: !value.enabled } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks", "scheduled"] }),
     onError: error => toast((error as Error).message, "bad")
   });
-  const openEditor = (item: Schedule | null) => {
-    setDraft(item ? { ...item } : { perm: "full", enabled: true, block_on_failure: true });
-    if (item) {
-      const parsed = parseScheduleCron(item.cron);
-      setUnsupported(!parsed);
-      setDirty(false);
-      setFrequency(parsed?.frequency || "daily");
-      setWeekday(parsed?.weekday || "1");
-      setMonthday(parsed?.monthday || "1");
-      setTime(parsed?.time || DEFAULT_TIME);
-    } else {
-      setUnsupported(false);
-      setDirty(false);
-      setFrequency("daily");
-      setWeekday("1");
-      setMonthday("1");
-      setTime(DEFAULT_TIME);
-    }
+  const openEditor = (item: Task) => {
+    setDraft({ ...item });
+    const parsed = parseScheduleCron(item.cron || "");
+    setUnsupported(!parsed);
+    setDirty(false);
+    setFrequency(parsed?.frequency || "daily");
+    setWeekday(parsed?.weekday || "1");
+    setMonthday(parsed?.monthday || "1");
+    setTime(parsed?.time || DEFAULT_TIME);
   };
-  const preview = unsupported && !dirty ? "当前任务使用了自定义周期；调整上面的选项后会转换为常用周期。" : `将按“${scheduleLabel(cronFromFields(frequency, weekday, monthday, time))}”执行`;
+  const preview = unsupported && !dirty ? "当前定时定义使用了自定义周期；调整上面的选项后会转换为常用周期。" : `将按“${scheduleLabel(cronFromFields(frequency, weekday, monthday, time))}”执行`;
   return <>
-    <PageHeader title="定时任务" copy="按 cron 创建普通任务，后续仍遵守同一依赖、权限和并发策略。" actions={<Button variant="primary" onClick={() => openEditor(null)}><CalendarPlus size={16} />新建定时任务</Button>} />
+    <PageHeader title="定时任务" copy="定时属性与任务形态正交：任务/会话/工作流都可挂 cron，到点按形态创建实例；本页汇总全部定时定义。" actions={<Button variant="primary" onClick={() => setCreateOpen(true)}><CalendarPlus size={16} />新建定时任务</Button>} />
     {schedules.isLoading ? <Spinner /> : schedules.data?.length ? <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
-      <th className="whitespace-nowrap px-3 py-2 font-medium">名称</th><th className="whitespace-nowrap px-3 py-2 font-medium">周期</th><th className="whitespace-nowrap px-3 py-2 font-medium">角色</th><th className="whitespace-nowrap px-3 py-2 font-medium">类型</th><th className="whitespace-nowrap px-3 py-2 font-medium">任务标题</th><th className="whitespace-nowrap px-3 py-2 font-medium">上次执行</th><th className="whitespace-nowrap px-3 py-2 font-medium">启用</th><th className="whitespace-nowrap px-3 py-2 font-medium">操作</th>
+      <th className="whitespace-nowrap px-3 py-2 font-medium">标题</th><th className="whitespace-nowrap px-3 py-2 font-medium">形态</th><th className="whitespace-nowrap px-3 py-2 font-medium">周期</th><th className="whitespace-nowrap px-3 py-2 font-medium">角色</th><th className="whitespace-nowrap px-3 py-2 font-medium">项目</th><th className="whitespace-nowrap px-3 py-2 font-medium">上次执行</th><th className="whitespace-nowrap px-3 py-2 font-medium">启用</th><th className="whitespace-nowrap px-3 py-2 font-medium">操作</th>
     </tr></thead><tbody className="divide-y divide-line">{schedules.data.map(item => <tr key={item.id} className="hover:bg-hover">
-      <td className="whitespace-nowrap px-3 py-2 font-medium">{item.name}</td>
-      <td className="px-3 py-2"><span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-elevated px-2.5 py-1 text-xs text-muted">{scheduleLabel(item.cron)}</span><code className="ml-1 text-[11px] text-faint">{item.cron}</code></td>
+      <td className="max-w-64 truncate px-3 py-2 font-medium" title={item.title}><span className="inline-flex items-center gap-2"><Badge tone="neutral">定时</Badge><span className="truncate">{item.title || `#${item.id}`}</span></span></td>
+      <td className="whitespace-nowrap px-3 py-2"><Badge tone={TYPE_TONE[item.type] || "neutral"}>{TYPE_LABEL[item.type] || item.type}</Badge></td>
+      <td className="px-3 py-2"><span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-elevated px-2.5 py-1 text-xs text-muted">{scheduleLabel(item.cron || "")}</span><code className="ml-1 text-[11px] text-faint">{item.cron}</code></td>
       <td className="whitespace-nowrap px-3 py-2 text-muted">{item.role_name || "-"}</td>
-      <td className="px-3 py-2">{item.project_id ? <><span className="chip">项目 · {item.project_name || `#${item.project_id}`}</span>{item.block_on_failure ? <span className="chip merge-blocked">失败阻塞</span> : null}</> : <span className="chip">通用</span>}</td>
-      <td className="max-w-52 truncate px-3 py-2 text-muted" title={item.title_template}>{item.title_template || "-"}</td>
-      <td className="px-3 py-2 text-faint">{String(item.last_run_at || "-").slice(0, 16).replace("T", " ")}</td>
+      <td className="whitespace-nowrap px-3 py-2 text-muted">{item.project_name || "-"}</td>
+      <td className="px-3 py-2 text-faint">{formatTime(item.last_run_at)}</td>
       <td className="px-3 py-2"><label className="sw" title={item.enabled ? "停用" : "启用"}><input type="checkbox" checked={item.enabled} onChange={() => toggle.mutate(item)} /><span className="sw-slider" /></label></td>
-      <td className="px-3 py-2"><span className="inline-flex gap-1.5"><Button size="sm" variant="ghost" onClick={() => openEditor(item)}><Pencil size={14} />编辑</Button><Button size="sm" variant="danger" aria-label={`删除 ${item.name}`} onClick={() => confirm(`删除“${item.name}”？`) && remove.mutate(item)}><Trash2 size={14} /></Button></span></td>
-    </tr>)}</tbody></table></Card> : <Empty title="没有定时任务" copy="为周期性检查、同步或报告创建一条 cron 规则。" />}
-    <Dialog open={draft !== null} onOpenChange={open => !open && setDraft(null)} title={draft?.id ? "编辑定时任务" : "新建定时任务"} wide>{draft && <form className="grid gap-4" onSubmit={(e: FormEvent) => { e.preventDefault(); save.mutate(draft); }}>
-      <div className="grid gap-4 md:grid-cols-2"><Field label="名称"><input className={inputClass} required value={draft.name || ""} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="任务标题"><input className={inputClass} required value={draft.title_template || ""} onChange={e => setDraft({ ...draft, title_template: e.target.value })} /></Field></div>
-      <Field label="任务说明"><textarea className={inputClass + " min-h-28 py-3"} value={draft.body_template || ""} onChange={e => setDraft({ ...draft, body_template: e.target.value })} /></Field>
+      <td className="px-3 py-2"><span className="inline-flex gap-1.5"><Button size="sm" variant="ghost" onClick={() => openEditor(item)}><Pencil size={14} />编辑</Button><Button size="sm" variant="danger" aria-label={`删除 ${item.title}`} onClick={() => confirm(`删除定时定义“${item.title || `#${item.id}`}”？`) && remove.mutate(item)}><Trash2 size={14} /></Button></span></td>
+    </tr>)}</tbody></table></Card> : <Empty title="没有定时任务" copy="新建任务/会话/工作流时挂上 cron 周期，到点自动创建对应实例；本页汇总全部形态的定时定义。" />}
+    <Dialog open={draft !== null} onOpenChange={open => !open && setDraft(null)} title="编辑定时定义" wide>{draft && <form className="grid gap-4" onSubmit={(e: FormEvent) => { e.preventDefault(); save.mutate(draft); }}>
       <div className="grid gap-4 md:grid-cols-2">
         <Field label="周期"><select className={inputClass} value={frequency} onChange={e => { setDirty(true); setFrequency(e.target.value); }}><option value="daily">每天</option><option value="weekdays">工作日</option><option value="weekly">每周</option><option value="monthly">每月</option></select></Field>
         <Field label="时间"><input type="time" className={inputClass} value={time} onChange={e => { setDirty(true); setTime(e.target.value); }} /></Field>
       </div>
       {frequency === "weekly" ? <Field label="星期"><select className={inputClass} value={weekday} onChange={e => { setDirty(true); setWeekday(e.target.value); }}>{WEEKDAYS.slice(1).map((label, index) => <option key={index + 1} value={index + 1}>{label}</option>)}</select></Field> : frequency === "monthly" ? <Field label="日期"><select className={inputClass} value={monthday} onChange={e => { setDirty(true); setMonthday(e.target.value); }}>{Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1} 日</option>)}</select></Field> : null}
       <p className={cn("rounded-xl px-3 py-2 text-sm", unsupported && !dirty ? "bg-warning/10 text-warning" : "bg-elevated text-muted")}>{preview}</p>
-      <div className="grid gap-4 md:grid-cols-2"><Field label="角色"><select className={inputClass} required value={draft.role_id || ""} onChange={e => setDraft({ ...draft, role_id: Number(e.target.value) })}><option value="">请选择</option>{roles.data?.filter(r => r.enabled).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></Field><Field label="项目"><select className={inputClass} value={draft.project_id || ""} onChange={e => setDraft({ ...draft, project_id: e.target.value ? Number(e.target.value) : null })}><option value="">不绑定项目</option>{projects.data?.filter(p => p.status === "active").map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field></div>
-      <div className="grid gap-4 md:grid-cols-2">
-        <Field label="权限"><select className={inputClass} value={draft.perm || "full"} onChange={e => setDraft({ ...draft, perm: e.target.value as "full" | "review" })}><option value="full">自动整合</option><option value="review">人工审批</option></select></Field>
-        <label className="flex min-h-11 items-center gap-3 self-end rounded-xl border border-line bg-elevated px-3 text-sm"><input type="checkbox" checked={draft.block_on_failure ?? true} onChange={e => setDraft({ ...draft, block_on_failure: e.target.checked })} />失败后阻塞后续任务</label>
-      </div>
-      <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={draft.enabled ?? true} onChange={e => setDraft({ ...draft, enabled: e.target.checked })} />启用</label>{save.error instanceof Error && <p className="text-sm text-danger">{save.error.message}</p>}<div className="flex justify-end"><Button variant="primary">保存</Button></div>
+      {draft.type === "session" ? <>
+        <Field label="标题"><input className={inputClass} value={draft.title || ""} onChange={e => setDraft({ ...draft, title: e.target.value })} placeholder="默认使用角色名称" /></Field>
+        <Field label="初始指令"><textarea className={inputClass + " min-h-28 py-3"} value={draft.body || ""} onChange={e => setDraft({ ...draft, body: e.target.value })} placeholder="到点创建会话后自动发送的初始指令" /></Field>
+        <div className="grid gap-4 md:grid-cols-2"><Field label="角色"><select className={inputClass} required value={draft.role_id || ""} onChange={e => setDraft({ ...draft, role_id: Number(e.target.value) })}><option value="">请选择</option>{roles.data?.filter(r => r.enabled).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></Field><Field label="项目"><select className={inputClass} value={draft.project_id || ""} onChange={e => setDraft({ ...draft, project_id: e.target.value ? Number(e.target.value) : null })}><option value="">不绑定项目</option>{projects.data?.filter(p => p.status === "active").map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field></div>
+      </> : draft.type === "workflow" ? <>
+        <p className="rounded-xl border border-line bg-elevated px-3 py-2.5 text-sm leading-6 text-muted">工作流定时定义基于冻结 spec，仅可调整周期与启停；角色 / 项目 / 权限从任务读取展示。</p>
+        <div className="grid gap-4 md:grid-cols-3">
+          <Field label="角色"><input className={inputClass} readOnly value={draft.role_name || "-"} /></Field>
+          <Field label="项目"><input className={inputClass} readOnly value={draft.project_name || "-"} /></Field>
+          <Field label="权限"><input className={inputClass} readOnly value={draft.perm === "review" ? "人工审批" : "自动整合"} /></Field>
+        </div>
+      </> : <>
+        <Field label="标题模板"><input className={inputClass} required value={draft.title || ""} onChange={e => setDraft({ ...draft, title: e.target.value })} placeholder="支持 {{.date}} / {{.time}} / {{.name}}" /></Field>
+        <Field label="说明模板"><textarea className={inputClass + " min-h-28 py-3"} value={draft.body || ""} onChange={e => setDraft({ ...draft, body: e.target.value })} placeholder="可选" /></Field>
+        <div className="grid gap-4 md:grid-cols-2"><Field label="角色"><select className={inputClass} required value={draft.role_id || ""} onChange={e => setDraft({ ...draft, role_id: Number(e.target.value) })}><option value="">请选择</option>{roles.data?.filter(r => r.enabled).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></Field><Field label="项目"><select className={inputClass} value={draft.project_id || ""} onChange={e => setDraft({ ...draft, project_id: e.target.value ? Number(e.target.value) : null })}><option value="">不绑定项目</option>{projects.data?.filter(p => p.status === "active").map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field></div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="权限"><select className={inputClass} value={draft.perm || "full"} onChange={e => setDraft({ ...draft, perm: e.target.value as "full" | "review" })}><option value="full">自动整合</option><option value="review">人工审批</option></select></Field>
+          <label className="flex min-h-11 items-center gap-3 self-end rounded-xl border border-line bg-elevated px-3 text-sm"><input type="checkbox" checked={draft.block_on_failure ?? true} onChange={e => setDraft({ ...draft, block_on_failure: e.target.checked })} />失败后阻塞后续任务</label>
+        </div>
+      </>}
+      <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={draft.enabled ?? true} onChange={e => setDraft({ ...draft, enabled: e.target.checked })} />启用</label>{save.error instanceof Error && <p className="text-sm text-danger">{save.error.message}</p>}<div className="flex justify-end"><Button variant="primary" disabled={save.isPending}>保存</Button></div>
     </form>}</Dialog>
+    <NewTaskDialog open={createOpen} onOpenChange={setCreateOpen} />
   </>;
 }
-
-function schedulePayload(value: ScheduleDraft) { return { name: value.name, cron: value.cron, title_template: value.title_template, body_template: value.body_template || "", role_id: value.role_id, project_id: value.project_id || null, perm: value.perm || "full", block_on_failure: value.block_on_failure ?? true, enabled: value.enabled ?? true }; }
 
 export function TemplatesPage() {
   const templates = useQuery({ queryKey: ["templates"], queryFn: () => api<TaskTemplate[]>("/templates") });

@@ -5,7 +5,18 @@ import { Link, useNavigate } from "react-router-dom";
 import { PageHeader } from "../components/shell";
 import { Button, Card, Dialog, Empty, Field, inputClass, Spinner, useToast } from "../components/ui";
 import { api, keys } from "../lib/api";
-import type { Task, WorkflowProposal } from "../types";
+import type { Task, WorkflowSpec } from "../types";
+
+/** Task.spec 是 JSON 字符串；parse 失败返回 null（列表展示用占位，不崩溃）。 */
+function parseProposalSpec(spec?: string | null): WorkflowSpec | null {
+  if (!spec) return null;
+  try {
+    const parsed = JSON.parse(spec) as WorkflowSpec;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 /* ============================================================
    审批工作台：主线上的一道闸口，聚合所有待审批点
@@ -23,7 +34,7 @@ export function ApprovalsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const tasks = useQuery({ queryKey: keys.tasks, queryFn: () => api<Task[]>("/tasks"), refetchInterval: 15_000 });
-  const proposals = useQuery({ queryKey: ["workflow-proposals"], queryFn: () => api<WorkflowProposal[]>("/workflow-proposals"), refetchInterval: 15_000 });
+  const proposals = useQuery({ queryKey: ["workflow-proposals"], queryFn: () => api<Task[]>("/workflow-proposals"), refetchInterval: 15_000 });
   const [rejectTask, setRejectTask] = useState<Task | null>(null);
   const [rejectNote, setRejectNote] = useState("");
 
@@ -43,7 +54,7 @@ export function ApprovalsPage() {
     onError: error => toast((error as Error).message, "bad")
   });
   const adoptProposal = useMutation({
-    mutationFn: (item: WorkflowProposal) => api(`/workflow-proposals/${item.id}/adopt`, { method: "POST", revision: item.revision }),
+    mutationFn: (item: Task) => api(`/workflow-proposals/${item.id}/adopt`, { method: "POST", revision: item.revision }),
     onSuccess: () => { invalidate(); toast("已采纳并冻结为 Plan"); },
     onError: error => toast((error as Error).message, "bad")
   });
@@ -76,15 +87,18 @@ export function ApprovalsPage() {
       <section>
         <div className="mb-3 flex items-center"><h2 className="font-semibold">Workflow 采纳</h2><span className="ml-auto text-sm text-faint">{pendingProposals.length} 条待冻结</span></div>
         {proposals.isLoading ? <Spinner /> : pendingProposals.length ? <div className="grid gap-2">
-          {pendingProposals.map(item => <article key={item.id} className="rounded-xl border border-line bg-elevated p-3.5 transition hover:border-brand/35">
-            <div className="flex items-center gap-2"><span className="text-xs text-faint">#{item.id}</span>
-              <Link to={`/workflow-proposals/${item.id}`} className="truncate font-semibold text-ink hover:text-brand-soft">{item.spec.goal}</Link></div>
-            <p className="mt-2 text-xs text-muted">{item.spec.nodes.length} 个节点 · 预算 {item.spec.limits.budget} · revision {item.revision}</p>
-            <div className="mt-2.5 flex flex-wrap gap-2">
-              <Button size="sm" variant="primary" disabled={adoptProposal.isPending} onClick={() => { if (confirm("采纳该 Proposal 并冻结为不可变 Plan？")) adoptProposal.mutate(item); }}><Snowflake size={14} />采纳并冻结</Button>
-              <Button size="sm" variant="ghost" onClick={() => navigate(`/workflow-proposals/${item.id}`)}>查看规格</Button>
-            </div>
-          </article>)}
+          {pendingProposals.map(item => {
+            const spec = parseProposalSpec(item.spec);
+            return <article key={item.id} className="rounded-xl border border-line bg-elevated p-3.5 transition hover:border-brand/35">
+              <div className="flex items-center gap-2"><span className="text-xs text-faint">#{item.id}</span>
+                <Link to={`/workflow-proposals/${item.id}`} className="truncate font-semibold text-ink hover:text-brand-soft">{spec?.goal || "（无法解析规格）"}</Link></div>
+              <p className="mt-2 text-xs text-muted">{spec ? `${spec.nodes.length} 个节点 · 预算 ${spec.limits?.budget ?? "-"} · revision ${item.revision}` : `revision ${item.revision}`}</p>
+              <div className="mt-2.5 flex flex-wrap gap-2">
+                <Button size="sm" variant="primary" disabled={adoptProposal.isPending} onClick={() => { if (confirm("采纳该 Proposal 并冻结为不可变 Plan？")) adoptProposal.mutate(item); }}><Snowflake size={14} />采纳并冻结</Button>
+                <Button size="sm" variant="ghost" onClick={() => navigate(`/workflow-proposals/${item.id}`)}>查看规格</Button>
+              </div>
+            </article>;
+          })}
         </div> : <Card><Empty title="没有待采纳的 Proposal" copy="校验通过的 Proposal 会出现在这里，采纳后冻结为不可变 Plan。" action={<Button size="sm" onClick={() => navigate("/workflows")}><CirclePlus size={14} />新建 Proposal</Button>} /></Card>}
       </section>
     </div>

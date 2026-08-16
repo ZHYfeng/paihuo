@@ -1,15 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, Check, CirclePlus, Copy, GitBranch, ListFilter, ListTree, MessagesSquare, Play, RotateCcw, Save, TerminalSquare, Trash2, Workflow, X } from "lucide-react";
+import { CalendarClock, Check, CirclePlus, Copy, GitBranch, ListFilter, ListTree, Play, RotateCcw, Save, TerminalSquare, Trash2, Workflow, X } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { PageHeader } from "../components/shell";
 import { DiffView } from "../components/diff-view";
 import { TaskTerminal } from "../components/terminal";
-import { Badge, Button, Card, Dialog, Empty, Field, inputClass, Spinner, useToast } from "../components/ui";
+import { Badge, Button, Card, cn, Dialog, Empty, Field, inputClass, Spinner, useToast } from "../components/ui";
 import { useHotkeys } from "../lib/hotkeys";
 import { api, keys } from "../lib/api";
 import { BOARD_COLS, STATUS_LABEL, ST_COLOR, PERM_LABEL, canDeleteTask, canRetryTask, cleanLogContent, dependencyInfo, fmtDur, fmtPct, isMergeTask, mergeBlockReason, mergeTaskFor, retryTaskLabel, splitReviewRounds, terminalRenderableLog, tsOf } from "../lib/taskmeta";
-import type { Artifact, OverviewStats, Project, ProvisionInfo, Role, Task, TaskLog, TaskLogPage, TaskTemplate, WorkspaceStatus } from "../types";
+import type { Artifact, OverviewStats, Project, ProvisionInfo, Role, Session, Task, TaskLog, TaskLogPage, TaskTemplate, WorkspaceStatus } from "../types";
+import { NewProposalDialog } from "./workflows";
 
 const statusTone: Record<string, "neutral" | "good" | "warn" | "bad" | "info"> = { queued: "neutral", claimed: "info", running: "info", awaiting_review: "warn", succeeded: "good", failed: "bad", cancelled: "neutral" };
 
@@ -145,7 +146,7 @@ export function DashboardPage() {
   const visible = ranked.slice(0, 4);
   const installed = provisioning.data?.filter(p => p.installed) || [];
   return <>
-    <PageHeader title="工作台" copy="一条路：创建任务（单任务 / 复合任务 / 自由探索 / 定时）→ 执行 → 审批；所有状态由持久事件流同步。" actions={<><Button variant="ghost" onClick={() => navigate("/sessions")}><MessagesSquare size={16} />自由探索</Button><Button variant="ghost" onClick={() => navigate("/workflows")}><Workflow size={16} />复合任务</Button><Button variant="ghost" onClick={() => navigate("/schedules")}><CalendarClock size={16} />定时</Button><Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={17} />单任务</Button></>} />
+    <PageHeader title="工作台" copy="一条路：项目 → 创建任务（任务 / 会话 / 工作流 / 定时）→ 执行 → 审批；定时是正交属性，任何形态都可挂 cron。所有状态由持久事件流同步。" actions={<Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={17} />新建任务</Button>} />
     <StatsStrip dashboard />
     <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(18rem,.75fr)]">
       <div className="grid gap-4">
@@ -694,6 +695,75 @@ export function TaskDetailPage() {
   </>;
 }
 
+/* ---- 统一新建任务对话框：任务 / 会话 / 工作流 / 定时（定时是正交属性） ---- */
+
+const SCHED_WEEKDAYS = ["", "周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+const SCHED_DEFAULT_TIME = "09:00";
+
+// 调度器保存六段 cron；表单只映射常用周期。兼容五段与六段。
+function parseScheduleCron(cron: string): { frequency: string; weekday?: string; monthday?: string; time?: string } | null {
+  const raw = String(cron || "").trim().toLowerCase();
+  if (raw === "@daily") return { frequency: "daily", time: "00:00" };
+  if (raw === "@weekly") return { frequency: "weekly", weekday: "7", time: "00:00" };
+  if (raw === "@monthly") return { frequency: "monthly", monthday: "1", time: "00:00" };
+  const fields = raw.split(/\s+/);
+  if (fields.length !== 5 && fields.length !== 6) return null;
+  const [second, minute, hour, dom, month, dow] = fields.length === 6 ? fields : ["0", fields[0], fields[1], fields[2], fields[3], fields[4]];
+  if (second !== "0" || month !== "*") return null;
+  if (!/^\d{1,2}$/.test(minute) || !/^\d{1,2}$/.test(hour)) return null;
+  const minuteNum = Number(minute), hourNum = Number(hour);
+  if (minuteNum < 0 || minuteNum > 59 || hourNum < 0 || hourNum > 23) return null;
+  const time = `${String(hourNum).padStart(2, "0")}:${String(minuteNum).padStart(2, "0")}`;
+  if (dom === "*" && dow === "*") return { frequency: "daily", time };
+  if (dom === "*" && dow === "1-5") return { frequency: "weekdays", time };
+  if (dom === "*" && /^\d$/.test(dow) && Number(dow) >= 0 && Number(dow) <= 7) {
+    return { frequency: "weekly", weekday: String(Number(dow) === 0 ? 7 : Number(dow)), time };
+  }
+  if (dow === "*" && /^\d{1,2}$/.test(dom) && Number(dom) >= 1 && Number(dom) <= 31) {
+    return { frequency: "monthly", monthday: String(Number(dom)), time };
+  }
+  return null;
+}
+
+function scheduleLabel(cron: string): string {
+  const parsed = parseScheduleCron(cron);
+  if (!parsed) return "自定义周期";
+  if (parsed.frequency === "daily") return `每天 ${parsed.time}`;
+  if (parsed.frequency === "weekdays") return `工作日 ${parsed.time}`;
+  if (parsed.frequency === "weekly") return `每周${SCHED_WEEKDAYS[Number(parsed.weekday)] || ""} ${parsed.time}`;
+  if (parsed.frequency === "monthly") return `每月${parsed.monthday}日 ${parsed.time}`;
+  return "自定义周期";
+}
+
+function cronFromFields(frequency: string, weekday: string, monthday: string, time: string): string {
+  const match = /^(\d{2}):(\d{2})$/.exec(time);
+  if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) return "";
+  const minute = Number(match[2]);
+  const hour = Number(match[1]);
+  let dom = "*", dow = "*";
+  if (frequency === "weekdays") dow = "1-5";
+  if (frequency === "weekly") {
+    const day = Number(weekday) || 1;
+    dow = day === 7 ? "0" : String(day);
+  }
+  if (frequency === "monthly") dom = String(Number(monthday) || 1);
+  return `0 ${minute} ${hour} ${dom} * ${dow}`;
+}
+
+function ScheduleCronFields({ value, onChange }: { value: { frequency: string; weekday: string; monthday: string; time: string }; onChange(patch: Partial<typeof value>): void }) {
+  const cron = cronFromFields(value.frequency, value.weekday, value.monthday, value.time);
+  return <div className="grid gap-4">
+    <div className="grid gap-4 md:grid-cols-2">
+      <Field label="周期"><select className={inputClass} value={value.frequency} onChange={e => onChange({ frequency: e.target.value })}><option value="daily">每天</option><option value="weekdays">工作日</option><option value="weekly">每周</option><option value="monthly">每月</option></select></Field>
+      <Field label="时间"><input type="time" className={inputClass} value={value.time} onChange={e => onChange({ time: e.target.value })} /></Field>
+    </div>
+    {value.frequency === "weekly" ? <Field label="星期"><select className={inputClass} value={value.weekday} onChange={e => onChange({ weekday: e.target.value })}>{SCHED_WEEKDAYS.slice(1).map((label, index) => <option key={index + 1} value={index + 1}>{label}</option>)}</select></Field> : value.frequency === "monthly" ? <Field label="日期"><select className={inputClass} value={value.monthday} onChange={e => onChange({ monthday: e.target.value })}>{Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1} 日</option>)}</select></Field> : null}
+    <p className="rounded-xl bg-elevated px-3 py-2 text-sm text-muted">将按“{scheduleLabel(cron)}”执行{cron ? <code className="ml-1 text-[11px] text-faint">{cron}</code> : null}</p>
+  </div>;
+}
+
+type CreateKind = "task" | "session" | "workflow" | "schedule";
+
 export function NewTaskDialog({ open, onOpenChange, initialProjectID }: { open: boolean; onOpenChange(open: boolean): void; initialProjectID?: number }) {
   const toast = useToast();
   const navigate = useNavigate();
@@ -701,21 +771,102 @@ export function NewTaskDialog({ open, onOpenChange, initialProjectID }: { open: 
   const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles"), enabled: open });
   const projects = useQuery({ queryKey: keys.projects, queryFn: () => api<Project[]>("/projects"), enabled: open });
   const templates = useQuery({ queryKey: ["templates"], queryFn: () => api<TaskTemplate[]>("/templates"), enabled: open });
+  const [kind, setKind] = useState<CreateKind>("task");
+  const [proposalOpen, setProposalOpen] = useState(false);
+  // 单任务表单
   const [form, setForm] = useState({ title: "", body: "", role_id: "", project_id: initialProjectID ? String(initialProjectID) : "", perm: "full", run_mode: "batch", concurrent: false, dependency_mode: "weak", depends_on: "", block_on_failure: false });
-  const strongDeps = useQuery({ queryKey: keys.tasks, queryFn: () => api<Task[]>("/tasks"), enabled: open && form.dependency_mode === "strong" });
+  // 会话表单
+  const [sessionForm, setSessionForm] = useState({ title: "", body: "", role_id: "", project_id: initialProjectID ? String(initialProjectID) : "" });
+  // 定时表单（基础形态 + cron + 该形态载荷）
+  const [sched, setSched] = useState({ baseType: "task" as "task" | "session" | "workflow", title: "", body: "", role_id: "", project_id: initialProjectID ? String(initialProjectID) : "", perm: "full", block_on_failure: true, enabled: true, frequency: "daily", weekday: "1", monthday: "1", time: SCHED_DEFAULT_TIME });
+  const strongDeps = useQuery({ queryKey: keys.tasks, queryFn: () => api<Task[]>("/tasks"), enabled: open && kind === "task" && form.dependency_mode === "strong" });
   const create = useMutation({ mutationFn: () => api<Task>("/tasks", { method: "POST", body: { ...form, role_id: Number(form.role_id), project_id: Number(form.project_id), concurrent: form.concurrent, dependency_mode: form.dependency_mode, depends_on: form.dependency_mode === "strong" && form.depends_on ? Number(form.depends_on) : null, block_on_failure: form.block_on_failure } }), onSuccess: task => { void queryClient.invalidateQueries({ queryKey: keys.tasks }); onOpenChange(false); toast(`已创建任务 #${task.id}`); navigate(`/tasks/${task.id}`); }, onError: error => toast((error as Error).message, "bad") });
-  const submit = (event: FormEvent) => { event.preventDefault(); create.mutate(); };
-  return <Dialog open={open} onOpenChange={onOpenChange} title="新建任务" description="任务必须绑定 Role 与 Project；Runtime 只负责执行。"><form className="grid gap-4" onSubmit={submit}>
-    <Field label="标题"><input className={inputClass} required value={form.title} onChange={event => setForm({ ...form, title: event.target.value })} autoFocus /></Field>
-    <Field label="从模板插入"><select className={inputClass} value="" onChange={event => { const item = templates.data?.find(value => value.id === Number(event.target.value)); if (item) setForm(current => ({ ...current, title: current.title || item.name, body: current.body ? `${current.body}\n\n${item.body}` : item.body })); }}><option value="">选择模板…</option>{templates.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-    <Field label="任务说明"><textarea className={inputClass + " min-h-32 py-3"} value={form.body} onChange={event => setForm({ ...form, body: event.target.value })} placeholder="可选" /></Field>
-    <div className="grid gap-4 sm:grid-cols-2"><Field label="项目"><select className={inputClass} required value={form.project_id} onChange={event => setForm({ ...form, project_id: event.target.value, depends_on: "" })}><option value="">选择项目</option>{projects.data?.filter(item => item.status === "active").map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="角色"><select className={inputClass} required value={form.role_id} onChange={event => setForm({ ...form, role_id: event.target.value })}><option value="">选择角色</option>{roles.data?.filter(item => item.enabled).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field></div>
-    <div className="grid gap-4 sm:grid-cols-2"><Field label="权限"><select className={inputClass} value={form.perm} onChange={event => setForm({ ...form, perm: event.target.value })}><option value="full">自动整合</option><option value="review">人工审批</option></select></Field><Field label="运行方式"><select className={inputClass} value={form.run_mode} onChange={event => setForm({ ...form, run_mode: event.target.value })}><option value="batch">批处理</option><option value="interactive">交互终端</option></select></Field></div>
-    <div className="grid gap-4 sm:grid-cols-2"><Field label="依赖模式"><select className={inputClass} value={form.dependency_mode} onChange={event => setForm({ ...form, dependency_mode: event.target.value, depends_on: "" })}><option value="weak">自动顺序（默认）</option><option value="none">独立执行</option><option value="strong">明确前置</option></select></Field><Field label="失败后"><select className={inputClass} value={form.block_on_failure ? "1" : "0"} onChange={event => setForm({ ...form, block_on_failure: event.target.value === "1" })}><option value="0">后续弱依赖可跳过</option><option value="1">阻塞后续弱依赖</option></select></Field></div>
-    {form.dependency_mode === "strong" ? <Field label="前置任务"><select className={inputClass} required value={form.depends_on} onChange={event => setForm({ ...form, depends_on: event.target.value })}><option value="">选择前置任务</option>{(strongDeps.data || []).filter(item => item.project_id === Number(form.project_id) && !isMergeTask(item)).sort((a, b) => b.id - a.id).map(item => <option key={item.id} value={item.id}>#{item.id} · {item.title}</option>)}</select></Field> : null}
-    <label className="flex min-h-11 items-center gap-3 rounded-xl border border-line bg-elevated px-3 text-sm"><input type="checkbox" checked={form.concurrent} onChange={event => setForm({ ...form, concurrent: event.target.checked })} />允许与同项目其他任务并行</label>
-    <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant="primary" disabled={create.isPending}><Play size={16} />创建并排队</Button></div>
-  </form></Dialog>;
+  const createSession = useMutation({
+    mutationFn: async () => {
+      const ss = await api<Session>("/sessions", { method: "POST", body: { role_id: Number(sessionForm.role_id), project_id: sessionForm.project_id ? Number(sessionForm.project_id) : null, title: sessionForm.title || undefined } });
+      await api(`/sessions/${ss.id}/start`, { method: "POST" });
+      if (sessionForm.body.trim()) await api(`/sessions/${ss.id}/prompt`, { method: "POST", body: { message: sessionForm.body, streaming_behavior: "follow_up" } });
+      return ss;
+    },
+    onSuccess: ss => { void queryClient.invalidateQueries({ queryKey: keys.sessions }); onOpenChange(false); toast(`已创建会话 #${ss.id}`); navigate(`/sessions/${ss.id}`); },
+    onError: error => toast((error as Error).message, "bad")
+  });
+  const createSchedule = useMutation({
+    mutationFn: async () => {
+      const cron = cronFromFields(sched.frequency, sched.weekday, sched.monthday, sched.time);
+      if (!cron) throw new Error("请选择有效的执行时间");
+      const common = { cron, enabled: sched.enabled };
+      if (sched.baseType === "session") {
+        return api<Session>("/sessions", { method: "POST", body: { role_id: Number(sched.role_id), project_id: sched.project_id ? Number(sched.project_id) : null, title: sched.title, body: sched.body, ...common } });
+      }
+      return api<Task>("/tasks", { method: "POST", body: { title: sched.title, body: sched.body, role_id: Number(sched.role_id), project_id: Number(sched.project_id), perm: sched.perm, block_on_failure: sched.block_on_failure, ...common } });
+    },
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: keys.tasks }); onOpenChange(false); toast("已创建定时定义"); navigate("/schedules"); },
+    onError: error => toast((error as Error).message, "bad")
+  });
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (kind === "task") create.mutate();
+    else if (kind === "session") createSession.mutate();
+    else if (kind === "schedule") createSchedule.mutate();
+  };
+  const kindTabs: Array<[CreateKind, string]> = [["task", "任务"], ["session", "会话"], ["workflow", "工作流"], ["schedule", "定时"]];
+  return <><Dialog open={open} onOpenChange={onOpenChange} title="新建任务" description="在项目的任务系统中创建任务；定时是正交属性——任何形态都可挂 cron，到点自动创建实例。" wide>
+    <form className="grid gap-4" onSubmit={submit}>
+      <div className="flex w-fit items-center gap-1 rounded-lg border border-line bg-elevated p-1 text-sm">
+        {kindTabs.map(([value, label]) => <button key={value} type="button" onClick={() => setKind(value)} className={cn("flex items-center gap-1.5 rounded-md px-3 py-1.5 transition", kind === value ? "bg-surface font-medium text-ink shadow-sm" : "text-muted hover:text-ink")}>{label}</button>)}
+      </div>
+
+      {kind === "task" ? <>
+        <Field label="标题"><input className={inputClass} required value={form.title} onChange={event => setForm({ ...form, title: event.target.value })} autoFocus /></Field>
+        <Field label="从模板插入"><select className={inputClass} value="" onChange={event => { const item = templates.data?.find(value => value.id === Number(event.target.value)); if (item) setForm(current => ({ ...current, title: current.title || item.name, body: current.body ? `${current.body}\n\n${item.body}` : item.body })); }}><option value="">选择模板…</option>{templates.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+        <Field label="任务说明"><textarea className={inputClass + " min-h-32 py-3"} value={form.body} onChange={event => setForm({ ...form, body: event.target.value })} placeholder="可选" /></Field>
+        <div className="grid gap-4 sm:grid-cols-2"><Field label="项目"><select className={inputClass} required value={form.project_id} onChange={event => setForm({ ...form, project_id: event.target.value, depends_on: "" })}><option value="">选择项目</option>{projects.data?.filter(item => item.status === "active").map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="角色"><select className={inputClass} required value={form.role_id} onChange={event => setForm({ ...form, role_id: event.target.value })}><option value="">选择角色</option>{roles.data?.filter(item => item.enabled).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field></div>
+        <div className="grid gap-4 sm:grid-cols-2"><Field label="权限"><select className={inputClass} value={form.perm} onChange={event => setForm({ ...form, perm: event.target.value })}><option value="full">自动整合</option><option value="review">人工审批</option></select></Field><Field label="运行方式"><select className={inputClass} value={form.run_mode} onChange={event => setForm({ ...form, run_mode: event.target.value })}><option value="batch">批处理</option><option value="interactive">交互终端</option></select></Field></div>
+        <div className="grid gap-4 sm:grid-cols-2"><Field label="依赖模式"><select className={inputClass} value={form.dependency_mode} onChange={event => setForm({ ...form, dependency_mode: event.target.value, depends_on: "" })}><option value="weak">自动顺序（默认）</option><option value="none">独立执行</option><option value="strong">明确前置</option></select></Field><Field label="失败后"><select className={inputClass} value={form.block_on_failure ? "1" : "0"} onChange={event => setForm({ ...form, block_on_failure: event.target.value === "1" })}><option value="0">后续弱依赖可跳过</option><option value="1">阻塞后续弱依赖</option></select></Field></div>
+        {form.dependency_mode === "strong" ? <Field label="前置任务"><select className={inputClass} required value={form.depends_on} onChange={event => setForm({ ...form, depends_on: event.target.value })}><option value="">选择前置任务</option>{(strongDeps.data || []).filter(item => item.project_id === Number(form.project_id) && !isMergeTask(item)).sort((a, b) => b.id - a.id).map(item => <option key={item.id} value={item.id}>#{item.id} · {item.title}</option>)}</select></Field> : null}
+        <label className="flex min-h-11 items-center gap-3 rounded-xl border border-line bg-elevated px-3 text-sm"><input type="checkbox" checked={form.concurrent} onChange={event => setForm({ ...form, concurrent: event.target.checked })} />允许与同项目其他任务并行</label>
+      </> : kind === "session" ? <>
+        <Field label="标题"><input className={inputClass} value={sessionForm.title} onChange={event => setSessionForm({ ...sessionForm, title: event.target.value })} placeholder="默认使用角色名称" autoFocus /></Field>
+        <div className="grid gap-4 sm:grid-cols-2"><Field label="项目"><select className={inputClass} value={sessionForm.project_id} onChange={event => setSessionForm({ ...sessionForm, project_id: event.target.value })}><option value="">不绑定项目</option>{projects.data?.filter(item => item.status === "active").map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="角色"><select className={inputClass} required value={sessionForm.role_id} onChange={event => setSessionForm({ ...sessionForm, role_id: event.target.value })}><option value="">请选择</option>{roles.data?.filter(item => item.enabled).map(item => <option key={item.id} value={item.id}>{item.name} · {item.runtime_id}</option>)}</select></Field></div>
+        <Field label="初始指令"><textarea className={inputClass + " min-h-28 py-3"} value={sessionForm.body} onChange={event => setSessionForm({ ...sessionForm, body: event.target.value })} placeholder="可选：创建后自动启动并发起首轮对话" /></Field>
+      </> : kind === "workflow" ? <>
+        <p className="rounded-xl border border-line bg-elevated px-3 py-2.5 text-sm leading-6 text-muted">复合任务使用声明式节点编排（节点 + 依赖边 + 策略门禁）：提交后先经确定性校验，通过后在「审批」页采纳冻结，再启动 Run 原子实例化子任务树。</p>
+        <p className="text-sm text-muted">创建工作流将打开完整构建器；需要定时执行时，在构建器中勾选「定时执行」即可（定时是正交属性）。</p>
+        <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="button" variant="primary" onClick={() => { onOpenChange(false); setProposalOpen(true); }}><Workflow size={16} />打开工作流构建器</Button></div>
+      </> : <>
+        <Field label="定时实例化的形态" hint="定时是正交属性：任务 / 会话 / 工作流都可挂 cron，到点自动创建对应实例。">
+          <select className={inputClass} value={sched.baseType} onChange={event => setSched({ ...sched, baseType: event.target.value as typeof sched.baseType })}>
+            <option value="task">任务：到点渲染标题/说明模板，创建任务实例</option>
+            <option value="session">会话：到点自动创建会话并发送初始指令</option>
+            <option value="workflow">工作流：到点自动启动 Run（需先采纳冻结）</option>
+          </select>
+        </Field>
+        <ScheduleCronFields value={{ frequency: sched.frequency, weekday: sched.weekday, monthday: sched.monthday, time: sched.time }} onChange={patch => setSched({ ...sched, ...patch })} />
+        {sched.baseType === "workflow" ? <>
+          <p className="text-sm leading-6 text-muted">定时工作流需要先构建并采纳冻结：打开构建器后勾选「定时执行」。到点自动启动 Run。</p>
+          <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="button" variant="primary" onClick={() => { onOpenChange(false); setProposalOpen(true); }}><Workflow size={16} />打开工作流构建器</Button></div>
+        </> : <>
+          {sched.baseType === "task" ? <>
+            <Field label="标题模板"><input className={inputClass} required value={sched.title} onChange={event => setSched({ ...sched, title: event.target.value })} placeholder="支持 {{.date}} / {{.time}} / {{.name}}" autoFocus /></Field>
+            <Field label="说明模板"><textarea className={inputClass + " min-h-24 py-3"} value={sched.body} onChange={event => setSched({ ...sched, body: event.target.value })} placeholder="可选" /></Field>
+            <div className="grid gap-4 sm:grid-cols-2"><Field label="项目"><select className={inputClass} required value={sched.project_id} onChange={event => setSched({ ...sched, project_id: event.target.value })}><option value="">选择项目</option>{projects.data?.filter(item => item.status === "active").map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="角色"><select className={inputClass} required value={sched.role_id} onChange={event => setSched({ ...sched, role_id: event.target.value })}><option value="">选择角色</option>{roles.data?.filter(item => item.enabled).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field></div>
+            <div className="grid gap-4 sm:grid-cols-2"><Field label="权限"><select className={inputClass} value={sched.perm} onChange={event => setSched({ ...sched, perm: event.target.value })}><option value="full">自动整合</option><option value="review">人工审批</option></select></Field><label className="flex min-h-11 items-center gap-3 self-end rounded-xl border border-line bg-elevated px-3 text-sm"><input type="checkbox" checked={sched.block_on_failure} onChange={event => setSched({ ...sched, block_on_failure: event.target.checked })} />失败后阻塞后续任务</label></div>
+          </> : <>
+            <Field label="标题"><input className={inputClass} value={sched.title} onChange={event => setSched({ ...sched, title: event.target.value })} placeholder="默认使用角色名称" autoFocus /></Field>
+            <Field label="初始指令"><textarea className={inputClass + " min-h-24 py-3"} value={sched.body} onChange={event => setSched({ ...sched, body: event.target.value })} placeholder="到点创建会话后自动发送的初始指令" /></Field>
+            <div className="grid gap-4 sm:grid-cols-2"><Field label="项目"><select className={inputClass} value={sched.project_id} onChange={event => setSched({ ...sched, project_id: event.target.value })}><option value="">不绑定项目</option>{projects.data?.filter(item => item.status === "active").map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="角色"><select className={inputClass} required value={sched.role_id} onChange={event => setSched({ ...sched, role_id: event.target.value })}><option value="">请选择</option>{roles.data?.filter(item => item.enabled).map(item => <option key={item.id} value={item.id}>{item.name} · {item.runtime_id}</option>)}</select></Field></div>
+          </>}
+          <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={sched.enabled} onChange={event => setSched({ ...sched, enabled: event.target.checked })} />启用</label>
+        </>}
+      </>}
+
+      {kind !== "workflow" && kind !== "schedule" ? <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant="primary" disabled={create.isPending || createSession.isPending}><Play size={16} />{kind === "task" ? "创建并排队" : "创建并启动"}</Button></div>
+        : kind === "schedule" && sched.baseType !== "workflow" ? <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant="primary" disabled={createSchedule.isPending}><CalendarClock size={16} />创建定时定义</Button></div> : null}
+    </form>
+  </Dialog>
+    <NewProposalDialog open={proposalOpen} onOpenChange={setProposalOpen} projects={projects.data} roles={roles.data} />
+  </>;
 }
 
 function formatTime(value?: string | null) {

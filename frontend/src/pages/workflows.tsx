@@ -1,55 +1,136 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, CirclePlus, Code2, ListTree, Play, Snowflake, Trash2 } from "lucide-react";
+import { CheckCircle2, CirclePlus, Clock, Code2, ListTree, Play, Snowflake, Trash2 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { PageHeader } from "../components/shell";
 import { TaskGraph } from "../components/visualization";
 import { Badge, Button, Card, cn, Dialog, Empty, Field, inputClass, Spinner } from "../components/ui";
 import { api, keys } from "../lib/api";
-import type { Project, Role, WorkflowPlan, WorkflowProposal, WorkflowRun, WorkflowSpec } from "../types";
+import type { Project, Role, Task, WorkflowRun, WorkflowSpec } from "../types";
+
+/** Task.spec / Task.violations 是 JSON 字符串；parse 失败返回 null（列表/详情用占位展示，不崩溃）。 */
+function parseWorkflowSpec(spec?: string | null): WorkflowSpec | null {
+  if (!spec) return null;
+  try {
+    const parsed = JSON.parse(spec) as WorkflowSpec;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+interface WorkflowViolation { code: string; node_id?: string; message: string }
+
+function parseViolations(violations?: string | null): WorkflowViolation[] {
+  if (!violations) return [];
+  try {
+    const parsed = JSON.parse(violations);
+    return Array.isArray(parsed) ? parsed as WorkflowViolation[] : [];
+  } catch {
+    return [];
+  }
+}
+
+// 定时快捷选择：与 management.tsx SchedulesPage 的 parseScheduleCron/cronFromFields/scheduleLabel 同一套 cron 规则（内联实现，避免跨页 import）。
+const SCHEDULE_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+const SCHEDULE_TIME = "09:00";
+
+function cronFromFields(frequency: string, weekday: string, monthday: string, time: string): string {
+  const match = /^(\d{2}):(\d{2})$/.exec(time);
+  if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) return "";
+  const minute = Number(match[2]);
+  const hour = Number(match[1]);
+  let dom = "*", dow = "*";
+  if (frequency === "weekdays") dow = "1-5";
+  if (frequency === "weekly") {
+    const day = Number(weekday) || 1;
+    dow = day === 7 ? "0" : String(day);
+  }
+  if (frequency === "monthly") dom = String(Number(monthday) || 1);
+  return `0 ${minute} ${hour} ${dom} * ${dow}`;
+}
+
+function scheduleLabel(cron: string): string {
+  const raw = String(cron || "").trim().toLowerCase();
+  let frequency = "", weekday = "", monthday = "", time = "";
+  if (raw === "@daily") { frequency = "daily"; time = "00:00"; }
+  else if (raw === "@weekly") { frequency = "weekly"; weekday = "7"; time = "00:00"; }
+  else if (raw === "@monthly") { frequency = "monthly"; monthday = "1"; time = "00:00"; }
+  else {
+    const fields = raw.split(/\s+/);
+    if (fields.length === 5 || fields.length === 6) {
+      const [second, minute, hour, dom, month, dow] = fields.length === 6 ? fields : ["0", fields[0], fields[1], fields[2], fields[3], fields[4]];
+      if (second === "0" && month === "*" && /^\d{1,2}$/.test(minute) && /^\d{1,2}$/.test(hour)) {
+        const minuteNum = Number(minute), hourNum = Number(hour);
+        if (minuteNum <= 59 && hourNum <= 23) {
+          time = `${String(hourNum).padStart(2, "0")}:${String(minuteNum).padStart(2, "0")}`;
+          if (dom === "*" && dow === "*") frequency = "daily";
+          else if (dom === "*" && dow === "1-5") frequency = "weekdays";
+          else if (dom === "*" && /^\d$/.test(dow) && Number(dow) <= 7) { frequency = "weekly"; weekday = String(Number(dow) === 0 ? 7 : Number(dow)); }
+          else if (dow === "*" && /^\d{1,2}$/.test(dom) && Number(dom) >= 1 && Number(dom) <= 31) { frequency = "monthly"; monthday = String(Number(dom)); }
+        }
+      }
+    }
+  }
+  if (!frequency) return "自定义周期";
+  if (frequency === "daily") return `每天 ${time}`;
+  if (frequency === "weekdays") return `工作日 ${time}`;
+  if (frequency === "weekly") return `每周${SCHEDULE_WEEKDAYS[Number(weekday) - 1] || ""} ${time}`;
+  if (frequency === "monthly") return `每月${monthday}日 ${time}`;
+  return "自定义周期";
+}
 
 export function WorkflowsPage() {
-  const proposals = useQuery({ queryKey: ["workflow-proposals"], queryFn: () => api<WorkflowProposal[]>("/workflow-proposals") });
-  const plans = useQuery({ queryKey: keys.workflows, queryFn: () => api<WorkflowPlan[]>("/workflows") });
+  const proposals = useQuery({ queryKey: ["workflow-proposals"], queryFn: () => api<Task[]>("/workflow-proposals") });
   const projects = useQuery({ queryKey: keys.projects, queryFn: () => api<Project[]>("/projects") });
   const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
   const [open, setOpen] = useState(false);
+  const plans = (proposals.data || []).filter(item => item.status === "adopted");
   return <>
     <PageHeader title="工作流" copy="Proposal 先经过确定性策略校验，采纳后冻结为不可变 Plan，再原子创建 Run 与任务依赖图。" actions={<Button variant="primary" onClick={() => setOpen(true)}><CirclePlus size={16} />新建 Proposal</Button>} />
-    <div className="grid gap-4 xl:grid-cols-2"><section><h2 className="mb-3 text-sm font-semibold text-muted">待决 Proposal</h2>{proposals.isLoading ? <Spinner /> : proposals.data?.length ? <div className="grid gap-3">{proposals.data.map(item => <Link key={item.id} to={`/workflow-proposals/${item.id}`} className="rounded-xl border border-line bg-surface p-3.5 shadow-card transition hover:border-brand/35"><div className="flex items-center gap-2"><span className="text-xs text-faint">#{item.id}</span><h3 className="truncate font-semibold">{item.spec.goal}</h3><Badge tone={item.status === "validated" ? "good" : item.status === "rejected" ? "bad" : "neutral"}>{item.status}</Badge></div><p className="mt-2 text-sm text-muted">{item.spec.nodes.length} 个节点 · revision {item.revision}</p></Link>)}</div> : <Empty title="没有 Proposal" copy="提交一份只描述意图、依赖和边界的工作流规格。" />}</section>
-      <section><h2 className="mb-3 text-sm font-semibold text-muted">冻结 Plan</h2>{plans.isLoading ? <Spinner /> : plans.data?.length ? <div className="grid gap-3">{plans.data.map(item => <Link key={item.id} to={`/workflows/${item.id}`} className="rounded-xl border border-line bg-surface p-3.5 shadow-card transition hover:border-brand/35"><div className="flex items-center gap-2"><Snowflake size={15} className="text-brand-soft"/><h3 className="truncate font-semibold">{item.spec.goal}</h3><Badge tone="info">{item.status}</Badge></div><p className="mt-2 truncate font-mono text-xs text-muted">{item.spec_hash}</p></Link>)}</div> : <Empty title="没有冻结 Plan" copy="通过校验并采纳 Proposal 后，Plan 会出现在这里。" />}</section></div>
+    <div className="grid gap-4 xl:grid-cols-2"><section><h2 className="mb-3 text-sm font-semibold text-muted">待决 Proposal</h2>{proposals.isLoading ? <Spinner /> : proposals.data?.length ? <div className="grid gap-3">{proposals.data.map(item => {
+      const spec = parseWorkflowSpec(item.spec);
+      return <Link key={item.id} to={`/workflow-proposals/${item.id}`} className="rounded-xl border border-line bg-surface p-3.5 shadow-card transition hover:border-brand/35"><div className="flex items-center gap-2"><span className="text-xs text-faint">#{item.id}</span><h3 className="truncate font-semibold">{spec?.goal || "（无法解析规格）"}</h3><Badge tone={item.status === "validated" ? "good" : item.status === "rejected" ? "bad" : "neutral"}>{item.status}</Badge></div><p className="mt-2 text-sm text-muted">{spec ? `${spec.nodes.length} 个节点 · ` : ""}revision {item.revision}</p></Link>;
+    })}</div> : <Empty title="没有 Proposal" copy="提交一份只描述意图、依赖和边界的工作流规格。" />}</section>
+      <section><h2 className="mb-3 text-sm font-semibold text-muted">冻结 Plan</h2>{proposals.isLoading ? <Spinner /> : plans.length ? <div className="grid gap-3">{plans.map(item => {
+        const spec = parseWorkflowSpec(item.spec);
+        return <Link key={item.id} to={`/workflows/${item.id}`} className="rounded-xl border border-line bg-surface p-3.5 shadow-card transition hover:border-brand/35"><div className="flex items-center gap-2"><Snowflake size={15} className="text-brand-soft"/><h3 className="truncate font-semibold">{spec?.goal || "（无法解析规格）"}</h3><Badge tone="info">{item.status}</Badge></div><p className="mt-2 truncate font-mono text-xs text-muted">{item.spec_hash}</p></Link>;
+      })}</div> : <Empty title="没有冻结 Plan" copy="通过校验并采纳 Proposal 后，Plan 会出现在这里。" />}</section></div>
     <NewProposalDialog open={open} onOpenChange={setOpen} projects={projects.data} roles={roles.data} />
   </>;
 }
 
 export function WorkflowProposalPage() {
   const id = Number(useParams().id);
-  const item = useQuery({ queryKey: ["workflow-proposals", id], queryFn: () => api<WorkflowProposal>(`/workflow-proposals/${id}`) });
+  const item = useQuery({ queryKey: ["workflow-proposals", id], queryFn: () => api<Task>(`/workflow-proposals/${id}`) });
   const qc = useQueryClient();
   const act = useMutation({ mutationFn: (name: "validate" | "adopt") => api(`/workflow-proposals/${id}/${name}`, { method: "POST", revision: item.data?.revision }), onSuccess: () => { qc.invalidateQueries({ queryKey: ["workflow-proposals"] }); qc.invalidateQueries({ queryKey: keys.workflows }); } });
   if (item.isLoading) return <Spinner />;
   if (!item.data) return <Empty title="Proposal 不存在" copy="请返回工作流列表。" />;
   const proposal = item.data;
-  return <><PageHeader title={proposal.spec.goal} copy={`由 ${proposal.spec.created_by || "operator"} 创建 · revision ${proposal.revision}`} actions={<>{proposal.status !== "adopted" && <Button onClick={() => act.mutate("validate")}><CheckCircle2 size={16} />校验</Button>}{proposal.status === "validated" && <Button variant="primary" onClick={() => act.mutate("adopt")}><Snowflake size={16} />采纳并冻结</Button>}</>} />
-    {proposal.violations.length > 0 && <Card className="mb-4 border-danger/30"><h2 className="font-semibold text-danger">策略拒绝</h2><ul className="mt-3 grid gap-2 text-sm text-muted">{proposal.violations.map((v, i) => <li key={i}><code className="text-danger">{v.code}</code>{v.node_id && ` · ${v.node_id}`}：{v.message}</li>)}</ul></Card>}<WorkflowGraph spec={proposal.spec} /></>;
+  const spec = parseWorkflowSpec(proposal.spec);
+  const violations = parseViolations(proposal.violations);
+  return <><PageHeader title={spec?.goal || "（无法解析规格）"} copy={`由 ${spec?.created_by || "operator"} 创建 · revision ${proposal.revision}`} actions={<>{proposal.status !== "adopted" && <Button onClick={() => act.mutate("validate")}><CheckCircle2 size={16} />校验</Button>}{proposal.status === "validated" && <Button variant="primary" onClick={() => act.mutate("adopt")}><Snowflake size={16} />采纳并冻结</Button>}</>} />
+    {violations.length > 0 && <Card className="mb-4 border-danger/30"><h2 className="font-semibold text-danger">策略拒绝</h2><ul className="mt-3 grid gap-2 text-sm text-muted">{violations.map((v, i) => <li key={i}><code className="text-danger">{v.code}</code>{v.node_id && ` · ${v.node_id}`}：{v.message}</li>)}</ul></Card>}{spec ? <WorkflowGraph spec={spec} /> : <Empty title="无法解析规格" copy="该 Proposal 的 spec 不是有效 JSON 字符串。" />}</>;
 }
 
 export function WorkflowPlanPage() {
   const id = Number(useParams().id);
-  const plan = useQuery({ queryKey: ["workflows", id], queryFn: () => api<WorkflowPlan>(`/workflows/${id}`) });
+  const plan = useQuery({ queryKey: ["workflows", id], queryFn: () => api<Task>(`/workflows/${id}`) });
   const runs = useQuery({ queryKey: ["workflows", id, "runs"], queryFn: () => api<WorkflowRun[]>(`/workflows/${id}/runs`), refetchInterval: query => (query.state.data as WorkflowRun[] | undefined)?.some(r => r.status === "running" || r.status === "created") ? 3000 : false });
   const qc = useQueryClient();
   const [run, setRun] = useState<WorkflowRun | null>(null);
   const start = useMutation({ mutationFn: () => api<WorkflowRun>(`/workflows/${id}/runs`, { method: "POST", revision: plan.data?.revision }), onSuccess: value => { setRun(value); qc.invalidateQueries({ queryKey: ["workflows", id, "runs"] }); } });
   if (plan.isLoading) return <Spinner />;
   if (!plan.data) return <Empty title="Plan 不存在" copy="请返回工作流列表。" />;
+  const spec = parseWorkflowSpec(plan.data.spec);
   const latest = run ?? runs.data?.[0] ?? null;
   const latestRunning = latest?.status === "running" || latest?.status === "created";
   const runTone: Record<string, "neutral" | "good" | "bad" | "info"> = { created: "neutral", running: "info", succeeded: "good", failed: "bad", cancelled: "neutral" };
-  return <><PageHeader title={plan.data.spec.goal} copy={`版本 ${plan.data.version} · ${plan.data.spec_hash}`} actions={<Button variant="primary" onClick={() => start.mutate()} disabled={start.isPending || latestRunning}><Play size={16} />{latestRunning ? "Run 进行中" : "启动 Run"}</Button>} />
+  return <><PageHeader title={spec?.goal || "（无法解析规格）"} copy={`版本 ${spec?.version ?? 1} · ${plan.data.spec_hash}`} actions={<Button variant="primary" onClick={() => start.mutate()} disabled={start.isPending || latestRunning}><Play size={16} />{latestRunning ? "Run 进行中" : "启动 Run"}</Button>} />
     {latest && <Card className="mb-4"><div className="flex items-center gap-2"><Badge tone={runTone[latest.status] || "neutral"}>Run #{latest.id} · {latest.status}</Badge><span className="text-sm text-muted">{formatRunTime(latest.created_at)}{latest.finished_at ? ` · 结束 ${formatRunTime(latest.finished_at)}` : ""}</span></div>
-      <table className="mt-3 w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint"><th className="py-1.5 pr-3 font-medium">节点</th><th className="py-1.5 pr-3 font-medium">意图</th><th className="py-1.5 font-medium">任务</th></tr></thead><tbody className="divide-y divide-line">{Object.entries(latest.task_ids).map(([nodeID, taskID]) => <tr key={nodeID}><td className="py-1.5 pr-3 font-mono text-xs text-muted">{nodeID}</td><td className="py-1.5 pr-3 text-muted">{plan.data.spec.nodes.find(n => n.id === nodeID)?.intent || "-"}</td><td className="py-1.5"><Link to={`/tasks/${taskID}`} className="text-brand-soft hover:underline">任务 #{taskID} →</Link></td></tr>)}</tbody></table></Card>}
-    {run && <Card className="mb-4 border-success/30"><div className="flex items-center gap-2"><Badge tone="good">Run #{run.id}</Badge><span className="text-sm text-muted">已原子创建 {Object.keys(run.task_ids).length} 个任务</span></div></Card>}<WorkflowGraph spec={plan.data.spec} /></>;
+      <table className="mt-3 w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint"><th className="py-1.5 pr-3 font-medium">节点</th><th className="py-1.5 pr-3 font-medium">意图</th><th className="py-1.5 font-medium">任务</th></tr></thead><tbody className="divide-y divide-line">{Object.entries(latest.task_ids).map(([nodeID, taskID]) => <tr key={nodeID}><td className="py-1.5 pr-3 font-mono text-xs text-muted">{nodeID}</td><td className="py-1.5 pr-3 text-muted">{spec?.nodes.find(n => n.id === nodeID)?.intent || "-"}</td><td className="py-1.5"><Link to={`/tasks/${taskID}`} className="text-brand-soft hover:underline">任务 #{taskID} →</Link></td></tr>)}</tbody></table></Card>}
+    {run && <Card className="mb-4 border-success/30"><div className="flex items-center gap-2"><Badge tone="good">Run #{run.id}</Badge><span className="text-sm text-muted">已原子创建 {Object.keys(run.task_ids).length} 个任务</span></div></Card>}{spec ? <WorkflowGraph spec={spec} /> : <Empty title="无法解析规格" copy="该 Plan 的 spec 不是有效 JSON 字符串。" />}</>;
 }
 
 function formatRunTime(value?: string): string {
@@ -220,7 +301,7 @@ function validateDraft(draft: Draft): string[] {
   return errors;
 }
 
-function NewProposalDialog({ open, onOpenChange, projects, roles }: {
+export function NewProposalDialog({ open, onOpenChange, projects, roles }: {
   open: boolean;
   onOpenChange(open: boolean): void;
   projects?: Project[];
@@ -231,12 +312,22 @@ function NewProposalDialog({ open, onOpenChange, projects, roles }: {
   const [draft, setDraft] = useState<Draft>(() => draftFromSpec(exampleSpec(0, 0)));
   const [json, setJson] = useState("");
   const [jsonError, setJsonError] = useState("");
+  const [scheduled, setScheduled] = useState(false);
+  const [frequency, setFrequency] = useState("daily");
+  const [weekday, setWeekday] = useState("1");
+  const [monthday, setMonthday] = useState("1");
+  const [time, setTime] = useState(SCHEDULE_TIME);
+  const [enabled, setEnabled] = useState(true);
   const didInit = useRef(false);
   const errors = useMemo(() => validateDraft(draft), [draft]);
   const create = useMutation({
     mutationFn: () => {
       const spec = mode === "json" ? (JSON.parse(json) as WorkflowSpec) : buildSpec(draft);
-      return api<WorkflowProposal>("/workflow-proposals", { method: "POST", body: spec });
+      const cron = scheduled ? cronFromFields(frequency, weekday, monthday, time) : "";
+      if (scheduled && !cron) throw new Error("请选择有效的执行时间");
+      const body: Record<string, unknown> = { spec };
+      if (cron) { body.cron = cron; body.enabled = enabled; }
+      return api<Task>("/workflow-proposals", { method: "POST", body });
     },
     onSuccess: () => { onOpenChange(false); qc.invalidateQueries({ queryKey: ["workflow-proposals"] }); },
   });
@@ -248,6 +339,12 @@ function NewProposalDialog({ open, onOpenChange, projects, roles }: {
       setJson(JSON.stringify(spec, null, 2));
       setMode("form");
       setJsonError("");
+      setScheduled(false);
+      setFrequency("daily");
+      setWeekday("1");
+      setMonthday("1");
+      setTime(SCHEDULE_TIME);
+      setEnabled(true);
     } else if (!open) {
       didInit.current = false;
     }
@@ -322,13 +419,28 @@ function NewProposalDialog({ open, onOpenChange, projects, roles }: {
         </div>
         {errors.length > 0 && <div className="rounded-xl border border-danger/30 bg-danger/5 p-3"><h3 className="text-sm font-semibold text-danger">还有 {errors.length} 处需要修正</h3><ul className="mt-2 grid gap-1 text-sm leading-6 text-muted">{errors.map((error, i) => <li key={i}>{error}</li>)}</ul></div>}
         {create.error instanceof Error && <p className="text-sm text-danger">{create.error.message}</p>}
-        <div className="flex items-center gap-2"><span className="mr-auto text-xs leading-5 text-faint">提交后进入策略校验，通过后可在「审批」页采纳冻结为不可变 Plan。</span><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant="primary" disabled={create.isPending || errors.length > 0}>提交 Proposal</Button></div>
       </> : <>
         <Field label="Workflow Spec（JSON）" hint="仅表达声明式节点，不会直接执行命令。"><textarea className={inputClass + " min-h-[26rem] py-3 font-mono text-xs"} value={json} onChange={event => { setJson(event.target.value); setJsonError(""); }} /></Field>
         {jsonError && <p className="text-sm text-danger">{jsonError}</p>}
         {create.error instanceof Error && <p className="text-sm text-danger">{create.error.message}</p>}
-        <div className="flex items-center gap-2"><span className="mr-auto text-xs leading-5 text-faint">提交后进入策略校验，通过后可在「审批」页采纳冻结为不可变 Plan。</span><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant="primary" disabled={create.isPending}>提交 Proposal</Button></div>
       </>}
+      <details className="rounded-xl border border-line bg-elevated p-3.5">
+        <summary className="flex cursor-pointer select-none items-center gap-2 text-sm font-medium"><Clock size={15} className="text-muted" />定时执行{scheduled ? (cronFromFields(frequency, weekday, monthday, time) ? <span className="ml-auto text-xs font-normal text-muted">{scheduleLabel(cronFromFields(frequency, weekday, monthday, time))}</span> : <span className="ml-auto text-xs font-normal text-danger">时间无效</span>) : <span className="ml-auto text-xs font-normal text-faint">关闭 · cron 为空 = 普通工作流</span>}</summary>
+        <div className="mt-3 grid gap-3">
+          <label className="flex min-h-11 items-center gap-3 rounded-xl border border-line bg-surface px-3 text-sm"><input type="checkbox" className="accent-brand" checked={scheduled} onChange={event => setScheduled(event.target.checked)} />按 cron 定时执行（不勾选 = 普通工作流，立即进入校验）</label>
+          {scheduled && <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="频率"><select className={inputClass} value={frequency} onChange={event => setFrequency(event.target.value)}><option value="daily">每天</option><option value="weekdays">工作日</option><option value="weekly">每周</option><option value="monthly">每月</option></select></Field>
+              <Field label="时间"><input type="time" className={inputClass} value={time} onChange={event => setTime(event.target.value)} /></Field>
+              {frequency === "weekly" && <Field label="星期"><select className={inputClass} value={weekday} onChange={event => setWeekday(event.target.value)}>{SCHEDULE_WEEKDAYS.map((label, i) => <option key={i + 1} value={i + 1}>{label}</option>)}</select></Field>}
+              {frequency === "monthly" && <Field label="日期"><select className={inputClass} value={monthday} onChange={event => setMonthday(event.target.value)}>{Array.from({ length: 28 }, (_, i) => i + 1).map(day => <option key={day} value={day}>{day}日</option>)}</select></Field>}
+            </div>
+            <label className="flex min-h-11 items-center gap-3 rounded-xl border border-line bg-surface px-3 text-sm"><input type="checkbox" className="accent-brand" checked={enabled} onChange={event => setEnabled(event.target.checked)} />启用该定时（取消勾选 = 暂停，不产生执行）</label>
+            {!cronFromFields(frequency, weekday, monthday, time) && <p className="text-sm text-danger">请选择有效的执行时间</p>}
+          </>}
+        </div>
+      </details>
+      <div className="flex items-center gap-2"><span className="mr-auto text-xs leading-5 text-faint">提交后进入策略校验，通过后可在「审批」页采纳冻结为不可变 Plan。</span><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant="primary" disabled={create.isPending || (mode === "form" && errors.length > 0)}>提交 Proposal</Button></div>
     </form>
   </Dialog>;
 }

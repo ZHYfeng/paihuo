@@ -26,12 +26,14 @@ export interface Role {
 }
 
 export type TaskStatus = "queued" | "claimed" | "running" | "awaiting_review" | "succeeded" | "failed" | "cancelled";
+export type TaskType = "task" | "session" | "workflow";
 
 export interface Task {
   id: ID;
+  type: TaskType;
   title: string;
   body: string;
-  status: TaskStatus;
+  status: string;
   perm: "full" | "review";
   run_mode: "batch" | "interactive";
   concurrent: boolean;
@@ -52,17 +54,37 @@ export interface Task {
   session_id?: ID | null;
   workflow_run_id?: ID | null;
   resume_of?: ID | null;
+  schedule_id?: ID | null;
   worktree_branch?: string;
   base_commit?: string;
   sort_order?: number;
   terminal_cols?: number;
   terminal_rows?: number;
+  // 定时属性（正交：任何形态可挂；cron 非空 = 定时定义，永不直接执行）
+  cron?: string;
+  enabled?: boolean;
+  last_run_at?: string | null;
+  next_run_at?: string | null;
+  // 会话字段（type=session）
+  worktree_path?: string;
+  session_dir?: string;
+  last_message_at?: string;
+  message_count?: number;
+  suspended_at?: string | null;
+  delivered_at?: string | null;
+  // 工作流字段（type=workflow；spec/violations 为 JSON 字符串，需 parse）
+  spec?: string;
+  violations?: string;
+  spec_hash?: string;
   revision: number;
   created_at: string;
   started_at?: string | null;
   finished_at?: string | null;
   updated_at: string;
 }
+
+/** 会话 = type=session 的任务（字段全部在 Task 上）。 */
+export type Session = Task;
 
 export interface TaskLog {
   id: ID;
@@ -145,25 +167,6 @@ export interface Skill {
   created_at: string;
 }
 
-export interface Schedule {
-  id: ID;
-  name: string;
-  cron: string;
-  title_template: string;
-  body_template: string;
-  role_id: ID;
-  role_name?: string;
-  project_id?: ID | null;
-  project_name?: string;
-  perm: "full" | "review";
-  block_on_failure: boolean;
-  enabled: boolean;
-  revision: number;
-  next_run_at?: string | null;
-  last_run_at?: string | null;
-  created_at: string;
-}
-
 export interface TaskTemplate {
   id: ID;
   name: string;
@@ -171,22 +174,6 @@ export interface TaskTemplate {
   role_id?: ID | null;
   role_name?: string;
   created_at: string;
-}
-
-export interface Session {
-  id: ID;
-  project_id?: ID | null;
-  project_name?: string;
-  role_id: ID;
-  role_name?: string;
-  title: string;
-  status: "created" | "active" | "suspended" | "delivered" | "deleted";
-  runtime_id: string;
-  task_id?: ID | null;
-  message_count: number;
-  revision: number;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface OverviewStats {
@@ -323,31 +310,9 @@ export interface WorkflowSpec {
   nodes: WorkflowNode[];
 }
 
-export interface WorkflowProposal {
-  id: ID;
-  spec: WorkflowSpec;
-  status: "proposed" | "validated" | "rejected" | "adopted";
-  violations: Array<{ code: string; node_id?: string; message: string }>;
-  revision: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface WorkflowPlan {
-  id: ID;
-  version: number;
-  spec: WorkflowSpec;
-  spec_hash: string;
-  status: string;
-  proposal_id?: ID;
-  revision: number;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface WorkflowRun {
   id: ID;
-  plan_id: ID;
+  workflow_id: ID;
   status: string;
   task_ids: Record<string, ID>;
   revision: number;
