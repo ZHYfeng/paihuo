@@ -355,7 +355,7 @@ export function HistoryPage() {
       <span className="flex shrink-0 items-center gap-2 px-2 text-sm text-muted whitespace-nowrap"><ListFilter size={16} />筛选</span>
       <select className={inputClass + " sm:w-40"} value={roleID} onChange={event => setRoleID(event.target.value)} aria-label="按角色筛选"><option value="">全部角色</option>{roles.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
       <select className={inputClass + " sm:w-36"} value={status} onChange={event => setStatus(event.target.value)} aria-label="按状态筛选"><option value="">全部状态</option>{Object.entries(STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-      <Field label="天数"><input type="number" min={1} className={inputClass + " sm:w-28"} value={days} onChange={event => onDaysChange(event.target.value)} placeholder="全部时间" aria-label="按天数筛选" /></Field>
+      <label className="flex items-center gap-2 whitespace-nowrap text-sm text-muted"><span>天数</span><input type="number" min={1} className={inputClass + " sm:w-24"} value={days} onChange={event => onDaysChange(event.target.value)} placeholder="全部时间" aria-label="按天数筛选" /></label>
       <span className="whitespace-nowrap text-sm text-muted sm:ml-auto">{filtered.length} 条</span>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" onClick={toggleAll}>全选非合并</Button>
