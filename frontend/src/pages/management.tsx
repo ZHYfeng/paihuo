@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarPlus, CirclePlus, Copy, FolderOpen, FolderSearch, Pencil, Save, Trash2, X } from "lucide-react";
-import { FormEvent, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { DirectoryPicker } from "../components/directory-picker";
 import { Markdown } from "../components/markdown";
 import { PageHeader } from "../components/shell";
@@ -20,9 +20,14 @@ export function SkillsPage() {
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [view, setView] = useState<"grid" | "list">("grid");
+  const [grouped, setGrouped] = useState(false);
+  const [batchDialog, setBatchDialog] = useState<"tags" | "category" | null>(null);
+  const [batchTags, setBatchTags] = useState("");
+  const [batchCategory, setBatchCategory] = useState("");
   const [tab, setTab] = useState<"skills" | "extensions">("skills");
   const [detail, setDetail] = useState<(Skill & { content: string }) | null>(null);
   const [draftTags, setDraftTags] = useState<string[]>([]);
+  const [draftCategory, setDraftCategory] = useState("");
   const [scanSummary, setScanSummary] = useState("");
   const [extDialog, setExtDialog] = useState<"install" | "remove" | null>(null);
   const [extSource, setExtSource] = useState("");
@@ -42,17 +47,31 @@ export function SkillsPage() {
   }, onError: (error: Error) => { setScanSummary(""); toast(error.message, "bad"); } });
   const remove = useMutation({ mutationFn: (id: number) => api(`/skills/${id}`, { method: "DELETE" }), onSuccess: (_, id) => { setSelected(prev => { const next = new Set(prev); next.delete(id); return next; }); qc.invalidateQueries({ queryKey: keys.skills }); toast("已删除"); }, onError: (error: Error) => toast(error.message, "bad") });
   const removeMany = useMutation({ mutationFn: (ids: number[]) => api("/skills", { method: "DELETE", body: { ids } }), onSuccess: (_, ids) => { toast(`已删除 ${ids.length} 个技能`); setSelected(new Set()); qc.invalidateQueries({ queryKey: keys.skills }); }, onError: (error: Error) => toast(error.message, "bad") });
-  const saveTags = useMutation({ mutationFn: ({ id, tags }: { id: number; tags: string[] }) => api(`/skills/${id}`, { method: "PATCH", body: { tags } }), onSuccess: () => { toast("标签已保存"); qc.invalidateQueries({ queryKey: keys.skills }); }, onError: (error: Error) => toast(error.message, "bad") });
+  const saveSkill = useMutation({ mutationFn: ({ id, tags, category }: { id: number; tags: string[]; category: string }) => api(`/skills/${id}`, { method: "PATCH", body: { tags, category } }), onSuccess: () => { toast("已保存"); qc.invalidateQueries({ queryKey: keys.skills }); }, onError: (error: Error) => toast(error.message, "bad") });
+  const applyTags = useMutation({ mutationFn: (tags: string[]) => api<Skill[]>("/skills", { method: "PATCH", body: { ids: Array.from(selected), tags } }), onSuccess: () => { toast("标签已应用到选中技能"); setBatchDialog(null); setBatchTags(""); setSelected(new Set()); qc.invalidateQueries({ queryKey: keys.skills }); }, onError: (error: Error) => toast(error.message, "bad") });
+  const applyCategory = useMutation({ mutationFn: (category: string) => api<Skill[]>("/skills", { method: "PATCH", body: { ids: Array.from(selected), category } }), onSuccess: () => { toast("分类已应用到选中技能"); setBatchDialog(null); setBatchCategory(""); setSelected(new Set()); qc.invalidateQueries({ queryKey: keys.skills }); }, onError: (error: Error) => toast(error.message, "bad") });
   const installExt = useMutation({ mutationFn: (source: string) => api<ExtensionOutput>("/extensions/install", { method: "POST", body: { source } }), onSuccess: data => { setExtOutput(data); toast("扩展已安装"); qc.invalidateQueries({ queryKey: ["extensions"] }); }, onError: (error: Error) => { setExtOutput({ raw: "", error: error.message }); toast(error.message, "bad"); } });
   const removeExt = useMutation({ mutationFn: (name: string) => api<ExtensionOutput>(`/extensions/${name}`, { method: "DELETE" }), onSuccess: data => { setExtOutput(data); toast("扩展已移除"); qc.invalidateQueries({ queryKey: ["extensions"] }); }, onError: (error: Error) => { setExtOutput({ raw: "", error: error.message }); toast(error.message, "bad"); } });
 
   const allTags = Array.from(new Set((skills.data ?? []).flatMap(skill => skill.tags ?? []))).sort();
+  const categoryOf = (skill: Skill) => (skill.category || "").trim() || "未分类";
+  const allCategories = Array.from(new Set((skills.data ?? []).map(categoryOf))).sort();
   const filtered = (skills.data ?? []).filter(skill => {
     const q = search.trim().toLowerCase();
-    const hit = !q || skill.name.toLowerCase().includes(q) || (skill.description || "").toLowerCase().includes(q);
+    const hit = !q || skill.name.toLowerCase().includes(q) || (skill.description || "").toLowerCase().includes(q) || (skill.tags ?? []).some(tag => tag.toLowerCase().includes(q));
     const tagged = tagFilter.size === 0 || (skill.tags ?? []).some(tag => tagFilter.has(tag));
     return hit && tagged;
   });
+  const groups = useMemo(() => {
+    const map = new Map<string, Skill[]>();
+    for (const skill of filtered) {
+      const key = categoryOf(skill);
+      const list = map.get(key);
+      if (list) list.push(skill);
+      else map.set(key, [skill]);
+    }
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [filtered]);
   const toggleTag = (tag: string) => setTagFilter(prev => { const next = new Set(prev); if (next.has(tag)) next.delete(tag); else next.add(tag); return next; });
   const toggleSkill = (id: number) => setSelected(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const toggleGroup = (list: Skill[]) => setSelected(prev => {
@@ -64,6 +83,7 @@ export function SkillsPage() {
   const openDetail = async (skill: Skill) => {
     const full = await api<Skill & { content: string }>(`/skills/${skill.id}`);
     setDraftTags(full.tags ?? []);
+    setDraftCategory(full.category || "");
     setDetail(full);
   };
   const openExtDialog = (mode: "install" | "remove") => { setExtDialog(mode); setExtSource(""); setExtName(""); setExtOutput(null); };
@@ -76,6 +96,40 @@ export function SkillsPage() {
       toast((error as Error).message, "bad");
     }
   };
+  const renderCard = (skill: Skill) => (
+    <Card key={skill.id}>
+      <div className="flex items-start gap-3">
+        <button className="min-w-0 text-left" onClick={() => openDetail(skill)}><h2 className="font-semibold hover:text-brand-soft">{skill.name}</h2>{skill.dir ? <code className="mt-1 block truncate font-mono text-xs text-faint" title={skill.dir}>{skill.dir}</code> : null}<p className="mt-2 text-sm leading-5 text-muted">{skill.description || "暂无说明"}</p></button>
+        <div className="ml-auto flex items-center gap-1"><input type="checkbox" className="size-4" aria-label={`选择 ${skill.name}`} checked={selected.has(skill.id)} onChange={() => toggleSkill(skill.id)} /><Button variant="danger" size="sm" aria-label={`删除 ${skill.name}`} onClick={() => confirm(`删除 skill「${skill.name}」？将同时移除工作目录中的副本，已引用它的角色配置会失效。`) && remove.mutate(skill.id)}><Trash2 size={15} /></Button></div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">{skill.tags?.length ? skill.tags.map(tag => <Badge key={tag}>{tag}</Badge>) : <Badge>未分类</Badge>}<Button size="sm" variant="ghost" className="ml-auto" onClick={() => void copyContent(skill)}><Copy size={13} />复制 SKILL.md</Button></div>
+    </Card>
+  );
+  const renderRow = (skill: Skill) => (
+    <tr key={skill.id} className="hover:bg-hover">
+      <td className="px-3 py-2"><input type="checkbox" className="size-4" aria-label={`选择 ${skill.name}`} checked={selected.has(skill.id)} onChange={() => toggleSkill(skill.id)} /></td>
+      <td className="whitespace-nowrap px-3 py-2 font-medium"><button className="hover:text-brand-soft" onClick={() => openDetail(skill)}>{skill.name}</button><div className="mt-0.5 max-w-80 truncate text-xs text-faint">{skill.description || ""}</div></td>
+      <td className="whitespace-nowrap px-3 py-2 text-muted">{categoryOf(skill)}</td>
+      <td className="px-3 py-2"><span className="inline-flex flex-wrap gap-1">{skill.tags?.length ? skill.tags.map(tag => <Badge key={tag}>{tag}</Badge>) : <Badge>未分类</Badge>}</span></td>
+      <td className="max-w-52 truncate px-3 py-2 font-mono text-xs text-muted" title={skill.dir}>{skill.dir}</td>
+      <td className="px-3 py-2 text-faint">{formatTime(skill.created_at)}</td>
+      <td className="px-3 py-2"><span className="inline-flex gap-1.5"><Button size="sm" variant="ghost" onClick={() => void copyContent(skill)}><Copy size={13} />复制</Button><Button size="sm" variant="danger" onClick={() => confirm(`删除 skill「${skill.name}」？`) && remove.mutate(skill.id)}><Trash2 size={13} /></Button></span></td>
+    </tr>
+  );
+  const renderGroup = (category: string, list: Skill[]) => (
+    <section key={category} className="grid gap-3">
+      <div className="flex items-center gap-2 border-b border-line pb-2">
+        <FolderOpen size={14} className="text-muted" />
+        <h3 className="text-sm font-semibold">{category}</h3>
+        <span className="text-xs text-faint">{list.length} 个</span>
+        <label className="ml-auto flex cursor-pointer items-center gap-1.5 text-xs text-muted select-none"><input type="checkbox" className="size-3.5 accent-brand" aria-label={`全选 ${category}`} checked={list.every(skill => selected.has(skill.id))} onChange={() => toggleGroup(list)} />全选</label>
+      </div>
+      {view === "grid" ? <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">{list.map(renderCard)}</div> : <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
+        <th className="w-10 px-3 py-2 font-medium"><input type="checkbox" className="size-4" aria-label={`全选 ${category}`} checked={list.every(skill => selected.has(skill.id))} onChange={() => toggleGroup(list)} /></th>
+        <th className="whitespace-nowrap px-3 py-2 font-medium">技能</th><th className="whitespace-nowrap px-3 py-2 font-medium">分类</th><th className="whitespace-nowrap px-3 py-2 font-medium">标签</th><th className="whitespace-nowrap px-3 py-2 font-medium">来源目录</th><th className="whitespace-nowrap px-3 py-2 font-medium">添加时间</th><th className="whitespace-nowrap px-3 py-2 font-medium">操作</th>
+      </tr></thead><tbody className="divide-y divide-line">{list.map(renderRow)}</tbody></table></Card>}
+    </section>
+  );
 
   return <>
     <PageHeader title="技能" copy="导入带 SKILL.md 的目录；角色只保存技能选择，执行时由平台物化挂载。" />
@@ -89,37 +143,27 @@ export function SkillsPage() {
         <DirectoryPicker open={dirOpen} onOpenChange={setDirOpen} initial={path} onPick={selected => setPath(selected)} /></Card>
       <Card className="mb-4 grid gap-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <input className={inputClass + " sm:flex-1"} placeholder="搜索技能名称或说明…" value={search} onChange={e => setSearch(e.target.value)} />
+          <input className={inputClass + " sm:flex-1"} placeholder="搜索技能名称、说明或标签…" value={search} onChange={e => setSearch(e.target.value)} />
           {skills.data?.length ? <div className="flex shrink-0 rounded-xl border border-line bg-elevated p-0.5" role="tablist" aria-label="视图切换">
             <button role="tab" aria-selected={view === "grid"} className={cn("rounded-[10px] px-2.5 py-1 text-[13px]", view === "grid" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted")} onClick={() => setView("grid")}>卡片</button>
             <button role="tab" aria-selected={view === "list"} className={cn("rounded-[10px] px-2.5 py-1 text-[13px]", view === "list" ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted")} onClick={() => setView("list")}>列表</button>
           </div> : null}
+          {skills.data?.length ? <label className="flex shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-line bg-elevated px-3 py-1.5 text-[13px] text-muted select-none"><input type="checkbox" className="accent-brand" checked={grouped} onChange={e => setGrouped(e.target.checked)} />按文件夹分组</label> : null}
         </div>
         {allTags.length > 0 && <div className="flex flex-wrap gap-2">{allTags.map(tag => <button key={tag} type="button" className={cn("rounded-full border px-2.5 py-1 text-xs font-medium transition-colors", tagFilter.has(tag) ? "border-brand bg-brand/10 text-brand-soft" : "border-line bg-elevated text-muted hover:bg-hover")} onClick={() => toggleTag(tag)}>{tag}</button>)}</div>}
       </Card>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <span className="text-sm text-muted">{filtered.length === skills.data?.length ? `${skills.data.length} 个技能` : `${filtered.length} / ${skills.data?.length} 个技能`} · 已选 {selected.size} 项</span>
-        <Button variant="danger" size="sm" disabled={selected.size === 0} onClick={() => confirm(`删除选中的 ${selected.size} 个技能？`) && removeMany.mutate(Array.from(selected))}><Trash2 size={15} />删除选中</Button>
+        {selected.size > 0 && <>
+          <Button size="sm" variant="ghost" onClick={() => { setBatchTags(""); setBatchDialog("tags"); }}><Pencil size={14} />批量打标签</Button>
+          <Button size="sm" variant="ghost" onClick={() => { setBatchCategory(""); setBatchDialog("category"); }}><FolderOpen size={14} />移动分类</Button>
+          <Button variant="danger" size="sm" onClick={() => confirm(`删除选中的 ${selected.size} 个技能？`) && removeMany.mutate(Array.from(selected))}><Trash2 size={15} />删除选中</Button>
+        </>}
       </div>
-      {skills.isLoading ? <Spinner /> : skills.data?.length === 0 ? <Empty title="技能库为空" copy="从一个包含 SKILL.md 的目录开始导入。" /> : filtered.length === 0 ? <Empty title="没有匹配的技能" copy="调整搜索或标签筛选后重试。" /> : view === "grid" ? <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">{filtered.map(skill => (
-            <Card key={skill.id}>
-              <div className="flex items-start gap-3">
-                <button className="min-w-0 text-left" onClick={() => openDetail(skill)}><h2 className="font-semibold hover:text-brand-soft">{skill.name}</h2>{skill.dir ? <code className="mt-1 block truncate font-mono text-xs text-faint" title={skill.dir}>{skill.dir}</code> : null}<p className="mt-2 text-sm leading-5 text-muted">{skill.description || "暂无说明"}</p></button>
-                <div className="ml-auto flex items-center gap-1"><input type="checkbox" className="size-4" aria-label={`选择 ${skill.name}`} checked={selected.has(skill.id)} onChange={() => toggleSkill(skill.id)} /><Button variant="danger" size="sm" aria-label={`删除 ${skill.name}`} onClick={() => confirm(`删除 skill「${skill.name}」？将同时移除工作目录中的副本，已引用它的角色配置会失效。`) && remove.mutate(skill.id)}><Trash2 size={15} /></Button></div>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2">{skill.tags?.length ? skill.tags.map(tag => <Badge key={tag}>{tag}</Badge>) : <Badge>未分类</Badge>}<Button size="sm" variant="ghost" className="ml-auto" onClick={() => void copyContent(skill)}><Copy size={13} />复制 SKILL.md</Button></div>
-            </Card>
-          ))}</div> : <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
+      {skills.isLoading ? <Spinner /> : skills.data?.length === 0 ? <Empty title="技能库为空" copy="从一个包含 SKILL.md 的目录开始导入。" /> : filtered.length === 0 ? <Empty title="没有匹配的技能" copy="调整搜索或标签筛选后重试。" /> : grouped ? <div className="grid gap-6">{groups.map(([category, list]) => renderGroup(category, list))}</div> : view === "grid" ? <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">{filtered.map(renderCard)}</div> : <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
         <th className="w-10 px-3 py-2 font-medium"><input type="checkbox" className="size-4" aria-label="全选技能" checked={filtered.length > 0 && filtered.every(skill => selected.has(skill.id))} onChange={() => toggleGroup(filtered)} /></th>
-        <th className="whitespace-nowrap px-3 py-2 font-medium">技能</th><th className="whitespace-nowrap px-3 py-2 font-medium">标签</th><th className="whitespace-nowrap px-3 py-2 font-medium">来源目录</th><th className="whitespace-nowrap px-3 py-2 font-medium">添加时间</th><th className="whitespace-nowrap px-3 py-2 font-medium">操作</th>
-      </tr></thead><tbody className="divide-y divide-line">{filtered.map(skill => <tr key={skill.id} className="hover:bg-hover">
-        <td className="px-3 py-2"><input type="checkbox" className="size-4" aria-label={`选择 ${skill.name}`} checked={selected.has(skill.id)} onChange={() => toggleSkill(skill.id)} /></td>
-        <td className="whitespace-nowrap px-3 py-2 font-medium"><button className="hover:text-brand-soft" onClick={() => openDetail(skill)}>{skill.name}</button><div className="mt-0.5 max-w-80 truncate text-xs text-faint">{skill.description || ""}</div></td>
-        <td className="px-3 py-2"><span className="inline-flex flex-wrap gap-1">{skill.tags?.length ? skill.tags.map(tag => <Badge key={tag}>{tag}</Badge>) : <Badge>未分类</Badge>}</span></td>
-        <td className="max-w-52 truncate px-3 py-2 font-mono text-xs text-muted" title={skill.dir}>{skill.dir}</td>
-        <td className="px-3 py-2 text-faint">{formatTime(skill.created_at)}</td>
-        <td className="px-3 py-2"><span className="inline-flex gap-1.5"><Button size="sm" variant="ghost" onClick={() => void copyContent(skill)}><Copy size={13} />复制</Button><Button size="sm" variant="danger" onClick={() => confirm(`删除 skill「${skill.name}」？`) && remove.mutate(skill.id)}><Trash2 size={13} /></Button></span></td>
-      </tr>)}</tbody></table></Card>}
+        <th className="whitespace-nowrap px-3 py-2 font-medium">技能</th><th className="whitespace-nowrap px-3 py-2 font-medium">分类</th><th className="whitespace-nowrap px-3 py-2 font-medium">标签</th><th className="whitespace-nowrap px-3 py-2 font-medium">来源目录</th><th className="whitespace-nowrap px-3 py-2 font-medium">添加时间</th><th className="whitespace-nowrap px-3 py-2 font-medium">操作</th>
+      </tr></thead><tbody className="divide-y divide-line">{filtered.map(renderRow)}</tbody></table></Card>}
     </>}
     {tab === "extensions" && <>
       <div className="mb-4 flex flex-wrap gap-2">
@@ -128,15 +172,29 @@ export function SkillsPage() {
       </div>
       {extensions.isLoading ? <Spinner /> : <Card>{extensions.data?.error && <p className="mb-3 text-sm text-danger">{extensions.data.error}</p>}<pre className="whitespace-pre-wrap break-words rounded-xl border border-line bg-elevated p-3 font-mono text-xs leading-5 text-ink">{extensions.data?.raw || "（无输出）"}</pre></Card>}
     </>}
+    <Dialog open={batchDialog === "tags"} onOpenChange={open => !open && setBatchDialog(null)} title="批量打标签" description={`为选中的 ${selected.size} 个技能整体替换标签（不影响分类）。`}>{batchDialog === "tags" && <form className="grid gap-4" onSubmit={e => { e.preventDefault(); applyTags.mutate(batchTags.split(/[\n,，]/).map(tag => tag.trim()).filter(Boolean)); }}>
+      <Field label="标签" hint="逗号或换行分隔；保存后整体替换选中技能的标签"><input className={inputClass} placeholder="例如：coding, review" value={batchTags} onChange={e => setBatchTags(e.target.value)} autoFocus /></Field>
+      {applyTags.error instanceof Error && <p className="text-sm text-danger">{applyTags.error.message}</p>}
+      <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setBatchDialog(null)}>取消</Button><Button type="submit" variant="primary" disabled={applyTags.isPending}>应用</Button></div>
+    </form>}</Dialog>
+    <Dialog open={batchDialog === "category"} onOpenChange={open => !open && setBatchDialog(null)} title="移动分类" description={`把选中的 ${selected.size} 个技能移动到同一分类（文件夹）；留空 = 清空为未分类。`}>{batchDialog === "category" && <form className="grid gap-4" onSubmit={e => { e.preventDefault(); applyCategory.mutate(batchCategory.trim()); }}>
+      <Field label="分类" hint="输入新分类名，或从现有分类中选择"><input className={inputClass} list="batch-skill-categories" placeholder="例如：engineering" value={batchCategory} onChange={e => setBatchCategory(e.target.value)} autoFocus /><datalist id="batch-skill-categories">{allCategories.map(category => <option key={category} value={category} />)}</datalist></Field>
+      {applyCategory.error instanceof Error && <p className="text-sm text-danger">{applyCategory.error.message}</p>}
+      <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setBatchDialog(null)}>取消</Button><Button type="submit" variant="primary" disabled={applyCategory.isPending}>移动</Button></div>
+    </form>}</Dialog>
     <Dialog open={detail !== null} onOpenChange={open => !open && setDetail(null)} title={detail?.name || "技能详情"} wide>{detail && <>
-      <div className="mb-4">
-        <div className="mb-2 text-sm font-medium">标签</div>
-        <div className="flex flex-wrap gap-2">{draftTags.map(tag => <span key={tag} className="inline-flex items-center gap-1 rounded-full border border-line bg-elevated px-2.5 py-1 text-xs font-medium text-muted">{tag}<button type="button" className="text-faint hover:text-danger" aria-label={`移除标签 ${tag}`} onClick={() => setDraftTags(tags => tags.filter(t => t !== tag))}><X size={12} /></button></span>)}{draftTags.length === 0 && <span className="text-sm text-faint">暂无标签</span>}</div>
-        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-          <input className={inputClass} placeholder="输入标签后回车添加" onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); const tag = (e.target as HTMLInputElement).value.trim(); if (tag && !draftTags.includes(tag)) setDraftTags(tags => [...tags, tag]); (e.target as HTMLInputElement).value = ""; } }} />
-          <Button variant="primary" disabled={saveTags.isPending} onClick={() => saveTags.mutate({ id: detail.id, tags: draftTags })}><Save size={15} />保存标签</Button>
+      <div className="mb-4 grid gap-4">
+        <div>
+          <div className="mb-2 text-sm font-medium">标签</div>
+          <div className="flex flex-wrap gap-2">{draftTags.map(tag => <span key={tag} className="inline-flex items-center gap-1 rounded-full border border-line bg-elevated px-2.5 py-1 text-xs font-medium text-muted">{tag}<button type="button" className="text-faint hover:text-danger" aria-label={`移除标签 ${tag}`} onClick={() => setDraftTags(tags => tags.filter(t => t !== tag))}><X size={12} /></button></span>)}{draftTags.length === 0 && <span className="text-sm text-faint">暂无标签</span>}</div>
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+            <input className={inputClass} placeholder="输入标签后回车添加" onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); const tag = (e.target as HTMLInputElement).value.trim(); if (tag && !draftTags.includes(tag)) setDraftTags(tags => [...tags, tag]); (e.target as HTMLInputElement).value = ""; } }} />
+            <input className={inputClass} list="skill-categories" placeholder="分类（文件夹），留空 = 未分类" value={draftCategory} onChange={e => setDraftCategory(e.target.value)} />
+            <datalist id="skill-categories">{allCategories.map(category => <option key={category} value={category} />)}</datalist>
+            <Button variant="primary" disabled={saveSkill.isPending} onClick={() => saveSkill.mutate({ id: detail.id, tags: draftTags, category: draftCategory })}><Save size={15} />保存</Button>
+          </div>
+          {saveSkill.error instanceof Error && <p className="mt-2 text-sm text-danger">{saveSkill.error.message}</p>}
         </div>
-        {saveTags.error instanceof Error && <p className="mt-2 text-sm text-danger">{saveTags.error.message}</p>}
       </div>
       <Markdown>{detail.content}</Markdown>
     </>}</Dialog>

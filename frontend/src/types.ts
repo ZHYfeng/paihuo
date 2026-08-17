@@ -161,6 +161,8 @@ export interface Skill {
   id: ID;
   name: string;
   description: string;
+  /** 分类（文件夹）：导入时从源目录父文件夹推断，可单独/批量调整 */
+  category?: string;
   tags: string[];
   dir: string;
   source_path: string;

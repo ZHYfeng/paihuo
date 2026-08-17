@@ -334,7 +334,7 @@ export function RolesPage() {
       {draft && <form className="grid gap-4" onSubmit={(event: FormEvent) => { event.preventDefault(); save.mutate(draft); }}>
         <div className="grid gap-4 md:grid-cols-2"><Field label="名称"><input className={inputClass} required value={draft.name || ""} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="Runtime"><select className={inputClass} value={draft.runtime_id} onChange={e => setDraft({ ...draft, runtime_id: e.target.value, role_config: {} })}>{runtimes.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field></div>
         <Field label="职责说明"><textarea className={inputClass + " min-h-24 py-3"} value={draft.description || ""} onChange={e => setDraft({ ...draft, description: e.target.value })} /></Field>
-        <div className="grid gap-4 md:grid-cols-2">{selected?.fields.map(field => <RuntimeFieldInput key={field.key} field={resolveRuntimeField(field, draft.role_config, skills.data)} value={field.builtin ? draft.role_config[field.key as keyof RoleConfig] : draft.role_config.custom?.[field.key]} onChange={value => setDraft({ ...draft, role_config: field.builtin ? { ...draft.role_config, [field.key]: value } : { ...draft.role_config, custom: { ...draft.role_config.custom, [field.key]: String(value) } } })} />)}</div>
+        <div className="grid gap-4 md:grid-cols-2">{selected?.fields.map(field => field.source === "skills" ? <RoleSkillPicker key={field.key} skills={skills.data} value={field.builtin ? draft.role_config[field.key as keyof RoleConfig] : draft.role_config.custom?.[field.key]} onChange={value => setDraft({ ...draft, role_config: field.builtin ? { ...draft.role_config, [field.key]: value } : { ...draft.role_config, custom: { ...draft.role_config.custom, [field.key]: String(value) } } })} /> : <RuntimeFieldInput key={field.key} field={resolveRuntimeField(field, draft.role_config, skills.data)} value={field.builtin ? draft.role_config[field.key as keyof RoleConfig] : draft.role_config.custom?.[field.key]} onChange={value => setDraft({ ...draft, role_config: field.builtin ? { ...draft.role_config, [field.key]: value } : { ...draft.role_config, custom: { ...draft.role_config.custom, [field.key]: String(value) } } })} />)}</div>
         <div className="grid gap-4 md:grid-cols-2"><Field label="最大并发"><input className={inputClass} type="number" min="1" value={draft.max_concurrency || 1} onChange={e => setDraft({ ...draft, max_concurrency: Number(e.target.value) })} /></Field><label className="flex min-h-11 items-center gap-3 self-end rounded-xl border border-line bg-elevated px-3 text-sm"><input type="checkbox" checked={draft.enabled ?? true} onChange={e => setDraft({ ...draft, enabled: e.target.checked })} />启用角色</label></div>
         <MutationError value={save.error} /><div className="flex justify-end"><Button variant="primary" disabled={save.isPending}>保存角色</Button></div>
       </form>}
@@ -406,7 +406,7 @@ function RoleStudioDialog({ initial, onClose }: { initial: { role?: Role; draft:
     <div className="grid gap-4">
       <div className="grid gap-4 md:grid-cols-2"><Field label="名称"><input className={inputClass} required value={draft.name || ""} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="Runtime"><select className={inputClass} value={draft.runtime_id} onChange={e => setDraft({ ...draft, runtime_id: e.target.value, role_config: {} })}>{runtimes.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field></div>
       <Field label="职责说明"><textarea className={inputClass + " min-h-20 py-3"} value={draft.description || ""} onChange={e => setDraft({ ...draft, description: e.target.value })} /></Field>
-      <div className="grid gap-4 md:grid-cols-2">{selected?.fields.map(field => <RuntimeFieldInput key={field.key} field={resolveRuntimeField(field, draft.role_config, skills.data)} value={field.builtin ? draft.role_config[field.key as keyof RoleConfig] : draft.role_config.custom?.[field.key]} onChange={value => setField(field, value)} />)}</div>
+      <div className="grid gap-4 md:grid-cols-2">{selected?.fields.map(field => field.source === "skills" ? <RoleSkillPicker key={field.key} skills={skills.data} value={field.builtin ? draft.role_config[field.key as keyof RoleConfig] : draft.role_config.custom?.[field.key]} onChange={value => setField(field, value)} /> : <RuntimeFieldInput key={field.key} field={resolveRuntimeField(field, draft.role_config, skills.data)} value={field.builtin ? draft.role_config[field.key as keyof RoleConfig] : draft.role_config.custom?.[field.key]} onChange={value => setField(field, value)} />)}</div>
       <div className="grid gap-4 md:grid-cols-2"><Field label="最大并发"><input className={inputClass} type="number" min="1" value={draft.max_concurrency || 1} onChange={e => setDraft({ ...draft, max_concurrency: Number(e.target.value) })} /></Field><Field label="创建助手角色" hint="角色助手由哪个已启用角色驱动"><select className={inputClass} value={creatorID} onChange={e => setCreatorID(Number(e.target.value))}><option value={0}>自动选择</option>{roles.data?.filter(role => role.enabled).map(role => <option key={role.id} value={role.id}>{role.name} · {role.runtime_id}</option>)}</select></Field></div>
       <div className="flex gap-1 rounded-xl border border-line p-1"><button type="button" className={tabClass(tab === "chat")} onClick={() => setTab("chat")}><MessagesSquare size={14} className="mr-1 inline" />助手对话</button><button type="button" className={tabClass(tab === "test")} onClick={() => setTab("test")}><FlaskConical size={14} className="mr-1 inline" />测试</button></div>
       {tab === "chat" ? <div className="grid gap-3">
@@ -434,6 +434,41 @@ function resolveRuntimeField(field: RuntimeField, config: RoleConfig, skills?: S
     return { ...field, options: ["", ...field.thinking_options_by_model[config.model].filter(option => option !== "")] };
   }
   return field;
+}
+
+/** 角色技能选择器：按文件夹（分类）分组展示，支持搜索；标签 chip 点击
+ *  一键选取/取消该标签的全部技能，分组头可全选。值与 RuntimeFieldInput
+ *  的 skills 字段一致：技能目录数组（保持注册顺序）。 */
+function RoleSkillPicker({ skills, value, onChange }: { skills?: Skill[]; value: unknown; onChange(value: unknown): void }) {
+  const [search, setSearch] = useState("");
+  const all = skills || [];
+  const selected = new Set<string>(Array.isArray(value) ? value : []);
+  const categoryOf = (skill: Skill) => (skill.category || "").trim() || "未分类";
+  const visible = all.filter(skill => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return skill.name.toLowerCase().includes(q) || (skill.description || "").toLowerCase().includes(q) || (skill.tags || []).some(tag => tag.toLowerCase().includes(q));
+  });
+  const commit = (next: Set<string>) => onChange(all.filter(skill => next.has(skill.dir)).map(skill => skill.dir));
+  const toggle = (dir: string) => { const next = new Set(selected); if (next.has(dir)) next.delete(dir); else next.add(dir); commit(next); };
+  const toggleGroup = (list: Skill[]) => { const next = new Set(selected); const allIn = list.length > 0 && list.every(skill => next.has(skill.dir)); list.forEach(skill => { if (allIn) next.delete(skill.dir); else next.add(skill.dir); }); commit(next); };
+  const tagSkills = (tag: string) => all.filter(skill => (skill.tags || []).includes(tag));
+  const toggleTag = (tag: string) => { const list = tagSkills(tag); const allIn = list.length > 0 && list.every(skill => selected.has(skill.dir)); const next = new Set(selected); list.forEach(skill => { if (allIn) next.delete(skill.dir); else next.add(skill.dir); }); commit(next); };
+  const allTags = Array.from(new Set(all.flatMap(skill => skill.tags || []))).sort();
+  const groups = new Map<string, Skill[]>();
+  for (const skill of visible) { const key = categoryOf(skill); const list = groups.get(key); if (list) list.push(skill); else groups.set(key, [skill]); }
+  const groupEntries = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  return <fieldset className="grid gap-2 rounded-xl border border-line bg-elevated p-3">
+    <legend className="px-1 text-sm font-medium text-ink">技能</legend>
+    <input className={inputClass} placeholder="搜索技能名称、说明或标签…" value={search} onChange={e => setSearch(e.target.value)} />
+    {allTags.length > 0 && <div className="flex flex-wrap gap-1.5">{allTags.map(tag => { const list = tagSkills(tag); const active = list.length > 0 && list.every(skill => selected.has(skill.dir)); return <button key={tag} type="button" title={active ? "取消该标签的全部技能" : "一键选取该标签的全部技能"} className={"rounded-full border px-2.5 py-1 text-xs font-medium transition-colors " + (active ? "border-brand bg-brand/10 text-brand-soft" : "border-line bg-surface text-muted hover:bg-hover")} onClick={() => toggleTag(tag)}>{tag}<span className={"ml-1 " + (active ? "text-brand-soft/70" : "text-faint")}>{list.filter(skill => selected.has(skill.dir)).length}/{list.length}</span></button>; })}</div>}
+    {all.length === 0 ? <p className="text-sm leading-5 text-muted">技能库为空，请先到技能页导入。</p> : groupEntries.length === 0 ? <p className="text-sm leading-5 text-muted">没有匹配的技能。</p> : <div className="grid max-h-72 gap-2 overflow-auto pr-1">{groupEntries.map(([category, list]) => (
+      <div key={category} className="grid gap-1">
+        <div className="flex items-center gap-2 border-b border-line pb-1 text-xs font-semibold text-muted"><span>{category}</span><span className="font-normal text-faint">{list.filter(skill => selected.has(skill.dir)).length}/{list.length}</span><label className="ml-auto flex cursor-pointer items-center gap-1 font-normal select-none"><input type="checkbox" className="size-3.5 accent-brand" checked={list.length > 0 && list.every(skill => selected.has(skill.dir))} onChange={() => toggleGroup(list)} />全选</label></div>
+        {list.map(skill => <label key={skill.dir} className="flex min-h-8 cursor-pointer items-center gap-2 text-xs font-normal text-ink"><input type="checkbox" className="accent-brand" checked={selected.has(skill.dir)} onChange={() => toggle(skill.dir)} /><span className="min-w-0 flex-1 truncate" title={skill.dir}>{skill.name}</span>{skill.tags?.length ? <span className="shrink-0 text-faint">{skill.tags.join("、")}</span> : null}</label>)}
+      </div>
+    ))}</div>}
+  </fieldset>;
 }
 
 function RuntimeFieldInput({ field, value, onChange }: { field: RuntimeField; value: unknown; onChange(value: unknown): void }) {
