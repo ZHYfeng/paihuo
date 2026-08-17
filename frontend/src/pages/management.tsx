@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarPlus, CirclePlus, Copy, FolderSearch, Pencil, Save, Trash2, X } from "lucide-react";
+import { CalendarPlus, CirclePlus, Copy, FolderOpen, FolderSearch, Pencil, Save, Trash2, X } from "lucide-react";
 import { FormEvent, useState } from "react";
+import { DirectoryPicker } from "../components/directory-picker";
 import { Markdown } from "../components/markdown";
 import { PageHeader } from "../components/shell";
 import { Badge, Button, Card, cn, Dialog, Empty, Field, inputClass, Spinner, useToast } from "../components/ui";
@@ -14,6 +15,7 @@ export function SkillsPage() {
   const qc = useQueryClient();
   const toast = useToast();
   const [path, setPath] = useState("");
+  const [dirOpen, setDirOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -88,8 +90,9 @@ export function SkillsPage() {
       <button className={cn("flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all", tab === "extensions" ? "bg-brand text-white" : "text-muted hover:bg-hover hover:text-ink")} onClick={() => setTab("extensions")}>Pi 扩展</button>
     </div>
     {tab === "skills" && <>
-      <Card className="mb-4"><form className="flex flex-col gap-3 sm:flex-row" onSubmit={e => { e.preventDefault(); importOne.mutate(); }}><input className={inputClass} required placeholder="技能目录绝对路径" value={path} onChange={e => setPath(e.target.value)} /><Button variant="primary"><CirclePlus size={16} />导入</Button><Button type="button" onClick={() => scan.mutate()}><FolderSearch size={16} />递归扫描</Button></form>{(importOne.error || scan.error) instanceof Error && <p className="mt-3 text-sm text-danger">{(importOne.error || scan.error as Error).message}</p>}
-        {scanSummary ? <p className="mt-3 rounded-xl border border-success/25 bg-success/10 px-3 py-2 text-sm text-success">{scanSummary}</p> : null}</Card>
+      <Card className="mb-4"><form className="flex flex-col gap-3 sm:flex-row" onSubmit={e => { e.preventDefault(); if (!path.trim()) return; importOne.mutate(); }}><div className="flex min-w-0 flex-1 items-center gap-2"><input className={inputClass + " min-w-0 flex-1"} readOnly placeholder="未选择技能目录" value={path} title={path} aria-label="技能目录路径" /><Button type="button" variant="ghost" onClick={() => setDirOpen(true)}><FolderOpen size={16} />选择</Button></div><Button variant="primary" disabled={!path.trim()}><CirclePlus size={16} />导入</Button><Button type="button" disabled={!path.trim()} onClick={() => scan.mutate()}><FolderSearch size={16} />递归扫描</Button></form>{(importOne.error || scan.error) instanceof Error && <p className="mt-3 text-sm text-danger">{(importOne.error || scan.error as Error).message}</p>}
+        {scanSummary ? <p className="mt-3 rounded-xl border border-success/25 bg-success/10 px-3 py-2 text-sm text-success">{scanSummary}</p> : null}
+        <DirectoryPicker open={dirOpen} onOpenChange={setDirOpen} initial={path} onPick={selected => setPath(selected)} /></Card>
       <Card className="mb-4 grid gap-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <input className={inputClass + " sm:flex-1"} placeholder="搜索技能名称或说明…" value={search} onChange={e => setSearch(e.target.value)} />

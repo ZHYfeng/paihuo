@@ -1865,7 +1865,7 @@ func (s *Server) fsDirs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	var dirs []string
+	dirs := make([]string, 0)
 	for _, e := range es {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || junkDir[e.Name()] {
 			continue

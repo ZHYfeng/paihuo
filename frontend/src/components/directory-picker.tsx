@@ -74,10 +74,10 @@ export function DirectoryPicker({ open, onOpenChange, initial, onPick }: {
       </nav>
       <div className="grid max-h-72 gap-1 overflow-auto rounded-xl border border-line bg-elevated p-2">
         {listing && listing.parent !== listing.path && <button type="button" className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted hover:bg-hover hover:text-ink" onClick={() => load(listing.parent)}><FolderOpen size={15} className="shrink-0" aria-hidden="true" />上一级</button>}
-        {listing?.dirs.map(dir => <button type="button" key={dir} className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-ink hover:bg-hover" onClick={() => load(`${listing.path.replace(/\/+$/, "")}/${dir}`)}>
+        {listing?.dirs?.map(dir => <button type="button" key={dir} className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-ink hover:bg-hover" onClick={() => load(`${listing.path.replace(/\/+$/, "")}/${dir}`)}>
           <Folder size={15} className="shrink-0 text-brand-soft" aria-hidden="true" />{dir}
         </button>)}
-        {listing && !listing.dirs.length && listing.parent === listing.path && <p className="px-3 py-4 text-center text-sm text-faint">空目录</p>}
+        {listing && !listing.dirs?.length && listing.parent === listing.path && <p className="px-3 py-4 text-center text-sm text-faint">空目录</p>}
       </div>
       <div className="flex gap-2">
         <input className={inputClass} placeholder="在当前目录下新建子目录名" value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void mkdir(); } }} aria-label="新建子目录名" />
