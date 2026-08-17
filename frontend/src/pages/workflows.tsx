@@ -101,7 +101,7 @@ export function WorkflowsPage() {
   const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
   const [open, setOpen] = useState(false);
   return <>
-    <PageHeader title="工作流" copy="定义经确定性策略校验即可用，可随时编辑或删除；启动 Run 时绑定具体项目，原子创建节点任务与依赖图。" actions={<Button variant="primary" onClick={() => setOpen(true)}><CirclePlus size={16} />新建工作流</Button>} />
+    <PageHeader title="工作流" copy="定义经确定性策略校验即可用，可随时编辑或删除；启动 Run 时绑定具体项目并填写自定义任务，按固定工作流完成该任务。" actions={<Button variant="primary" onClick={() => setOpen(true)}><CirclePlus size={16} />新建工作流</Button>} />
     {workflows.isLoading ? <Spinner /> : workflows.data?.length ? <div className="grid gap-3">
       {workflows.data.map(item => {
         const spec = parseWorkflowSpec(item.spec);
@@ -115,7 +115,7 @@ export function WorkflowsPage() {
           <p className="mt-2 text-sm text-muted">{spec ? `${spec.nodes.length} 个节点 · 预算 ${spec.limits?.budget ?? "-"}` : ""}<span className="ml-2 truncate font-mono text-xs text-faint">{item.spec_hash}</span></p>
         </Link>;
       })}
-    </div> : <Card><Empty title="没有工作流" copy="提交一份只描述意图、依赖和边界的工作流规格，即可复用；启动 Run 时绑定具体项目。" /></Card>}
+    </div> : <Card><Empty title="没有工作流" copy="提交一份只描述意图、依赖和边界的工作流规格，即可复用；启动 Run 时绑定具体项目并填写自定义任务。" /></Card>}
     <WorkflowDialog open={open} onOpenChange={setOpen} projects={projects.data} roles={roles.data} />
   </>;
 }
@@ -133,9 +133,10 @@ export function WorkflowDetailPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [projectID, setProjectID] = useState("");
+  const [customTask, setCustomTask] = useState("");
   const start = useMutation({
-    mutationFn: () => api<WorkflowRun>(`/workflows/${id}/runs`, { method: "POST", revision: plan.data?.revision, body: { project_id: Number(projectID) } }),
-    onSuccess: value => { setRun(value); setStartOpen(false); setProjectID(""); qc.invalidateQueries({ queryKey: ["workflows", id, "runs"] }); },
+    mutationFn: () => api<WorkflowRun>(`/workflows/${id}/runs`, { method: "POST", revision: plan.data?.revision, body: { project_id: Number(projectID), ...(customTask.trim() ? { task: customTask.trim() } : {}) } }),
+    onSuccess: value => { setRun(value); setStartOpen(false); setProjectID(""); setCustomTask(""); qc.invalidateQueries({ queryKey: ["workflows", id, "runs"] }); },
   });
   const remove = useMutation({
     mutationFn: () => api<void>(`/workflows/${id}`, { method: "DELETE", revision: plan.data?.revision }),
@@ -157,16 +158,18 @@ export function WorkflowDetailPage() {
     </>} />
     {latest && <Card className="mb-4">
       <div className="flex items-center gap-2"><Badge tone={runTone[latest.status] || "neutral"}>Run #{latest.id} · {latest.status}</Badge><span className="chip">{projectName(latest.project_id)}</span><span className="text-sm text-muted">{formatRunTime(latest.created_at)}{latest.finished_at ? ` · 结束 ${formatRunTime(latest.finished_at)}` : ""}</span></div>
+      {latest.task ? <p className="mt-2.5 whitespace-pre-wrap rounded-xl border border-line bg-elevated px-3 py-2.5 text-sm leading-6 text-muted"><span className="font-medium text-ink">自定义任务</span>：{latest.task}</p> : null}
       <table className="mt-3 w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint"><th className="py-1.5 pr-3 font-medium">节点</th><th className="py-1.5 pr-3 font-medium">意图</th><th className="py-1.5 font-medium">任务</th></tr></thead><tbody className="divide-y divide-line">{Object.entries(latest.task_ids).map(([nodeID, taskID]) => <tr key={nodeID}><td className="py-1.5 pr-3 font-mono text-xs text-muted">{nodeID}</td><td className="py-1.5 pr-3 text-muted">{spec?.nodes.find(n => n.id === nodeID)?.intent || "-"}</td><td className="py-1.5"><Link to={`/tasks/${taskID}`} className="text-brand-soft hover:underline">任务 #{taskID} →</Link></td></tr>)}</tbody></table>
     </Card>}
     {(runs.data?.length || 0) > 1 && <Card className="mb-4">
       <h2 className="text-sm font-semibold">Run 历史</h2>
-      <div className="mt-2 grid gap-1.5">{runs.data?.map(item => <div key={item.id} className="flex items-center gap-2 text-sm"><Badge tone={runTone[item.status] || "neutral"}>#{item.id} · {item.status}</Badge><span className="chip">{projectName(item.project_id)}</span><span className="text-xs text-faint">{formatRunTime(item.created_at)}</span></div>)}</div>
+      <div className="mt-2 grid gap-1.5">{runs.data?.map(item => <div key={item.id} className="flex items-center gap-2 text-sm"><Badge tone={runTone[item.status] || "neutral"}>#{item.id} · {item.status}</Badge><span className="chip">{projectName(item.project_id)}</span>{item.task ? <span className="max-w-72 truncate text-xs text-muted" title={item.task}>{item.task}</span> : null}<span className="text-xs text-faint">{formatRunTime(item.created_at)}</span></div>)}</div>
     </Card>}
     {spec ? <WorkflowGraph spec={spec} /> : <Empty title="无法解析规格" copy="该工作流的 spec 不是有效 JSON 字符串。" />}
-    <Dialog open={startOpen} onOpenChange={setStartOpen} title="创建 Run" description="选择具体项目：节点任务将原子创建在该项目下（工作流定义本身不绑定项目）。">
+    <Dialog open={startOpen} onOpenChange={setStartOpen} title="创建 Run" description="固定工作流 + 自定义任务：选择项目并填写本次要完成的具体任务，节点任务将原子创建在该项目下（工作流定义本身不绑定项目）。">
       <form className="grid gap-4" onSubmit={(event: FormEvent) => { event.preventDefault(); if (projectID) start.mutate(); }}>
         <Field label="目标项目"><select className={inputClass} required value={projectID} onChange={e => setProjectID(e.target.value)}><option value="">选择项目</option>{activeProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
+        <Field label="自定义任务" hint="可选：本次 Run 的具体任务。节点意图含 {{.task}} 占位符时替换；纯文本意图自动附加「自定义任务：…」。留空 = 按模板原样执行。"><textarea className={inputClass + " min-h-24 py-3"} value={customTask} onChange={e => setCustomTask(e.target.value)} placeholder="例如：修复登录页 XSS 并补充回归测试" /></Field>
         {start.error instanceof Error && <p className="text-sm text-danger">{start.error.message}</p>}
         <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setStartOpen(false)}>取消</Button><Button type="submit" variant="primary" disabled={start.isPending || !projectID}>创建并启动</Button></div>
       </form>
@@ -538,7 +541,7 @@ export function WorkflowDialog({ open, onOpenChange, projects, roles, initial, i
         <button type="button" onClick={switchJson} className={cn("flex items-center gap-1.5 rounded-md px-3 py-1.5 transition", mode === "json" ? "bg-surface font-medium text-ink shadow-sm" : "text-muted hover:text-ink")}><Code2 size={14} />JSON</button>
       </div>
       {mode === "form" ? <>
-        <Field label="目标" hint="一句话说明这个工作流要交付什么。"><input className={inputClass} value={draft.goal} onChange={event => setDraft({ ...draft, goal: event.target.value })} placeholder="例如：交付一个经过验证的变更" autoFocus /></Field>
+        <Field label="目标" hint="一句话说明这个工作流要交付什么；支持 {{.task}} / {{.date}} / {{.time}} 占位符，启动 Run 时渲染"><input className={inputClass} value={draft.goal} onChange={event => setDraft({ ...draft, goal: event.target.value })} placeholder="例如：交付一个经过验证的变更" autoFocus /></Field>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="总预算" hint={`节点预算之和不能超过它（上限 ${LIMITS.budget}）`}><input type="number" min={0} max={LIMITS.budget} className={inputClass} value={draft.budget} onChange={event => setDraft({ ...draft, budget: event.target.value })} /></Field>
           <Field label="最大节点数" hint={`1–${LIMITS.max_nodes}`}><input type="number" min={1} max={LIMITS.max_nodes} className={inputClass} value={draft.max_nodes} onChange={event => setDraft({ ...draft, max_nodes: event.target.value })} /></Field>
@@ -597,7 +600,7 @@ function NodeEditor({ node, index, roles, otherIds, onChange, onRemove }: {
       <Field label="角色"><select className={inputClass} value={node.role_id} onChange={event => onChange({ role_id: event.target.value })}><option value="">选择角色</option>{roles?.filter(role => role.enabled).map(role => <option key={role.id} value={role.id}>{role.name}</option>)}</select></Field>
       <Field label="权限"><select className={inputClass} value={node.permission} onChange={event => onChange({ permission: event.target.value as "full" | "review" })}><option value="full">full · 自动整合</option><option value="review">review · 人工审批</option></select></Field>
     </div>
-    <div className="mt-3"><Field label="意图" hint="节点要完成什么；只写意图，不含可执行命令"><textarea className={inputClass + " min-h-20 py-3"} value={node.intent} onChange={event => onChange({ intent: event.target.value })} /></Field></div>
+    <div className="mt-3"><Field label="意图" hint="节点要完成什么；只写意图，不含可执行命令。用 {{.task}} 引用启动 Run 时的自定义任务（未模板化则自动附加）"><textarea className={inputClass + " min-h-20 py-3"} value={node.intent} onChange={event => onChange({ intent: event.target.value })} /></Field></div>
     <div className="mt-3 grid gap-3 sm:grid-cols-3">
       <Field label="超时（秒）"><input type="number" min={1} className={inputClass} value={node.timeout_seconds} onChange={event => onChange({ timeout_seconds: event.target.value })} /></Field>
       <Field label="失败策略"><select className={inputClass} value={node.failure_policy} onChange={event => onChange({ failure_policy: event.target.value as "stop" | "continue" })}><option value="stop">stop · 失败即停</option><option value="continue">continue · 继续后续</option></select></Field>

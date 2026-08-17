@@ -312,6 +312,8 @@ export interface WorkflowRun {
   id: ID;
   workflow_id: ID;
   project_id: ID;
+  /** 本次 Run 的自定义任务描述（可为空 = 纯模板执行）；渲染进节点意图并记录在书签上 */
+  task?: string;
   status: string;
   task_ids: Record<string, ID>;
   revision: number;
