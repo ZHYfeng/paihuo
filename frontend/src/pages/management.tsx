@@ -6,6 +6,7 @@ import { Markdown } from "../components/markdown";
 import { PageHeader } from "../components/shell";
 import { Badge, Button, Card, cn, Dialog, Empty, Field, inputClass, Spinner, useToast } from "../components/ui";
 import { api, keys } from "../lib/api";
+import { copyText } from "../lib/clipboard";
 import type { ExtensionOutput, Project, Role, Skill, Task, TaskTemplate } from "../types";
 import { NewTaskDialog } from "./tasks";
 
@@ -90,7 +91,7 @@ export function SkillsPage() {
   const copyContent = async (skill: Skill) => {
     try {
       const full = await api<Skill & { content: string }>(`/skills/${skill.id}`);
-      await navigator.clipboard.writeText(full.content);
+      await copyText(full.content);
       toast(`已复制 ${skill.name} 的 SKILL.md`);
     } catch (error) {
       toast((error as Error).message, "bad");
