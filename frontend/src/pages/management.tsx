@@ -53,12 +53,6 @@ export function SkillsPage() {
     const tagged = tagFilter.size === 0 || (skill.tags ?? []).some(tag => tagFilter.has(tag));
     return hit && tagged;
   });
-  const groups = new Map<string, Skill[]>();
-  for (const skill of filtered) {
-    const dir = skill.dir || "未分类";
-    const list = groups.get(dir);
-    if (list) list.push(skill); else groups.set(dir, [skill]);
-  }
   const toggleTag = (tag: string) => setTagFilter(prev => { const next = new Set(prev); if (next.has(tag)) next.delete(tag); else next.add(tag); return next; });
   const toggleSkill = (id: number) => setSelected(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const toggleGroup = (list: Skill[]) => setSelected(prev => {
@@ -107,23 +101,15 @@ export function SkillsPage() {
         <span className="text-sm text-muted">{filtered.length === skills.data?.length ? `${skills.data.length} 个技能` : `${filtered.length} / ${skills.data?.length} 个技能`} · 已选 {selected.size} 项</span>
         <Button variant="danger" size="sm" disabled={selected.size === 0} onClick={() => confirm(`删除选中的 ${selected.size} 个技能？`) && removeMany.mutate(Array.from(selected))}><Trash2 size={15} />删除选中</Button>
       </div>
-      {skills.isLoading ? <Spinner /> : skills.data?.length === 0 ? <Empty title="技能库为空" copy="从一个包含 SKILL.md 的目录开始导入。" /> : filtered.length === 0 ? <Empty title="没有匹配的技能" copy="调整搜索或标签筛选后重试。" /> : view === "grid" ? Array.from(groups.entries()).map(([dir, list]) => (
-        <div key={dir} className="mb-6">
-          <div className="mb-3 flex flex-wrap items-center gap-3">
-            <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-ink"><input type="checkbox" className="size-4" checked={list.every(skill => selected.has(skill.id))} onChange={() => toggleGroup(list)} />来源目录 <code className="font-mono text-xs font-normal text-muted">{dir}</code></label>
-            <span className="text-xs text-muted">{list.length} 个</span>
-          </div>
-          <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">{list.map(skill => (
+      {skills.isLoading ? <Spinner /> : skills.data?.length === 0 ? <Empty title="技能库为空" copy="从一个包含 SKILL.md 的目录开始导入。" /> : filtered.length === 0 ? <Empty title="没有匹配的技能" copy="调整搜索或标签筛选后重试。" /> : view === "grid" ? <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">{filtered.map(skill => (
             <Card key={skill.id}>
               <div className="flex items-start gap-3">
-                <button className="min-w-0 text-left" onClick={() => openDetail(skill)}><h2 className="font-semibold hover:text-brand-soft">{skill.name}</h2><p className="mt-2 text-sm leading-5 text-muted">{skill.description || "暂无说明"}</p></button>
+                <button className="min-w-0 text-left" onClick={() => openDetail(skill)}><h2 className="font-semibold hover:text-brand-soft">{skill.name}</h2>{skill.dir ? <code className="mt-1 block truncate font-mono text-xs text-faint" title={skill.dir}>{skill.dir}</code> : null}<p className="mt-2 text-sm leading-5 text-muted">{skill.description || "暂无说明"}</p></button>
                 <div className="ml-auto flex items-center gap-1"><input type="checkbox" className="size-4" aria-label={`选择 ${skill.name}`} checked={selected.has(skill.id)} onChange={() => toggleSkill(skill.id)} /><Button variant="danger" size="sm" aria-label={`删除 ${skill.name}`} onClick={() => confirm(`删除 skill「${skill.name}」？将同时移除工作目录中的副本，已引用它的角色配置会失效。`) && remove.mutate(skill.id)}><Trash2 size={15} /></Button></div>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2">{skill.tags?.length ? skill.tags.map(tag => <Badge key={tag}>{tag}</Badge>) : <Badge>未分类</Badge>}<Button size="sm" variant="ghost" className="ml-auto" onClick={() => void copyContent(skill)}><Copy size={13} />复制 SKILL.md</Button></div>
             </Card>
-          ))}</div>
-        </div>
-      )) : <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
+          ))}</div> : <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
         <th className="w-10 px-3 py-2 font-medium"><input type="checkbox" className="size-4" aria-label="全选技能" checked={filtered.length > 0 && filtered.every(skill => selected.has(skill.id))} onChange={() => toggleGroup(filtered)} /></th>
         <th className="whitespace-nowrap px-3 py-2 font-medium">技能</th><th className="whitespace-nowrap px-3 py-2 font-medium">标签</th><th className="whitespace-nowrap px-3 py-2 font-medium">来源目录</th><th className="whitespace-nowrap px-3 py-2 font-medium">添加时间</th><th className="whitespace-nowrap px-3 py-2 font-medium">操作</th>
       </tr></thead><tbody className="divide-y divide-line">{filtered.map(skill => <tr key={skill.id} className="hover:bg-hover">
