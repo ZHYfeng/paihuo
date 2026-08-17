@@ -234,6 +234,7 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.
 	m.HandleFunc("GET /api/v1/runtimes/provisioning", s.provisionStatus)
 	m.HandleFunc("GET /api/v1/skills", s.listSkills)
 	m.HandleFunc("POST /api/v1/skills", s.createSkill)
+	m.HandleFunc("PATCH /api/v1/skills", s.patchSkills)
 	m.HandleFunc("DELETE /api/v1/skills", s.deleteSkills)
 	m.HandleFunc("POST /api/v1/skills/scan", s.scanSkills)
 	m.HandleFunc("GET /api/v1/skills/{id}", s.getSkill)

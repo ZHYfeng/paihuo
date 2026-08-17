@@ -145,6 +145,22 @@ paths:
   /skills:
     get: {tags: [Management], responses: {'200': {description: Skills}}}
     post: {tags: [Management], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Skill imported}}}
+    patch:
+      tags: [Management]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids: {type: array, items: {type: integer, format: int64}, description: 选中的技能 id 列表}
+                tags: {type: array, items: {type: string}, description: 出现则整体替换选中技能的标签}
+                category: {type: string, description: 出现则设置选中技能的分类（文件夹）；空字符串 = 清空为未分类}
+      responses:
+        '200': {description: Skills updated}
+        '404': {$ref: '#/components/responses/Error'}
     delete: {tags: [Management], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Skills deleted}}}
   /templates:
     get: {tags: [Management], responses: {'200': {description: Task templates}}}

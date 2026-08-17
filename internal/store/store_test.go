@@ -147,6 +147,64 @@ func TestMigrateWorkflowRunsProjectColumn(t *testing.T) {
 	}
 }
 
+// 旧版 schema（skills 无 category 列）必须被幂等迁移：补列后存量技能
+// 默认为未分类，且不丢数据。
+func TestMigrateSkillsCategoryColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.Replace(schema,
+		`CREATE TABLE IF NOT EXISTS skills (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  category    TEXT NOT NULL DEFAULT '', -- 分类（文件夹）：导入时从源目录父文件夹推断，可批量调整
+  tags        TEXT NOT NULL DEFAULT '[]', -- JSON array of labels
+  dir         TEXT NOT NULL UNIQUE,      -- 复制到 paihuo 工作目录后的技能目录（绝对路径）
+  source_path TEXT NOT NULL DEFAULT '',  -- 添加时的来源路径
+  created_at  TEXT NOT NULL
+);`,
+		`CREATE TABLE IF NOT EXISTS skills (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  tags        TEXT NOT NULL DEFAULT '[]',
+  dir         TEXT NOT NULL UNIQUE,
+  source_path TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL
+);`, 1)
+	if _, err := db.Exec(legacy); err != nil {
+		t.Fatal(err)
+	}
+	now := Now()
+	if _, err := db.Exec(`INSERT INTO skills (name, description, tags, dir, source_path, created_at)
+		VALUES ('legacy-skill', 'legacy', '["a"]', '/tmp/legacy-skill', '/src/legacy-skill', ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	sk, err := s.GetSkill(1)
+	if err != nil {
+		t.Fatalf("迁移后读取技能失败: %v", err)
+	}
+	if sk.Name != "legacy-skill" || sk.Category != "" || len(sk.Tags) != 1 || sk.Tags[0] != "a" {
+		t.Fatalf("迁移后技能数据错误: %+v", sk)
+	}
+	// 幂等：再次打开不应报错。
+	if _, err := Open(path); err != nil {
+		t.Fatalf("reopen after migration must succeed: %v", err)
+	}
+}
+
 // 新库会预置一个通用模板，用于让会话中的 agent 把上下文整理成当前项目任务。
 func TestOpenSeedsCreateTasksTemplate(t *testing.T) {
 	s := openTest(t)

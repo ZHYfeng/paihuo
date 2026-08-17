@@ -114,6 +114,106 @@ func TestSkillImportReadsTagsAndPatchUpdatesThem(t *testing.T) {
 	}
 }
 
+// 分类（文件夹）：frontmatter category 优先，否则从源目录父文件夹名推断；
+// 单个 PATCH 可改分类；批量 PATCH 按请求字段整体替换标签/设置分类。
+func TestSkillCategoryInferenceAndBatchUpdate(t *testing.T) {
+	root := t.TempDir()
+	// 嵌套目录结构：catalog/coding/reviewer → 分类 "coding"（frontmatter 无 category）
+	withCategory := filepath.Join(root, "catalog", "writing", "prose")
+	writeTestSkill(t, withCategory, "---\nname: prose\ndescription: write well\ncategory: writing\n---\n")
+	withoutCategory := filepath.Join(root, "catalog", "coding", "reviewer")
+	writeTestSkill(t, withoutCategory, "---\nname: reviewer\ndescription: review code\n---\n")
+
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	hub := events.NewEventStream()
+	sess := session.New(st, hub, nil, t.TempDir(), t.TempDir())
+	wf := application.NewWorkflowService(st, exec.NewDefaultRuntimeService(), nil, hub)
+	sc := sched.New(st, hub, nil, sess, wf)
+	s := New(st, hub, nil, sc, sess, wf, "", filepath.Join(root, "managed-skills"))
+
+	importSkill := func(source string) store.Skill {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"source_path": source})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/skills", bytes.NewReader(body))
+		resp := httptest.NewRecorder()
+		s.Handler().ServeHTTP(resp, req)
+		if resp.Code != http.StatusCreated {
+			t.Fatalf("导入 %s 应为 201，得到 %d: %s", source, resp.Code, resp.Body.String())
+		}
+		var sk store.Skill
+		if err := json.Unmarshal(resp.Body.Bytes(), &sk); err != nil {
+			t.Fatal(err)
+		}
+		return sk
+	}
+
+	// 1. frontmatter category 优先；缺失时从源目录父文件夹名推断。
+	prose := importSkill(withCategory)
+	if prose.Category != "writing" {
+		t.Fatalf("frontmatter category 未生效: %q", prose.Category)
+	}
+	reviewer := importSkill(withoutCategory)
+	if reviewer.Category != "coding" {
+		t.Fatalf("应从源父文件夹推断分类: %q", reviewer.Category)
+	}
+
+	// 2. 单个 PATCH 只改分类，标签不受影响。
+	body, _ := json.Marshal(map[string]any{"category": "engineering"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/skills/"+strconv.FormatInt(reviewer.ID, 10), bytes.NewReader(body))
+	resp := httptest.NewRecorder()
+	s.Handler().ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("PATCH 分类应为 200，得到 %d: %s", resp.Code, resp.Body.String())
+	}
+	var patched store.Skill
+	if err := json.Unmarshal(resp.Body.Bytes(), &patched); err != nil {
+		t.Fatal(err)
+	}
+	if patched.Category != "engineering" {
+		t.Fatalf("分类未更新: %q", patched.Category)
+	}
+
+	// 3. 批量 PATCH：整体替换标签 + 设置分类。
+	body, _ = json.Marshal(map[string]any{"ids": []int64{prose.ID, reviewer.ID}, "tags": []string{"shared"}, "category": "core"})
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/skills", bytes.NewReader(body))
+	resp = httptest.NewRecorder()
+	s.Handler().ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("批量 PATCH 应为 200，得到 %d: %s", resp.Code, resp.Body.String())
+	}
+	var updated []store.Skill
+	if err := json.Unmarshal(resp.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if len(updated) != 2 {
+		t.Fatalf("批量返回应含 2 个技能，得到 %d", len(updated))
+	}
+	for _, sk := range updated {
+		if sk.Category != "core" || len(sk.Tags) != 1 || sk.Tags[0] != "shared" {
+			t.Fatalf("批量更新结果错误: %+v", sk)
+		}
+	}
+
+	// 4. 批量 PATCH 只带 ids+tags：分类保持不变。
+	body, _ = json.Marshal(map[string]any{"ids": []int64{prose.ID}, "tags": []string{"only-tag"}})
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/skills", bytes.NewReader(body))
+	resp = httptest.NewRecorder()
+	s.Handler().ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("批量 PATCH 标签应为 200，得到 %d: %s", resp.Code, resp.Body.String())
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if len(updated) != 1 || updated[0].Category != "core" || len(updated[0].Tags) != 1 || updated[0].Tags[0] != "only-tag" {
+		t.Fatalf("只改标签时分类必须保留: %+v", updated)
+	}
+}
+
 func TestScanSkillsDiscoversRootAndNestedSkillsWithoutReimportingManagedCopies(t *testing.T) {
 	root := t.TempDir()
 	writeTestSkill(t, root, "---\nname: root-skill\ndescription: root description\n---\n")

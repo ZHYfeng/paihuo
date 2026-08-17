@@ -362,7 +362,7 @@ func roleStudioSkillNames(paths []string) []string {
 		if path == "" {
 			continue
 		}
-		name, _, _ := parseSkillFrontmatter(filepath.Join(path, "SKILL.md"))
+		name, _, _, _ := parseSkillFrontmatter(filepath.Join(path, "SKILL.md"))
 		name = strings.TrimSpace(name)
 		if name == "" {
 			name = filepath.Base(filepath.Clean(path))

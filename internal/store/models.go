@@ -239,6 +239,7 @@ type Skill struct {
 	ID          int64    `json:"id"`
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
+	Category    string   `json:"category"` // 分类（文件夹）：导入时从源目录父文件夹推断，可单独/批量调整
 	Tags        []string `json:"tags"`
 	Dir         string   `json:"dir"` // 复制后的实际目录（--add-dir 传这个）
 	SourcePath  string   `json:"source_path"`

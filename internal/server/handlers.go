@@ -1584,10 +1584,15 @@ func (s *Server) importSkillWithTags(src string, extraTags []string) (store.Skil
 	if err != nil || fi.IsDir() {
 		return store.Skill{}, fmt.Errorf("该目录没有 SKILL.md，不是技能")
 	}
-	name, desc, tags := parseSkillFrontmatter(skillmd)
+	name, desc, tags, category := parseSkillFrontmatter(skillmd)
 	tags = append(tags, extraTags...)
 	if name == "" {
 		name = filepath.Base(src)
+	}
+	if category == "" {
+		// 从源目录的父文件夹名推断分类：从按目录组织的技能库扫描导入时，
+		// 同一父目录下的技能自动归入同一文件夹。
+		category = filepath.Base(filepath.Dir(filepath.Clean(src)))
 	}
 	if err := os.MkdirAll(s.skillsDir, 0o755); err != nil {
 		return store.Skill{}, err
@@ -1609,7 +1614,7 @@ func (s *Server) importSkillWithTags(src string, extraTags []string) (store.Skil
 		return store.Skill{}, fmt.Errorf("复制技能目录失败: %w", err)
 	}
 	id, err := s.st.CreateSkill(store.Skill{
-		Name: name, Description: desc, Tags: tags, Dir: dst, SourcePath: src,
+		Name: name, Description: desc, Category: category, Tags: tags, Dir: dst, SourcePath: src,
 	})
 	if err != nil {
 		_ = os.RemoveAll(dst)
@@ -1632,14 +1637,23 @@ func (s *Server) patchSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Tags []string `json:"tags"`
+		Tags     *[]string `json:"tags"`
+		Category *string   `json:"category"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if err := s.st.UpdateSkillTags(id, in.Tags); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+	if in.Tags != nil {
+		if err := s.st.UpdateSkillTags(id, *in.Tags); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if in.Category != nil {
+		if err := s.st.UpdateSkillCategory(id, *in.Category); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	sk, err := s.st.GetSkill(id)
 	if err != nil {
@@ -1647,6 +1661,65 @@ func (s *Server) patchSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, sk)
+}
+
+// patchSkills 批量更新技能：对选中的技能整体替换标签和/或设置分类。
+// 请求中出现哪个字段就更新哪个；两个字段都出现时也支持。
+func (s *Server) patchSkills(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		IDs      []int64   `json:"ids"`
+		Tags     *[]string `json:"tags"`     // 出现则整体替换
+		Category *string   `json:"category"` // 出现则设置（空字符串 = 清空为未分类）
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if len(in.IDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "至少选择一个技能")
+		return
+	}
+
+	// 去重保持请求顺序；校验 id 存在，避免批量更新部分生效。
+	ids := make([]int64, 0, len(in.IDs))
+	seen := make(map[int64]struct{}, len(in.IDs))
+	for _, id := range in.IDs {
+		if id <= 0 {
+			writeErr(w, http.StatusBadRequest, "非法技能 id")
+			return
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		if _, err := s.st.GetSkill(id); err != nil {
+			writeErr(w, http.StatusNotFound, fmt.Sprintf("技能不存在: %d", id))
+			return
+		}
+		ids = append(ids, id)
+	}
+
+	if in.Tags != nil {
+		if err := s.st.SetSkillTagsMany(ids, *in.Tags); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if in.Category != nil {
+		if err := s.st.SetSkillCategoryMany(ids, *in.Category); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	skills := make([]store.Skill, 0, len(ids))
+	for _, id := range ids {
+		sk, err := s.st.GetSkill(id)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		skills = append(skills, *sk)
+	}
+	writeJSON(w, http.StatusOK, skills)
 }
 
 func (s *Server) deleteSkill(w http.ResponseWriter, r *http.Request) {
@@ -1715,7 +1788,7 @@ func (s *Server) deleteSkills(w http.ResponseWriter, r *http.Request) {
 
 // parseSkillFrontmatter 解析 SKILL.md 头部 YAML frontmatter 的 name / description / tags。
 // 解析失败或没有 frontmatter 时返回空，由调用方用目录名兜底。
-func parseSkillFrontmatter(path string) (name, desc string, tags []string) {
+func parseSkillFrontmatter(path string) (name, desc string, tags []string, category string) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return
@@ -1747,6 +1820,8 @@ func parseSkillFrontmatter(path string) (name, desc string, tags []string) {
 			name = strings.Trim(strings.TrimSpace(v), `"'`)
 		case "description":
 			desc = strings.Trim(strings.TrimSpace(v), `"'`)
+		case "category":
+			category = strings.Trim(strings.TrimSpace(v), `"'`)
 		case "tags":
 			tags = parseSkillTagsValue(v)
 			// Inline tags are complete on this line. For a YAML list, the

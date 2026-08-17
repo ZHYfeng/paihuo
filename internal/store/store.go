@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS skills (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
+  category    TEXT NOT NULL DEFAULT '', -- 分类（文件夹）：导入时从源目录父文件夹推断，可批量调整
   tags        TEXT NOT NULL DEFAULT '[]', -- JSON array of labels
   dir         TEXT NOT NULL UNIQUE,      -- 复制到 paihuo 工作目录后的技能目录（绝对路径）
   source_path TEXT NOT NULL DEFAULT '',  -- 添加时的来源路径
@@ -232,6 +233,10 @@ func Open(path string) (*Store, error) {
 			db.Close()
 			return nil, err
 		}
+		if err := migrateSkillsCategoryColumn(db); err != nil {
+			db.Close()
+			return nil, err
+		}
 		// Unsupported databases are inspected before any schema statement runs.
 		// Rejection must not leave current-version tables or indexes behind.
 		if err := verifyCurrentSchema(db); err != nil {
@@ -297,6 +302,22 @@ func migrateWorkflowRunsTaskColumn(db *sql.DB) error {
 	return nil
 }
 
+// migrateSkillsCategoryColumn 为存量库补 skills.category 列（幂等）：新库由
+// schema 直接建出；旧库 ALTER ADD COLUMN，存量技能默认为未分类。
+func migrateSkillsCategoryColumn(db *sql.DB) error {
+	var has int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('skills') WHERE name='category'`).Scan(&has); err != nil {
+		return fmt.Errorf("检查 skills 结构失败: %w", err)
+	}
+	if has > 0 {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE skills ADD COLUMN category TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("迁移 skills.category 失败: %w", err)
+	}
+	return nil
+}
+
 func verifyCurrentSchema(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
@@ -310,6 +331,7 @@ func verifyCurrentSchema(db *sql.DB) error {
 		"SELECT role_id FROM templates LIMIT 0",
 		"SELECT seq, event_type, role_id, payload FROM event_log LIMIT 0",
 		"SELECT revision, workflow_id, project_id, task, task_ids FROM workflow_runs LIMIT 0",
+		"SELECT name, description, category, tags, dir, source_path FROM skills LIMIT 0",
 		"SELECT key, method, path, status_code FROM idempotency_records LIMIT 0",
 		"SELECT task_id, run_id, content_hash, locator FROM artifacts LIMIT 0",
 	} {
@@ -2740,12 +2762,12 @@ func (s *Store) OverviewStatsOf() (*OverviewStats, error) {
 // ---------------------------------------------------------------------------
 // 技能库（注册到 paihuo 工作目录，角色配置时按名称勾选）
 
-const skillCols = "id, name, description, tags, dir, source_path, created_at"
+const skillCols = "id, name, description, category, tags, dir, source_path, created_at"
 
 func scanSkill(rows scanner) (Skill, error) {
 	var s Skill
 	var tagsJSON string
-	err := rows.Scan(&s.ID, &s.Name, &s.Description, &tagsJSON, &s.Dir, &s.SourcePath, &s.CreatedAt)
+	err := rows.Scan(&s.ID, &s.Name, &s.Description, &s.Category, &tagsJSON, &s.Dir, &s.SourcePath, &s.CreatedAt)
 	if err != nil {
 		return s, err
 	}
@@ -2787,8 +2809,8 @@ func (s *Store) CreateSkill(sk Skill) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := s.db.Exec("INSERT INTO skills (name, description, tags, dir, source_path, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-		sk.Name, sk.Description, string(tagsJSON), sk.Dir, sk.SourcePath, sk.CreatedAt)
+	res, err := s.db.Exec("INSERT INTO skills (name, description, category, tags, dir, source_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		sk.Name, sk.Description, strings.TrimSpace(sk.Category), string(tagsJSON), sk.Dir, sk.SourcePath, sk.CreatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -2805,6 +2827,57 @@ func (s *Store) UpdateSkillTags(id int64, tags []string) error {
 	}
 	_, err = s.db.Exec("UPDATE skills SET tags=? WHERE id=?", string(tagsJSON), id)
 	return err
+}
+
+// UpdateSkillCategory 修改技能的分类（文件夹）。分类只是分组标签，不移动
+// 磁盘目录，因此已引用该技能目录的角色配置不受影响。
+func (s *Store) UpdateSkillCategory(id int64, category string) error {
+	_, err := s.db.Exec("UPDATE skills SET category=? WHERE id=?", strings.TrimSpace(category), id)
+	return err
+}
+
+// SetSkillTagsMany 在同一个事务中批量整体替换一批技能的标签。
+func (s *Store) SetSkillTagsMany(ids []int64, tags []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tagsJSON, err := json.Marshal(normalizeSkillTags(tags))
+	if err != nil {
+		return err
+	}
+	return s.updateSkillsMany(ids, "UPDATE skills SET tags=? WHERE id=?", string(tagsJSON))
+}
+
+// SetSkillCategoryMany 在同一个事务中批量设置一批技能的分类。分类只是
+// 分组标签，不移动磁盘目录，已引用该技能目录的角色配置不受影响。
+func (s *Store) SetSkillCategoryMany(ids []int64, category string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.updateSkillsMany(ids, "UPDATE skills SET category=? WHERE id=?", strings.TrimSpace(category))
+}
+
+// updateSkillsMany 先校验全部 id，再在同一个事务中执行批量更新，避免部分更新。
+func (s *Store) updateSkillsMany(ids []int64, query, value string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(query)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, id := range ids {
+		if id <= 0 {
+			return fmt.Errorf("非法技能 id: %d", id)
+		}
+		if _, err := stmt.Exec(value, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func normalizeSkillTags(tags []string) []string {
