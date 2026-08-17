@@ -41,7 +41,7 @@ HTTP handler 不定义 Runtime 命令、不直接拥有 Workflow 策略，也不
 ## 领域边界
 
 - `TaskLifecycle` 校验任务目标、Role、Project、权限、运行方式和依赖，创建后唤醒执行器。人工状态变更必须符合状态机。
-- `WorkflowService` 管理 Proposal、确定性 Policy、冻结 Plan 和 Run。Run 在同一事务内创建全部 Task 与多边依赖，执行器不会观察到半张图。
+- `WorkflowService` 管理工作流定义（增删查改）、确定性 Policy 和 Run。Run 在同一事务内创建全部 Task 与多边依赖，执行器不会观察到半张图。
 - `RuntimeService` 通过 capability 选择执行提供者。`ExecutionRequest` 被翻译为可审计 `CommandSpec`；Task 与 Workflow 不理解厂商 flag。
 - `SessionDriver` 只由支持结构化多轮消息的 Runtime 实现。当前 Pi 与 OMP 支持 session，其他 Runtime 保持批处理。
 - `WorkspaceService` 管理状态查询、丢弃和 Git 初始化；Git 项目中的 Task/Session 使用独占 worktree。
@@ -72,7 +72,11 @@ Policy 在创建时同步校验，拒绝即不落库：
 - 非 `node:` / `artifact:` 受控引用；
 - 危险动作没有显式审批。
 
-通过校验后，Workflow 直接冻结成带 canonical hash 的不可变定义。启动 Run 时绑定具体 Project，Run 中每个 Task 持有 `workflow_run_id`；执行器跨 Role 强制执行 Workflow 的并发上限，并以包含代码整合子任务在内的 Delivery 状态结算 Run。冻结后的 Workflow 不允许原地修改。
+通过校验后，Workflow 成为带 canonical hash 的 adopted 定义，可被多次启动；
+定义可整体替换（重新校验、重写 spec_hash）或删除，均受 revision 保护。
+启动 Run 时绑定具体 Project，Run 中每个 Task 持有 `workflow_run_id`；执行器
+跨 Role 强制执行 Workflow 的并发上限，并以包含代码整合子任务在内的 Delivery
+状态结算 Run。删除定义只移除定义与 Run 书签，节点任务保留为任务历史。
 
 ## HTTP 合同
 

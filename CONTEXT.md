@@ -19,7 +19,7 @@
 系统唯一的实体，物理上只有一张 `tasks` 表，`type` 列区分四种形态：
 
 - `task`（单任务）：一次 batch 执行（日常主力）；
-- `workflow`（复合任务）：带编排 spec（节点 + 依赖边），创建即冻结，启动 Run 时绑定项目并原子实例化为子任务树，状态聚合；
+- `workflow`（复合任务）：带编排 spec（节点 + 依赖边），创建/编辑经确定性策略校验，启动 Run 时绑定项目并原子实例化为子任务树，状态聚合；
 - `session`（自由探索任务）：持久多轮协作，可挂起/恢复，交付后形成可结算的收编任务；
 - 定时是正交属性：任何形态都可挂 `cron`，到点按形态创建实例（定时页跨形态汇总）。
 
@@ -65,15 +65,17 @@ Session 产生的、准备进入任务审批与整合流程的版本化工作成
 
 ### Workflow
 
-一个创建即冻结的可复用编排定义：冻结版本的 Task 节点、依赖、限制。
+一个可复用、可编辑的编排定义：Task 节点、依赖、限制；创建与每次编辑都经过
+确定性策略校验（adopted）。
 spec 不绑定 Project——在启动 Run 时选择具体项目，同一定义可复用于多个项目。
-物理上是 `type=workflow` 任务处于 adopted 状态（spec + spec_hash）。
+物理上是 `type=workflow` 任务处于 adopted 状态（spec + spec_hash，revision
+保护并发编辑；删除只移除定义与 Run 书签，节点任务保留为任务历史）。
 
 避免：Proposal、Prompt chain、live task list。
 
 ### Workflow Run
 
-由一个冻结 Workflow 原子实例化的执行实例，启动时绑定具体 Project，
+由一个 Workflow 定义原子实例化的执行实例，启动时绑定具体 Project，
 包含节点到 Task 的稳定映射。`workflow_runs` 表保留为实例书签（非实体），
 任务本身仍是 `type=task`。
 

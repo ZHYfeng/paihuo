@@ -23,7 +23,7 @@
 | 形态 | 当前实现 | 特征 |
 |---|---|---|
 | **单任务** | tasks 表 type=task | 一个 Role 执行一次，后台跑完，日常主力 |
-| **复合任务** | tasks 表 type=workflow | 带编排 spec（节点 + 依赖边）的任务，创建即冻结，启动 Run 时绑定项目并原子实例化为子任务树，状态聚合 |
+| **复合任务** | tasks 表 type=workflow | 带编排 spec（节点 + 依赖边）的定义，创建/编辑时同步完成确定性策略校验（adopted），启动 Run 时绑定项目并原子实例化为子任务树，状态聚合 |
 | **自由探索任务** | tasks 表 type=session | 持久多轮协作，可挂起/恢复，产出后交付为收编任务 |
 | **定时任务** | 任何形态 + cron 属性 | 定时是正交属性：任务/会话/工作流都可挂 cron，到点按形态创建实例 |
 
@@ -92,9 +92,10 @@ Task ──► Role（指令/模型/并发/技能选择）──► Runtime（Pi
 |---|---|---|
 | review 任务执行完毕 | 交付成果可否进入整合 | 批准 → succeeded + 自动建 merge；拒绝 → cancelled；打回 → queued |
 
-工作流没有独立的采纳审批：创建工作流时同步完成确定性策略校验，通过即冻结。
-危险动作（install_runtime、arbitrary_host_path、full_permission、
-merge_workspace、delete_workspace）在创建时强制要求节点声明人工审批。
+工作流没有独立的采纳审批：创建/编辑工作流时同步完成确定性策略校验，校验失败
+返回违规明细且不落库。危险动作（install_runtime、arbitrary_host_path、
+full_permission、merge_workspace、delete_workspace）在创建和编辑时都强制要求
+节点声明人工审批。
 
 ## 6. 管理面（支撑设施）
 
@@ -108,17 +109,34 @@ merge_workspace、delete_workspace）在创建时强制要求节点声明人工�
 | 角色和技能 | Roles / 技能 | Role 指令与约束；SKILL.md 导入与挂载 |
 | Pi 扩展 | 技能页 Pi 扩展 tab | 安装/移除 Pi 扩展 |
 | 模板 | 模板 | 调度模板 + MCP 任务创建模板 |
-| Workflow 管理 | Workflows | 工作流创建/冻结、启动 Run、Run 历史与节点任务 |
+| Workflow 管理 | Workflows | 工作流定义增删查改、启动 Run、Run 历史与节点任务 |
 | 审批 | 工作台待审批聚合 | 所有 awaiting_review 任务集中出现 |
+
+#### Workflow 定义管理（增删查改）
+
+定义是普通资源，走完整 CRUD，全部 mutation 带 `If-Match` revision：
+
+| 操作 | 端点 | 语义 |
+|---|---|---|
+| 增 | `POST /api/v1/workflows` | 提交 spec（+ 可选 cron/enabled/project_id）→ 同步策略校验 → adopted + spec_hash |
+| 查 | `GET /api/v1/workflows`、`GET /api/v1/workflows/{id}` | 列表 / 详情（spec、revision、spec_hash）；Run 经 `/workflows/{id}/runs`、`/workflow-runs/{id}` |
+| 改 | `PUT /api/v1/workflows/{id}` | 整体替换定义：重新策略校验、重写 spec_hash、bump revision；已实例化的 Run 不受影响 |
+| 删 | `DELETE /api/v1/workflows/{id}` | 删除定义与 Run 书签；节点任务解除 `workflow_run_id` 关联后保留为任务历史；有进行中的 Run 时 409 |
+
+删除不级联销毁节点任务：它们是有日志、产物和合并历史的真实实体，
+Run 才是「实例书签（非实体）」，随定义删除。编辑定义只影响后续 Run。定时
+工作流的周期/启停也可在定时页调整；spec 本身只在工作流页编辑。
 
 ## 7. 设计决策
 
 - **一条路，一个实体**：Task 是唯一实体，四种形态是创建方式差异；
-  Workflow 是创建即冻结的编排定义，Run 是它的执行实例书签，不是另一类实体。
+  Workflow 是可编辑的编排定义，Run 是它的执行实例书签，不是另一类实体。
 - **定义与项目解耦**：Workflow spec 不绑定 Project，启动 Run 时选择具体
   项目——一个定义可复用于多个项目；定时工作流在创建时绑定目标项目。
-- **创建即冻结**：创建工作流时同步完成确定性策略校验，通过直接冻结可用，
-  不设提案/采纳两阶段门禁；校验失败返回违规明细且不落库。
+- **定义可编辑，Run 快照实例化**：创建与每次编辑都同步完成确定性策略校验
+  （adopted），不设提案/采纳两阶段门禁；校验失败返回违规明细且不落库。
+  定义可整体替换或删除，均受 revision 保护。Run 在启动瞬间原子实例化节点
+  任务与依赖图，之后编辑定义不影响已开始的 Run。
 - **路由层保持确定性**：跨角色任务路由（复合任务的依赖图）是平台职责，
   必须可静态校验、可审计、可重放；LLM 动态路由放在自由探索任务内部
   （runtime 职责）。

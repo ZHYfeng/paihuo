@@ -468,7 +468,7 @@ func (e *Executor) restoreProjectSlot(tk store.Task) {
 	e.mu.Unlock()
 }
 
-// reserveWorkflowSlot enforces the frozen Plan's cross-Role concurrency cap.
+// reserveWorkflowSlot enforces the Run's spec cross-Role concurrency cap.
 func (e *Executor) reserveWorkflowSlot(tk store.Task, limit int) bool {
 	if tk.WorkflowRunID == nil {
 		return true

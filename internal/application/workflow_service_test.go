@@ -1,6 +1,7 @@
 package application
 
 import (
+	"database/sql"
 	"errors"
 	"testing"
 
@@ -10,7 +11,7 @@ import (
 	"paihuo/internal/workflow"
 )
 
-func TestWorkflowFreezesOnCreateAndInstantiatesDependencyGraph(t *testing.T) {
+func TestWorkflowCreateAdoptsAndInstantiatesDependencyGraph(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -41,8 +42,8 @@ func TestWorkflowFreezesOnCreateAndInstantiatesDependencyGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wf.SpecHash == "" || wf.Status != workflow.WorkflowStatusFrozen {
-		t.Fatalf("workflow not frozen on create: %+v", wf)
+	if wf.SpecHash == "" || wf.Status != workflow.WorkflowStatusAdopted {
+		t.Fatalf("workflow not adopted on create: %+v", wf)
 	}
 	// spec 不绑定项目：工作流任务记录无项目。
 	if wf.ProjectID != nil {
@@ -58,8 +59,8 @@ func TestWorkflowFreezesOnCreateAndInstantiatesDependencyGraph(t *testing.T) {
 	if run.ProjectID != projectID {
 		t.Fatalf("run.ProjectID=%d, want %d", run.ProjectID, projectID)
 	}
-	// 创建后工作流任务保持冻结态，run 不应再改动其状态，可多次 run。
-	if tk, err := st.GetWorkflowTask(wf.ID); err != nil || tk == nil || tk.Status != workflow.WorkflowStatusFrozen {
+	// 定义创建后保持 adopted，run 不应改动其状态，可多次 run。
+	if tk, err := st.GetWorkflowTask(wf.ID); err != nil || tk == nil || tk.Status != workflow.WorkflowStatusAdopted {
 		t.Fatalf("工作流任务创建后应保持 adopted: %+v %v", tk, err)
 	}
 	build, _ := st.GetTask(run.TaskIDs["build"])
@@ -152,5 +153,152 @@ func TestCreateWorkflowRequiresProjectForScheduled(t *testing.T) {
 	}
 	if _, err := service.CreateWorkflow(spec, "0 0 * * * *", true, nil); err == nil {
 		t.Fatal("scheduled workflow without project must be rejected")
+	}
+}
+
+func singleNodeSpec(roleID int64, goal string) workflow.Spec {
+	return workflow.Spec{
+		Goal: goal, CreatedBy: "test",
+		Limits: workflow.Limits{Budget: 100, MaxNodes: 4, MaxDepth: 3, MaxConcurrency: 2},
+		Nodes: []workflow.Node{
+			{ID: "build", Intent: "构建", Role: workflow.RoleSelector{RoleID: roleID}, Permission: store.PermFull, TimeoutSeconds: 60, FailurePolicy: "stop", Budget: 20},
+		},
+	}
+}
+
+func newWorkflowTestService(t *testing.T) (*store.Store, *WorkflowService, int64, int64) {
+	t.Helper()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	projectID, err := st.CreateProject(store.Project{Name: "workflow", ProjectDir: t.TempDir(), Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &paiexec.FakeRuntime{RuntimeDescriptor: paiexec.RuntimeDescriptor{
+		ID: "fake", Name: "Fake", Healthy: true, Capabilities: []paiexec.RuntimeCapability{paiexec.CapabilityBatch},
+	}}
+	runtimes := paiexec.NewRuntimeService(runtime)
+	roleID, err := st.CreateRole(store.Role{Name: "builder", RuntimeID: "fake", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st, NewWorkflowService(st, runtimes, nil, events.NewEventStream(st)), projectID, roleID
+}
+
+func TestUpdateWorkflowReplacesDefinitionAndGuardsRevision(t *testing.T) {
+	st, service, projectID, roleID := newWorkflowTestService(t)
+	wf, err := service.CreateWorkflow(singleNodeSpec(roleID, "构建并验证"), "", false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. 整体替换：goal/spec_hash 变化、revision+1、状态保持 adopted。
+	updated, err := service.UpdateWorkflow(wf.ID, wf.Revision, singleNodeSpec(roleID, "构建并发布"), "", false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Revision != wf.Revision+1 {
+		t.Fatalf("revision=%d, want %d", updated.Revision, wf.Revision+1)
+	}
+	if updated.SpecHash == wf.SpecHash {
+		t.Fatalf("spec_hash must change after edit: %s", updated.SpecHash)
+	}
+	if updated.Status != workflow.WorkflowStatusAdopted {
+		t.Fatalf("status=%s, want adopted after edit", updated.Status)
+	}
+	spec, err := specOf(updated)
+	if err != nil || spec.Goal != "构建并发布" {
+		t.Fatalf("spec not replaced: %+v %v", spec, err)
+	}
+
+	// 2. 陈旧 revision → 冲突，不落库。
+	if _, err := service.UpdateWorkflow(wf.ID, wf.Revision, singleNodeSpec(roleID, "不应生效"), "", false, nil); !errors.Is(err, store.ErrRevisionConflict) {
+		t.Fatalf("stale revision must conflict, got %v", err)
+	}
+
+	// 3. 策略违规 → 422 明细且定义不变。
+	bad := workflow.Spec{
+		Goal: "非法", CreatedBy: "test",
+		Limits: workflow.Limits{Budget: 100, MaxNodes: 4, MaxDepth: 3, MaxConcurrency: 2},
+		Nodes: []workflow.Node{
+			{ID: "a", Intent: "A", Role: workflow.RoleSelector{RoleID: roleID}, Permission: store.PermFull, TimeoutSeconds: 60, FailurePolicy: "stop", Budget: 20, AllowedActions: []string{"delete_workspace"}},
+		},
+	}
+	_, err = service.UpdateWorkflow(wf.ID, updated.Revision, bad, "", false, nil)
+	var validation *WorkflowValidationError
+	if !errors.As(err, &validation) || len(validation.Violations) == 0 {
+		t.Fatalf("policy-violating update must be rejected with violations, got %v", err)
+	}
+	unchanged, _ := st.GetWorkflowTask(wf.ID)
+	if spec, err := specOf(unchanged); err != nil || spec.Goal != "构建并发布" {
+		t.Fatalf("rejected update must not persist: %+v %v", spec, err)
+	}
+
+	// 4. 编辑为定时必须绑定目标项目；绑定后成功。
+	if _, err := service.UpdateWorkflow(wf.ID, updated.Revision, singleNodeSpec(roleID, "构建并发布"), "0 0 * * * *", true, nil); err == nil {
+		t.Fatal("scheduled update without project must be rejected")
+	}
+	scheduled, err := service.UpdateWorkflow(wf.ID, updated.Revision, singleNodeSpec(roleID, "构建并发布"), "0 0 * * * *", true, &projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scheduled.Cron != "0 0 * * * *" || scheduled.ProjectID == nil || *scheduled.ProjectID != projectID {
+		t.Fatalf("scheduled fields not updated: %+v", scheduled)
+	}
+
+	// 5. 不存在的定义 → sql.ErrNoRows。
+	if _, err := service.UpdateWorkflow(9999, 1, singleNodeSpec(roleID, "x"), "", false, nil); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("missing workflow must be sql.ErrNoRows, got %v", err)
+	}
+}
+
+func TestDeleteWorkflowBlocksActiveRunsAndKeepsNodeTasks(t *testing.T) {
+	st, service, projectID, roleID := newWorkflowTestService(t)
+	wf, err := service.CreateWorkflow(singleNodeSpec(roleID, "构建并验证"), "", false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := service.StartPlan(wf.ID, wf.Revision, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. 进行中的 Run → 拒绝删除。
+	if err := service.DeleteWorkflow(wf.ID, wf.Revision); !errors.Is(err, store.ErrWorkflowRunsActive) {
+		t.Fatalf("delete with active run must be rejected, got %v", err)
+	}
+	// 陈旧 revision → 冲突。
+	if err := service.DeleteWorkflow(wf.ID, wf.Revision-1); !errors.Is(err, store.ErrRevisionConflict) {
+		t.Fatalf("stale revision must conflict, got %v", err)
+	}
+
+	// 2. Run 结束后删除成功：定义消失、Run 书签删除、节点任务保留且解除关联。
+	if err := st.FinishWorkflowRun(run.ID, run.Revision, workflow.RunStatusSucceeded); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.DeleteWorkflow(wf.ID, wf.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if tk, err := st.GetWorkflowTask(wf.ID); err != nil || tk != nil {
+		t.Fatalf("workflow definition must be gone: %+v %v", tk, err)
+	}
+	runs, err := st.ListWorkflowRunsByWorkflow(wf.ID)
+	if err != nil || len(runs) != 0 {
+		t.Fatalf("run bookmarks must be deleted: %d %v", len(runs), err)
+	}
+	build, err := st.GetTask(run.TaskIDs["build"])
+	if err != nil {
+		t.Fatalf("node task must survive deletion: %v", err)
+	}
+	if build.WorkflowRunID != nil {
+		t.Fatalf("node task must be unlinked from deleted run: %+v", build.WorkflowRunID)
+	}
+
+	// 3. 重复删除 → sql.ErrNoRows。
+	if err := service.DeleteWorkflow(wf.ID, wf.Revision); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("second delete must be sql.ErrNoRows, got %v", err)
 	}
 }

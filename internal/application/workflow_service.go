@@ -20,9 +20,10 @@ import (
 	"paihuo/internal/workflow"
 )
 
-// WorkflowService 管理工作流任务（type=workflow）：创建即冻结（adopted），
-// 启动 Run 时绑定具体项目实例化节点任务。Proposal/Plan 概念已折叠：
-// 创建工作流时同步完成策略校验，通过即冻结可用。
+// WorkflowService 管理工作流任务（type=workflow）：创建/查询/编辑/删除
+// （增删查改）+ 启动 Run 时绑定具体项目实例化节点任务。定义创建即完成
+// 确定性策略校验（adopted），之后可整体替换（重新校验 + spec_hash，受
+// revision 保护）或删除；Proposal/Plan 概念已折叠。
 type WorkflowService struct {
 	store    *store.Store
 	runtimes *paiexec.RuntimeService
@@ -62,10 +63,9 @@ func (e *WorkflowValidationError) Error() string {
 	return "Workflow 策略校验失败: " + e.Violations[0].Message
 }
 
-// CreateWorkflow 创建工作流任务并立即冻结（status=adopted + spec_hash）。
-// spec 不绑定项目；定时工作流（cron 非空）必须绑定目标项目，供定时触发
-// 启动 Run 时使用。策略校验失败返回 WorkflowValidationError，不落库。
-func (s *WorkflowService) CreateWorkflow(spec workflow.Spec, cron string, enabled bool, projectID *int64) (*store.Task, error) {
+// prepareSpec 应用默认值并完成策略校验与定时项目绑定检查；校验失败返回
+// WorkflowValidationError。创建与编辑共用同一套校验，保证定义永远合法。
+func (s *WorkflowService) prepareSpec(spec workflow.Spec, cron string, projectID *int64) (workflow.Spec, error) {
 	if spec.Version == 0 {
 		spec.Version = 1
 	}
@@ -79,19 +79,30 @@ func (s *WorkflowService) CreateWorkflow(spec workflow.Spec, cron string, enable
 		spec.Limits.MaxConcurrency = 2
 	}
 	if violations := s.policy.Validate(spec); len(violations) > 0 {
-		return nil, &WorkflowValidationError{Violations: violations}
+		return spec, &WorkflowValidationError{Violations: violations}
 	}
 	if cron != "" && projectID == nil {
-		return nil, fmt.Errorf("定时工作流必须绑定目标项目")
+		return spec, fmt.Errorf("定时工作流必须绑定目标项目")
 	}
 	if projectID != nil {
 		project, err := s.store.GetProject(*projectID)
 		if err != nil {
-			return nil, fmt.Errorf("项目不存在")
+			return spec, fmt.Errorf("项目不存在")
 		}
 		if project.Status != "active" {
-			return nil, fmt.Errorf("项目不可用")
+			return spec, fmt.Errorf("项目不可用")
 		}
+	}
+	return spec, nil
+}
+
+// CreateWorkflow 创建工作流任务（status=adopted + spec_hash）。
+// spec 不绑定项目；定时工作流（cron 非空）必须绑定目标项目，供定时触发
+// 启动 Run 时使用。策略校验失败返回 WorkflowValidationError，不落库。
+func (s *WorkflowService) CreateWorkflow(spec workflow.Spec, cron string, enabled bool, projectID *int64) (*store.Task, error) {
+	spec, err := s.prepareSpec(spec, cron, projectID)
+	if err != nil {
+		return nil, err
 	}
 	canonical, err := json.Marshal(spec)
 	if err != nil {
@@ -109,7 +120,58 @@ func (s *WorkflowService) CreateWorkflow(spec workflow.Spec, cron string, enable
 	return created, err
 }
 
-// StartPlan 从冻结的工作流任务原子实例化一次 Run，绑定 projectID 项目。
+// UpdateWorkflow 整体替换工作流定义：重新策略校验后重写 spec/spec_hash 与
+// 定时属性并 bump revision。revision 不符返回 ErrRevisionConflict；已实例化
+// 的 Run 及其节点任务不受影响。校验失败返回 WorkflowValidationError，不落库。
+func (s *WorkflowService) UpdateWorkflow(id, expectedRevision int64, spec workflow.Spec, cron string, enabled bool, projectID *int64) (*store.Task, error) {
+	tk, err := s.store.GetWorkflowTask(id)
+	if err != nil {
+		return nil, err
+	}
+	if tk == nil || tk.Type != store.TaskTypeWorkflow {
+		return nil, sql.ErrNoRows
+	}
+	if tk.Revision != expectedRevision {
+		return nil, store.ErrRevisionConflict
+	}
+	spec, err = s.prepareSpec(spec, cron, projectID)
+	if err != nil {
+		return nil, err
+	}
+	canonical, err := json.Marshal(spec)
+	if err != nil {
+		return nil, err
+	}
+	hash := sha256.Sum256(canonical)
+	updated, err := s.store.UpdateWorkflowTask(id, expectedRevision, spec, cron, enabled, projectID, hex.EncodeToString(hash[:]))
+	if err != nil {
+		return nil, err
+	}
+	s.events.Publish(events.Event{Type: "workflow.updated", Payload: updated})
+	return updated, nil
+}
+
+// DeleteWorkflow 删除工作流定义及其 Run 书签；节点任务解除 Run 关联后保留
+// 为任务历史。有进行中的 Run 时返回 ErrWorkflowRunsActive。
+func (s *WorkflowService) DeleteWorkflow(id, expectedRevision int64) error {
+	tk, err := s.store.GetWorkflowTask(id)
+	if err != nil {
+		return err
+	}
+	if tk == nil || tk.Type != store.TaskTypeWorkflow {
+		return sql.ErrNoRows
+	}
+	if tk.Revision != expectedRevision {
+		return store.ErrRevisionConflict
+	}
+	if err := s.store.DeleteWorkflowTask(id, expectedRevision); err != nil {
+		return err
+	}
+	s.events.Publish(events.Event{Type: "workflow.deleted", Payload: map[string]any{"id": id}})
+	return nil
+}
+
+// StartPlan 从工作流定义原子实例化一次 Run，绑定 projectID 项目。
 func (s *WorkflowService) StartPlan(id, expectedRevision, projectID int64) (*workflow.Run, error) {
 	if projectID < 1 {
 		return nil, fmt.Errorf("启动 Run 必须指定项目")
@@ -124,8 +186,8 @@ func (s *WorkflowService) StartPlan(id, expectedRevision, projectID int64) (*wor
 	if tk.Revision != expectedRevision {
 		return nil, store.ErrRevisionConflict
 	}
-	if tk.Status != workflow.WorkflowStatusFrozen {
-		return nil, fmt.Errorf("工作流未冻结，无法启动")
+	if tk.Status != workflow.WorkflowStatusAdopted {
+		return nil, fmt.Errorf("工作流定义不可用，无法启动")
 	}
 	spec, err := specOf(tk)
 	if err != nil {

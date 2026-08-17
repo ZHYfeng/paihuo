@@ -30,9 +30,10 @@ type Node struct {
 	Budget           int64          `json:"budget"`
 }
 
-// Spec 创建时冻结（不可变），描述一次可复用的工作流编排。Edges 只表达依赖
-// ID，从不包含可执行代码。Spec 不绑定 Project：具体项目在启动 Run 时指定，
-// 同一工作流定义可复用于多个项目。
+// Spec 描述一次可复用、可编辑的工作流编排。Edges 只表达依赖 ID，从不包含
+// 可执行代码。Spec 不绑定 Project：具体项目在启动 Run 时指定，同一工作流
+// 定义可复用于多个项目；定义创建后可通过 UpdateWorkflow 整体替换（重新
+// 策略校验 + 重写 spec_hash，受 revision 保护），已实例化的 Run 不受影响。
 type Spec struct {
 	Version   int64  `json:"version"`
 	Goal      string `json:"goal"`
@@ -47,8 +48,9 @@ type Violation struct {
 	Message string `json:"message"`
 }
 
-// Run 是一次冻结工作流任务的执行实例（实例书签，非实体）：启动时绑定具体
+// Run 是一次工作流任务的执行实例（实例书签，非实体）：启动时绑定具体
 // Project，原子实例化节点子任务，task_ids 是节点 ID → 任务 ID 的稳定映射。
+// Run 在启动瞬间固化节点任务与依赖图，之后编辑工作流定义不影响已开始的 Run。
 type Run struct {
 	ID         int64            `json:"id"`
 	WorkflowID int64            `json:"workflow_id"`
@@ -63,13 +65,14 @@ type Run struct {
 }
 
 const (
-	// 工作流任务（type=workflow）的状态：创建即冻结（adopted），
-	// 写入 spec_hash 之后不可变，可被多次 run。存量库中的
-	// proposed/validated/rejected 是旧版提案门禁遗留，不可启动。
-	WorkflowStatusFrozen = "adopted"
-	RunStatusCreated     = "created"
-	RunStatusRunning     = "running"
-	RunStatusSucceeded   = "succeeded"
-	RunStatusFailed      = "failed"
-	RunStatusCancelled   = "cancelled"
+	// 工作流任务（type=workflow）的状态：adopted = 已通过策略校验、可启动
+	// Run 的就绪定义。定义可编辑（重新校验 + 重写 spec_hash）或删除，均受
+	// revision 保护；存量库中的 proposed/validated/rejected 是旧版提案门禁
+	// 遗留，不可启动。
+	WorkflowStatusAdopted = "adopted"
+	RunStatusCreated      = "created"
+	RunStatusRunning      = "running"
+	RunStatusSucceeded    = "succeeded"
+	RunStatusFailed       = "failed"
+	RunStatusCancelled    = "cancelled"
 )

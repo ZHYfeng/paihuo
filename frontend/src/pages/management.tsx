@@ -241,7 +241,7 @@ export function SchedulesPage() {
       const cron = unsupported && !dirty ? value.cron : cronFromFields(frequency, weekday, monthday, time);
       if (!cron) throw new Error("请选择有效的执行时间");
       const base = { cron, enabled: value.enabled ?? true };
-      // 工作流定时定义基于冻结 spec，仅允许调整周期与启停；其余形态可编辑各自专属字段。
+      // 工作流定时定义仅允许调整周期与启停（spec 在「工作流」页编辑）；其余形态可编辑各自专属字段。
       const body = value.type === "workflow" ? base : {
         ...base,
         title: value.title || "",
@@ -298,7 +298,7 @@ export function SchedulesPage() {
         <Field label="初始指令"><textarea className={inputClass + " min-h-28 py-3"} value={draft.body || ""} onChange={e => setDraft({ ...draft, body: e.target.value })} placeholder="到点创建会话后自动发送的初始指令" /></Field>
         <div className="grid gap-4 md:grid-cols-2"><Field label="角色"><select className={inputClass} required value={draft.role_id || ""} onChange={e => setDraft({ ...draft, role_id: Number(e.target.value) })}><option value="">请选择</option>{roles.data?.filter(r => r.enabled).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></Field><Field label="项目"><select className={inputClass} value={draft.project_id || ""} onChange={e => setDraft({ ...draft, project_id: e.target.value ? Number(e.target.value) : null })}><option value="">不绑定项目</option>{projects.data?.filter(p => p.status === "active").map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field></div>
       </> : draft.type === "workflow" ? <>
-        <p className="rounded-xl border border-line bg-elevated px-3 py-2.5 text-sm leading-6 text-muted">工作流定时定义基于冻结 spec，仅可调整周期与启停；角色 / 项目 / 权限从任务读取展示。</p>
+        <p className="rounded-xl border border-line bg-elevated px-3 py-2.5 text-sm leading-6 text-muted">工作流定时定义仅可调整周期与启停；spec 在「工作流」页编辑。角色 / 项目 / 权限从任务读取展示。</p>
         <div className="grid gap-4 md:grid-cols-3">
           <Field label="角色"><input className={inputClass} readOnly value={draft.role_name || "-"} /></Field>
           <Field label="项目"><input className={inputClass} readOnly value={draft.project_name || "-"} /></Field>

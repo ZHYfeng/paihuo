@@ -2,7 +2,7 @@
 // 定时定义是 tasks 表中的任务（cron 非空）；触发语义：
 //   - type=task：渲染 title/body 模板创建新任务实例；
 //   - type=session：创建会话任务实例并自动启动、发送初始指令；
-//   - type=workflow：从冻结（adopted）的工作流任务创建一次 Run。
+//   - type=workflow：从工作流定义创建一次 Run。
 package sched
 
 import (
@@ -211,11 +211,11 @@ func (j *scheduleJob) dispatchSession(now string) bool {
 	return true
 }
 
-// dispatchWorkflow 从冻结的工作流任务启动一次 Run（未冻结或未绑定项目则跳过并提示）。
+// dispatchWorkflow 从工作流定义启动一次 Run（不可用或未绑定项目则跳过并提示）。
 func (j *scheduleJob) dispatchWorkflow(now string) bool {
 	tk := j.tk
-	if tk.Status != workflow.WorkflowStatusFrozen {
-		log.Printf("定时工作流 %s 尚未冻结（status=%s），跳过本次触发", tk.Title, tk.Status)
+	if tk.Status != workflow.WorkflowStatusAdopted {
+		log.Printf("定时工作流 %s 定义不可用（status=%s），跳过本次触发", tk.Title, tk.Status)
 		return false
 	}
 	if tk.ProjectID == nil {

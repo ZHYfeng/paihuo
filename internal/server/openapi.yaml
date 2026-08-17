@@ -88,9 +88,22 @@ paths:
     get: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Transcript page}}}
   /workflows:
     get: {tags: [Workflows], responses: {'200': {description: Workflows}}}
-    post: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Workflow created and frozen}}}
+    post: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Workflow created}}}
   /workflows/{id}:
     get: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Workflow}}}
+    put:
+      tags: [Workflows]
+      parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Workflow replaced}
+        '409': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Workflows]
+      parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '204': {description: Workflow deleted}
+        '409': {$ref: '#/components/responses/Error'}
   /workflows/{id}/runs:
     get: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Runs of a workflow}}}
     post: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Workflow run created atomically}}}
@@ -159,7 +172,7 @@ components:
           properties:
             id: {type: integer, format: int64}
             type: {type: string, enum: [task, session, workflow], description: 任务形态：四种形态物理统一在 tasks 表}
-            status: {type: string, description: 按形态解释：task→queued/claimed/running/awaiting_review/succeeded/failed/cancelled；session→created/active/suspended/delivered/deleted；workflow→adopted（创建即冻结）}
+            status: {type: string, description: 按形态解释：task→queued/claimed/running/awaiting_review/succeeded/failed/cancelled；session→created/active/suspended/delivered/deleted；workflow→adopted（已通过策略校验、可启动 Run；定义可编辑）}
             role_name: {type: string}
             project_name: {type: string}
             session_id: {type: integer, format: int64}

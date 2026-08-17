@@ -11,11 +11,15 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 工作流任务（type=workflow）：创建即冻结为 adopted，spec/spec_hash 承载
-// 冻结载荷；spec 不绑定项目，启动 Run 时按项目实例化节点任务。
+// 工作流任务（type=workflow）：status=adopted（已通过策略校验、可启动 Run
+// 的就绪定义），spec/spec_hash 承载定义载荷；定义可编辑（UpdateWorkflowTask）
+// 或删除（DeleteWorkflowTask），均受 revision 保护。spec 不绑定项目，启动
+// Run 时按项目实例化节点任务。
+
+var ErrWorkflowRunsActive = errors.New("工作流仍有进行中的 Run，无法删除")
 
 // CreateWorkflowTask 创建工作流任务（type=workflow, status=adopted），
-// 写入 spec_hash 冻结。projectID 仅定时工作流（cron 非空）必填：定时触发
+// 写入 spec_hash。projectID 仅定时工作流（cron 非空）必填：定时触发
 // 启动 Run 时需要确定目标项目；普通工作流由启动 Run 时选择项目。
 func (s *Store) CreateWorkflowTask(spec workflow.Spec, cron string, enabled bool, projectID *int64, specHash string) (int64, error) {
 	data, err := json.Marshal(spec)
@@ -26,7 +30,7 @@ func (s *Store) CreateWorkflowTask(spec workflow.Spec, cron string, enabled bool
 		Type:      TaskTypeWorkflow,
 		Title:     spec.Goal,
 		Body:      spec.Goal,
-		Status:    workflow.WorkflowStatusFrozen,
+		Status:    workflow.WorkflowStatusAdopted,
 		ProjectID: projectID,
 		Spec:      string(data),
 		SpecHash:  specHash,
@@ -53,10 +57,72 @@ func (s *Store) ListWorkflowTasks() ([]Task, error) {
 	return s.ListTasksFiltered(TaskFilter{Type: TaskTypeWorkflow})
 }
 
+// UpdateWorkflowTask 整体替换工作流定义：调用方已完成策略校验，这里原子地
+// 重写 spec/spec_hash 与定时属性并 bump revision。记录不存在、非工作流或
+// revision 不符一律返回 ErrRevisionConflict。已实例化的 Run 不受影响。
+func (s *Store) UpdateWorkflowTask(id, expectedRevision int64, spec workflow.Spec, cron string, enabled bool, projectID *int64, specHash string) (*Task, error) {
+	data, err := json.Marshal(spec)
+	if err != nil {
+		return nil, err
+	}
+	res, err := s.db.Exec(`UPDATE tasks
+		SET title=?, body=?, spec=?, spec_hash=?, cron=?, enabled=?, project_id=?, updated_at=?, revision=revision+1
+		WHERE id=? AND revision=? AND type=?`,
+		spec.Goal, spec.Goal, string(data), specHash, cron, boolInt(enabled), projectID, Now(), id, expectedRevision, TaskTypeWorkflow)
+	if err != nil {
+		return nil, err
+	}
+	if changed, _ := res.RowsAffected(); changed != 1 {
+		return nil, ErrRevisionConflict
+	}
+	return s.GetWorkflowTask(id)
+}
+
+// DeleteWorkflowTask 删除工作流定义及其 Run 书签：先解除节点任务（含合并
+// 子任务）的 workflow_run_id 关联以保留任务历史，再删除 Run 书签与定义。
+// 有进行中的 Run（created/running）时返回 ErrWorkflowRunsActive，避免
+// 定义消失后 run 聚合失去依据。
+func (s *Store) DeleteWorkflowTask(id, expectedRevision int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var revision int64
+	if err := tx.QueryRow(`SELECT revision FROM tasks WHERE id=? AND type=?`, id, TaskTypeWorkflow).Scan(&revision); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return sql.ErrNoRows
+		}
+		return err
+	}
+	if revision != expectedRevision {
+		return ErrRevisionConflict
+	}
+	var active int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM workflow_runs WHERE workflow_id=? AND status IN (?, ?)`,
+		id, workflow.RunStatusCreated, workflow.RunStatusRunning).Scan(&active); err != nil {
+		return err
+	}
+	if active > 0 {
+		return ErrWorkflowRunsActive
+	}
+	if _, err := tx.Exec(`UPDATE tasks SET workflow_run_id=NULL, updated_at=?
+		WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE workflow_id=?)`, Now(), id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM workflow_runs WHERE workflow_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM tasks WHERE id=? AND revision=? AND type=?`, id, expectedRevision, TaskTypeWorkflow); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // InstantiateWorkflow is one transaction from an adopted workflow task to
 // persisted Run and Tasks. Every dependency edge is stored before any Task can
-// be claimed. 工作流任务创建后保持 adopted（冻结）不变，可被多次 run；
-// 每次 Run 绑定调用方指定的 projectID，节点任务创建在该项目下，
+// be claimed. 工作流定义保持 adopted 可被多次 run；每次 Run 绑定调用方指定的
+// projectID，节点任务创建在该项目下，
 func (s *Store) InstantiateWorkflow(tk Task, projectID int64) (*workflow.Run, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -68,7 +134,7 @@ func (s *Store) InstantiateWorkflow(tk Task, projectID int64) (*workflow.Run, er
 	if err := tx.QueryRow("SELECT status, revision FROM tasks WHERE id=?", tk.ID).Scan(&status, &revision); err != nil {
 		return nil, err
 	}
-	if status != workflow.WorkflowStatusFrozen || revision != tk.Revision {
+	if status != workflow.WorkflowStatusAdopted || revision != tk.Revision {
 		return nil, ErrRevisionConflict
 	}
 	var spec workflow.Spec
@@ -144,8 +210,9 @@ func (s *Store) InstantiateWorkflow(tk Task, projectID int64) (*workflow.Run, er
 		TaskIDs: taskIDs, Revision: 1, CreatedAt: now, StartedAt: &started, UpdatedAt: now}, nil
 }
 
-// WorkflowRunConcurrencyLimit returns the immutable frozen spec limit governing
-// a Run. The executor uses it as a dispatch gate shared by all Roles in the Run.
+// WorkflowRunConcurrencyLimit returns the spec limit governing a Run's
+// dispatch. The executor uses it as a gate shared by all Roles in the Run;
+// 定义被编辑后，进行中的 Run 的并发门禁随定义当前 spec 变化。
 func (s *Store) WorkflowRunConcurrencyLimit(runID int64) (int, error) {
 	var data []byte
 	if err := s.db.QueryRow(`SELECT t.spec FROM workflow_runs r

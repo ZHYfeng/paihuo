@@ -78,7 +78,7 @@ func TestMigrateWorkflowRunsProjectColumn(t *testing.T) {
 	legacy := strings.Replace(schema,
 		`CREATE TABLE IF NOT EXISTS workflow_runs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  workflow_id INTEGER NOT NULL REFERENCES tasks(id), -- 冻结的工作流任务（type=workflow, status=adopted）
+  workflow_id INTEGER NOT NULL REFERENCES tasks(id), -- adopted 的工作流定义（type=workflow）
   project_id  INTEGER NOT NULL REFERENCES projects(id), -- 本次 Run 绑定的具体项目
   status      TEXT NOT NULL DEFAULT 'created',
   task_ids    TEXT NOT NULL DEFAULT '{}',
