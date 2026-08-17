@@ -104,7 +104,7 @@ Agent 输出不能生成可执行 HTML/JS。`VisualizationSpec` 只允许 metric
 
 当前 schema 在空数据库上一次创建，不包含数据库升级链。更换到本版本时应使用全新数据库并重新配置；启动检测到其他 schema 会直接拒绝。
 
-当前生产基线为 `/home/yu/paihuo` 中的 `v2026.08.17-2`，由
+当前生产基线为 `/home/yu/paihuo` 中的 `v2026.08.17-3`，由
 `paihuo.service` 用户服务托管。架构或 schema 发布采用干净部署：清空数据库、
 Session/worktree 和 Artifact，保留访问令牌与独立技能库。部署命令以
 [部署指南](DEPLOYMENT.md) 为准。
