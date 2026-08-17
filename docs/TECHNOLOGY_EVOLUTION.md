@@ -96,6 +96,8 @@ API 只暴露 `/api/v1`。权威合同位于 [`internal/server/openapi.yaml`](..
 
 认证后只有一个 React root 和 BrowserRouter。页面按领域懒加载；TanStack Query 管服务端状态，持久 SSE hook 统一失效相关 query。Role 表单直接消费 Runtime schema、逐模型思考档位、已安装扩展和技能库候选。路由包括工作台、任务板、历史、项目、Role、Runtime、技能、模板、定时、Session、Workflow 与设置。
 
+技能库以「分类（文件夹）+ 标签」组织：导入/扫描时分类从源目录父文件夹名推断（frontmatter `category` 优先），可单独或批量调整；技能页支持按文件夹分组、批量打标签/移动分类/删除。角色表单的技能选择器按分类分组展示，标签 chip 点击一键选取/取消该标签的全部技能，值仍是 `role_config.skills` 目录数组（保持注册顺序）。
+
 设计使用 primitive → semantic → component 的语义 token，支持亮/暗主题、响应式导航、键盘焦点、reduced motion 与移动端触控尺寸。Dialog 基于 Radix。Workflow 图总有表格等价视图，状态不只依赖颜色。
 
 Agent 输出不能生成可执行 HTML/JS。`VisualizationSpec` 只允许 metric、table、timeline、task graph、diff summary 和 series；服务端验证版本与类型，前端选择本地 renderer。
