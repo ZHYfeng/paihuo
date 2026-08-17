@@ -125,6 +125,7 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   workflow_id INTEGER NOT NULL REFERENCES tasks(id), -- adopted 的工作流定义（type=workflow）
   project_id  INTEGER NOT NULL REFERENCES projects(id), -- 本次 Run 绑定的具体项目
+  task        TEXT NOT NULL DEFAULT '', -- 本次 Run 的自定义任务（{{.task}} 渲染进节点意图；留空 = 纯模板执行）
   status      TEXT NOT NULL DEFAULT 'created',
   task_ids    TEXT NOT NULL DEFAULT '{}',
   revision    INTEGER NOT NULL DEFAULT 1,
@@ -227,6 +228,10 @@ func Open(path string) (*Store, error) {
 			db.Close()
 			return nil, err
 		}
+		if err := migrateWorkflowRunsTaskColumn(db); err != nil {
+			db.Close()
+			return nil, err
+		}
 		// Unsupported databases are inspected before any schema statement runs.
 		// Rejection must not leave current-version tables or indexes behind.
 		if err := verifyCurrentSchema(db); err != nil {
@@ -275,6 +280,23 @@ func migrateWorkflowRunsProjectColumn(db *sql.DB) error {
 	return nil
 }
 
+// migrateWorkflowRunsTaskColumn 为存量库补 workflow_runs.task 列（幂等）：
+// 新库由 schema 直接建出该列；旧库 ALTER ADD COLUMN，存量 Run 默认为空
+// （无自定义任务，纯模板执行）。
+func migrateWorkflowRunsTaskColumn(db *sql.DB) error {
+	var has int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('workflow_runs') WHERE name='task'`).Scan(&has); err != nil {
+		return fmt.Errorf("检查 workflow_runs 结构失败: %w", err)
+	}
+	if has > 0 {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE workflow_runs ADD COLUMN task TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("迁移 workflow_runs.task 失败: %w", err)
+	}
+	return nil
+}
+
 func verifyCurrentSchema(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
@@ -287,7 +309,7 @@ func verifyCurrentSchema(db *sql.DB) error {
 		"SELECT task_id, depends_on, on_failure FROM task_dependencies LIMIT 0",
 		"SELECT role_id FROM templates LIMIT 0",
 		"SELECT seq, event_type, role_id, payload FROM event_log LIMIT 0",
-		"SELECT revision, workflow_id, project_id, task_ids FROM workflow_runs LIMIT 0",
+		"SELECT revision, workflow_id, project_id, task, task_ids FROM workflow_runs LIMIT 0",
 		"SELECT key, method, path, status_code FROM idempotency_records LIMIT 0",
 		"SELECT task_id, run_id, content_hash, locator FROM artifacts LIMIT 0",
 	} {

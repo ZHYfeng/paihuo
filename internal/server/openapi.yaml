@@ -106,7 +106,22 @@ paths:
         '409': {$ref: '#/components/responses/Error'}
   /workflows/{id}/runs:
     get: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Runs of a workflow}}}
-    post: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Workflow run created atomically}}}
+    post:
+      tags: [Workflows]
+      parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id]
+              properties:
+                project_id: {type: integer, format: int64, description: 本次 Run 绑定的具体项目}
+                task: {type: string, description: '可选：本次 Run 的自定义任务描述；渲染进节点意图（{{.task}} 占位符，纯文本意图自动附加），并记录在 Run 上供审计'}
+      responses:
+        '201': {description: Workflow run created atomically}
+        '422': {$ref: '#/components/responses/Error'}
   /workflow-runs/{id}:
     get: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Workflow run}}}
   /artifacts:

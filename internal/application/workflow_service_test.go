@@ -49,7 +49,7 @@ func TestWorkflowCreateAdoptsAndInstantiatesDependencyGraph(t *testing.T) {
 	if wf.ProjectID != nil {
 		t.Fatalf("workflow definition must not bind a project: %+v", wf.ProjectID)
 	}
-	run, err := service.StartPlan(wf.ID, wf.Revision, projectID)
+	run, err := service.StartPlan(wf.ID, wf.Revision, projectID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestDeleteWorkflowBlocksActiveRunsAndKeepsNodeTasks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := service.StartPlan(wf.ID, wf.Revision, projectID)
+	run, err := service.StartPlan(wf.ID, wf.Revision, projectID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,5 +300,78 @@ func TestDeleteWorkflowBlocksActiveRunsAndKeepsNodeTasks(t *testing.T) {
 	// 3. 重复删除 → sql.ErrNoRows。
 	if err := service.DeleteWorkflow(wf.ID, wf.Revision); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("second delete must be sql.ErrNoRows, got %v", err)
+	}
+}
+
+// 固定工作流 + 自定义任务：启动 Run 时提供具体任务，{{.task}} 占位符替换、
+// 纯文本意图自动附加，Run 书签记录任务；无任务时意图保持原文（行为不变）。
+func TestStartPlanWithCustomTask(t *testing.T) {
+	st, service, projectID, roleID := newWorkflowTestService(t)
+	wf, err := service.CreateWorkflow(workflow.Spec{
+		Goal: "构建并验证", CreatedBy: "test",
+		Limits: workflow.Limits{Budget: 100, MaxNodes: 4, MaxDepth: 3, MaxConcurrency: 2},
+		Nodes: []workflow.Node{
+			{ID: "build", Intent: "针对任务「{{.task}}」实现目标", Role: workflow.RoleSelector{RoleID: roleID}, Permission: store.PermFull, TimeoutSeconds: 60, FailurePolicy: "stop", Budget: 40},
+			{ID: "verify", Intent: "独立复核实现", Role: workflow.RoleSelector{RoleID: roleID}, DependsOn: []string{"build"}, Permission: store.PermReview, TimeoutSeconds: 60, FailurePolicy: "stop", Budget: 20},
+		},
+	}, "", false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. 带自定义任务：占位符替换 + 纯文本附加，Run 记录任务。
+	run, err := service.StartPlan(wf.ID, wf.Revision, projectID, "修复登录页 XSS")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Task != "修复登录页 XSS" {
+		t.Fatalf("run.Task=%q, want 自定义任务", run.Task)
+	}
+	build, err := st.GetTask(run.TaskIDs["build"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if build.Title != "针对任务「修复登录页 XSS」实现目标" {
+		t.Fatalf("{{.task}} 占位符必须替换: %q", build.Title)
+	}
+	verify, err := st.GetTask(run.TaskIDs["verify"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verify.Title != "独立复核实现\n\n自定义任务：修复登录页 XSS" {
+		t.Fatalf("纯文本意图必须附加自定义任务: %q", verify.Title)
+	}
+
+	// 2. Run 重新读取后任务仍在（书签持久化）。
+	loaded, err := st.GetWorkflowRun(run.ID)
+	if err != nil || loaded.Task != "修复登录页 XSS" {
+		t.Fatalf("run task must persist: %+v %v", loaded, err)
+	}
+
+	// 3. 无自定义任务：纯文本意图保持原文（行为不变）；模板化意图按作者
+	// 声明渲染（{{.task}} 替换为空）。
+	if err := st.FinishWorkflowRun(run.ID, run.Revision, workflow.RunStatusSucceeded); err != nil {
+		t.Fatal(err)
+	}
+	plain, err := service.StartPlan(wf.ID, wf.Revision, projectID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	build2, err := st.GetTask(plain.TaskIDs["build"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if build2.Title != "针对任务「」实现目标" {
+		t.Fatalf("空任务时模板化意图 {{.task}} 应渲染为空: %q", build2.Title)
+	}
+	verify2, err := st.GetTask(plain.TaskIDs["verify"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verify2.Title != "独立复核实现" {
+		t.Fatalf("空任务时纯文本意图必须保持原文: %q", verify2.Title)
+	}
+	if plain.Task != "" {
+		t.Fatalf("空任务 Run.Task=%q, want empty", plain.Task)
 	}
 }

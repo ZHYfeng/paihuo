@@ -76,6 +76,7 @@ spec 不绑定 Project——在启动 Run 时选择具体项目，同一定义�
 ### Workflow Run
 
 由一个 Workflow 定义原子实例化的执行实例，启动时绑定具体 Project，
+可携带自定义任务（本次 Run 的具体任务描述，渲染进节点意图并记录在书签上），
 包含节点到 Task 的稳定映射。`workflow_runs` 表保留为实例书签（非实体），
 任务本身仍是 `type=task`。
 

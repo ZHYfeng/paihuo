@@ -212,6 +212,9 @@ func (j *scheduleJob) dispatchSession(now string) bool {
 }
 
 // dispatchWorkflow 从工作流定义启动一次 Run（不可用或未绑定项目则跳过并提示）。
+// 定义标题作为本次触发的自定义任务（渲染 {{.date}} 等变量，与定时任务
+// 的标题/正文模板一致）：节点意图里的 {{.task}} 拿到触发时上下文，纯文本
+// 意图自动附加，Run 书签记录每次触发的内容。
 func (j *scheduleJob) dispatchWorkflow(now string) bool {
 	tk := j.tk
 	if tk.Status != workflow.WorkflowStatusAdopted {
@@ -222,7 +225,8 @@ func (j *scheduleJob) dispatchWorkflow(now string) bool {
 		log.Printf("定时工作流 %s 未绑定目标项目，跳过本次触发", tk.Title)
 		return false
 	}
-	run, err := j.s.wf.StartPlan(tk.ID, tk.Revision, *tk.ProjectID)
+	task, _ := renderTemplate(tk.Title, tk.Title)
+	run, err := j.s.wf.StartPlan(tk.ID, tk.Revision, *tk.ProjectID, task)
 	if err != nil {
 		log.Printf("定时工作流 %s 启动 Run 失败: %v", tk.Title, err)
 		return false

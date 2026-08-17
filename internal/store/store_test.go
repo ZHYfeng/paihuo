@@ -67,8 +67,9 @@ func mustTask(t *testing.T, s *Store, title string, agentID *int64, status strin
 	return id
 }
 
-// 旧版 schema（workflow_runs 无 project_id 列）必须被幂等迁移：加列后用
-// 节点任务的 project_id 回填存量 Run。
+// 旧版 schema（workflow_runs 无 project_id/task 列）必须被幂等迁移：
+// 补 project_id 并用节点任务的 project_id 回填存量 Run；补 task（默认空 =
+// 无自定义任务）。
 func TestMigrateWorkflowRunsProjectColumn(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	db, err := sql.Open("sqlite", path)
@@ -80,6 +81,7 @@ func TestMigrateWorkflowRunsProjectColumn(t *testing.T) {
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   workflow_id INTEGER NOT NULL REFERENCES tasks(id), -- adopted 的工作流定义（type=workflow）
   project_id  INTEGER NOT NULL REFERENCES projects(id), -- 本次 Run 绑定的具体项目
+  task        TEXT NOT NULL DEFAULT '', -- 本次 Run 的自定义任务（{{.task}} 渲染进节点意图；留空 = 纯模板执行）
   status      TEXT NOT NULL DEFAULT 'created',
   task_ids    TEXT NOT NULL DEFAULT '{}',
   revision    INTEGER NOT NULL DEFAULT 1,
@@ -135,6 +137,9 @@ func TestMigrateWorkflowRunsProjectColumn(t *testing.T) {
 	}
 	if run.ProjectID != 1 {
 		t.Fatalf("migrated run must backfill project from node task: %+v", run)
+	}
+	if run.Task != "" {
+		t.Fatalf("migrated run must have empty custom task: %+v", run)
 	}
 	// 幂等：再次打开不应报错。
 	if _, err := Open(path); err != nil {

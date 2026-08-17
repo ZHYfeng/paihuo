@@ -51,10 +51,13 @@ type Violation struct {
 // Run 是一次工作流任务的执行实例（实例书签，非实体）：启动时绑定具体
 // Project，原子实例化节点子任务，task_ids 是节点 ID → 任务 ID 的稳定映射。
 // Run 在启动瞬间固化节点任务与依赖图，之后编辑工作流定义不影响已开始的 Run。
+// Task 是本次 Run 的自定义任务描述（可为空）：固定工作流按它完成具体任务，
+// 启动时渲染进节点意图（{{.task}} 占位符），并保留在书签上供审计与展示。
 type Run struct {
 	ID         int64            `json:"id"`
 	WorkflowID int64            `json:"workflow_id"`
 	ProjectID  int64            `json:"project_id"`
+	Task       string           `json:"task,omitempty"`
 	Status     string           `json:"status"`
 	TaskIDs    map[string]int64 `json:"task_ids"`
 	Revision   int64            `json:"revision"`

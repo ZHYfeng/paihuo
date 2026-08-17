@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"paihuo/internal/workflow"
 )
@@ -122,8 +123,10 @@ func (s *Store) DeleteWorkflowTask(id, expectedRevision int64) error {
 // InstantiateWorkflow is one transaction from an adopted workflow task to
 // persisted Run and Tasks. Every dependency edge is stored before any Task can
 // be claimed. 工作流定义保持 adopted 可被多次 run；每次 Run 绑定调用方指定的
-// projectID，节点任务创建在该项目下，
-func (s *Store) InstantiateWorkflow(tk Task, projectID int64) (*workflow.Run, error) {
+// projectID，节点任务创建在该项目下。customTask 是本次 Run 的自定义任务描述：
+// 记录到 Run 书签，并渲染进每个节点意图（workflow.RenderIntent：{{.task}}
+// 占位符替换，纯文本意图自动附加）。
+func (s *Store) InstantiateWorkflow(tk Task, projectID int64, customTask string) (*workflow.Run, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
@@ -146,9 +149,10 @@ func (s *Store) InstantiateWorkflow(tk Task, projectID int64) (*workflow.Run, er
 		return nil, fmt.Errorf("Workflow Project 不可用: %w", err)
 	}
 	now := Now()
+	customTask = strings.TrimSpace(customTask)
 	emptyTaskIDs, _ := json.Marshal(map[string]int64{})
-	res, err := tx.Exec(`INSERT INTO workflow_runs(workflow_id, project_id, status, task_ids, created_at, started_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?)`, tk.ID, projectID, workflow.RunStatusRunning, emptyTaskIDs, now, now, now)
+	res, err := tx.Exec(`INSERT INTO workflow_runs(workflow_id, project_id, task, status, task_ids, created_at, started_at, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, tk.ID, projectID, customTask, workflow.RunStatusRunning, emptyTaskIDs, now, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -162,18 +166,19 @@ func (s *Store) InstantiateWorkflow(tk Task, projectID int64) (*workflow.Run, er
 	taskIDs := make(map[string]int64, len(nodes))
 	for _, node := range nodes {
 		roleID := node.Role.RoleID
-		task := Task{
-			Title: node.Intent, Body: node.Intent, Status: StatusQueued, Perm: node.Permission,
+		intent := workflow.RenderIntent(node.Intent, customTask)
+		nodeTask := Task{
+			Title: intent, Body: intent, Status: StatusQueued, Perm: node.Permission,
 			RunMode: RunModeBatch, Concurrent: spec.Limits.MaxConcurrency > 1,
 			RoleID: &roleID, ProjectID: &projectID, ProjectDir: projectDir,
 			WorkflowRunID:  &runID,
 			DependencyMode: DependencyNone, BlockOnFailure: node.FailurePolicy == "stop",
 		}
-		prepareTaskForInsert(&task)
-		if err := assignNextTaskSortOrder(tx, &task); err != nil {
+		prepareTaskForInsert(&nodeTask)
+		if err := assignNextTaskSortOrder(tx, &nodeTask); err != nil {
 			return nil, err
 		}
-		id, err := insertTask(tx, task)
+		id, err := insertTask(tx, nodeTask)
 		if err != nil {
 			return nil, err
 		}
@@ -206,8 +211,8 @@ func (s *Store) InstantiateWorkflow(tk Task, projectID int64) (*workflow.Run, er
 		return nil, err
 	}
 	started := now
-	return &workflow.Run{ID: runID, WorkflowID: tk.ID, ProjectID: projectID, Status: workflow.RunStatusRunning,
-		TaskIDs: taskIDs, Revision: 1, CreatedAt: now, StartedAt: &started, UpdatedAt: now}, nil
+	return &workflow.Run{ID: runID, WorkflowID: tk.ID, ProjectID: projectID, Task: customTask,
+		Status: workflow.RunStatusRunning, TaskIDs: taskIDs, Revision: 1, CreatedAt: now, StartedAt: &started, UpdatedAt: now}, nil
 }
 
 // WorkflowRunConcurrencyLimit returns the spec limit governing a Run's
@@ -234,7 +239,7 @@ func scanWorkflowRun(row scanner) (workflow.Run, error) {
 	var taskIDs []byte
 	var started, finished sql.NullString
 	var projectID sql.NullInt64 // 迁移后的存量 Run 可能无项目（0）
-	err := row.Scan(&item.ID, &item.WorkflowID, &projectID, &item.Status, &taskIDs, &item.Revision,
+	err := row.Scan(&item.ID, &item.WorkflowID, &projectID, &item.Task, &item.Status, &taskIDs, &item.Revision,
 		&item.CreatedAt, &started, &finished, &item.UpdatedAt)
 	if err != nil {
 		return item, err
@@ -249,7 +254,7 @@ func scanWorkflowRun(row scanner) (workflow.Run, error) {
 }
 
 func (s *Store) GetWorkflowRun(id int64) (*workflow.Run, error) {
-	item, err := scanWorkflowRun(s.db.QueryRow(`SELECT id, workflow_id, project_id, status, task_ids, revision,
+	item, err := scanWorkflowRun(s.db.QueryRow(`SELECT id, workflow_id, project_id, task, status, task_ids, revision,
 		created_at, started_at, finished_at, updated_at FROM workflow_runs WHERE id=?`, id))
 	if err != nil {
 		return nil, err
@@ -258,7 +263,7 @@ func (s *Store) GetWorkflowRun(id int64) (*workflow.Run, error) {
 }
 
 func (s *Store) ListActiveWorkflowRuns() ([]workflow.Run, error) {
-	rows, err := s.db.Query(`SELECT id, workflow_id, project_id, status, task_ids, revision,
+	rows, err := s.db.Query(`SELECT id, workflow_id, project_id, task, status, task_ids, revision,
 		created_at, started_at, finished_at, updated_at FROM workflow_runs WHERE status=? ORDER BY id`, workflow.RunStatusRunning)
 	if err != nil {
 		return nil, err
@@ -278,7 +283,7 @@ func (s *Store) ListActiveWorkflowRuns() ([]workflow.Run, error) {
 // ListWorkflowRunsByWorkflow 返回某个工作流任务的全部 Run（新→旧）。工作流
 // 页用它恢复最近一次启动的 Run：刷新页面后也能继续看到聚合状态与节点任务。
 func (s *Store) ListWorkflowRunsByWorkflow(workflowID int64) ([]workflow.Run, error) {
-	rows, err := s.db.Query(`SELECT id, workflow_id, project_id, status, task_ids, revision,
+	rows, err := s.db.Query(`SELECT id, workflow_id, project_id, task, status, task_ids, revision,
 		created_at, started_at, finished_at, updated_at FROM workflow_runs WHERE workflow_id=? ORDER BY id DESC`, workflowID)
 	if err != nil {
 		return nil, err

@@ -118,7 +118,8 @@ func (s *Server) getWorkflow(w http.ResponseWriter, r *http.Request) {
 }
 
 // startWorkflow 从工作流定义创建一次 Run，绑定调用方指定的具体项目，
-// 原子实例化该工作流的节点任务。
+// 原子实例化该工作流的节点任务。可选 task 是本次 Run 的自定义任务描述：
+// 渲染进节点意图（{{.task}} 占位符 / 纯文本自动附加），并记录在 Run 上。
 func (s *Server) startWorkflow(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
@@ -129,12 +130,13 @@ func (s *Server) startWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		ProjectID int64 `json:"project_id"`
+		ProjectID int64  `json:"project_id"`
+		Task      string `json:"task"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	item, err := s.workflows.StartPlan(id, revision, in.ProjectID)
+	item, err := s.workflows.StartPlan(id, revision, in.ProjectID, in.Task)
 	if err != nil {
 		writeWorkflowError(w, err)
 		return

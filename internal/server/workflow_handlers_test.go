@@ -118,6 +118,29 @@ func TestWorkflowCreateAdoptsAndStartBindsProject(t *testing.T) {
 		t.Fatalf("node task must bind run project: %+v", build.ProjectID)
 	}
 
+	// 3.5 带自定义任务启动：task 记录在 Run 上，{{.task}} 占位符渲染进节点任务。
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/workflows/"+itoa(wfID)+"/runs", strings.NewReader(`{"project_id":`+itoa(projectID)+`,"task":"修复登录页 XSS"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("If-Match", `"`+itoa(revision)+`"`)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("start with custom task: %d %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	if run.Task != "修复登录页 XSS" {
+		t.Fatalf("run.Task=%q, want custom task", run.Task)
+	}
+	build, err = st.GetTask(run.TaskIDs["build"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if build.Title != "构建\n\n自定义任务：修复登录页 XSS" {
+		t.Fatalf("纯文本意图必须附加自定义任务: %q", build.Title)
+	}
+
 	// 4. 启动不带项目 → 422。
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/workflows/"+itoa(wfID)+"/runs", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")

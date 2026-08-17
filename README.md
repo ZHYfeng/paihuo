@@ -12,7 +12,8 @@ PaiHuo 是个人自托管的 Coding Agent 调度平台。它把项目、Role、T
 - Task 状态机、角色/项目并发、审批、定时、重试和持久日志。
 - Git worktree 隔离与确定性代码整合任务。
 - Pi/OMP 结构化 Session，支持挂起、恢复和交付为 Task。
-- Workflow 定义经策略校验即可用（可编辑/删除）→ 绑定项目启动原子 Run。
+- Workflow 定义经策略校验即可用（可编辑/删除）→ 绑定项目启动原子 Run，
+  可按固定工作流执行自定义任务（`{{.task}}` 占位符渲染进节点意图）。
 - 持久 SSE 事件序号、断线补拉、mutation 幂等键与 revision 冲突保护。
 - 内容寻址 ArtifactStore 与受控 VisualizationSpec。
 - React + TypeScript 响应式控制台，亮/暗主题和可访问工作流表格。
@@ -40,7 +41,7 @@ export PAIHUO_TOKEN="$(openssl rand -hex 32)"
 
 ### 当前本机部署
 
-当前实例运行 `v2026.08.17-6`，由用户级 systemd 托管：
+当前实例运行 `v2026.08.17-7`，由用户级 systemd 托管：
 
 ```bash
 systemctl --user status paihuo.service

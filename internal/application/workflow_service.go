@@ -172,7 +172,9 @@ func (s *WorkflowService) DeleteWorkflow(id, expectedRevision int64) error {
 }
 
 // StartPlan 从工作流定义原子实例化一次 Run，绑定 projectID 项目。
-func (s *WorkflowService) StartPlan(id, expectedRevision, projectID int64) (*workflow.Run, error) {
+// task 是本次 Run 的自定义任务描述（可为空）：固定工作流按它完成具体任务，
+// 渲染进节点意图并记录在 Run 书签上。
+func (s *WorkflowService) StartPlan(id, expectedRevision, projectID int64, task string) (*workflow.Run, error) {
 	if projectID < 1 {
 		return nil, fmt.Errorf("启动 Run 必须指定项目")
 	}
@@ -196,7 +198,7 @@ func (s *WorkflowService) StartPlan(id, expectedRevision, projectID int64) (*wor
 	if violations := s.policy.Validate(spec); len(violations) > 0 {
 		return nil, fmt.Errorf("Workflow 当前不可运行: %s", violations[0].Message)
 	}
-	run, err := s.store.InstantiateWorkflow(*tk, projectID)
+	run, err := s.store.InstantiateWorkflow(*tk, projectID, task)
 	if err != nil {
 		return nil, err
 	}
