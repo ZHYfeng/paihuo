@@ -867,7 +867,7 @@ export function NewTaskDialog({ open, onOpenChange, initialProjectID }: { open: 
         <ScheduleToggle checked={sessSched} onChange={setSessSched} enabled={schedEnabled} onEnabledChange={setSchedEnabled} cronForm={cronForm} onCronChange={patch => setCronForm(current => ({ ...current, ...patch }))} />
       </> : kind === "workflow" ? <>
         <p className="rounded-xl border border-line bg-elevated px-3 py-2.5 text-sm leading-6 text-muted">复合任务使用声明式节点编排（节点 + 依赖边 + 策略门禁）：创建时同步完成确定性校验；之后可在「工作流」页编辑或删除定义，并选择具体项目启动 Run，原子实例化子任务树。</p>
-        <p className="text-sm text-muted">创建工作流将打开完整构建器；需要定时执行时，在构建器中勾选「定时执行」并绑定目标项目（定时是正交属性）。</p>
+        {initialProjectID ? <p className="text-sm text-muted">打开构建器并提交后，将立即在<b className="font-medium text-ink">当前项目</b>下创建并启动 Run（与工作流页「创建 Run」同一流程），节点任务出现在本项目任务列表中。需要定时执行时，在构建器中勾选「定时执行」，此时只创建定时定义、不立即启动。</p> : <p className="text-sm text-muted">创建工作流将打开完整构建器；需要定时执行时，在构建器中勾选「定时执行」并绑定目标项目（定时是正交属性）。</p>}
         <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="button" variant="primary" onClick={() => { onOpenChange(false); setProposalOpen(true); }}><Workflow size={16} />打开工作流构建器</Button></div>
       </> : null}
 
@@ -876,7 +876,7 @@ export function NewTaskDialog({ open, onOpenChange, initialProjectID }: { open: 
         : null}
     </form>
   </Dialog>
-    <WorkflowDialog open={proposalOpen} onOpenChange={setProposalOpen} projects={projects.data} roles={roles.data} />
+    <WorkflowDialog open={proposalOpen} onOpenChange={setProposalOpen} projects={projects.data} roles={roles.data} initialProjectID={initialProjectID} />
   </>;
 }
 

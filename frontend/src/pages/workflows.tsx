@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { PageHeader } from "../components/shell";
 import { TaskGraph } from "../components/visualization";
-import { Badge, Button, Card, cn, Dialog, Empty, Field, inputClass, Spinner } from "../components/ui";
+import { Badge, Button, Card, cn, Dialog, Empty, Field, inputClass, Spinner, useToast } from "../components/ui";
 import { APIError, api, keys } from "../lib/api";
 import type { Project, Role, Task, WorkflowRun, WorkflowSpec } from "../types";
 
@@ -203,7 +203,7 @@ function WorkflowGraph({ spec }: { spec: WorkflowSpec }) {
 // seedDialog 计算对话框打开时的初始表单状态：编辑模式预填已有定义
 // （spec + 定时字段），创建模式使用示例 spec。setState 全部在 effect
 // 顶层执行，避免深层嵌套触发 set-state-in-effect。
-function seedDialog(initial: Task | null, roles?: Role[]): {
+function seedDialog(initial: Task | null, roles?: Role[], initialProjectID?: number): {
   draft: Draft;
   json: string;
   scheduled: boolean;
@@ -244,7 +244,7 @@ function seedDialog(initial: Task | null, roles?: Role[]): {
     monthday: "1",
     time: SCHEDULE_TIME,
     enabled: true,
-    scheduledProject: "",
+    scheduledProject: initialProjectID ? String(initialProjectID) : "",
   };
 }
 
@@ -394,15 +394,19 @@ function validateDraft(draft: Draft): string[] {
   return errors;
 }
 
-export function WorkflowDialog({ open, onOpenChange, projects, roles, initial }: {
+export function WorkflowDialog({ open, onOpenChange, projects, roles, initial, initialProjectID }: {
   open: boolean;
   onOpenChange(open: boolean): void;
   projects?: Project[];
   roles?: Role[];
   /** 传入已存在的工作流任务时进入编辑模式：预填定义并 PUT 整体替换。 */
   initial?: Task;
+  /** 从项目页创建：非定时工作流创建后立即在该项目下启动 Run（与工作流页「创建 Run」同一路径）。 */
+  initialProjectID?: number;
 }) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const toast = useToast();
   const editing = Boolean(initial);  const [mode, setMode] = useState<"form" | "json">("form");
   const [draft, setDraft] = useState<Draft>(() => draftFromSpec(exampleSpec(0)));
   const [json, setJson] = useState("");
@@ -421,7 +425,7 @@ export function WorkflowDialog({ open, onOpenChange, projects, roles, initial }:
   const didInit = useRef(false);
   const errors = useMemo(() => validateDraft(draft), [draft]);
   const create = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const spec = mode === "json" ? (JSON.parse(json) as WorkflowSpec) : buildSpec(draft);
       const cron = scheduled ? (cronDirty || !scheduleUnsupported ? cronFromFields(frequency, weekday, monthday, time) : (initial?.cron || "")) : "";
       if (scheduled && !cron) throw new Error("请选择有效的执行时间");
@@ -433,15 +437,36 @@ export function WorkflowDialog({ open, onOpenChange, projects, roles, initial }:
         body.project_id = Number(scheduledProject);
       }
       const path = editing && initial ? `/workflows/${initial.id}` : "/workflows";
-      return api<Task>(path, { method: editing ? "PUT" : "POST", ...(editing && initial ? { revision: initial.revision } : {}), body });
+      const created = await api<Task>(path, { method: editing ? "PUT" : "POST", ...(editing && initial ? { revision: initial.revision } : {}), body });
+      // 项目页创建：定义创建后立即在该项目下启动 Run（与工作流页「创建 Run」同一路径，
+      // 原子实例化节点任务）。Run 启动失败不吞定义创建结果：定义保留，跳转详情页可重试。
+      let runError: Error | null = null;
+      if (!editing && initialProjectID && !scheduled) {
+        try {
+          await api<WorkflowRun>(`/workflows/${created.id}/runs`, { method: "POST", revision: created.revision, body: { project_id: initialProjectID } });
+        } catch (error) {
+          runError = error instanceof Error ? error : new Error(String(error));
+        }
+      }
+      return { created, runError };
     },
-    onSuccess: () => { onOpenChange(false); qc.invalidateQueries({ queryKey: keys.workflows }); if (initial) qc.invalidateQueries({ queryKey: ["workflows", initial.id] }); },
+    onSuccess: ({ created, runError }) => {
+      onOpenChange(false);
+      qc.invalidateQueries({ queryKey: keys.workflows });
+      if (initial) qc.invalidateQueries({ queryKey: ["workflows", initial.id] });
+      if (!editing && initialProjectID && !scheduled) {
+        qc.invalidateQueries({ queryKey: ["workflows", created.id, "runs"] });
+        if (runError) toast(`工作流已创建，但启动 Run 失败：${runError.message}`, "bad");
+        else toast("工作流已创建并在项目下启动 Run");
+        navigate(`/workflows/${created.id}`);
+      }
+    },
   });
   const violations = (create.error instanceof APIError && (create.error.payload as { error?: { violations?: WorkflowViolation[] } } | undefined)?.error?.violations) || null;
   useEffect(() => {
     if (open && !didInit.current) {
       didInit.current = true;
-      const seeded = seedDialog(initial || null, roles);
+      const seeded = seedDialog(initial || null, roles, initialProjectID);
       setMode("form");
       setJsonError("");
       setDraft(seeded.draft);
@@ -458,7 +483,7 @@ export function WorkflowDialog({ open, onOpenChange, projects, roles, initial }:
     } else if (!open) {
       didInit.current = false;
     }
-  }, [open, projects, roles, initial]);
+  }, [open, projects, roles, initial, initialProjectID]);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -505,7 +530,8 @@ export function WorkflowDialog({ open, onOpenChange, projects, roles, initial }:
     return [...seen].filter(id => !dup.has(id));
   }, [draft.nodes]);
 
-  return <Dialog open={open} onOpenChange={onOpenChange} title={editing ? "编辑工作流" : "新建工作流"} description="声明式描述工作流：目标、依赖与边界；提交即完成确定性策略校验，启动 Run 时再绑定具体项目。" wide>
+  const projectName = initialProjectID ? (projects || []).find(p => p.id === initialProjectID)?.name || `项目 #${initialProjectID}` : "";
+  return <Dialog open={open} onOpenChange={onOpenChange} title={editing ? "编辑工作流" : "新建工作流"} description={editing || !initialProjectID ? "声明式描述工作流：目标、依赖与边界；提交即完成确定性策略校验，启动 Run 时再绑定具体项目。" : `声明式描述工作流：目标、依赖与边界；提交即完成策略校验，并立即在「${projectName}」下创建并启动 Run（与工作流页「创建 Run」同一流程）。勾选定时执行则只创建定时定义。`} wide>
     <form className="grid gap-4" onSubmit={submit}>
       <div className="flex w-fit items-center gap-1 rounded-lg border border-line bg-elevated p-1 text-sm">
         <button type="button" onClick={switchForm} className={cn("flex items-center gap-1.5 rounded-md px-3 py-1.5 transition", mode === "form" ? "bg-surface font-medium text-ink shadow-sm" : "text-muted hover:text-ink")}><ListTree size={14} />表单</button>
@@ -551,7 +577,7 @@ export function WorkflowDialog({ open, onOpenChange, projects, roles, initial }:
           </>}
         </div>
       </details>
-      <div className="flex items-center gap-2"><span className="mr-auto text-xs leading-5 text-faint">提交后立即完成策略校验；定义可随时编辑或删除（revision 保护），可多次创建 Run。</span><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant="primary" disabled={create.isPending || (mode === "form" && errors.length > 0)}>{editing ? "保存修改" : "创建"}</Button></div>
+      <div className="flex items-center gap-2"><span className="mr-auto text-xs leading-5 text-faint">提交后立即完成策略校验；定义可随时编辑或删除（revision 保护），可多次创建 Run。</span><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant="primary" disabled={create.isPending || (mode === "form" && errors.length > 0)}>{editing ? "保存修改" : initialProjectID ? "创建并启动" : "创建"}</Button></div>
     </form>
   </Dialog>;
 }
