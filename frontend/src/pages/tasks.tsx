@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, Check, CirclePlus, Copy, GitBranch, ListFilter, ListTree, Play, RotateCcw, Save, TerminalSquare, Trash2, Workflow, X } from "lucide-react";
+import { CalendarClock, Check, CirclePlus, Copy, GitBranch, ListFilter, ListTree, Play, RotateCcw, Save, TerminalSquare, Trash2, X } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { PageHeader } from "../components/shell";
@@ -791,7 +791,6 @@ export function NewTaskDialog({ open, onOpenChange, initialProjectID }: { open: 
   const projects = useQuery({ queryKey: keys.projects, queryFn: () => api<Project[]>("/projects"), enabled: open });
   const templates = useQuery({ queryKey: ["templates"], queryFn: () => api<TaskTemplate[]>("/templates"), enabled: open });
   const [kind, setKind] = useState<CreateKind>("task");
-  const [proposalOpen, setProposalOpen] = useState(false);
   // 单任务表单
   const [form, setForm] = useState({ title: "", body: "", role_id: "", project_id: initialProjectID ? String(initialProjectID) : "", perm: "full", run_mode: "batch", concurrent: false, dependency_mode: "weak", depends_on: "", block_on_failure: false });
   // 会话表单
@@ -842,6 +841,11 @@ export function NewTaskDialog({ open, onOpenChange, initialProjectID }: { open: 
     }
   };
   const kindTabs: Array<[CreateKind, string]> = [["task", "任务"], ["session", "会话"], ["workflow", "工作流"]];
+  // 选择工作流形态直接进入构建器（不再经「打开工作流构建器」中转按钮）；
+  // 关闭构建器后回到任务/会话表单，避免下次打开仍停留在工作流。
+  if (kind === "workflow") {
+    return <WorkflowDialog open={open} onOpenChange={next => { onOpenChange(next); if (!next) setKind("task"); }} projects={projects.data} roles={roles.data} initialProjectID={initialProjectID} />;
+  }
   return <><Dialog open={open} onOpenChange={onOpenChange} title="新建任务" description="在项目的任务系统中创建任务；定时是正交属性——任何形态都可挂 cron，到点自动创建实例。" wide>
     <form className="grid gap-4" onSubmit={submit}>
       <div className="flex w-fit items-center gap-1 rounded-lg border border-line bg-elevated p-1 text-sm">
@@ -865,10 +869,6 @@ export function NewTaskDialog({ open, onOpenChange, initialProjectID }: { open: 
         <div className="grid gap-4 sm:grid-cols-2"><Field label="项目"><select className={inputClass} value={sessionForm.project_id} onChange={event => setSessionForm({ ...sessionForm, project_id: event.target.value })}><option value="">不绑定项目</option>{projects.data?.filter(item => item.status === "active").map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="角色"><select className={inputClass} required value={sessionForm.role_id} onChange={event => setSessionForm({ ...sessionForm, role_id: event.target.value })}><option value="">请选择</option>{roles.data?.filter(item => item.enabled).map(item => <option key={item.id} value={item.id}>{item.name} · {item.runtime_id}</option>)}</select></Field></div>
         <Field label="初始指令"><textarea className={inputClass + " min-h-28 py-3"} value={sessionForm.body} onChange={event => setSessionForm({ ...sessionForm, body: event.target.value })} placeholder={sessSched ? "到点创建会话后自动发送的初始指令" : "可选：创建后自动启动并发起首轮对话"} /></Field>
         <ScheduleToggle checked={sessSched} onChange={setSessSched} enabled={schedEnabled} onEnabledChange={setSchedEnabled} cronForm={cronForm} onCronChange={patch => setCronForm(current => ({ ...current, ...patch }))} />
-      </> : kind === "workflow" ? <>
-        <p className="rounded-xl border border-line bg-elevated px-3 py-2.5 text-sm leading-6 text-muted">复合任务使用声明式节点编排（节点 + 依赖边 + 策略门禁）：创建时同步完成确定性校验；之后可在「工作流」页编辑或删除定义，并选择具体项目启动 Run，原子实例化子任务树。</p>
-        {initialProjectID ? <p className="text-sm text-muted">打开构建器并提交后，将立即在<b className="font-medium text-ink">当前项目</b>下创建并启动 Run（与工作流页「创建 Run」同一流程），节点任务出现在本项目任务列表中。需要定时执行时，在构建器中勾选「定时执行」，此时只创建定时定义、不立即启动。</p> : <p className="text-sm text-muted">创建工作流将打开完整构建器；需要定时执行时，在构建器中勾选「定时执行」并绑定目标项目（定时是正交属性）。</p>}
-        <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="button" variant="primary" onClick={() => { onOpenChange(false); setProposalOpen(true); }}><Workflow size={16} />打开工作流构建器</Button></div>
       </> : null}
 
       {kind === "task" ? <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant="primary" disabled={create.isPending || createScheduledTask.isPending}>{taskSched ? <><CalendarClock size={16} />创建定时定义</> : <><Play size={16} />创建并排队</>}</Button></div>
@@ -876,7 +876,6 @@ export function NewTaskDialog({ open, onOpenChange, initialProjectID }: { open: 
         : null}
     </form>
   </Dialog>
-    <WorkflowDialog open={proposalOpen} onOpenChange={setProposalOpen} projects={projects.data} roles={roles.data} initialProjectID={initialProjectID} />
   </>;
 }
 
