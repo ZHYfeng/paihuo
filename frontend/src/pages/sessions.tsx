@@ -295,6 +295,8 @@ export function SessionDetailPage() {
   const compact = useMutation({ mutationFn: () => api(`/sessions/${id}/command`, { method: "POST", body: { command: "compact" } }), onSuccess: () => { toast("已压缩上下文"); refresh(); }, onError: error => toast(error instanceof Error ? error.message : "压缩失败", "bad") });
   const prompt = useMutation({ mutationFn: (body: { message: string; streaming_behavior: string }) => api(`/sessions/${id}/prompt`, { method: "POST", body }), onSuccess: () => { setMessage(""); refresh(); qc.invalidateQueries({ queryKey: ["sessions", id, "transcript"] }); }, onError: error => toast(error instanceof Error ? error.message : "发送失败", "bad") });
   const abort = useMutation({ mutationFn: () => api(`/sessions/${id}/abort`, { method: "POST" }), onSuccess: () => { toast("已发送中止"); refresh(); }, onError: error => toast(error instanceof Error ? error.message : "中止失败", "bad") });
+  // 焦点就绪：输入框聚焦时若会话未运行（未启动/已挂起）自动启动，pi-web 行为。
+  const resumeFocus = useMutation({ mutationFn: () => api(`/sessions/${id}/start`, { method: "POST" }), onSuccess: () => { refresh(); toast("会话已就绪"); }, onError: error => toast(error instanceof Error ? error.message : "恢复会话失败", "bad") });
   const ask = useMutation({ mutationFn: (body: { id: string; value?: string; confirmed?: boolean }) => api(`/sessions/${id}/ask`, { method: "POST", body }), onSuccess: (_data, vars) => { setAnswered(prev => ({ ...prev, [vars.id]: true })); qc.invalidateQueries({ queryKey: ["sessions", id, "transcript"] }); }, onError: error => toast(error instanceof Error ? error.message : "应答失败", "bad") });
   const loadOlder = async () => {
     const loaded = [...older, ...(transcript.data?.entries ?? [])];
@@ -414,6 +416,11 @@ export function SessionDetailPage() {
   if (session.isLoading) return <Spinner />;
   if (!session.data) return <Empty title="会话不存在" copy="它可能已经被删除。" />;
   const item = session.data;
+  const onInputFocus = () => {
+    if (item.status !== "created" && item.status !== "suspended") return;
+    if (resumeFocus.isPending) return;
+    resumeFocus.mutate();
+  };
   const sendText = (text: string) => { if (!text.trim() || prompt.isPending) return; setSending(true); prompt.mutate({ message: text.trim(), streaming_behavior: behavior }, { onSettled: () => setSending(false) }); };
   const send = () => sendText(message);
   const insertTemplate = (body: string) => {
@@ -481,7 +488,7 @@ export function SessionDetailPage() {
     {canInput && <form className="sticky bottom-4 mt-3 flex gap-3 rounded-xl border border-line bg-surface/95 p-3 shadow-pop backdrop-blur" onSubmit={e => { e.preventDefault(); send(); }}>
       <div className="grid min-w-0 flex-1 gap-2">
         <div className="relative">
-          <textarea className={inputClass + " min-h-14 resize-y py-3"} required aria-label="发送消息" placeholder="输入消息…（Enter 发送，Shift+Enter 换行；输入 / 查看斜杠命令）" value={message} onChange={onMessageChange} onSelect={onMessageSelect} onKeyDown={onInputKeyDown} />
+          <textarea className={inputClass + " min-h-14 resize-y py-3"} required aria-label="发送消息" placeholder="输入消息…（Enter 发送，Shift+Enter 换行；输入 / 查看斜杠命令）" value={message} onChange={onMessageChange} onSelect={onMessageSelect} onKeyDown={onInputKeyDown} onFocus={onInputFocus} />
           {slashOpen && <div className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-xl border border-line bg-elevated shadow-pop" role="listbox" aria-label="斜杠命令" onMouseDown={e => e.preventDefault()}>
             {slashError ? <div className="px-3 py-2.5 text-sm text-muted">命令列表不可用：{slashError}</div>
               : commands === null ? <div className="px-3 py-2.5 text-sm text-muted">加载命令…</div>
