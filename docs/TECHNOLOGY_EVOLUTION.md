@@ -43,7 +43,7 @@ HTTP handler 不定义 Runtime 命令、不直接拥有 Workflow 策略，也不
 - `TaskLifecycle` 校验任务目标、Role、Project、权限、运行方式和依赖，创建后唤醒执行器。人工状态变更必须符合状态机。
 - `WorkflowService` 管理工作流定义（增删查改）、确定性 Policy 和 Run。Run 在同一事务内创建全部 Task 与多边依赖，执行器不会观察到半张图。
 - `RuntimeService` 通过 capability 选择执行提供者。`ExecutionRequest` 被翻译为可审计 `CommandSpec`；Task 与 Workflow 不理解厂商 flag。
-- `SessionDriver` 只由支持结构化多轮消息的 Runtime 实现。当前 Pi 与 OMP 支持 session，其他 Runtime 保持批处理。
+- `SessionDriver` 只由支持结构化多轮消息的 Runtime 实现。Pi 与 OMP 用 `--mode rpc` 的 stdin/stdout JSONL 通道（rpcProc）；DSH 用其原生 HTTP ApiProxy——常驻 `dsh --profile web` 宿主（full/review 两个权限模式宿主），会话经 `session.create/prompt/history/cancel` 驱动、SSE 事件流订阅，事件在服务端归一化为统一 rpcEvent 形状；其他 Runtime 保持批处理。
 - `WorkspaceService` 管理状态查询、丢弃和 Git 初始化；Git 项目中的 Task/Session 使用独占 worktree。
 - `EventStream` 先持久化再发布，事件具有稳定 `seq`。浏览器用 `Last-Event-ID` 或 `after` 补拉断线区间。
 - `ArtifactStore` 以 SHA-256 内容寻址保存不可变内容；SQLite 只保存归属、媒体类型、hash、大小、locator 与保留策略。
@@ -58,7 +58,7 @@ Role 表达责任、指令、技能和并发策略；Runtime 表达执行能力�
 - `SessionDriver`：准备结构化会话并声明退出语义。
 - `Provisioner`：检查安装、版本、登录状态和安装命令。
 
-内置 Runtime 为 OMP、OpenCode、Pi、Claude Code、Codex。FakeRuntime 可独立验证 TaskLifecycle 与 Workflow，不需要真实 CLI 或 tmux。
+内置 Runtime 为 OMP、OpenCode、Pi、Claude Code、Codex、DSH。FakeRuntime 可独立验证 TaskLifecycle 与 Workflow，不需要真实 CLI 或 tmux。
 
 ## Workflow
 

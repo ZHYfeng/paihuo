@@ -32,6 +32,7 @@ var InstallCommands = map[string]string{
 	"opencode": "npm install -g opencode-ai",
 	"pi":       "curl -fsSL https://pi.dev/install.sh | sh",
 	"omp":      "curl -fsSL https://omp.sh/install | sh",
+	"dsh":      "npm install -g @deepseek-ai/dsh",
 }
 
 // LoginHints 各 CLI 登录引导（手动登录可接受，能自动化的尽量自动化）。
@@ -41,6 +42,7 @@ var LoginHints = map[string]string{
 	"opencode": "在服务器终端执行 opencode auth login（浏览器授权）",
 	"pi":       "运行 pi 后用 /login 选择提供商（订阅登录或 API key）；也可 export ANTHROPIC_API_KEY=... 后直接使用",
 	"omp":      "运行 omp 后用 /login 选择提供商登录（如 /login claude）；模型切换用 /model，也可先 omp setup 配置默认模型",
+	"dsh":      "凭据存于 $DSH_HOME/.credentials.yaml（如 DEEPSEEK_API_KEY）；provider/model 在 dsh profile 配置或 TUI 内切换",
 }
 
 var provisionCache struct {
@@ -64,6 +66,7 @@ func ProvisionStatus() []ProvisionInfo {
 		"opencode": {filepath.Join(home, ".local", "share", "opencode", "auth.json")},
 		"pi":       {filepath.Join(home, ".pi", "agent", "auth.json")},
 		"omp":      {filepath.Join(home, ".omp", "agent", "auth.json"), filepath.Join(home, ".pi", "agent", "auth.json")},
+		"dsh":      {filepath.Join(home, ".dsh", ".credentials.yaml")},
 	}
 	adapters := commandAdapters()
 	out := make([]ProvisionInfo, 0, len(adapters))

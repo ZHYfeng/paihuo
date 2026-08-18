@@ -2,16 +2,16 @@
 
 [![CI](https://github.com/ZHYfeng/paihuo/actions/workflows/ci.yml/badge.svg)](https://github.com/ZHYfeng/paihuo/actions/workflows/ci.yml)
 
-PaiHuo 是个人自托管的 Coding Agent 调度平台。它把项目、Role、Task、审批、Workflow、结构化 Session、Skills 与五种本机 Runtime 集中在一个控制台中，并以 Go 单二进制交付。
+PaiHuo 是个人自托管的 Coding Agent 调度平台。它把项目、Role、Task、审批、Workflow、结构化 Session、Skills 与六种本机 Runtime 集中在一个控制台中，并以 Go 单二进制交付。
 
 > PaiHuo 是可信管理员使用的宿主机控制台，不是多租户沙箱。Runtime 以服务进程的系统权限执行命令；只向受信任管理员开放。
 
 ## 能力
 
-- OMP、OpenCode、Pi、Claude Code、Codex Runtime；Role 与具体 CLI 解耦。
+- OMP、OpenCode、Pi、Claude Code、Codex、DSH Runtime；Role 与具体 CLI 解耦。
 - Task 状态机、角色/项目并发、审批、定时、重试和持久日志。
 - Git worktree 隔离与确定性代码整合任务。
-- Pi/OMP 结构化 Session，支持挂起、恢复和交付为 Task。
+- Pi/OMP 结构化 Session（RPC JSONL）；DSH 结构化 Session（原生 HTTP ApiProxy，`dsh --profile web` 宿主，支持 agent 预设/模型/权限路由），均可挂起、恢复和交付为 Task。
 - Workflow 定义经策略校验即可用（可编辑/删除）→ 绑定项目启动原子 Run，
   可按固定工作流执行自定义任务（`{{.task}}` 占位符渲染进节点意图）。
 - 持久 SSE 事件序号、断线补拉、mutation 幂等键与 revision 冲突保护。

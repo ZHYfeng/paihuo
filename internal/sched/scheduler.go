@@ -185,7 +185,7 @@ func (j *scheduleJob) dispatchSession(now string) bool {
 	}
 	title, _ := renderTemplate(tk.Title, tk.Title)
 	seed, _ := renderTemplate(tk.Body, tk.Title)
-	ss, err := j.s.sess.Create(tk.ProjectID, *tk.RoleID)
+	ss, err := j.s.sess.Create(tk.ProjectID, *tk.RoleID, tk.Perm)
 	if err != nil {
 		log.Printf("定时会话 %s 创建失败: %v", tk.Title, err)
 		return false

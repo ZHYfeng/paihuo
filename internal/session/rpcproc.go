@@ -17,6 +17,18 @@ import (
 	"paihuo/internal/store"
 )
 
+// sessionChannel 是会话管理器持有的执行通道抽象：rpcProc（pi/omp 的
+// stdin/stdout JSONL 子进程）与 dshChannel（dsh web 宿主的 HTTP + SSE 会话）
+// 都实现它，Manager 的生命周期/事件/空闲挂起逻辑与具体通道解耦。
+type sessionChannel interface {
+	runCommand(ctx context.Context, cmdType string, fields map[string]any, timeout time.Duration) (rpcResponse, error)
+	sendLine(cmd map[string]any) error
+	terminate()
+	setEventHandler(fn func(rpcEvent))
+	setExitHandler(fn func())
+	lastEventTime() time.Time
+}
+
 // rpcProc 封装一个 pi --mode rpc 子进程：stdin 收命令 JSONL，stdout 事件
 // JSONL，全双工。命令带 id 关联：写命令后同步等待对应 response（带超时）；
 // 其余 stdout 行按事件类型分发（消息流、状态、bash 输出）。
@@ -329,6 +341,16 @@ func cmdID() string {
 // setEventHandler 回接事件。为避免包级循环引用，事件处理函数在
 // manager.go 定义并注入。
 func (p *rpcProc) setEventHandler(fn func(ev rpcEvent)) { p.onEvent = fn }
+
+// setExitHandler 注入崩溃/退出回调（Manager 据此把 active 会话置 suspended）。
+func (p *rpcProc) setExitHandler(fn func()) { p.onExit = fn }
+
+// lastEventTime 返回最近一次事件时间（空闲挂起巡检用）。
+func (p *rpcProc) lastEventTime() time.Time {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lastEvent
+}
 
 // broadcastEvent 把事件转发到 Hub（session.message / session.updated）。
 func broadcastEvent(hub *events.EventStream, typ string, payload any) {

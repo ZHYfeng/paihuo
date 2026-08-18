@@ -111,7 +111,7 @@ func TestCreateWorktree(t *testing.T) {
 		t.Fatalf("projects: %v %d", err, len(proj))
 	}
 	agents, _ := st.ListRoles()
-	ss, err := m.Create(&proj[0].ID, agents[0].ID)
+	ss, err := m.Create(&proj[0].ID, agents[0].ID, "full")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestCreateSessionRejectsNonPiOmpAgents(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = m.Create(nil, id)
+		_, err = m.Create(nil, id, "full")
 		if cli == "pi" || cli == "omp" {
 			if err != nil {
 				t.Fatalf("%s 创建会话应成功: %v", cli, err)
@@ -186,7 +186,7 @@ func TestDeliverReusesWorktree(t *testing.T) {
 	m, st, _, _ := newTestEnv(t)
 	proj, _ := st.ListProjects()
 	agents, _ := st.ListRoles()
-	ss, err := m.Create(&proj[0].ID, agents[0].ID)
+	ss, err := m.Create(&proj[0].ID, agents[0].ID, "full")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestDeliverReviewSkipsExecution(t *testing.T) {
 	m, st, _, _ := newTestEnv(t)
 	proj, _ := st.ListProjects()
 	agents, _ := st.ListRoles()
-	ss, err := m.Create(&proj[0].ID, agents[0].ID)
+	ss, err := m.Create(&proj[0].ID, agents[0].ID, "full")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestDeliverFullNonGitCompletesWithoutMerge(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 	agents, _ := st.ListRoles()
-	ss, err := m.Create(&pid, agents[0].ID)
+	ss, err := m.Create(&pid, agents[0].ID, "full")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestLifecycleWithRealPi(t *testing.T) {
 	m, st, ex, _ := newTestEnv(t)
 	proj, _ := st.ListProjects()
 	agents, _ := st.ListRoles()
-	ss, err := m.Create(&proj[0].ID, agents[0].ID)
+	ss, err := m.Create(&proj[0].ID, agents[0].ID, "full")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestLifecycleWithRealPi(t *testing.T) {
 		t.Fatalf("transcript: %v len=%d", err, len(entries))
 	}
 	// 崩溃恢复：再开一个会话，主动杀进程 → 自动 suspended。
-	ss2, err := m.Create(&proj[0].ID, agents[0].ID)
+	ss2, err := m.Create(&proj[0].ID, agents[0].ID, "full")
 	if err != nil {
 		t.Fatalf("create2: %v", err)
 	}
@@ -436,7 +436,12 @@ func TestLifecycleWithRealPi(t *testing.T) {
 	if proc == nil {
 		t.Fatal("进程未注册")
 	}
-	_ = proc.cmd.Process.Kill()
+	// 该测试角色是 pi：通道底层是 RPC 子进程，直接杀进程模拟崩溃。
+	if rpc, ok := proc.(*rpcProc); ok {
+		_ = rpc.cmd.Process.Kill()
+	} else {
+		t.Fatalf("期望 pi RPC 进程通道，得到 %T", proc)
+	}
 	waitDeadline := timeAfter(10)
 	for {
 		got2, _ := m.Get(ss2.ID)

@@ -68,6 +68,13 @@ type SessionDriver interface {
 	ExitCommand() string
 }
 
+// ExitProvider 是只声明交互退出命令的运行时（如 dsh-tui）。结构化会话驱动
+// 缺失的 Runtime（claude/opencode/codex/dsh 等）通过它让「结束会话」按钮
+// 仍能优雅收尾，而不是要求它们实现整套 RPC 通道。
+type ExitProvider interface {
+	ExitCommand() string
+}
+
 // Provisioner owns install/login inspection for one Runtime. It is not needed
 // to prepare or execute a Task.
 type Provisioner interface {
@@ -99,7 +106,7 @@ func NewRuntimeService(runtimes ...CommandRuntime) *RuntimeService {
 	return s
 }
 
-// NewDefaultRuntimeService registers the five supported CLI Runtime adapters.
+// NewDefaultRuntimeService registers the supported CLI Runtime adapters.
 func NewDefaultRuntimeService() *RuntimeService {
 	items := commandAdapters()
 	runtimes := make([]CommandRuntime, 0, len(items))
@@ -162,6 +169,23 @@ func (s *RuntimeService) Session(id string) (SessionDriver, bool) {
 	driver, ok := s.sessions[id]
 	s.mu.RUnlock()
 	return driver, ok
+}
+
+// ExitCommand 返回某 Runtime 交互模式下的优雅退出命令。结构化会话驱动优先
+// （pi 用 /quit），其余 CLI 回退到适配器默认（/exit）。交互终端任务（如
+// dsh-tui）不注册 SessionDriver，也通过它拿到退出命令。
+func (s *RuntimeService) ExitCommand(id string) (string, bool) {
+	s.mu.RLock()
+	driver, hasSession := s.sessions[id]
+	runtime := s.commands[id]
+	s.mu.RUnlock()
+	if hasSession && driver != nil {
+		return driver.ExitCommand(), true
+	}
+	if ep, ok := runtime.(ExitProvider); ok {
+		return ep.ExitCommand(), true
+	}
+	return "", false
 }
 
 func (s *RuntimeService) Descriptor(id string) RuntimeDescriptor {
@@ -227,6 +251,10 @@ type builtinCommandRuntime struct{ adapter commandAdapter }
 
 func (r builtinCommandRuntime) ID() string { return r.adapter.ID() }
 
+// ExitCommand 把适配器的交互退出命令暴露给 ExitProvider（非 RPC Runtime 的
+// 「结束会话」按钮通道）。
+func (r builtinCommandRuntime) ExitCommand() string { return r.adapter.ExitCommand() }
+
 func (r builtinCommandRuntime) Descriptor() RuntimeDescriptor {
 	d := RuntimeDescriptor{
 		ID: r.adapter.ID(), Name: r.adapter.Name(), Docs: r.adapter.Docs(),
@@ -236,6 +264,12 @@ func (r builtinCommandRuntime) Descriptor() RuntimeDescriptor {
 	}
 	if r.adapter.ID() == "pi" || r.adapter.ID() == "omp" {
 		d.Capabilities = append(d.Capabilities, CapabilityInteractive, CapabilitySession)
+	}
+	// dsh：结构化会话走 HTTP ApiProxy（dsh --profile web 宿主），见
+	// internal/session 的 dsh 通道；不声明 CapabilityInteractive（无终端交互
+	// 任务），结构化 Session 能力由会话管理器按其通道类型裁决。
+	if r.adapter.ID() == "dsh" {
+		d.Capabilities = append(d.Capabilities, CapabilitySession)
 	}
 	if _, err := r.adapter.Detect(); err != nil {
 		d.Health = err.Error()

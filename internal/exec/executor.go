@@ -67,7 +67,7 @@ func New(st *store.Store, hub *events.EventStream, sessionsRoot, instanceID stri
 }
 
 // NewWithRuntime injects the Runtime seam. Tests can use FakeRuntime without
-// registering a fake CLI globally, and production uses the five built-ins.
+// registering a fake CLI globally, and production uses the built-ins.
 func NewWithRuntime(st *store.Store, hub *events.EventStream, sessionsRoot, instanceID string, runtimes *RuntimeService) *Executor {
 	return &Executor{
 		st:                   st,
@@ -820,11 +820,10 @@ func (e *Executor) EndSession(taskID int64) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("读取角色失败: %w", err)
 	}
-	driver, ok := e.runtimes.Session(agent.RuntimeID)
+	cmd, ok := e.runtimes.ExitCommand(agent.RuntimeID)
 	if !ok {
 		return "", fmt.Errorf("Runtime %s 不支持交互会话", agent.RuntimeID)
 	}
-	cmd := driver.ExitCommand()
 	if err := e.runner.SendText(taskID, cmd); err != nil {
 		return "", err
 	}

@@ -15,6 +15,15 @@ import (
 
 // Session API：CRUD、状态机与结构化 Runtime 消息命令。
 
+// sessionPerm 归一化会话权限：缺省/非法值按 full 处理（Manager 只接受
+// full/review，非法值在 Create 会被拒绝）。
+func sessionPerm(perm string) string {
+	if perm == store.PermReview {
+		return store.PermReview
+	}
+	return store.PermFull
+}
+
 type sessionIn struct {
 	ProjectID *int64 `json:"project_id"`
 	RoleID    int64  `json:"role_id"`
@@ -22,6 +31,7 @@ type sessionIn struct {
 	Body      string `json:"body"`  // 可选：初始指令（定时会话定义 = seed 模板）
 	Cron      string `json:"cron"`  // 可选：cron 非空时创建定时会话定义（不建 worktree，永不启动）
 	Enabled   bool   `json:"enabled"`
+	Perm      string `json:"perm"` // 可选：会话权限模式（full=免审批 / review=审批）；dsh 会话路由宿主依据
 }
 
 type deliverIn struct {
@@ -105,7 +115,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		tk := store.Task{
 			Type: store.TaskTypeSession, Title: title, Body: in.Body,
 			Status: store.SessionStatusCreated, RoleID: &roleID, ProjectID: in.ProjectID,
-			Cron: in.Cron, Enabled: in.Enabled,
+			Perm: sessionPerm(in.Perm), Cron: in.Cron, Enabled: in.Enabled,
 		}
 		id, err := s.st.CreateTask(tk)
 		if err != nil {
@@ -121,7 +131,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 201, created)
 		return
 	}
-	ss, err := s.sess.Create(in.ProjectID, in.RoleID)
+	ss, err := s.sess.Create(in.ProjectID, in.RoleID, sessionPerm(in.Perm))
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return

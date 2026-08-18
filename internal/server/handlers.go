@@ -390,7 +390,7 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if cur.RunMode == store.RunModeInteractive && !s.ex.RuntimeService().Supports(a.RuntimeID, exec.CapabilityInteractive) {
-				writeErr(w, http.StatusBadRequest, fmt.Sprintf("交互式任务只支持 pi / omp 角色（%s 不支持）", a.RuntimeID))
+				writeErr(w, http.StatusBadRequest, fmt.Sprintf("交互式任务要求 Runtime 支持交互模式（%s 不支持）", a.RuntimeID))
 				return
 			}
 			set["role_id"] = int64(aid)

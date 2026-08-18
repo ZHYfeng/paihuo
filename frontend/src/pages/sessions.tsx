@@ -28,8 +28,9 @@ export function SessionsPage() {
   const [roleID, setRoleID] = useState("");
   const [projectID, setProjectID] = useState("");
   const [initialPrompt, setInitialPrompt] = useState("");
+  const [perm, setPerm] = useState("full");
   const create = useMutation({
-    mutationFn: () => api<Session>("/sessions", { method: "POST", body: { role_id: Number(roleID), project_id: projectID ? Number(projectID) : null } }),
+    mutationFn: () => api<Session>("/sessions", { method: "POST", body: { role_id: Number(roleID), project_id: projectID ? Number(projectID) : null, perm } }),
     onSuccess: async item => {
       await api(`/sessions/${item.id}/start`, { method: "POST" });
       const seed = initialPrompt.trim();
@@ -45,7 +46,8 @@ export function SessionsPage() {
       navigate(`/sessions/${item.id}`);
     }
   });
-  const eligible = roles.data?.filter(role => role.enabled && ["pi", "omp"].includes(role.runtime_id)) || [];
+  // 结构化会话角色：pi/omp（RPC 通道）与 dsh（HTTP ApiProxy 通道）。
+  const eligible = roles.data?.filter(role => role.enabled && ["pi", "omp", "dsh"].includes(role.runtime_id)) || [];
   const filtered = useMemo(() => filter === "all" ? (sessions.data || []) : (sessions.data || []).filter(item => item.status === filter), [sessions.data, filter]);
   return <>
     <PageHeader title="会话" copy="常驻会话保存结构化消息与工作区；形成明确成果后再交付为任务。" actions={<Button variant="primary" onClick={() => setOpen(true)}><CirclePlus size={16} />新建会话</Button>} />
@@ -55,7 +57,7 @@ export function SessionsPage() {
       <span className="text-sm text-muted sm:ml-auto">{filtered.length} 个会话</span>
     </Card>
     {sessions.isLoading ? <Spinner /> : filtered.length ? <div className="grid gap-3 lg:grid-cols-2">{filtered.map(item => <Link key={item.id} to={`/sessions/${item.id}`} className="rounded-xl border border-line bg-surface p-3.5 shadow-card transition hover:border-brand/35 hover:bg-hover focus-visible:ring-2 focus-visible:ring-focus"><div className="flex items-center gap-2"><span className="text-xs text-faint">#{item.id}</span><h2 className="truncate font-semibold">{item.title}</h2><Badge tone={sessionTone[item.status] || "neutral"}>{sessionLabel[item.status] || item.status}</Badge></div><div className="mt-2 flex flex-wrap gap-2 text-sm text-muted"><span>{item.role_name}</span>{item.project_name && <span>· {item.project_name}</span>}<span>· {item.message_count} 条消息</span><span className="ml-auto">{formatTime(item.updated_at)}</span></div></Link>)}</div> : <Empty title={filter === "all" ? "还没有会话" : "没有匹配的会话"} copy="会话保存完整的结构化对话，可在后续交付为任务。" />}
-    <Dialog open={open} onOpenChange={setOpen} title="新建会话"><form className="grid gap-4" onSubmit={(e: FormEvent) => { e.preventDefault(); create.mutate(); }}><Field label="角色"><select className={inputClass} required value={roleID} onChange={e => setRoleID(e.target.value)}><option value="">请选择</option>{eligible.map(role => <option key={role.id} value={role.id}>{role.name} · {role.runtime_id}</option>)}</select></Field><Field label="项目"><select className={inputClass} value={projectID} onChange={e => setProjectID(e.target.value)}><option value="">不绑定项目</option>{projects.data?.filter(p => p.status === "active").map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field><Field label="初始指令"><textarea className={inputClass + " min-h-20 py-3"} placeholder="可选：创建后自动启动并发起首条消息…" value={initialPrompt} onChange={e => setInitialPrompt(e.target.value)} /></Field><div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setOpen(false)}>取消</Button><Button type="submit" variant="primary" disabled={create.isPending}>创建并启动</Button></div></form></Dialog>
+    <Dialog open={open} onOpenChange={setOpen} title="新建会话"><form className="grid gap-4" onSubmit={(e: FormEvent) => { e.preventDefault(); create.mutate(); }}><Field label="角色"><select className={inputClass} required value={roleID} onChange={e => setRoleID(e.target.value)}><option value="">请选择</option>{eligible.map(role => <option key={role.id} value={role.id}>{role.name} · {role.runtime_id}</option>)}</select></Field><Field label="项目"><select className={inputClass} value={projectID} onChange={e => setProjectID(e.target.value)}><option value="">不绑定项目</option>{projects.data?.filter(p => p.status === "active").map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field><Field label="权限"><select className={inputClass} value={perm} onChange={e => setPerm(e.target.value)}><option value="full">自动整合（免审批）</option><option value="review">人工审批</option></select><span className="text-xs text-faint">dsh 会话按此路由到 full / review 宿主；pi/omp 不使用</span></Field><Field label="初始指令"><textarea className={inputClass + " min-h-20 py-3"} placeholder="可选：创建后自动启动并发起首条消息…" value={initialPrompt} onChange={e => setInitialPrompt(e.target.value)} /></Field><div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setOpen(false)}>取消</Button><Button type="submit" variant="primary" disabled={create.isPending}>创建并启动</Button></div></form></Dialog>
   </>;
 }
 

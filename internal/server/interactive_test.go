@@ -16,9 +16,10 @@ import (
 	"paihuo/internal/store"
 )
 
-// 交互式任务只支持 pi / omp 角色（RPC 消息流通道）；opencode / claude /
+// 交互式任务按 Runtime 能力放行：pi / omp（RPC 消息流通道）支持；
+// dsh 的结构化会话走 HTTP ApiProxy（不提供终端交互任务）；opencode / claude /
 // codex 只能批处理。批处理对所有 CLI 开放，未指定 run_mode 时保持 batch。
-func TestCreateInteractiveTaskOnlySupportsPiAndOmpAgents(t *testing.T) {
+func TestCreateInteractiveTaskOnlySupportsInteractiveRuntimes(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -31,8 +32,9 @@ func TestCreateInteractiveTaskOnlySupportsPiAndOmpAgents(t *testing.T) {
 	sc := sched.New(st, hub, executor, sess, wf)
 	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
 
+	interactiveCLIs := map[string]bool{"pi": true, "omp": true}
 	agentIDs := make(map[string]int64)
-	for _, cli := range []string{"omp", "opencode", "pi", "claude", "codex"} {
+	for _, cli := range []string{"omp", "opencode", "pi", "claude", "codex", "dsh"} {
 		id, err := st.CreateRole(store.Role{Name: cli, RuntimeID: cli, Enabled: true})
 		if err != nil {
 			t.Fatal(err)
@@ -41,11 +43,11 @@ func TestCreateInteractiveTaskOnlySupportsPiAndOmpAgents(t *testing.T) {
 	}
 
 	var piTask store.Task
-	for _, cli := range []string{"omp", "opencode", "pi", "claude", "codex"} {
+	for _, cli := range []string{"omp", "opencode", "pi", "claude", "codex", "dsh"} {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(`{"title":"interactive `+cli+`","role_id":`+itoa(agentIDs[cli])+`,"run_mode":"interactive"}`))
 		resp := httptest.NewRecorder()
 		s.createTask(resp, req)
-		if cli == "pi" || cli == "omp" {
+		if interactiveCLIs[cli] {
 			if resp.Code != http.StatusCreated {
 				t.Fatalf("%s 交互任务创建失败: code=%d body=%s", cli, resp.Code, resp.Body.String())
 			}
@@ -61,13 +63,13 @@ func TestCreateInteractiveTaskOnlySupportsPiAndOmpAgents(t *testing.T) {
 			}
 		} else {
 			if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "不支持交互式") {
-				t.Fatalf("%s 交互任务应被拒绝（只支持 pi / omp）: code=%d body=%s", cli, resp.Code, resp.Body.String())
+				t.Fatalf("%s 交互任务应被拒绝（不支持交互模式）: code=%d body=%s", cli, resp.Code, resp.Body.String())
 			}
 		}
 	}
 
 	// 批处理对所有 CLI 开放，不受交互式限制影响。
-	for _, cli := range []string{"omp", "opencode", "pi", "claude", "codex"} {
+	for _, cli := range []string{"omp", "opencode", "pi", "claude", "codex", "dsh"} {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(`{"title":"batch `+cli+`","role_id":`+itoa(agentIDs[cli])+`}`))
 		resp := httptest.NewRecorder()
 		s.createTask(resp, req)
@@ -76,13 +78,13 @@ func TestCreateInteractiveTaskOnlySupportsPiAndOmpAgents(t *testing.T) {
 		}
 	}
 
-	// 交互式任务只能改派到 pi / omp 角色；不能改派到其他 CLI，也不能清空角色。
+	// 交互式任务只能改派到支持交互模式的角色；不能改派到其他 CLI，也不能清空角色。
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(piTask.ID), strings.NewReader(`{"role_id":`+itoa(agentIDs["codex"])+`}`))
 	req.SetPathValue("id", itoa(piTask.ID))
 	setTaskRevision(t, st, piTask.ID, req)
 	resp := httptest.NewRecorder()
 	s.patchTask(resp, req)
-	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "只支持 pi / omp") {
+	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "要求 Runtime 支持交互模式") {
 		t.Fatalf("交互式任务不应允许改派到 codex: code=%d body=%s", resp.Code, resp.Body.String())
 	}
 

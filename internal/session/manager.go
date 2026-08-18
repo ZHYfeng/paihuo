@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,9 +33,10 @@ type Manager struct {
 	runtimes        *exec.RuntimeService
 	sessionsRoot    string
 	runtimeSessions string // <sessionsRoot>/.runtime-sessions（与任务会话平级，session- 前缀）
+	dshHosts        *dshHostPool
 
 	mu    sync.Mutex
-	procs map[int64]*rpcProc // pi/omp 会话进程（RPC 通道）
+	procs map[int64]sessionChannel // pi/omp RPC 进程 / dsh HTTP 会话通道
 	// stopping 置位后禁止再启动新进程（服务关闭）
 	stopping bool
 	stopIdle chan struct{} // 空闲挂起巡检停止信号（Stop 时关闭）
@@ -48,14 +50,16 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sessionsRo
 	if ex != nil {
 		runtimes = ex.RuntimeService()
 	}
+	runtimeSessions := filepath.Join(sessionsRoot, ".runtime-sessions")
 	return &Manager{
 		st:              st,
 		hub:             hub,
 		ex:              ex,
 		runtimes:        runtimes,
 		sessionsRoot:    sessionsRoot,
-		runtimeSessions: filepath.Join(sessionsRoot, ".runtime-sessions"),
-		procs:           make(map[int64]*rpcProc),
+		runtimeSessions: runtimeSessions,
+		dshHosts:        newDSHHostPool(runtimeSessions),
+		procs:           make(map[int64]sessionChannel),
 		stopIdle:        make(chan struct{}),
 	}
 }
@@ -75,8 +79,15 @@ func (m *Manager) stderrPathOf(id int64) string {
 
 // Create 创建会话，标题自动使用对应角色名称：git 项目建隔离 worktree
 // （sessions/<project>/session-<id>），非 git 项目复制到专属会话目录，无项目时使用独立空目录
-// （sessions/session-<id>，不关联任何项目）。
-func (m *Manager) Create(projectID *int64, roleID int64) (*store.Task, error) {
+// （sessions/session-<id>，不关联任何项目）。perm 决定 dsh 会话路由到哪个宿主
+// （full=免审批 / review=沙箱+人工审批）；pi/omp 会话不使用该字段。
+func (m *Manager) Create(projectID *int64, roleID int64, perm string) (*store.Task, error) {
+	if perm == "" {
+		perm = store.PermFull
+	}
+	if perm != store.PermFull && perm != store.PermReview {
+		return nil, fmt.Errorf("非法的权限模式: %s", perm)
+	}
 	agent, err := m.st.GetRole(roleID)
 	if err != nil {
 		return nil, err
@@ -103,6 +114,7 @@ func (m *Manager) Create(projectID *int64, roleID int64) (*store.Task, error) {
 		RoleID:    &roleID,
 		Title:     agent.Name,
 		Status:    store.SessionStatusCreated,
+		Perm:      perm,
 	}
 	id, err := m.st.CreateSessionTask(ss)
 	if err != nil {
@@ -184,13 +196,12 @@ func (m *Manager) Start(ctx context.Context, id int64) error {
 	if dir == "" {
 		dir = m.projectDir(ss) // 非 git / 无 worktree 回退
 	}
-	// 交互式会话只支持 pi / omp（RPC 消息流通道）；其余 CLI 无结构化
-	// 消息通道，S5 终端降级通道已移除，无法启动。
-	if _, ok := m.runtimes.Session(agent.RuntimeID); !ok {
+	// 结构化会话只支持 pi / omp（RPC 消息流通道）与 dsh（HTTP ApiProxy 会话）。
+	if _, ok := m.runtimes.Session(agent.RuntimeID); !ok && agent.RuntimeID != "dsh" {
 		m.ex.ReleaseRoleSlot(agent.ID)
 		return fmt.Errorf("Runtime %s 不提供结构化会话能力", agent.RuntimeID)
 	}
-	if err := m.startRPC(ss, *agent, dir); err != nil {
+	if err := m.startChannel(ss, *agent, dir); err != nil {
 		m.ex.ReleaseRoleSlot(agent.ID)
 		return err
 	}
@@ -205,30 +216,65 @@ func (m *Manager) Start(ctx context.Context, id int64) error {
 	return nil
 }
 
-// startRPC 启动 pi/omp RPC 会话进程（恢复时 switch_session 接续）。
-func (m *Manager) startRPC(ss *store.Task, agent store.Role, dir string) error {
-	proc, err := m.spawn(ss, agent, dir)
-	if err != nil {
-		return err
-	}
-	if ss.Status == store.SessionStatusSuspended {
-		if f := latestSessionFile(ss.SessionDir); f != "" {
-			if _, err := proc.runCommand(context.Background(), "switch_session", map[string]any{"sessionPath": f}, cmdTimeout); err != nil {
-				log.Printf("⚠ 会话 %d 恢复 switch_session 失败: %v（降级为新会话）", ss.ID, err)
+// startChannel 按 Runtime 启动会话通道：
+//   - pi/omp：spawn RPC 进程，挂起恢复时 switch_session 接续原会话
+//   - dsh：在对应权限宿主上 session.create（恢复时原 sessionId 接回）
+func (m *Manager) startChannel(ss *store.Task, agent store.Role, dir string) error {
+	var ch sessionChannel
+	if agent.RuntimeID == "dsh" {
+		dc, err := m.spawnDsh(ss, agent, dir)
+		if err != nil {
+			return err
+		}
+		ch = dc
+	} else {
+		proc, err := m.spawn(ss, agent, dir)
+		if err != nil {
+			return err
+		}
+		if ss.Status == store.SessionStatusSuspended {
+			if f := latestSessionFile(ss.SessionDir); f != "" {
+				if _, err := proc.runCommand(context.Background(), "switch_session", map[string]any{"sessionPath": f}, cmdTimeout); err != nil {
+					log.Printf("⚠ 会话 %d 恢复 switch_session 失败: %v（降级为新会话）", ss.ID, err)
+				}
 			}
 		}
+		ch = proc
 	}
 	m.mu.Lock()
-	m.procs[ss.ID] = proc
+	m.procs[ss.ID] = ch
 	m.mu.Unlock()
 	return nil
 }
 
-// stopChannel 停止会话的执行通道（RPC 进程）。
+// stopChannel 停止会话的执行通道（RPC 进程或 dsh 会话订阅）。
 func (m *Manager) stopChannel(id int64) {
 	if proc := m.detach(id); proc != nil {
 		proc.terminate()
 	}
+}
+
+// spawnDsh 在按权限路由的 dsh 宿主上创建/恢复会话通道并订阅事件流。
+func (m *Manager) spawnDsh(ss *store.Task, agent store.Role, cwd string) (*dshChannel, error) {
+	perm := dshPermOf(ss.Perm)
+	addr, err := m.dshHosts.addr(context.Background(), perm)
+	if err != nil {
+		return nil, err
+	}
+	resume := ""
+	if ss.Status == store.SessionStatusSuspended {
+		resume = readDSHSessionID(ss.SessionDir)
+	}
+	preset := strings.TrimSpace(agent.RoleConfig.Custom["preset"])
+	ch, err := newDSHChannel(ss.ID, addr, perm, cwd, preset, resume)
+	if err != nil {
+		return nil, fmt.Errorf("启动 dsh 会话失败: %w", err)
+	}
+	persistDSHSessionID(ss.SessionDir, ch.dshSession)
+	ch.setEventHandler(func(ev rpcEvent) { m.handleEvent(ss.ID, ev) })
+	ch.setExitHandler(func() { m.handleExit(ss.ID) })
+	ch.start()
+	return ch, nil
 }
 
 // spawn 启动 pi/omp RPC 进程并注入事件/退出回调。
@@ -261,7 +307,7 @@ func (m *Manager) spawn(ss *store.Task, agent store.Role, cwd string) (*rpcProc,
 }
 
 // detach 从进程池移除（内部，状态迁移前调用）。
-func (m *Manager) detach(id int64) *rpcProc {
+func (m *Manager) detach(id int64) sessionChannel {
 	m.mu.Lock()
 	proc := m.procs[id]
 	delete(m.procs, id)
@@ -605,10 +651,11 @@ func (m *Manager) State(ctx context.Context, id int64) (json.RawMessage, error) 
 	return resp.Data, nil
 }
 
-// Transcript 返回会话完整时间线（解析 pi 会话 JSONL 文件，含全部 entry 类型：
-// message / model_change / compaction / branch_summary 等）。挂起/交付后仍可读。
-// limit <= 0 表示全量；before 是分页游标（返回该 entry 之前的 limit 条，
-// 不含该条，即「上一页」）。返回 (entries, total, err)——total 为全部条目数（分页指示用）。
+// Transcript 返回会话完整时间线。pi/omp 解析会话 JSONL 文件（含全部 entry
+// 类型：message / model_change / compaction / branch_summary 等）；dsh 走宿主
+// history API。挂起/交付后仍可读。limit <= 0 表示全量；before 是分页游标
+// （返回该 entry 之前的 limit 条，不含该条，即「上一页」）。返回 (entries, total, err)
+// ——total 为全部条目数（分页指示用）。
 func (m *Manager) Transcript(ctx context.Context, id int64, limit int, before string) ([]map[string]any, int, error) {
 	ss, err := m.st.GetSessionTask(id)
 	if err != nil {
@@ -616,6 +663,9 @@ func (m *Manager) Transcript(ctx context.Context, id int64, limit int, before st
 	}
 	if ss == nil {
 		return nil, 0, ErrSessionNotFound
+	}
+	if m.isDSHSession(ss) {
+		return m.dshTranscript(ctx, ss, limit, before)
 	}
 	file := latestSessionFile(ss.SessionDir)
 	if file == "" {
@@ -670,6 +720,40 @@ func increment(st *store.Store, id int64) int {
 	return ss.MessageCount + 1
 }
 
+// isDSHSession 判断会话角色是否走 dsh HTTP 会话通道。
+func (m *Manager) isDSHSession(ss *store.Task) bool {
+	if ss.RoleID == nil {
+		return false
+	}
+	role, err := m.st.GetRole(*ss.RoleID)
+	return err == nil && role != nil && role.RuntimeID == "dsh"
+}
+
+// dshTranscript 通过宿主 history API 读取并归一化 dsh 会话时间线。
+// 挂起/交付后仍可读（宿主侧持久化）；宿主未启动时惰性启动。
+func (m *Manager) dshTranscript(ctx context.Context, ss *store.Task, limit int, before string) ([]map[string]any, int, error) {
+	dshSess := readDSHSessionID(ss.SessionDir)
+	if dshSess == "" {
+		return []map[string]any{}, 0, nil
+	}
+	perm := dshPermOf(ss.Perm)
+	addr, err := m.dshHosts.addr(ctx, perm)
+	if err != nil {
+		return nil, 0, err
+	}
+	api := newDSHAPI(addr)
+	var beforeSeq int64
+	if n, err := strconv.ParseInt(before, 10, 64); err == nil && n > 0 {
+		beforeSeq = n
+	}
+	events, err := api.history(ctx, dshSess, beforeSeq, limit)
+	if err != nil {
+		return nil, 0, fmt.Errorf("读取 dsh 会话历史失败: %w", err)
+	}
+	entries := buildDshTranscriptEntries(events)
+	return entries, len(entries), nil
+}
+
 func (m *Manager) handleEvent(id int64, ev rpcEvent) {
 	payload := map[string]any{"session_id": id, "event": ev}
 	m.hub.Publish(events.Event{Type: "session.message", Payload: payload})
@@ -692,8 +776,9 @@ func (m *Manager) handleEvent(id int64, ev rpcEvent) {
 	}
 }
 
-// handleExit 崩溃检测：进程退出且会话仍 active → 自动置 suspended
-// （transcript 不丢，随时可恢复），并释放槽位。
+// handleExit 崩溃检测：通道退出且会话仍 active → 自动置 suspended
+// （RPC 进程的 transcript 由会话文件持久化；dsh 会话由宿主持久化），随时
+// 可恢复，并释放槽位。
 func (m *Manager) handleExit(id int64) {
 	m.mu.Lock()
 	proc := m.procs[id]
@@ -723,7 +808,7 @@ func (m *Manager) handleExit(id int64) {
 }
 
 // Recover 服务重启时把遗留的 active 会话置为 suspended（进程已随服务退出
-// 丢失，transcript 由 pi 会话文件持久化，随时可恢复）。启动时调用。
+// 丢失，transcript 由会话文件/dsh 宿主持久化，随时可恢复）。启动时调用。
 func (m *Manager) Recover() {
 	list, err := m.st.ListSessionTasks(nil, nil, store.SessionStatusActive, true)
 	if err != nil {
@@ -743,22 +828,23 @@ func (m *Manager) Recover() {
 	}
 }
 
-// Stop 关闭所有活跃会话进程（服务退出时调用）。
+// Stop 关闭所有活跃会话通道（服务退出时调用；dsh 宿主随后停止）。
 func (m *Manager) Stop() {
 	close(m.stopIdle)
 	m.mu.Lock()
-	procs := make([]*rpcProc, 0, len(m.procs))
+	procs := make([]sessionChannel, 0, len(m.procs))
 	for _, p := range m.procs {
 		procs = append(procs, p)
 	}
-	m.procs = make(map[int64]*rpcProc)
+	m.procs = make(map[int64]sessionChannel)
 	m.mu.Unlock()
 	for _, p := range procs {
 		p.terminate()
 	}
+	m.dshHosts.StopAll()
 }
 
-func (m *Manager) activeProc(id int64) (*rpcProc, error) {
+func (m *Manager) activeProc(id int64) (sessionChannel, error) {
 	m.mu.Lock()
 	proc := m.procs[id]
 	m.mu.Unlock()
@@ -810,10 +896,7 @@ func (m *Manager) StartIdleMonitor(idle time.Duration) {
 				now := time.Now()
 				var idleIDs []int64
 				for id, p := range m.procs {
-					p.mu.Lock()
-					idle := now.Sub(p.lastEvent) >= idle
-					p.mu.Unlock()
-					if idle {
+					if idle := now.Sub(p.lastEventTime()) >= idle; idle {
 						idleIDs = append(idleIDs, id)
 					}
 				}

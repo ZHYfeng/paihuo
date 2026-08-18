@@ -3,6 +3,7 @@ module paihuo
 go 1.25.0
 
 require (
+	github.com/gorilla/websocket v1.5.3
 	github.com/robfig/cron/v3 v3.0.1
 	modernc.org/sqlite v1.56.0
 )

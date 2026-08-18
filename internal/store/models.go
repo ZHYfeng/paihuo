@@ -94,7 +94,7 @@ type Role struct {
 	ID             int64      `json:"id"`
 	Name           string     `json:"name"`
 	Description    string     `json:"description"`
-	RuntimeID      string     `json:"runtime_id"` // Runtime ID：omp | opencode | pi | claude | codex
+	RuntimeID      string     `json:"runtime_id"` // Runtime ID：omp | opencode | pi | claude | codex | dsh
 	RoleConfig     RoleConfig `json:"role_config"`
 	MaxConcurrency int        `json:"max_concurrency"` // 该角色同时运行的任务上限
 	Enabled        bool       `json:"enabled"`

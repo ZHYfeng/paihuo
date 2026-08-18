@@ -794,7 +794,7 @@ export function NewTaskDialog({ open, onOpenChange, initialProjectID }: { open: 
   // 单任务表单
   const [form, setForm] = useState({ title: "", body: "", role_id: "", project_id: initialProjectID ? String(initialProjectID) : "", perm: "full", run_mode: "batch", concurrent: false, dependency_mode: "weak", depends_on: "", block_on_failure: false });
   // 会话表单
-  const [sessionForm, setSessionForm] = useState({ title: "", body: "", role_id: "", project_id: initialProjectID ? String(initialProjectID) : "" });
+  const [sessionForm, setSessionForm] = useState({ title: "", body: "", role_id: "", project_id: initialProjectID ? String(initialProjectID) : "", perm: "full" });
   // 定时属性（正交）：任务/会话都可勾选；cron 非空 = 定时定义，永不直接执行
   const [cronForm, setCronForm] = useState({ frequency: "daily", weekday: "1", monthday: "1", time: SCHED_DEFAULT_TIME });
   const [taskSched, setTaskSched] = useState(false);
@@ -813,7 +813,7 @@ export function NewTaskDialog({ open, onOpenChange, initialProjectID }: { open: 
   });
   const createSession = useMutation({
     mutationFn: async () => {
-      const ss = await api<Session>("/sessions", { method: "POST", body: { role_id: Number(sessionForm.role_id), project_id: sessionForm.project_id ? Number(sessionForm.project_id) : null, title: sessionForm.title || undefined } });
+      const ss = await api<Session>("/sessions", { method: "POST", body: { role_id: Number(sessionForm.role_id), project_id: sessionForm.project_id ? Number(sessionForm.project_id) : null, title: sessionForm.title || undefined, perm: sessionForm.perm } });
       await api(`/sessions/${ss.id}/start`, { method: "POST" });
       if (sessionForm.body.trim()) await api(`/sessions/${ss.id}/prompt`, { method: "POST", body: { message: sessionForm.body, streaming_behavior: "follow_up" } });
       return ss;
@@ -866,7 +866,8 @@ export function NewTaskDialog({ open, onOpenChange, initialProjectID }: { open: 
         <ScheduleToggle checked={taskSched} onChange={setTaskSched} enabled={schedEnabled} onEnabledChange={setSchedEnabled} cronForm={cronForm} onCronChange={patch => setCronForm(current => ({ ...current, ...patch }))} />
       </> : kind === "session" ? <>
         <Field label="标题"><input className={inputClass} value={sessionForm.title} onChange={event => setSessionForm({ ...sessionForm, title: event.target.value })} placeholder="默认使用角色名称" autoFocus /></Field>
-        <div className="grid gap-4 sm:grid-cols-2"><Field label="项目"><select className={inputClass} value={sessionForm.project_id} onChange={event => setSessionForm({ ...sessionForm, project_id: event.target.value })}><option value="">不绑定项目</option>{projects.data?.filter(item => item.status === "active").map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="角色"><select className={inputClass} required value={sessionForm.role_id} onChange={event => setSessionForm({ ...sessionForm, role_id: event.target.value })}><option value="">请选择</option>{roles.data?.filter(item => item.enabled).map(item => <option key={item.id} value={item.id}>{item.name} · {item.runtime_id}</option>)}</select></Field></div>
+        <div className="grid gap-4 sm:grid-cols-2"><Field label="项目"><select className={inputClass} value={sessionForm.project_id} onChange={event => setSessionForm({ ...sessionForm, project_id: event.target.value })}><option value="">不绑定项目</option>{projects.data?.filter(item => item.status === "active").map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="角色"><select className={inputClass} required value={sessionForm.role_id} onChange={event => setSessionForm({ ...sessionForm, role_id: event.target.value })}><option value="">请选择</option>{roles.data?.filter(item => item.enabled && ["pi", "omp", "dsh"].includes(item.runtime_id)).map(item => <option key={item.id} value={item.id}>{item.name} · {item.runtime_id}</option>)}</select></Field></div>
+        <div className="grid gap-4 sm:grid-cols-2"><Field label="权限"><select className={inputClass} value={sessionForm.perm} onChange={event => setSessionForm({ ...sessionForm, perm: event.target.value })}><option value="full">自动整合（免审批）</option><option value="review">人工审批</option></select></Field></div>
         <Field label="初始指令"><textarea className={inputClass + " min-h-28 py-3"} value={sessionForm.body} onChange={event => setSessionForm({ ...sessionForm, body: event.target.value })} placeholder={sessSched ? "到点创建会话后自动发送的初始指令" : "可选：创建后自动启动并发起首轮对话"} /></Field>
         <ScheduleToggle checked={sessSched} onChange={setSessSched} enabled={schedEnabled} onEnabledChange={setSchedEnabled} cronForm={cronForm} onCronChange={patch => setCronForm(current => ({ ...current, ...patch }))} />
       </> : null}

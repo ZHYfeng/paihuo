@@ -1,10 +1,13 @@
 package exec
 
 import (
-	"paihuo/internal/store"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+
+	"paihuo/internal/store"
 )
 
 // 环境变量覆盖必须原地替换：重复 KEY 直接 append 时多数 CLI 取第一个，覆盖会静默失效。
@@ -376,6 +379,15 @@ func envHas(env []string, key, want string) bool {
 	return false
 }
 
+func envGet(env []string, key string) (string, bool) {
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+			return v, true
+		}
+	}
+	return "", false
+}
+
 func TestOpenCodeAdapterPassesVariantNameDirectly(t *testing.T) {
 	a := &openCodeAdapter{baseAdapter{id: "opencode", name: "opencode", bin: "opencode"}}
 	_, args, _, err := a.Build(ExecutionRequest{
@@ -448,7 +460,7 @@ func TestSchemaBuiltinMarking(t *testing.T) {
 }
 
 // 每个 CLI 的交互退出命令映射：pi 用 /quit，其余（omp/opencode/claude/
-// codex）用 /exit。按钮「结束会话」据此发送，命令不对 agent 不会退出。
+// codex/dsh）用 /exit。按钮「结束会话」据此发送，命令不对 agent 不会退出。
 func TestAdapterExitCommands(t *testing.T) {
 	want := map[string]string{
 		"pi":       "/quit",
@@ -456,10 +468,140 @@ func TestAdapterExitCommands(t *testing.T) {
 		"opencode": "/exit",
 		"claude":   "/exit",
 		"codex":    "/exit",
+		"dsh":      "/exit",
 	}
 	for _, a := range commandAdapters() {
 		if got := a.ExitCommand(); got != want[a.ID()] {
 			t.Fatalf("CLI %s 退出命令为 %q，期望 %q", a.ID(), got, want[a.ID()])
 		}
+	}
+}
+
+// dsh：批处理 headless（提示词是位置参数）、custom.profile 覆盖模式、
+// 模式/提示词/权限走原生环境变量（DSH_TUI_PRESET / DSH_TUI_PERSONA /
+// DSH_PERMISSION_MODE）。结构化会话不经 CLI 参数翻译（走 dsh web HTTP 通道）。
+func TestDshAdapterBuild(t *testing.T) {
+	a := &dshAdapter{baseAdapter{id: "dsh", name: "DSH（DeepSeek Harness）", bin: "dsh"}}
+
+	// 批处理默认 headless
+	_, args, env, err := a.Build(ExecutionRequest{Prompt: "hi", Role: store.RoleConfig{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--profile headless", "hi"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("缺少参数 %q（完整: %s）", want, joined)
+		}
+	}
+	if args[len(args)-1] != "hi" {
+		t.Fatalf("提示词应作为最后一个位置参数: %#v", args)
+	}
+	if _, present := envGet(env, "DSH_TUI_SESSION_ROOT"); present {
+		t.Fatalf("headless 不应注入 TUI 会话根（一次性任务）: %v", env)
+	}
+
+	// custom.profile 覆盖（支持 dsh 的各种模式）
+	_, args, _, err = a.Build(ExecutionRequest{Prompt: "p", Role: store.RoleConfig{Custom: map[string]string{"profile": "web"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(args, " "), "--profile web") {
+		t.Fatalf("自定义 profile 应覆盖默认: %v", args)
+	}
+
+	// 原生模式 env：preset→DSH_TUI_PRESET、system_prompt→DSH_TUI_PERSONA、
+	// 权限映射→DSH_PERMISSION_MODE（full=免审批无沙箱 / review=沙箱+审批）
+	_, _, env, err = a.Build(ExecutionRequest{
+		Prompt: "p", Perm: store.PermFull,
+		Role: store.RoleConfig{
+			SystemPrompt: "你是严格的前端评审员",
+			Custom:       map[string]string{"preset": "minimal"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !envHas(env, "DSH_TUI_PRESET", "minimal") {
+		t.Fatalf("预设应注入 DSH_TUI_PRESET: %v", env)
+	}
+	if !envHas(env, "DSH_TUI_PERSONA", "你是严格的前端评审员") {
+		t.Fatalf("系统提示词应注入 DSH_TUI_PERSONA: %v", env)
+	}
+	if !envHas(env, "DSH_PERMISSION_MODE", "danger-full-access") {
+		t.Fatalf("full 权限应映射为 danger-full-access: %v", env)
+	}
+	_, _, env, err = a.Build(ExecutionRequest{Prompt: "p", Perm: store.PermReview, Role: store.RoleConfig{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !envHas(env, "DSH_PERMISSION_MODE", "workspace-write") {
+		t.Fatalf("review 权限应映射为 workspace-write: %v", env)
+	}
+	_, _, env, err = a.Build(ExecutionRequest{Prompt: "p", Role: store.RoleConfig{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, present := envGet(env, "DSH_PERMISSION_MODE"); present {
+		t.Fatalf("未声明权限（batch 空权限）不应设置 DSH_PERMISSION_MODE: %v", env)
+	}
+}
+
+// dshPresetCandidates 扫描 $DSH_HOME/.agent-presets 下已安装预设 + 内置候选。
+func TestDshPresetCandidates(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("DSH_HOME", home)
+	for _, dir := range []string{"minimal", "liangshen", ".hidden"} {
+		if err := os.MkdirAll(filepath.Join(home, ".agent-presets", dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := strings.Join(dshPresetCandidates(), ",")
+	for _, want := range []string{"", "standard", "minimal", "liangshen"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("预设候选应包含 %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, ".hidden") {
+		t.Fatalf("隐藏目录不应作为预设候选: %s", got)
+	}
+}
+
+// dsh schema：通用角色字段（system_prompt→persona）+ profile/preset 模式选择；
+// 无逐模型/技能字段。
+func TestDshSchemaAndWarnings(t *testing.T) {
+	a := &dshAdapter{baseAdapter{id: "dsh", name: "DSH", bin: "dsh"}}
+	keys := map[string]*Field{}
+	for i := range a.Schema() {
+		keys[a.Schema()[i].Key] = &a.Schema()[i]
+	}
+	for _, want := range []string{"model", "system_prompt", "instructions", "preset", "profile", "extra_args", "env"} {
+		if keys[want] == nil {
+			t.Fatalf("schema 缺少 %s", want)
+		}
+	}
+	for _, absent := range []string{"thinking", "skills", "plugins"} {
+		if keys[absent] != nil {
+			t.Fatalf("dsh schema 不应有 %s", absent)
+		}
+	}
+	if keys["profile"].Builtin || keys["preset"].Builtin {
+		t.Fatal("profile/preset 应存入 RoleConfig.Custom，而不是顶层字段")
+	}
+	if got := a.Docs(); got != "https://github.com/deepseek-ai/deepseek-harness" {
+		t.Fatalf("Docs=%q", got)
+	}
+
+	// system_prompt 已原生支持（DSH_TUI_PERSONA），不再告警；model/skills/plugins 告警
+	if ws := a.Warnings(ExecutionRequest{Role: store.RoleConfig{
+		Model: "deepseek-v4-flash", Skills: []string{"/sk"}, Plugins: []string{"/p"},
+	}}); len(ws) != 3 {
+		t.Fatalf("model/skills/plugins 各应有一条警告，得到 %v", ws)
+	}
+	if ws := a.Warnings(ExecutionRequest{Role: store.RoleConfig{SystemPrompt: "sys"}}); len(ws) != 0 {
+		t.Fatalf("system_prompt 应受支持，不应有警告: %v", ws)
+	}
+	if ws := a.Warnings(ExecutionRequest{Role: store.RoleConfig{}}); len(ws) != 0 {
+		t.Fatalf("空角色不应有警告: %v", ws)
 	}
 }

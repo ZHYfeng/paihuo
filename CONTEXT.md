@@ -33,7 +33,7 @@
 
 ### Runtime
 
-实现 Role 所需能力的执行提供者，例如 Pi、Codex、Claude Code、OpenCode 或 OMP。
+实现 Role 所需能力的执行提供者，例如 Pi、Codex、Claude Code、OpenCode、OMP 或 DSH（DeepSeek Harness）。DSH 批处理走 headless，结构化会话走 `dsh --profile web` 常驻宿主的原生 HTTP ApiProxy（无终端交互任务）。
 
 避免：Role、Agent identity。
 

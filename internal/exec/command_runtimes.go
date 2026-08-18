@@ -1,5 +1,5 @@
 // Package exec 实现 Runtime 选择、命令翻译与任务执行。
-// 本文件只保存五个内置命令 Runtime 的具体翻译规则；目录、会话和安装能力
+// 本文件只保存内置命令 Runtime 的具体翻译规则；目录、会话和安装能力
 // 由 RuntimeService 在各自的接缝上组合。
 package exec
 
@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -72,6 +73,7 @@ func init() {
 	register(&piAdapter{baseAdapter{id: "pi", name: "Pi Role", bin: "pi"}})
 	register(&claudeAdapter{baseAdapter{id: "claude", name: "Claude Code", bin: "claude"}})
 	register(&codexAdapter{baseAdapter{id: "codex", name: "Codex", bin: "codex"}})
+	register(&dshAdapter{baseAdapter{id: "dsh", name: "DSH（DeepSeek Harness）", bin: "dsh"}})
 }
 
 type baseAdapter struct {
@@ -691,3 +693,130 @@ func tomlQuote(s string) string {
 	s = strings.ReplaceAll(s, "\t", `\t`)
 	return `"` + s + `"`
 }
+
+// ---------------------------------------------------------------------------
+// dsh（DeepSeek Harness）：dsh --profile headless "<任务>" 一次性批处理；
+// 结构化会话走 dsh web 宿主（dsh --profile web）的 HTTP ApiProxy 通道，
+// 由 internal/session 的 dsh 通道实现（无需 CLI 参数翻译）。
+// 角色映射：model/system_prompt 无官方标志（配置在 profile 插件栈内），提示词是
+// 位置参数（headless 收集全部位置参数作为任务文本）；模式与提示词通过
+// DSH_TUI_PRESET / DSH_TUI_PERSONA / DSH_PERMISSION_MODE 环境变量按角色注入。
+
+type dshAdapter struct{ baseAdapter }
+
+// Detect 除 CLI 二进制外还校验 profile：默认批处理依赖 headless，
+// 缺失时任务必然无法启动，提前在 Runtime 健康检查暴露。
+func (a *dshAdapter) Detect() (string, error) {
+	bin, err := exec.LookPath(a.bin)
+	if err != nil {
+		return "", fmt.Errorf("未找到 CLI「%s」，请先安装（npm install -g @deepseek-ai/dsh）", a.bin)
+	}
+	if _, ok := os.Stat(filepath.Join(dshHome(), "profiles", "headless")); ok != nil {
+		return "", fmt.Errorf("dsh 已安装但未初始化 headless profile（%s/profiles 下缺失）；先运行 dsh --profile headless --help 初始化", dshHome())
+	}
+	return bin, nil
+}
+
+// dshHome 返回 $DSH_HOME（缺省 ~/.dsh）。
+func dshHome() string {
+	if home := os.Getenv("DSH_HOME"); home != "" {
+		return home
+	}
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, ".dsh")
+	}
+	return ".dsh"
+}
+
+func (a *dshAdapter) Build(o ExecutionRequest) (string, []string, []string, error) {
+	profile := strings.TrimSpace(o.Role.Custom["profile"])
+	if profile == "" {
+		profile = "headless"
+	}
+	// 提示词是位置参数：headless 把它作为一次性任务。
+	// extra_args 会并入任务文本——headless 的 commander 只接收位置参数，
+	// 传 `--` 开头的标志会直接报错。
+	args := append([]string{"--profile", profile}, o.Role.ExtraArgs...)
+	args = append(args, o.Prompt)
+	env := mergeEnv(o.Role.Env)
+	// dsh 原生模式（profile 组合的 cordis 配置直接读这些环境变量）：
+	//   - DSH_TUI_PRESET：agent 预设（standard / minimal 极简 / 自定义 roster）；空=roster 默认
+	//   - DSH_TUI_PERSONA：系统提示词（@deepseek-ai/dsh-system-prompt 的 persona 配置）
+	//   - DSH_PERMISSION_MODE：沙箱与审批模式（danger-full-access 免审批无沙箱；
+	//     workspace-write 沙箱+人工审批 / read-only 只读），按任务权限映射
+	if preset := strings.TrimSpace(o.Role.Custom["preset"]); preset != "" {
+		env = envWith(env, "DSH_TUI_PRESET", preset)
+	}
+	if persona := strings.TrimSpace(o.Role.SystemPrompt); persona != "" {
+		env = envWith(env, "DSH_TUI_PERSONA", persona)
+	}
+	switch o.Perm {
+	case store.PermFull:
+		env = envWith(env, "DSH_PERMISSION_MODE", "danger-full-access")
+	case store.PermReview:
+		env = envWith(env, "DSH_PERMISSION_MODE", "workspace-write")
+	}
+	return a.bin, args, env, nil
+}
+
+func (a *dshAdapter) Warnings(o ExecutionRequest) []string {
+	var ws []string
+	if m := o.Role.Model; m != "" {
+		ws = append(ws, "dsh 模型与提供商在 profile 插件配置或 TUI 内（/model）选择，role.model 不生效")
+	}
+	if len(o.Role.Skills) > 0 {
+		ws = append(ws, "dsh 技能走 profile 插件体系（dsh plugin --profile ... add）与 agent 预设（preset），角色 skills 字段暂不生效")
+	}
+	if len(o.Role.Plugins) > 0 {
+		ws = append(ws, "dsh 插件在 profile 层管理，角色 plugins 字段不生效")
+	}
+	return ws
+}
+
+// dshPresetCandidates 返回可选的 agent 预设：roster 目录（$DSH_HOME/.agent-presets）下
+// 已安装的预设 id + 内置标准候选。供 schema 的 preset 字段做下拉候选。
+func dshPresetCandidates() []string {
+	out := []string{"", "standard", "minimal"}
+	entries, err := os.ReadDir(filepath.Join(dshHome(), ".agent-presets"))
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
+// dsh 无逐模型字段；schema 暴露通用角色字段（system_prompt→persona、preset→模式）
+// 与 profile 选择。
+func (a *dshAdapter) Schema() []Field {
+	return []Field{
+		{Key: "model", Label: "模型", Type: "text", Group: "模型与指令",
+			Placeholder: "在 dsh profile / TUI 内配置",
+			Help:        "dsh 模型取自 profile 插件配置（agent-default-model）或 TUI 内 /model 切换；此处仅作角色备注，不传给 CLI"},
+		{Key: "system_prompt", Label: "系统提示词", Type: "textarea", Group: "模型与指令",
+			Placeholder: "角色定位、行为规范",
+			Help:        "原生映射为 DSH_TUI_PERSONA（dsh-system-prompt 的 persona）：替换默认角色定位；如需保留默认请把默认内容并进这里"},
+		{Key: "instructions", Label: "指令", Type: "textarea", Group: "模型与指令",
+			Placeholder: "任务指令模板：每次执行前固定追加的指示",
+			Help:        "与系统提示词不同：这是每次任务的固定指令前缀，在任务提示词之前注入（dsh 以提示词文本方式生效）"},
+		{Key: "preset", Label: "Agent 预设（模式）", Type: "text", Group: "执行",
+			Suggestions: dshPresetCandidates(),
+			Placeholder: "留空用 roster 默认；如 minimal（极简双工具）/ installed presets",
+			Help:        "原生映射为 DSH_TUI_PRESET：按 dsh-agent-presets 的 roster 选择 agent 模式（工具组合/提示词结构），如 minimal 极简、standard、或 $DSH_HOME/.agent-presets 下已安装的自定义预设"},
+		{Key: "profile", Label: "dsh profile", Type: "text", Group: "执行",
+			Suggestions: []string{"", "headless", "web"},
+			Placeholder: "留空用 headless（一次性批处理）",
+			Help:        "要启动的 dsh profile（$DSH_HOME/profiles 下的插件栈）；批处理默认 headless，会话默认 web 宿主；可自定义已安装 profile"},
+		{Key: "extra_args", Label: "额外内容", Type: "text", Group: "执行",
+			Placeholder: "追加到任务文本的固定说明",
+			Help:        "dsh 无独立标志位：这里的内容会并入任务文本（headless 不接受 -- 开头的参数）"},
+		{Key: "env", Label: "环境变量", Type: "env", Group: "执行",
+			Placeholder: "KEY=VALUE（每行一个）",
+			Help:        "注入执行环境，如 DEEPSEEK_API_KEY、DSH_TUI_LANG、DSH_TUI_THEME"},
+	}
+}
+
+func (a *dshAdapter) Docs() string { return "https://github.com/deepseek-ai/deepseek-harness" }
