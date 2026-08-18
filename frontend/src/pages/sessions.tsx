@@ -277,6 +277,9 @@ export function SessionDetailPage() {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [answered, setAnswered] = useState<Record<string, boolean>>({});
   const [liveAsks, setLiveAsks] = useState<TranscriptEntry[]>([]);
+  // 流式中间态：message_update 增量累积的当前助手消息（jsonl 仅消息完成时落盘，
+  // 中间态必须由前端按 contentIndex 累积；message_end 后由 transcript 接管）。
+  const [liveMsg, setLiveMsg] = useState<Record<string, unknown> | null>(null);
   const [agentRunning, setAgentRunning] = useState(false);
   const [sending, setSending] = useState(false);
   const [scrollPct, setScrollPct] = useState(0);
@@ -377,7 +380,45 @@ export function SessionDetailPage() {
     const atBottom = el.scrollTop >= max - 120;
     prevMsgLen.current = renderItems.length;
     if (first || atBottom) el.scrollTop = max;
-  }, [renderItems.length, liveAsks.length]);
+  }, [renderItems.length, liveAsks.length, liveMsg]);
+  // 增量累积：assistantMessageEvent（contentIndex 定位块）→ 当前助手消息 content。
+  // 块类型 thinking/text/toolcall；_start 建块、_delta 追加、_end 整块落定。
+  const applyStreamDelta = (ame: Record<string, unknown>, base: Record<string, unknown> | null): Record<string, unknown> => {
+    const ci = Number(ame.contentIndex ?? 0);
+    const kind = String(ame.type || "");
+    const blocks = base && Array.isArray(base.content) ? [...(base.content as Array<Record<string, unknown>>)] : [];
+    while (blocks.length <= ci) blocks.push({ type: "placeholder", ci } as unknown as Record<string, unknown>);
+    const block = blocks[ci];
+    if (kind.endsWith("_start")) {
+      if (block.type === "placeholder") {
+        if (kind.startsWith("toolcall")) blocks[ci] = { type: "toolCall", id: String(ame.id || ""), name: String(ame.name || ame.toolName || "tool"), arguments: "", ci };
+        else { const key = kind.startsWith("thinking") ? "thinking" : "text"; blocks[ci] = { type: key, [key]: "", ci }; }
+      }
+    } else if (kind.endsWith("_delta")) {
+      const delta = String(ame.delta ?? "");
+      if (kind.startsWith("toolcall")) {
+        const raw = String((block.arguments ?? block.rawArgs) || "") + delta;
+        let args: unknown = raw;
+        try { args = JSON.parse(raw); } catch { /* 增量中，JSON 未完整 */ }
+        blocks[ci] = { ...block, arguments: args, rawArgs: raw };
+      } else if (delta) {
+        const key = kind.startsWith("thinking") ? "thinking" : "text";
+        blocks[ci] = { ...block, [key]: String(block[key] || "") + delta };
+      }
+    } else if (kind.endsWith("_end")) {
+      if (kind === "toolcall_end") {
+        const tc = ame.toolCall as Record<string, unknown> | undefined;
+        if (tc && typeof tc === "object") blocks[ci] = { type: "toolCall", id: String(tc.id || ""), name: String(tc.name || ""), arguments: (tc.input ?? tc.arguments ?? "") };
+      } else if (ame.content != null) {
+        const key = kind.startsWith("thinking") ? "thinking" : "text";
+        blocks[ci] = { ...block, [key]: String(ame.content) };
+      }
+    } else if ((kind === "thinking" || kind === "text") && ame.content != null) {
+      const key = kind;
+      blocks[ci] = { type: key, [key]: String(ame.content), ci };
+    }
+    return { role: "assistant", stopReason: "pending", content: blocks.filter(b => b.type !== "placeholder") };
+  };
   // SSE 实时：session.message 事件 → 增量刷新 transcript 与运行状态
   useEffect(() => {
     const source = new EventSource("/api/v1/events");
@@ -390,7 +431,18 @@ export function SessionDetailPage() {
         if (!ev) return;
         const type = String(ev.type || "");
         if (type === "agent_start" || type === "turn_start") setAgentRunning(true);
-        if (type === "agent_settled" || type === "agent_end") { setAgentRunning(false); setSending(false); setLiveAsks([]); }
+        if (type === "agent_settled" || type === "agent_end") { setAgentRunning(false); setSending(false); setLiveAsks([]); setLiveMsg(null); }
+        if (type === "message_update") {
+          const ame = ev.assistantMessageEvent as Record<string, unknown> | undefined;
+          if (ame && typeof ame === "object") setLiveMsg(prev => applyStreamDelta(ame, prev));
+        }
+        if (type === "message_start") {
+          const msg = ev.message as Record<string, unknown> | undefined;
+          if (msg && typeof msg === "object") {
+            if (String(msg.role || "") === "user") { qc.invalidateQueries({ queryKey: ["sessions", id, "transcript"] }); qc.invalidateQueries({ queryKey: keys.sessions }); }
+            else setLiveMsg({ ...msg, stopReason: "pending" });
+          }
+        }
         if (type === "extension_ui_request") {
           const method = String(ev.method || "");
           if (method === "select" || method === "confirm" || method === "input" || method === "editor") {
@@ -402,13 +454,24 @@ export function SessionDetailPage() {
             });
           }
         }
-        if (type === "user_echo" || type === "message_end" || type === "extension_ui_request") {
+        if (type === "message_end") { setLiveMsg(null); qc.invalidateQueries({ queryKey: ["sessions", id, "transcript"] }); qc.invalidateQueries({ queryKey: keys.sessions }); }
+        if (type === "user_echo" || type === "extension_ui_request") {
           qc.invalidateQueries({ queryKey: ["sessions", id, "transcript"] });
           qc.invalidateQueries({ queryKey: keys.sessions });
         }
       } catch { /* ignore malformed events */ }
     };
     source.addEventListener("session.message", receive);
+    // 状态变更（挂起/启动/交付/崩溃检测等）→ 立即刷新会话详情与列表，不等轮询。
+    source.addEventListener("session.updated", event => {
+      try {
+        const envelope = JSON.parse((event as MessageEvent).data);
+        const payload = envelope?.payload as Record<string, unknown> | undefined;
+        if (!payload || Number(payload.id) !== id) return;
+        qc.invalidateQueries({ queryKey: ["sessions", id] });
+        qc.invalidateQueries({ queryKey: keys.sessions });
+      } catch { /* ignore malformed events */ }
+    });
     return () => source.close();
   }, [id, qc]);
   const deliver = useMutation({ mutationFn: () => api(`/sessions/${id}/deliver`, { method: "POST", body: delivery }), onSuccess: () => { setDeliverOpen(false); refresh(); toast("会话已交付为任务"); } });
@@ -480,7 +543,7 @@ export function SessionDetailPage() {
       <div ref={listRef} onScroll={e => { const el = e.currentTarget; const max = el.scrollHeight - el.clientHeight; setScrollPct(max > 0 ? Math.min(100, Math.round(el.scrollTop / max * 100)) : 0); }} className="min-h-0 flex-1 overflow-y-auto">
         {transcript.isLoading ? <Spinner /> : renderItems.length || liveAsks.length ? <>
           <div className="mb-3 text-center"><Button size="sm" variant="ghost" disabled={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? "加载中…" : "加载更早消息"}</Button></div>
-          <div className="grid gap-3">{renderItems.map(item => <MessageCard key={item.key} item={item} />)}{liveAsks.map((entry, index) => { const entryKey = String(entry.id || `ask-${index}`); return <ExtensionRequestCard key={`ask-${entryKey}`} entry={entry} answered={!!answered[entryKey]} onAsk={body => ask.mutate(body)} />; })}</div>
+          <div className="grid gap-3">{renderItems.map(item => <MessageCard key={item.key} item={item} />)}{liveMsg ? <MessageCard item={{ kind: "assistant", msg: liveMsg, key: "live" }} /> : null}{liveAsks.map((entry, index) => { const entryKey = String(entry.id || `ask-${index}`); return <ExtensionRequestCard key={`ask-${entryKey}`} entry={entry} answered={!!answered[entryKey]} onAsk={body => ask.mutate(body)} />; })}</div>
         {item.status === "active" && agentRunning ? <div className="activity-dock active"><span className="dot" />Agent 正在执行…</div> : null}
         </> : <Empty title="还没有消息" copy="会话启动后，消息会实时显示在这里。" />}
       </div>
