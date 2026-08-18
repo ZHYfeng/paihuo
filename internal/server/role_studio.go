@@ -362,10 +362,20 @@ func roleStudioSkillNames(paths []string) []string {
 		if path == "" {
 			continue
 		}
-		name, _, _, _ := parseSkillFrontmatter(filepath.Join(path, "SKILL.md"))
+		// 规范化并拒绝含 ".." 的穿越成分：角色配置里的技能路径同样来自用户，
+		// 读取其 SKILL.md 前必须先净化（code-scanning path-injection）。
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			continue
+		}
+		abs = filepath.Clean(abs)
+		if strings.Contains(abs, "..") {
+			continue
+		}
+		name, _, _, _ := parseSkillFrontmatter(filepath.Join(abs, "SKILL.md"))
 		name = strings.TrimSpace(name)
 		if name == "" {
-			name = filepath.Base(filepath.Clean(path))
+			name = filepath.Base(abs)
 		}
 		if name == "" || name == "." || name == string(filepath.Separator) {
 			continue
