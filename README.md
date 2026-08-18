@@ -41,7 +41,7 @@ export PAIHUO_TOKEN="$(openssl rand -hex 32)"
 
 ### 当前本机部署
 
-当前实例运行 `v2026.08.17-12`（会话斜杠命令菜单），由用户级 systemd 托管：
+当前实例运行 `v2026.08.17-13`（会话斜杠命令菜单），由用户级 systemd 托管：
 
 ```bash
 systemctl --user status paihuo.service
