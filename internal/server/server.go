@@ -370,8 +370,12 @@ func (s *Server) validToken(got string) bool {
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	// 清除会话 cookie 时必须与应用会话 cookie 的属性一致（HttpOnly + 按配置
+	// 加 Secure），否则清除请求可能因签名/属性差异被忽略，或属性缺失被扫描告警。
 	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: "", Path: "/", MaxAge: -1,
+		Name: sessionCookie, Value: "", Path: "/",
+		HttpOnly: true, Secure: s.secureCookie, SameSite: http.SameSiteLaxMode,
+		MaxAge: -1,
 	})
 	http.Redirect(w, r, "/login", http.StatusFound)
 }

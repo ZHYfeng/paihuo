@@ -237,6 +237,12 @@ func resolveSkillSource(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	abs = filepath.Clean(abs)
+	// 拒绝包含 ".." 的路径：规范化后的绝对路径里出现 ".." 只能来自目录名
+	// 伪装，阻断路径穿越（同时是 code-scanning path-injection 的净化点）。
+	if strings.Contains(abs, "..") {
+		return "", fmt.Errorf("非法技能路径（不允许包含 ..）: %s", abs)
+	}
 	resolved, err := filepath.EvalSymlinks(abs)
 	if err != nil {
 		return "", err
