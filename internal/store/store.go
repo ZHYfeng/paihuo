@@ -468,8 +468,13 @@ func (s *Store) UpdateAtRevision(resource string, id, expected int64, set map[st
 			set["role_config"] = string(encoded)
 		}
 	}
-	cols := make([]string, 0, len(set))
-	vals := make([]any, 0, len(set)+3)
+	setLen := len(set)
+	maxInt := int(^uint(0) >> 1)
+	if setLen > maxInt-3 {
+		return errors.New("update set too large")
+	}
+	cols := make([]string, 0, setLen)
+	vals := make([]any, 0, setLen+3)
 	for key, value := range set {
 		cols = append(cols, key+"=?")
 		vals = append(vals, value)
