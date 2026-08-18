@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CirclePlus, Layers, Copy, Pause, Send, Square, Trash2, Truck } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, KeyboardEvent, SyntheticEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Markdown } from "../components/markdown";
 import { PageHeader } from "../components/shell";
@@ -12,6 +12,10 @@ const sessionTone: Record<string, "neutral" | "good" | "warn" | "info"> = { crea
 const sessionLabel: Record<string, string> = { created: "未启动", active: "活跃", suspended: "已挂起", delivered: "已交付", deleted: "已删除" };
 
 const FILTERS: Array<[string, string]> = [["all", "全部"], ["active", "活跃"], ["suspended", "已挂起"], ["created", "未启动"], ["delivered", "已交付"]];
+
+// 斜杠命令：列表来自运行时 get_commands（pi 输入层拦截 /<name> 行执行）。
+type SlashCommandInfo = { name: string; description?: string; source?: string };
+const SLASH_SOURCE_LABEL: Record<string, string> = { extension: "扩展", prompt: "提示词", skill: "技能" };
 
 export function SessionsPage() {
   const sessions = useQuery({ queryKey: keys.sessions, queryFn: () => api<Session[]>("/sessions"), refetchInterval: 15_000 });
@@ -280,6 +284,13 @@ export function SessionDetailPage() {
   const prevMsgLen = useRef(0);
   const [deliverOpen, setDeliverOpen] = useState(false);
   const [delivery, setDelivery] = useState({ task_title: "", task_body: "", perm: "review" });
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [caret, setCaret] = useState(0);
+  const [commands, setCommands] = useState<SlashCommandInfo[] | null>(null);
+  const [slashBusy, setSlashBusy] = useState(false);
+  const [slashError, setSlashError] = useState("");
+  const [slashSel, setSlashSel] = useState<{ query: string; index: number }>({ query: "", index: 0 });
+  const [dismissedQuery, setDismissedQuery] = useState<string | null>(null);
   const refresh = () => { qc.invalidateQueries({ queryKey: ["sessions", id] }); qc.invalidateQueries({ queryKey: keys.sessions }); };
   const action = useMutation({ mutationFn: (name: string) => api(`/sessions/${id}/${name}`, { method: "POST" }), onSuccess: refresh });
   const compact = useMutation({ mutationFn: () => api(`/sessions/${id}/command`, { method: "POST", body: { command: "compact" } }), onSuccess: () => { toast("已压缩上下文"); refresh(); }, onError: error => toast(error instanceof Error ? error.message : "压缩失败", "bad") });
@@ -327,6 +338,34 @@ export function SessionDetailPage() {
     return out;
   }, [older, transcript.data]);
   const renderItems = useMemo(() => buildRenderItems(allEntries), [allEntries]);
+  // 斜杠命令：光标所在行以 / 开头时列出运行时命令（get_commands）。选中后把
+  // /query 替换为 /name 插入输入框，回车经 prompt 发送，由 pi 输入层拦截执行；
+  // 带参命令（如 /subagents …）可直接在插入处继续输入参数。
+  const slashLine = useMemo(() => {
+    const line = message.slice(0, caret).split("\n").pop() ?? "";
+    const m = /^\/([^\s/]*)$/.exec(line);
+    return m ? { query: m[1] } : null;
+  }, [message, caret]);
+  const slashQuery = slashLine?.query ?? null;
+  const slashOpen = slashLine !== null && dismissedQuery !== slashQuery;
+  const slashIndex = slashSel.query === slashQuery ? slashSel.index : 0;
+  const slashFiltered = useMemo(() => {
+    const all = commands ?? [];
+    if (!slashLine) return all;
+    const q = slashLine.query.toLowerCase();
+    return q ? all.filter(c => c.name.toLowerCase().includes(q) || (c.description || "").toLowerCase().includes(q)) : all;
+  }, [commands, slashLine]);
+  const loadCommandsIfNeeded = () => {
+    if (commands !== null || slashBusy) return;
+    const line = message.slice(0, caret).split("\n").pop() ?? "";
+    if (!/^\/[^\s/]*$/.test(line)) return;
+    setSlashBusy(true);
+    setSlashError("");
+    api<{ data: { commands: SlashCommandInfo[] } }>(`/sessions/${id}/command`, { method: "POST", body: { command: "get_commands" } })
+      .then(res => setCommands(res?.data?.commands ?? []))
+      .catch(error => setSlashError(error instanceof Error ? error.message : "无法加载命令列表"))
+      .finally(() => setSlashBusy(false));
+  };
   // 消息窗口滚动：内容增长时若已在底部附近则跟随；首次打开直接滚到底部。
   useEffect(() => {
     const el = listRef.current;
@@ -387,6 +426,50 @@ export function SessionDetailPage() {
     const suffix = after && snippet && !/\s$/.test(snippet) && !/^\s/.test(after) ? "\n\n" : "";
     setMessage(before + prefix + snippet + suffix + after);
   };
+  const onMessageChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
+    setMessage(e.target.value);
+    setCaret(e.target.selectionStart);
+    loadCommandsIfNeeded();
+  };
+  const onMessageSelect = (e: SyntheticEvent<HTMLTextAreaElement>) => {
+    setCaret(e.currentTarget.selectionStart);
+    loadCommandsIfNeeded();
+  };
+  const insertSlash = (name: string) => {
+    const before = message.slice(0, caret);
+    const after = message.slice(caret);
+    const lineStart = before.lastIndexOf("\n") + 1;
+    const prefix = before.slice(0, lineStart);
+    const line = before.slice(lineStart);
+    const consumed = (/^\/[^\s/]*/.exec(line) || [""])[0].length;
+    const pos = prefix.length + name.length + 2;
+    setMessage(`${prefix}/${name} ${line.slice(consumed)}${after}`);
+    setCaret(pos);
+    setDismissedQuery(null);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (el) { el.focus(); el.setSelectionRange(pos, pos); }
+    });
+  };
+  const onInputKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      if (slashOpen) {
+        const chosen = slashFiltered[Math.min(slashIndex, slashFiltered.length - 1)];
+        if (chosen) { e.preventDefault(); insertSlash(chosen.name); return; }
+      }
+      e.preventDefault();
+      send();
+      return;
+    }
+    if (!slashOpen) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setSlashSel(s => ({ query: slashQuery ?? "", index: Math.min(s.index + 1, slashFiltered.length - 1) })); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setSlashSel(s => ({ query: slashQuery ?? "", index: Math.max(s.index - 1, 0) })); }
+    else if (e.key === "Escape") { e.preventDefault(); setDismissedQuery(slashQuery); }
+    else if (e.key === "Tab") {
+      const chosen = slashFiltered[Math.min(slashIndex, slashFiltered.length - 1)];
+      if (chosen) { e.preventDefault(); insertSlash(chosen.name); }
+    }
+  };
   return <>
     <PageHeader title={item.title} copy={`${item.role_name || "角色"} · ${item.project_name || "无项目"}`} actions={<><Badge tone={sessionTone[item.status] || "neutral"}>{sessionLabel[item.status]}</Badge>{item.status === "active" && <Button onClick={() => action.mutate("suspend")}><Pause size={16} />挂起</Button>}{item.status === "active" && <Button onClick={() => compact.mutate()} disabled={compact.isPending} title="压缩会话上下文，降低后续 token 消耗"><Layers size={16} />压缩上下文</Button>}{["active", "suspended"].includes(item.status) && <Button onClick={() => setDeliverOpen(true)}><Truck size={16} />交付</Button>}{item.status === "active" && <Button variant="danger" onClick={() => abort.mutate()}><Square size={15} />中止</Button>}<Button variant="ghost" onClick={() => { if (confirm(`删除会话 #${item.id}？其消息记录与工作区将一并删除。`)) remove.mutate(); }}><Trash2 size={15} />删除</Button><Button variant="ghost" onClick={() => navigate(-1)}>返回</Button></>} />
     <div className="session-rail" aria-label="会话进度" aria-valuenow={scrollPct}>
@@ -404,8 +487,19 @@ export function SessionDetailPage() {
     </Card>
     {canInput && <form className="sticky bottom-4 mt-3 flex gap-3 rounded-xl border border-line bg-surface/95 p-3 shadow-pop backdrop-blur" onSubmit={e => { e.preventDefault(); send(); }}>
       <div className="grid min-w-0 flex-1 gap-2">
-        <textarea className={inputClass + " min-h-14 resize-y py-3"} required aria-label="发送消息" placeholder="输入消息…（Enter 发送，Shift+Enter 换行）" value={message} onChange={e => setMessage(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
-        <div className="flex flex-wrap items-center gap-2"><select className="w-40 rounded-xl border border-line bg-elevated px-2 py-2 text-sm text-ink outline-none focus:border-brand" aria-label="插入模板" value="" onChange={e => { const tpl = templates.data?.find(t => t.id === Number(e.target.value)); if (tpl) insertTemplate(tpl.body); }}><option value="">插入模板…</option>{templates.data?.map(tpl => <option key={tpl.id} value={tpl.id}>{tpl.name}</option>)}</select><span className="text-xs text-faint">模板内容插入到输入框末尾</span></div>
+        <div className="relative">
+          <textarea ref={textareaRef} className={inputClass + " min-h-14 resize-y py-3"} required aria-label="发送消息" placeholder="输入消息…（Enter 发送，Shift+Enter 换行；输入 / 查看斜杠命令）" value={message} onChange={onMessageChange} onSelect={onMessageSelect} onKeyDown={onInputKeyDown} />
+          {slashOpen && <div className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-xl border border-line bg-elevated shadow-pop" role="listbox" aria-label="斜杠命令" onMouseDown={e => e.preventDefault()}>
+            {commands === null ? <div className="px-3 py-2.5 text-sm text-muted">加载命令…</div>
+              : slashError ? <div className="px-3 py-2.5 text-sm text-muted">命令列表不可用：{slashError}</div>
+              : !commands.length ? <div className="px-3 py-2.5 text-sm text-muted">没有可用命令</div>
+              : slashFiltered.length ? <ul className="max-h-72 overflow-y-auto py-1">{slashFiltered.map((cmd, index) => (
+                <li key={cmd.name}><button type="button" role="option" aria-selected={index === slashIndex} onMouseEnter={() => setSlashSel({ query: slashQuery ?? "", index })} onClick={() => insertSlash(cmd.name)} className={`flex w-full items-baseline gap-2 px-3 py-1.5 text-left ${index === slashIndex ? "bg-hover" : ""}`}><span className="shrink-0 font-mono text-[13px] text-ink">/{cmd.name}</span>{cmd.description ? <span className="min-w-0 flex-1 truncate text-xs text-muted" title={cmd.description}>{cmd.description}</span> : null}{cmd.source && SLASH_SOURCE_LABEL[cmd.source] ? <span className="shrink-0 text-[10px] uppercase tracking-wide text-faint">{SLASH_SOURCE_LABEL[cmd.source]}</span> : null}</button></li>
+              ))}</ul>
+              : <div className="px-3 py-2.5 text-sm text-muted">没有匹配的命令</div>}
+          </div>}
+        </div>
+        <div className="flex flex-wrap items-center gap-2"><select className="w-40 rounded-xl border border-line bg-elevated px-2 py-2 text-sm text-ink outline-none focus:border-brand" aria-label="插入模板" value="" onChange={e => { const tpl = templates.data?.find(t => t.id === Number(e.target.value)); if (tpl) insertTemplate(tpl.body); }}><option value="">插入模板…</option>{templates.data?.map(tpl => <option key={tpl.id} value={tpl.id}>{tpl.name}</option>)}</select><span className="text-xs text-faint">输入 / 查看可用命令 · 模板内容插入到输入框末尾</span></div>
       </div>
       <div className="flex shrink-0 flex-col items-stretch justify-between gap-2">
         <select className="w-28 self-end rounded-xl border border-line bg-elevated px-2 py-2 text-sm text-ink outline-none focus:border-brand" aria-label="消息类型" value={behavior} onChange={e => setBehavior(e.target.value as "follow_up" | "steer")}><option value="follow_up">跟随</option><option value="steer">插入</option></select>
