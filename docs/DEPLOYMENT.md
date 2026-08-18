@@ -1,6 +1,6 @@
 # 部署指南
 
-> 当前生产基线：Debian，用户 `yu`，PaiHuo `v2026.08.17-11`（会话斜杠命令菜单）。服务以
+> 当前生产基线：Debian，用户 `yu`，PaiHuo `v2026.08.17-12`（会话斜杠命令菜单）。服务以
 > systemd 用户服务 `paihuo.service` 运行，目录为 `/home/yu/paihuo`，监听
 > `0.0.0.0:8080`。
 
