@@ -1522,6 +1522,13 @@ func skillSourceDir(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	src = filepath.Clean(src)
+	// 规范化后的绝对路径仍含 ".." 说明目录名包含伪装的穿越成分，直接拒绝；
+	// 该守卫同时是 code-scanning path-injection 的净化点，阻断后续所有
+	// 基于 src 的文件系统操作被用户输入污染。
+	if strings.Contains(src, "..") {
+		return "", fmt.Errorf("非法技能目录路径（不允许包含 ..）")
+	}
 	fi, err := os.Stat(src)
 	if err != nil || !fi.IsDir() {
 		return "", fmt.Errorf("目录不存在")
@@ -1926,6 +1933,11 @@ func (s *Server) fsDirs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	abs = filepath.Clean(abs)
+	// 拒绝目录穿越成分：filepath.Clean 之后仍含 ".." 的输入不予受理。
+	if strings.Contains(abs, "..") {
+		writeErr(w, http.StatusBadRequest, "非法路径（不允许包含 ..）")
+		return
+	}
 	if !filepath.IsAbs(abs) {
 		writeErr(w, http.StatusBadRequest, "需要绝对路径")
 		return
@@ -1971,11 +1983,17 @@ func (s *Server) fsMkdir(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "无效路径")
 		return
 	}
-	if err := os.MkdirAll(filepath.Clean(abs), 0o755); err != nil {
+	abs = filepath.Clean(abs)
+	// 拒绝目录穿越成分：在 mkdir 前校验规范化后的路径不含 ".."。
+	if strings.Contains(abs, "..") {
+		writeErr(w, http.StatusBadRequest, "非法路径（不允许包含 ..）")
+		return
+	}
+	if err := os.MkdirAll(abs, 0o755); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"path": filepath.Clean(abs)})
+	writeJSON(w, http.StatusOK, map[string]any{"path": abs})
 }
 
 // ---------------------------------------------------------------------------

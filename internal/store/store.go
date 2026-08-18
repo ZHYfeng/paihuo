@@ -438,7 +438,9 @@ func updateOneExecer(execer sqlExecer, table string, id int64, set map[string]an
 		return nil
 	}
 	cols := make([]string, 0, len(set))
-	vals := make([]any, 0, len(set)+1)
+	// cap 只取 len(set)：更新语句还会追加 updated_at / id 两个参数，若直接写
+	// len(set)+1 会在极端长度下存在整数溢出风险，多出的元素交给 append 扩容。
+	vals := make([]any, 0, len(set))
 	for k, v := range set {
 		cols = append(cols, k+"=?")
 		vals = append(vals, v)
@@ -469,12 +471,10 @@ func (s *Store) UpdateAtRevision(resource string, id, expected int64, set map[st
 		}
 	}
 	setLen := len(set)
-	maxInt := int(^uint(0) >> 1)
-	if setLen > maxInt-3 {
-		return errors.New("update set too large")
-	}
 	cols := make([]string, 0, setLen)
-	vals := make([]any, 0, setLen+3)
+	// cap 只取 len(set)：后续 updated_at / revision / id / expected 均由 append
+	// 追加，避免 len(set)+N 的加法在极端长度下整数溢出（code-scanning #36）。
+	vals := make([]any, 0, setLen)
 	for key, value := range set {
 		cols = append(cols, key+"=?")
 		vals = append(vals, value)
@@ -1312,7 +1312,7 @@ func (s *Store) UpdateTask(id int64, set map[string]any) error {
 		return err
 	}
 
-	updated := make(map[string]any, len(set)+1)
+	updated := make(map[string]any, len(set))
 	for key, value := range set {
 		updated[key] = value
 	}
@@ -2202,7 +2202,10 @@ func (s *Store) ListLogsPage(taskID, beforeSeq int64, limit int) (logs []TaskLog
 	}
 	defer rows.Close()
 
-	logs = make([]TaskLog, 0, limit)
+	// limit 已在本函数开头被钳制在 [defaultLimit, maxLimit]，直接用常量上限
+	// 做预分配容量：分配大小不再依赖外部传入值，杜绝内存分配放大；即使本次
+	// 实际只取 limit 行，多出的容量也可忽略。
+	logs = make([]TaskLog, 0, maxLimit)
 	for rows.Next() {
 		var l TaskLog
 		if err = rows.Scan(&l.ID, &l.TaskID, &l.Seq, &l.Stream, &l.Content, &l.CreatedAt); err != nil {
@@ -2402,7 +2405,8 @@ func (s *Store) UpdateTemplate(id int64, set map[string]any) error {
 		return nil
 	}
 	cols := make([]string, 0, len(set))
-	vals := make([]any, 0, len(set)+1)
+	// cap 只取 len(set)：多出的 id 参数由 append 追加，避免 len(set)+1 溢出。
+	vals := make([]any, 0, len(set))
 	for k, v := range set {
 		cols = append(cols, k+"=?")
 		vals = append(vals, v)
