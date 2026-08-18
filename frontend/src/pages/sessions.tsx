@@ -280,6 +280,9 @@ export function SessionDetailPage() {
   // 流式中间态：message_update 增量累积的当前助手消息（jsonl 仅消息完成时落盘，
   // 中间态必须由前端按 contentIndex 累积；message_end 后由 transcript 接管）。
   const [liveMsg, setLiveMsg] = useState<Record<string, unknown> | null>(null);
+  // 用户消息本地回显：发送成功即渲染，不依赖 jsonl/SSE/refetch 时序；transcript
+  // 出现同文本同时间戳消息后移除（由持久数据接管）。
+  const [localEcho, setLocalEcho] = useState<Array<{ echoId: string; text: string; sentAt: number }>>([]);
   const [agentRunning, setAgentRunning] = useState(false);
   const [sending, setSending] = useState(false);
   const [scrollPct, setScrollPct] = useState(0);
@@ -342,6 +345,25 @@ export function SessionDetailPage() {
     return out;
   }, [older, transcript.data]);
   const renderItems = useMemo(() => buildRenderItems(allEntries), [allEntries]);
+  // 本地回显可见集：transcript 已出现同文本且时间戳相近（±10s）的 user 消息时隐藏
+  // echo，避免与持久数据重复；纯派生，无副作用。
+  const visibleEcho = useMemo(() => {
+    if (!localEcho.length || !transcript.data) return localEcho;
+    const byText = new Map<string, number>();
+    for (const entry of transcript.data.entries) {
+      if (entry.type !== "message") continue;
+      const msg = (entry.message as Record<string, unknown>) || {};
+      if (String(msg.role || "") !== "user") continue;
+      const text = msgTextOf(msg);
+      const raw = msg.timestamp;
+      const ts = typeof raw === "number" ? raw : Date.parse(String(raw || "")) || 0;
+      if (text && ts) byText.set(text, ts);
+    }
+    return localEcho.filter(echo => {
+      const ts = byText.get(echo.text);
+      return !(ts && Math.abs(ts - echo.sentAt) < 10_000);
+    });
+  }, [localEcho, transcript.data]);
   // 斜杠命令：光标所在行以 / 开头时列出运行时命令（get_commands）。选中即执行：
   // 以 /name 作为 prompt 发送，由 pi 输入层拦截；带参命令在 pi 端提示用法，
   // 也可手动输入 /name 参数（空格后菜单关闭，走普通发送）。
@@ -380,7 +402,7 @@ export function SessionDetailPage() {
     const atBottom = el.scrollTop >= max - 120;
     prevMsgLen.current = renderItems.length;
     if (first || atBottom) el.scrollTop = max;
-  }, [renderItems.length, liveAsks.length, liveMsg]);
+  }, [renderItems.length, liveAsks.length, liveMsg, localEcho.length]);
   // 增量累积：assistantMessageEvent（contentIndex 定位块）→ 当前助手消息 content。
   // 块类型 thinking/text/toolcall；_start 建块、_delta 追加、_end 整块落定。
   const applyStreamDelta = (ame: Record<string, unknown>, base: Record<string, unknown> | null): Record<string, unknown> => {
@@ -484,7 +506,7 @@ export function SessionDetailPage() {
     if (resumeFocus.isPending) return;
     resumeFocus.mutate();
   };
-  const sendText = (text: string) => { if (!text.trim() || prompt.isPending) return; setSending(true); prompt.mutate({ message: text.trim(), streaming_behavior: behavior }, { onSettled: () => setSending(false) }); };
+  const sendText = (text: string) => { if (!text.trim() || prompt.isPending) return; const sentAt = Date.now(); const trimmed = text.trim(); setSending(true); setLocalEcho(prev => [...prev, { echoId: `echo-${prev.length}-${sentAt}`, text: trimmed, sentAt }]); prompt.mutate({ message: trimmed, streaming_behavior: behavior }, { onSettled: () => setSending(false), onError: () => setLocalEcho(prev => prev.filter(echo => echo.sentAt !== sentAt)) }); };
   const send = () => sendText(message);
   const insertTemplate = (body: string) => {
     const current = message;
@@ -545,7 +567,7 @@ export function SessionDetailPage() {
       <div ref={listRef} onScroll={e => { const el = e.currentTarget; const max = el.scrollHeight - el.clientHeight; setScrollPct(max > 0 ? Math.min(100, Math.round(el.scrollTop / max * 100)) : 0); }} className="min-h-0 flex-1 overflow-y-auto">
         {transcript.isLoading ? <Spinner /> : renderItems.length || liveAsks.length ? <>
           <div className="mb-3 text-center"><Button size="sm" variant="ghost" disabled={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? "加载中…" : "加载更早消息"}</Button></div>
-          <div className="grid gap-3">{renderItems.map(item => <MessageCard key={item.key} item={item} />)}{liveMsg ? <MessageCard item={{ kind: "assistant", msg: liveMsg, key: "live" }} /> : null}{liveAsks.map((entry, index) => { const entryKey = String(entry.id || `ask-${index}`); return <ExtensionRequestCard key={`ask-${entryKey}`} entry={entry} answered={!!answered[entryKey]} onAsk={body => ask.mutate(body)} />; })}</div>
+          <div className="grid gap-3">{renderItems.map(item => <MessageCard key={item.key} item={item} />)}{visibleEcho.map(echo => <MessageCard key={echo.echoId} item={{ kind: "user", msg: { role: "user", content: [{ type: "text", text: echo.text }] }, key: echo.echoId }} />)}{liveMsg ? <MessageCard item={{ kind: "assistant", msg: liveMsg, key: "live" }} /> : null}{liveAsks.map((entry, index) => { const entryKey = String(entry.id || `ask-${index}`); return <ExtensionRequestCard key={`ask-${entryKey}`} entry={entry} answered={!!answered[entryKey]} onAsk={body => ask.mutate(body)} />; })}</div>
         {item.status === "active" && agentRunning ? <div className="activity-dock active"><span className="dot" />Agent 正在执行…</div> : null}
         </> : <Empty title="还没有消息" copy="会话启动后，消息会实时显示在这里。" />}
       </div>

@@ -1,236 +1,254 @@
 id: 1
 event: session.updated
-data: {"seq":1,"type":"session.updated","payload":{"base_commit":"","block_on_failure":false,"body":"","concurrent":false,"created_at":"2026-08-18T01:55:16Z","delivered_at":null,"dependency_mode":"none","depends_on":null,"enabled":false,"error":"","exit_code":null,"finished_at":null,"id":1,"last_run_at":null,"merge_of":null,"next_run_at":null,"parent_id":null,"perm":"","project_dir":"","project_id":null,"resume_of":null,"review_note":"","review_rounds":0,"revision":1,"role_id":1,"role_name":"R","run_mode":"batch","schedule_id":null,"session_dir":"sessions/.runtime-sessions/session-1","session_id":null,"sort_order":0,"started_at":null,"status":"created","suspended_at":null,"title":"R","type":"session","updated_at":"2026-08-18T01:55:16Z","workflow_run_id":null,"worktree_branch":"","worktree_path":"sessions/session-1"},"created_at":"2026-08-18T01:55:16Z"}
+data: {"seq":1,"type":"session.updated","payload":{"base_commit":"","block_on_failure":false,"body":"","concurrent":false,"created_at":"2026-08-18T02:31:59Z","delivered_at":null,"dependency_mode":"none","depends_on":null,"enabled":false,"error":"","exit_code":null,"finished_at":null,"id":1,"last_run_at":null,"merge_of":null,"next_run_at":null,"parent_id":null,"perm":"","project_dir":"","project_id":null,"resume_of":null,"review_note":"","review_rounds":0,"revision":1,"role_id":1,"role_name":"R","run_mode":"batch","schedule_id":null,"session_dir":"/tmp/paihuo-echo/sessions/.runtime-sessions/session-1","session_id":null,"sort_order":0,"started_at":null,"status":"created","suspended_at":null,"title":"R","type":"session","updated_at":"2026-08-18T02:31:59Z","workflow_run_id":null,"worktree_branch":"","worktree_path":"/tmp/paihuo-echo/sessions/session-1"},"created_at":"2026-08-18T02:31:59Z"}
 
 id: 2
 event: session.updated
-data: {"seq":2,"type":"session.updated","payload":{"base_commit":"","block_on_failure":false,"body":"","concurrent":false,"created_at":"2026-08-18T01:55:16Z","delivered_at":null,"dependency_mode":"none","depends_on":null,"enabled":false,"error":"","exit_code":null,"finished_at":null,"id":1,"last_run_at":null,"merge_of":null,"next_run_at":null,"parent_id":null,"perm":"","project_dir":"","project_id":null,"resume_of":null,"review_note":"","review_rounds":0,"revision":2,"role_id":1,"role_name":"R","run_mode":"batch","schedule_id":null,"session_dir":"sessions/.runtime-sessions/session-1","session_id":null,"sort_order":0,"started_at":null,"status":"created","suspended_at":null,"title":"R","type":"session","updated_at":"2026-08-18T01:55:16Z","workflow_run_id":null,"worktree_branch":"","worktree_path":"sessions/session-1"},"created_at":"2026-08-18T01:55:16Z"}
+data: {"seq":2,"type":"session.updated","payload":{"base_commit":"","block_on_failure":false,"body":"","concurrent":false,"created_at":"2026-08-18T02:31:59Z","delivered_at":null,"dependency_mode":"none","depends_on":null,"enabled":false,"error":"","exit_code":null,"finished_at":null,"id":1,"last_run_at":null,"merge_of":null,"next_run_at":null,"parent_id":null,"perm":"","project_dir":"","project_id":null,"resume_of":null,"review_note":"","review_rounds":0,"revision":2,"role_id":1,"role_name":"R","run_mode":"batch","schedule_id":null,"session_dir":"/tmp/paihuo-echo/sessions/.runtime-sessions/session-1","session_id":null,"sort_order":0,"started_at":null,"status":"created","suspended_at":null,"title":"R","type":"session","updated_at":"2026-08-18T02:31:59Z","workflow_run_id":null,"worktree_branch":"","worktree_path":"/tmp/paihuo-echo/sessions/session-1"},"created_at":"2026-08-18T02:31:59Z"}
 
 id: 3
 event: session.message
-data: {"seq":3,"type":"session.message","payload":{"event":{"id":"c41d5312-ded9-4384-8e84-33403ac76dd9","method":"setWidget","type":"extension_ui_request","widgetKey":"subagent-async"},"session_id":1},"created_at":"2026-08-18T01:55:17Z"}
+data: {"seq":3,"type":"session.message","payload":{"event":{"id":"f0cf5fc7-ce3f-4401-8704-9688613e2afa","method":"setWidget","type":"extension_ui_request","widgetKey":"subagent-async"},"session_id":1},"created_at":"2026-08-18T02:32:01Z"}
 
 id: 4
 event: session.message
-data: {"seq":4,"type":"session.message","payload":{"event":{"id":"1ab46471-562d-464e-959e-f6fae6f2bab1","method":"setStatus","statusKey":"stash","type":"extension_ui_request"},"session_id":1},"created_at":"2026-08-18T01:55:17Z"}
+data: {"seq":4,"type":"session.message","payload":{"event":{"id":"e760e72c-434e-44e2-9719-94fe02d8fdf6","method":"setStatus","statusKey":"stash","type":"extension_ui_request"},"session_id":1},"created_at":"2026-08-18T02:32:01Z"}
 
 id: 5
 event: session.message
-data: {"seq":5,"type":"session.message","payload":{"event":{"id":"2a964224-77c1-48d3-ac3f-135f935a09df","method":"setWidget","type":"extension_ui_request","widgetKey":"powerline-top"},"session_id":1},"created_at":"2026-08-18T01:55:17Z"}
+data: {"seq":5,"type":"session.message","payload":{"event":{"id":"693a62f9-21af-45fb-9592-45c351183ec8","method":"setWidget","type":"extension_ui_request","widgetKey":"powerline-top"},"session_id":1},"created_at":"2026-08-18T02:32:01Z"}
 
 id: 6
 event: session.message
-data: {"seq":6,"type":"session.message","payload":{"event":{"id":"666e0aef-ae08-4adc-81fc-03a8fad61307","method":"setWidget","type":"extension_ui_request","widgetKey":"powerline-secondary"},"session_id":1},"created_at":"2026-08-18T01:55:17Z"}
+data: {"seq":6,"type":"session.message","payload":{"event":{"id":"6f0596ac-4f07-447f-9e4f-707b7bbfc2a2","method":"setWidget","type":"extension_ui_request","widgetKey":"powerline-secondary"},"session_id":1},"created_at":"2026-08-18T02:32:01Z"}
 
 id: 7
 event: session.message
-data: {"seq":7,"type":"session.message","payload":{"event":{"id":"996138f3-3f7b-4add-85d1-1371afa1707c","method":"setWidget","type":"extension_ui_request","widgetKey":"powerline-bash-transcript"},"session_id":1},"created_at":"2026-08-18T01:55:17Z"}
+data: {"seq":7,"type":"session.message","payload":{"event":{"id":"1e8fdd3e-95d0-4905-b6c9-3d59c55e8575","method":"setWidget","type":"extension_ui_request","widgetKey":"powerline-bash-transcript"},"session_id":1},"created_at":"2026-08-18T02:32:01Z"}
 
 id: 8
 event: session.message
-data: {"seq":8,"type":"session.message","payload":{"event":{"id":"9550eb85-65d0-48c1-a457-9138353aab1e","method":"setWidget","type":"extension_ui_request","widgetKey":"powerline-status"},"session_id":1},"created_at":"2026-08-18T01:55:17Z"}
+data: {"seq":8,"type":"session.message","payload":{"event":{"id":"432301b9-3c73-48e1-bd2a-15a30bf6e717","method":"setWidget","type":"extension_ui_request","widgetKey":"powerline-status"},"session_id":1},"created_at":"2026-08-18T02:32:01Z"}
 
 id: 9
 event: session.message
-data: {"seq":9,"type":"session.message","payload":{"event":{"id":"4b40dc5d-8dac-4f2a-b440-0cf122a58c3b","method":"setWidget","type":"extension_ui_request","widgetKey":"powerline-queue-preview"},"session_id":1},"created_at":"2026-08-18T01:55:17Z"}
+data: {"seq":9,"type":"session.message","payload":{"event":{"id":"99c9a62a-936a-4495-8682-57f9317ec5bf","method":"setWidget","type":"extension_ui_request","widgetKey":"powerline-queue-preview"},"session_id":1},"created_at":"2026-08-18T02:32:01Z"}
 
 id: 10
 event: session.message
-data: {"seq":10,"type":"session.message","payload":{"event":{"id":"767add55-93d9-4a3c-b777-09f43997ebcf","method":"setWidget","type":"extension_ui_request","widgetKey":"powerline-last-prompt"},"session_id":1},"created_at":"2026-08-18T01:55:17Z"}
+data: {"seq":10,"type":"session.message","payload":{"event":{"id":"b9ee6521-812b-43f3-8b8d-d8146c8c99bb","method":"setWidget","type":"extension_ui_request","widgetKey":"powerline-last-prompt"},"session_id":1},"created_at":"2026-08-18T02:32:01Z"}
 
 id: 11
 event: session.message
-data: {"seq":11,"type":"session.message","payload":{"event":{"id":"a3078725-f0b8-4dc3-be10-0601a3e6bc22","method":"setStatus","statusKey":"compact-policy","type":"extension_ui_request"},"session_id":1},"created_at":"2026-08-18T01:55:17Z"}
+data: {"seq":11,"type":"session.message","payload":{"event":{"id":"0ef6be06-b798-44b1-8006-e35d89352cc5","method":"setStatus","statusKey":"compact-policy","type":"extension_ui_request"},"session_id":1},"created_at":"2026-08-18T02:32:01Z"}
 
 id: 12
 event: session.message
-data: {"seq":12,"type":"session.message","payload":{"event":{"id":"fea98264-0a1d-4c8c-a261-01970215a20c","method":"setStatus","statusKey":"compact-policy","statusText":"ctx · keep 20% · 0.0% (0/350000)","type":"extension_ui_request"},"session_id":1},"created_at":"2026-08-18T01:55:17Z"}
+data: {"seq":12,"type":"session.message","payload":{"event":{"id":"509cf640-7455-4e1b-988e-6d050257c1c4","method":"setStatus","statusKey":"compact-policy","statusText":"ctx · keep 20% · 0.0% (0/350000)","type":"extension_ui_request"},"session_id":1},"created_at":"2026-08-18T02:32:01Z"}
 
 id: 13
 event: session.message
-data: {"seq":13,"type":"session.message","payload":{"event":{"type":"agent_start"},"session_id":1},"created_at":"2026-08-18T01:55:20Z"}
+data: {"seq":13,"type":"session.message","payload":{"event":{"type":"agent_start"},"session_id":1},"created_at":"2026-08-18T02:32:02Z"}
 
 id: 14
 event: session.message
-data: {"seq":14,"type":"session.message","payload":{"event":{"type":"turn_start"},"session_id":1},"created_at":"2026-08-18T01:55:20Z"}
+data: {"seq":14,"type":"session.message","payload":{"event":{"type":"turn_start"},"session_id":1},"created_at":"2026-08-18T02:32:02Z"}
 
 id: 15
 event: session.message
-data: {"seq":15,"type":"session.message","payload":{"event":{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"用 bash 运行 echo hello，然后告诉我结果"}],"timestamp":1787018120503}},"session_id":1},"created_at":"2026-08-18T01:55:20Z"}
+data: {"seq":15,"type":"session.message","payload":{"event":{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"你好，请回复你好"}],"timestamp":1787020322966}},"session_id":1},"created_at":"2026-08-18T02:32:02Z"}
 
 id: 16
 event: session.message
-data: {"seq":16,"type":"session.message","payload":{"event":{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"用 bash 运行 echo hello，然后告诉我结果"}],"timestamp":1787018120503}},"session_id":1},"created_at":"2026-08-18T01:55:20Z"}
+data: {"seq":16,"type":"session.message","payload":{"event":{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"你好，请回复你好"}],"timestamp":1787020322966}},"session_id":1},"created_at":"2026-08-18T02:32:02Z"}
 
 id: 17
 event: session.message
-data: {"seq":17,"type":"session.message","payload":{"event":{"type":"message_start","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"opencode-go","model":"deepseek-v4-flash","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"pending","timestamp":1787018120544}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":17,"type":"session.message","payload":{"event":{"type":"message_start","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"opencode-go","model":"deepseek-v4-flash","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"pending","timestamp":1787020323010}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 18
 event: session.message
-data: {"seq":18,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":18,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 19
 event: session.message
-data: {"seq":19,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"Simple"}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":19,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"The"}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 20
 event: session.message
-data: {"seq":20,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" request"}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":20,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" user"}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 21
 event: session.message
-data: {"seq":21,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":": run"}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":21,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" said"}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 22
 event: session.message
-data: {"seq":22,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" echo"}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":22,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" \"你好"}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 23
 event: session.message
-data: {"seq":23,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" hello"}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":23,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"，请"}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 24
 event: session.message
-data: {"seq":24,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" via"}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":24,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"回复"}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 25
 event: session.message
-data: {"seq":25,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" bash and report"}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":25,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"你好\""}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 26
 event: session.message
-data: {"seq":26,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" the result"}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":26,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" which"}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 27
 event: session.message
-data: {"seq":27,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"."}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":27,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" means \"Hello"}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 28
 event: session.message
-data: {"seq":28,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":1}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":28,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":", please"}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 29
 event: session.message
-data: {"seq":29,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":""}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":29,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" reply hello"}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 30
 event: session.message
-data: {"seq":30,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"{"}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":30,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"\"."}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 31
 event: session.message
-data: {"seq":31,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"\"command\": \"echo"}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":31,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" Simple"}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 32
 event: session.message
-data: {"seq":32,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" hello\"}"}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":32,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" greeting"}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 33
 event: session.message
-data: {"seq":33,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"Simple request: run echo hello via bash and report the result."}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":33,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":","}},"session_id":1},"created_at":"2026-08-18T02:32:06Z"}
 
 id: 34
 event: session.message
-data: {"seq":34,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"toolcall_end","contentIndex":1,"toolCall":{"type":"toolCall","id":"call_22e360dc6e6c4f3cbd0f5424","name":"bash","arguments":{"command":"echo hello"}}}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":34,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" let me respond"}},"session_id":1},"created_at":"2026-08-18T02:32:07Z"}
 
 id: 35
 event: session.message
-data: {"seq":35,"type":"session.message","payload":{"event":{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Simple request: run echo hello via bash and report the result.","thinkingSignature":"reasoning_content"},{"type":"toolCall","id":"call_22e360dc6e6c4f3cbd0f5424","name":"bash","arguments":{"command":"echo hello"}}],"api":"openai-completions","provider":"opencode-go","model":"deepseek-v4-flash","usage":{"input":11456,"output":58,"cacheRead":512,"cacheWrite":0,"reasoning":0,"totalTokens":12026,"cost":{"input":0.00252032,"output":0.00003828,"cacheRead":0.000003584,"cacheWrite":0,"total":0.002562184}},"stopReason":"toolUse","timestamp":1787018120544,"responseId":"6b7ddd73f1b44e8593c33917b34a18e0","rawStopReason":"tool_calls"}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":35,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" in"}},"session_id":1},"created_at":"2026-08-18T02:32:07Z"}
 
 id: 36
 event: session.message
-data: {"seq":36,"type":"session.message","payload":{"event":{"type":"tool_execution_start"},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":36,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" Chinese."}},"session_id":1},"created_at":"2026-08-18T02:32:07Z"}
 
 id: 37
 event: session.message
-data: {"seq":37,"type":"session.message","payload":{"event":{"type":"tool_execution_update"},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":37,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":1}},"session_id":1},"created_at":"2026-08-18T02:32:07Z"}
 
 id: 38
 event: session.message
-data: {"seq":38,"type":"session.message","payload":{"event":{"type":"tool_execution_update"},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":38,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"你好"}},"session_id":1},"created_at":"2026-08-18T02:32:07Z"}
 
 id: 39
 event: session.message
-data: {"seq":39,"type":"session.message","payload":{"event":{"type":"tool_execution_end"},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":39,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"！"}},"session_id":1},"created_at":"2026-08-18T02:32:08Z"}
 
 id: 40
 event: session.message
-data: {"seq":40,"type":"session.message","payload":{"event":{"type":"message_start","message":{"role":"toolResult","toolCallId":"call_22e360dc6e6c4f3cbd0f5424","toolName":"bash","content":[{"type":"text","text":"hello\n"}],"isError":false,"timestamp":1787018123928}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":40,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"我是"}},"session_id":1},"created_at":"2026-08-18T02:32:08Z"}
 
 id: 41
 event: session.message
-data: {"seq":41,"type":"session.message","payload":{"event":{"type":"message_end","message":{"role":"toolResult","toolCallId":"call_22e360dc6e6c4f3cbd0f5424","toolName":"bash","content":[{"type":"text","text":"hello\n"}],"isError":false,"timestamp":1787018123928}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":41,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":" pi"}},"session_id":1},"created_at":"2026-08-18T02:32:08Z"}
 
 id: 42
 event: session.message
-data: {"seq":42,"type":"session.message","payload":{"event":{"type":"turn_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Simple request: run echo hello via bash and report the result.","thinkingSignature":"reasoning_content"},{"type":"toolCall","id":"call_22e360dc6e6c4f3cbd0f5424","name":"bash","arguments":{"command":"echo hello"}}],"api":"openai-completions","provider":"opencode-go","model":"deepseek-v4-flash","usage":{"input":11456,"output":58,"cacheRead":512,"cacheWrite":0,"reasoning":0,"totalTokens":12026,"cost":{"input":0.00252032,"output":0.00003828,"cacheRead":0.000003584,"cacheWrite":0,"total":0.002562184}},"stopReason":"toolUse","timestamp":1787018120544,"responseId":"6b7ddd73f1b44e8593c33917b34a18e0","rawStopReason":"tool_calls"}},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":42,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"，很高兴"}},"session_id":1},"created_at":"2026-08-18T02:32:08Z"}
 
 id: 43
 event: session.message
-data: {"seq":43,"type":"session.message","payload":{"event":{"type":"turn_start"},"session_id":1},"created_at":"2026-08-18T01:55:23Z"}
+data: {"seq":43,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"为你"}},"session_id":1},"created_at":"2026-08-18T02:32:08Z"}
 
 id: 44
 event: session.message
-data: {"seq":44,"type":"session.message","payload":{"event":{"type":"message_start","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"opencode-go","model":"deepseek-v4-flash","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"pending","timestamp":1787018123929}},"session_id":1},"created_at":"2026-08-18T01:55:28Z"}
+data: {"seq":44,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"服务。有什么"}},"session_id":1},"created_at":"2026-08-18T02:32:08Z"}
 
 id: 45
 event: session.message
-data: {"seq":45,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":0}},"session_id":1},"created_at":"2026-08-18T01:55:28Z"}
+data: {"seq":45,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"我可以"}},"session_id":1},"created_at":"2026-08-18T02:32:08Z"}
 
 id: 46
 event: session.message
-data: {"seq":46,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"结果"}},"session_id":1},"created_at":"2026-08-18T01:55:28Z"}
+data: {"seq":46,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"帮你的吗？"}},"session_id":1},"created_at":"2026-08-18T02:32:08Z"}
 
 id: 47
 event: session.message
-data: {"seq":47,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"：`hello"}},"session_id":1},"created_at":"2026-08-18T01:55:28Z"}
+data: {"seq":47,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"无论是"}},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
 
 id: 48
 event: session.message
-data: {"seq":48,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"`（echo"}},"session_id":1},"created_at":"2026-08-18T01:55:28Z"}
+data: {"seq":48,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"写"}},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
 
 id: 49
 event: session.message
-data: {"seq":49,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":" 命令"}},"session_id":1},"created_at":"2026-08-18T01:55:28Z"}
+data: {"seq":49,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"代码、调试"}},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
 
 id: 50
 event: session.message
-data: {"seq":50,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"正常输"}},"session_id":1},"created_at":"2026-08-18T01:55:28Z"}
+data: {"seq":50,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"问题、研究"}},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
 
 id: 51
 event: session.message
-data: {"seq":51,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"出了 hello"}},"session_id":1},"created_at":"2026-08-18T01:55:28Z"}
+data: {"seq":51,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"资料"}},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
 
 id: 52
 event: session.message
-data: {"seq":52,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"）。"}},"session_id":1},"created_at":"2026-08-18T01:55:28Z"}
+data: {"seq":52,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"，"}},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
 
 id: 53
 event: session.message
-data: {"seq":53,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"结果：`hello`（echo 命令正常输出了 hello）。"}},"session_id":1},"created_at":"2026-08-18T01:55:28Z"}
+data: {"seq":53,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"还是"}},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
 
 id: 54
 event: session.message
-data: {"seq":54,"type":"session.message","payload":{"event":{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"结果：`hello`（echo 命令正常输出了 hello）。"}],"api":"openai-completions","provider":"opencode-go","model":"deepseek-v4-flash","usage":{"input":11527,"output":16,"cacheRead":512,"cacheWrite":0,"reasoning":0,"totalTokens":12055,"cost":{"input":0.00253594,"output":0.00001056,"cacheRead":0.000003584,"cacheWrite":0,"total":0.002550084}},"stopReason":"stop","timestamp":1787018123929,"responseId":"0361ee443fa34fb4ae9ae261f6862c3f","rawStopReason":"stop"}},"session_id":1},"created_at":"2026-08-18T01:55:28Z"}
+data: {"seq":54,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"设计界面"}},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
 
 id: 55
 event: session.message
-data: {"seq":55,"type":"session.message","payload":{"event":{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"结果：`hello`（echo 命令正常输出了 hello）。"}],"api":"openai-completions","provider":"opencode-go","model":"deepseek-v4-flash","usage":{"input":11527,"output":16,"cacheRead":512,"cacheWrite":0,"reasoning":0,"totalTokens":12055,"cost":{"input":0.00253594,"output":0.00001056,"cacheRead":0.000003584,"cacheWrite":0,"total":0.002550084}},"stopReason":"stop","timestamp":1787018123929,"responseId":"0361ee443fa34fb4ae9ae261f6862c3f","rawStopReason":"stop"}},"session_id":1},"created_at":"2026-08-18T01:55:28Z"}
+data: {"seq":55,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"，我"}},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
 
 id: 56
 event: session.message
-data: {"seq":56,"type":"session.message","payload":{"event":{"type":"extension_ui_request","id":"33b09f23-ee12-4942-a362-1774e45cddf3","method":"setStatus","statusKey":"compact-policy","statusText":"ctx · keep 20% · 3.4% (12055/350000)"},"session_id":1},"created_at":"2026-08-18T01:55:28Z"}
+data: {"seq":56,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"都可以协助。"}},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
 
 id: 57
 event: session.message
-data: {"seq":57,"type":"session.message","payload":{"event":{"type":"agent_end"},"session_id":1},"created_at":"2026-08-18T01:55:28Z"}
+data: {"seq":57,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"The user said \"你好，请回复你好\" which means \"Hello, please reply hello\". Simple greeting, let me respond in Chinese."}},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
 
 id: 58
 event: session.message
-data: {"seq":58,"type":"session.message","payload":{"event":{"type":"agent_settled"},"session_id":1},"created_at":"2026-08-18T01:55:28Z"}
+data: {"seq":58,"type":"session.message","payload":{"event":{"type":"message_update","assistantMessageEvent":{"type":"text_end","contentIndex":1,"content":"你好！我是 pi，很高兴为你服务。有什么我可以帮你的吗？无论是写代码、调试问题、研究资料，还是设计界面，我都可以协助。"}},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
 
-: ping
+id: 59
+event: session.message
+data: {"seq":59,"type":"session.message","payload":{"event":{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"The user said \"你好，请回复你好\" which means \"Hello, please reply hello\". Simple greeting, let me respond in Chinese.","thinkingSignature":"reasoning_content"},{"type":"text","text":"你好！我是 pi，很高兴为你服务。有什么我可以帮你的吗？无论是写代码、调试问题、研究资料，还是设计界面，我都可以协助。"}],"api":"openai-completions","provider":"opencode-go","model":"deepseek-v4-flash","usage":{"input":9148,"output":63,"cacheRead":2816,"cacheWrite":0,"reasoning":0,"totalTokens":12027,"cost":{"input":0.00201256,"output":0.000041580000000000005,"cacheRead":0.000019712,"cacheWrite":0,"total":0.0020738519999999997}},"stopReason":"stop","timestamp":1787020323010,"responseId":"6b1fefc7e2834e2398aa9fb353ada172","rawStopReason":"stop"}},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
+
+id: 60
+event: session.message
+data: {"seq":60,"type":"session.message","payload":{"event":{"type":"turn_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"The user said \"你好，请回复你好\" which means \"Hello, please reply hello\". Simple greeting, let me respond in Chinese.","thinkingSignature":"reasoning_content"},{"type":"text","text":"你好！我是 pi，很高兴为你服务。有什么我可以帮你的吗？无论是写代码、调试问题、研究资料，还是设计界面，我都可以协助。"}],"api":"openai-completions","provider":"opencode-go","model":"deepseek-v4-flash","usage":{"input":9148,"output":63,"cacheRead":2816,"cacheWrite":0,"reasoning":0,"totalTokens":12027,"cost":{"input":0.00201256,"output":0.000041580000000000005,"cacheRead":0.000019712,"cacheWrite":0,"total":0.0020738519999999997}},"stopReason":"stop","timestamp":1787020323010,"responseId":"6b1fefc7e2834e2398aa9fb353ada172","rawStopReason":"stop"}},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
+
+id: 61
+event: session.message
+data: {"seq":61,"type":"session.message","payload":{"event":{"type":"extension_ui_request","id":"7499b02a-bf67-4236-823b-7eb1a8f016aa","method":"setStatus","statusKey":"compact-policy","statusText":"ctx · keep 20% · 3.4% (12027/350000)"},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
+
+id: 62
+event: session.message
+data: {"seq":62,"type":"session.message","payload":{"event":{"type":"agent_end"},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
+
+id: 63
+event: session.message
+data: {"seq":63,"type":"session.message","payload":{"event":{"type":"agent_settled"},"session_id":1},"created_at":"2026-08-18T02:32:10Z"}
 
 : ping
 
