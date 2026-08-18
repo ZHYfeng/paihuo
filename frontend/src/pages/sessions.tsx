@@ -511,6 +511,8 @@ export function SessionDetailPage() {
     sendText(`/${name}`);
   };
   const onInputKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // 输入法组合中（选候选词/拼音）的按键交给 IME 处理，不触发发送或命令菜单。
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter" && !e.shiftKey) {
       if (slashOpen) {
         const chosen = slashFiltered[Math.min(slashIndex, slashFiltered.length - 1)];
