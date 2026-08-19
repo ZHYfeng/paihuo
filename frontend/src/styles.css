@@ -857,6 +857,11 @@ a {
   min-height: 20px;
   margin-bottom: 6px;
   font-size: 12px;
+  min-width: 0;
+}
+
+.msg-head > * {
+  min-width: 0;
 }
 
 .msg-label {
@@ -891,6 +896,11 @@ a {
   cursor: pointer;
   user-select: text;
   font-size: 11px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-card {
@@ -1030,10 +1040,19 @@ a {
 
 .term-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--line);
+}
+
+.term-head code {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .term-body {

@@ -76,6 +76,6 @@ export function PageHeader({ title, copy, actions }: { title: string; copy?: str
       <h1 className="text-lg font-bold leading-tight tracking-tight text-ink sm:text-xl">{title}</h1>
       {copy && <p className="mt-1 max-w-2xl text-[13px] leading-5 text-muted">{copy}</p>}
     </div>
-    {actions && <div className="flex flex-wrap gap-2 sm:ml-auto">{actions}</div>}
+    {actions && <div className="flex min-w-0 max-w-full flex-wrap gap-2 sm:ml-auto">{actions}</div>}
   </header>;
 }
