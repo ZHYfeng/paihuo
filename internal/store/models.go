@@ -97,10 +97,31 @@ type Role struct {
 	RuntimeID      string     `json:"runtime_id"` // Runtime ID：omp | opencode | pi | claude | codex | dsh
 	RoleConfig     RoleConfig `json:"role_config"`
 	MaxConcurrency int        `json:"max_concurrency"` // 该角色同时运行的任务上限
-	Enabled        bool       `json:"enabled"`
-	Revision       int64      `json:"revision"`
-	CreatedAt      string     `json:"created_at"`
-	UpdatedAt      string     `json:"updated_at"`
+	// 委托（delegation）：开关 + 子任务最大权限。声明后，该角色的会话/任务
+	// 可以通过平台任务工具派生真实子任务（子任务复用其他 Role 执行）。
+	// 放在 Role 上而非 Runtime 能力：与「Role 表达责任与执行约束」一致。
+	DelegationEnabled bool   `json:"delegation_enabled"`
+	DelegationMaxPerm string `json:"delegation_max_perm"` // full/review；空=review（最保守）
+	Enabled           bool   `json:"enabled"`
+	Revision          int64  `json:"revision"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
+}
+
+// DelegationPermAllowed 判断子任务权限是否被本角色允许派生：子任务权限不得
+// 超过 delegation 声明的上限（无提权不变量）。
+func (a Role) DelegationPermAllowed(perm string) bool {
+	if !a.DelegationEnabled {
+		return false
+	}
+	max := a.DelegationMaxPerm
+	if max == "" {
+		max = PermReview // 缺省上限=受审：最保守
+	}
+	if perm == PermFull {
+		return max == PermFull
+	}
+	return perm == PermReview // 受审子任务永远允许（full 上限包含 review）
 }
 
 // ConcurrencyLimit 返回可执行的角色并发上限。零值收敛为 1，避免缺失配置
@@ -135,16 +156,21 @@ type Task struct {
 	ExitCode       *int   `json:"exit_code"`
 	ReviewNote     string `json:"review_note"`
 	ReviewRounds   int    `json:"review_rounds"`
-	TmuxLogOffset  int64  `json:"-"`                       // 已从专用 tmux 原始日志同步到 SQLite 的字节偏移
-	WorktreeBranch string `json:"worktree_branch"`         // 任务隔离 worktree 分支（paihuo/task-<id>）
-	BaseCommit     string `json:"base_commit"`             // 创建 worktree 时主分支 HEAD
-	ResumeOf       *int64 `json:"resume_of"`               // 续跑自哪个任务（复用其会话目录）
-	MergeOf        *int64 `json:"merge_of"`                // 合并任务整合自哪个源任务
-	SessionID      *int64 `json:"session_id"`              // 会话交付创建的收编任务回链（指向 type=session 的任务）
-	WorkflowRunID  *int64 `json:"workflow_run_id"`         // Workflow Run 原子实例化的归属
-	SortOrder      int64  `json:"sort_order"`              // 项目内执行顺序（合并任务不参与排序）
-	TerminalCols   int    `json:"terminal_cols,omitempty"` // 交互终端最近同步尺寸（列）；0=未同步（默认 80）
-	TerminalRows   int    `json:"terminal_rows,omitempty"` // 交互终端最近同步尺寸（行）；0=未同步（默认 24）
+	TmuxLogOffset  int64  `json:"-"`               // 已从专用 tmux 原始日志同步到 SQLite 的字节偏移
+	WorktreeBranch string `json:"worktree_branch"` // 任务隔离 worktree 分支（paihuo/task-<id>）
+	BaseCommit     string `json:"base_commit"`     // 创建 worktree 时主分支 HEAD
+	ResumeOf       *int64 `json:"resume_of"`       // 续跑自哪个任务（复用其会话目录）
+	MergeOf        *int64 `json:"merge_of"`        // 合并任务整合自哪个源任务
+	SessionID      *int64 `json:"session_id"`      // 会话交付创建的收编任务回链（指向 type=session 的任务）
+	WorkflowRunID  *int64 `json:"workflow_run_id"` // Workflow Run 原子实例化的归属
+	SortOrder      int64  `json:"sort_order"`      // 项目内执行顺序（合并任务不参与排序）
+	// 编排（delegation）归属：子任务如何挂到编排者会话树。
+	// parent_session_id 指向编排者会话（type=session，树的根）；
+	// parent_task_id 指向产生本次 spawn 的任务（子任务再派活的链）。
+	ParentSessionID *int64 `json:"parent_session_id"`
+	ParentTaskID    *int64 `json:"parent_task_id"`
+	TerminalCols    int    `json:"terminal_cols,omitempty"` // 交互终端最近同步尺寸（列）；0=未同步（默认 80）
+	TerminalRows    int    `json:"terminal_rows,omitempty"` // 交互终端最近同步尺寸（行）；0=未同步（默认 24）
 	// 定时属性（正交：任何形态可挂；cron 为空 = 非定时）
 	Cron      string  `json:"cron,omitempty"` // 六段 cron 表达式；非空时本任务为定时定义，永不直接执行
 	Enabled   bool    `json:"enabled"`        // 定时启停（cron 为空时忽略）
@@ -184,17 +210,19 @@ func NewMergeTask(source Task) Task {
 然后运行与改动相关的测试或构建并修复问题。不要操作主工作区或手工合并 main——
 退出后平台会自动 squash 合并本任务分支。`,
 			source.ID, source.Title, source.WorktreeBranch),
-		Status:         StatusQueued,
-		Perm:           PermFull,
-		RunMode:        RunModeBatch,
-		RoleID:         source.RoleID,
-		ProjectID:      source.ProjectID,
-		ProjectDir:     source.ProjectDir,
-		WorkflowRunID:  source.WorkflowRunID,
-		ParentID:       &sourceID,
-		MergeOf:        &sourceID,
-		DependencyMode: DependencyNone,
-		BlockOnFailure: source.BlockOnFailure,
+		Status:          StatusQueued,
+		Perm:            PermFull,
+		RunMode:         RunModeBatch,
+		RoleID:          source.RoleID,
+		ProjectID:       source.ProjectID,
+		ProjectDir:      source.ProjectDir,
+		WorkflowRunID:   source.WorkflowRunID,
+		ParentSessionID: source.ParentSessionID,
+		ParentTaskID:    source.ParentTaskID,
+		ParentID:        &sourceID,
+		MergeOf:         &sourceID,
+		DependencyMode:  DependencyNone,
+		BlockOnFailure:  source.BlockOnFailure,
 	}
 }
 

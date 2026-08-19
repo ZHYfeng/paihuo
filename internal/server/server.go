@@ -28,6 +28,7 @@ import (
 	"paihuo/internal/events"
 	"paihuo/internal/exec"
 	"paihuo/internal/github"
+	"paihuo/internal/orchestrator"
 	"paihuo/internal/sched"
 	"paihuo/internal/session"
 	"paihuo/internal/store"
@@ -44,6 +45,7 @@ type Server struct {
 	tasks        *application.TaskLifecycle
 	workspaces   *application.WorkspaceService
 	artifacts    artifact.Store
+	orchestrator *orchestrator.Service
 	gh           *github.Client
 	token        string
 	skillsDir    string // 技能库工作目录（<db目录>/skills，导入或扫描发现的技能复制到这里）
@@ -60,6 +62,34 @@ const (
 	sessionTTL    = 30 * 24 * time.Hour
 	maxJSONBody   = 1 << 20 // 1 MiB
 )
+
+// mcpSecretFromSettings 决定编排工具令牌的签名密钥。settings.mcp_auth_secret
+// 是唯一事实来源（首次解析时写入）：配置了访问令牌则以此作为密钥，否则
+// 生成随机密钥。会话管理器用同样方式读取，保证签发的令牌可被端点校验。
+func mcpSecretFromSettings(st *store.Store, token string) string {
+	if v, err := st.GetSetting("mcp_auth_secret"); err == nil && v != "" {
+		return v
+	}
+	v := token
+	if v == "" {
+		buf := make([]byte, 32)
+		if _, err := rand.Read(buf); err != nil {
+			return ""
+		}
+		v = base64.RawURLEncoding.EncodeToString(buf)
+	}
+	_ = st.SetSetting("mcp_auth_secret", v)
+	return v
+}
+
+// openArtifact 暴露 artifact 内容给编排工具（受控注入：限制在托管根部，
+// LocalStore 已约束路径）。
+func (s *Server) openArtifact(locator string) (io.ReadCloser, error) {
+	if s.artifacts == nil {
+		return nil, errors.New("ArtifactStore 不可用")
+	}
+	return s.artifacts.Open(context.Background(), locator)
+}
 
 // Start reconciles persisted sessions and starts bounded background services.
 // It must be called once before serving requests.
@@ -169,6 +199,7 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.
 	if artifactErr != nil {
 		log.Printf("ArtifactStore 初始化失败: %v", artifactErr)
 	}
+	s.orchestrator = orchestrator.New(st, runtimes, ex, mcpSecretFromSettings(st, token), s.openArtifact)
 
 	m := s.mux
 	m.HandleFunc("GET /login", s.pageLogin)
@@ -201,6 +232,7 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.
 		w.Write(b)
 	}))
 	m.HandleFunc("GET /api/v1/events", s.sse)
+	m.HandleFunc("POST /api/v1/mcp", s.orchestrator.HandleHTTP)
 	s.sessionRoutes(m)
 	s.workflowRoutes(m)
 
@@ -289,6 +321,11 @@ func (s *Server) Handler() http.Handler {
 			p := r.URL.Path
 			if strings.HasPrefix(p, "/static/") || p == "/login" {
 				s.mux.ServeHTTP(w, r)
+				return
+			}
+			// 平台工具面（MCP）用自己的 Bearer 令牌鉴权，不走浏览器会话。
+			if p == "/api/v1/mcp" {
+				base.ServeHTTP(w, r)
 				return
 			}
 			if !s.validSession(r) {

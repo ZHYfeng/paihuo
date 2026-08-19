@@ -28,6 +28,9 @@ type CreateTaskRequest struct {
 	BlockOnFailure bool   `json:"block_on_failure"`
 	ParentID       *int64 `json:"parent_id"`
 	ResumeOf       *int64 `json:"resume_of,omitempty"`
+	// 编排归属：spawn 时由平台写入（拒绝客户端伪造）。
+	ParentSessionID *int64 `json:"parent_session_id,omitempty"`
+	ParentTaskID    *int64 `json:"parent_task_id,omitempty"`
 	// 定时属性（正交）：cron 非空时创建定时定义任务，永不直接执行。
 	Cron    string `json:"cron"`
 	Enabled bool   `json:"enabled"`
@@ -57,6 +60,7 @@ func (s *TaskLifecycle) Create(request CreateTaskRequest) (*store.Task, error) {
 	task := store.Task{Title: request.Title, Body: request.Body, Status: store.StatusQueued, Perm: request.Permission, RunMode: request.RunMode,
 		Concurrent: request.Concurrent, RoleID: request.RoleID, ProjectID: request.ProjectID, ParentID: request.ParentID, ResumeOf: request.ResumeOf, ExternalKey: request.ExternalKey,
 		DependencyMode: request.DependencyMode, DependsOn: request.DependsOn, BlockOnFailure: request.BlockOnFailure,
+		ParentSessionID: request.ParentSessionID, ParentTaskID: request.ParentTaskID,
 		Cron: request.Cron, Enabled: request.Enabled}
 	if request.ProjectID != nil {
 		project, err := s.store.GetProject(*request.ProjectID)

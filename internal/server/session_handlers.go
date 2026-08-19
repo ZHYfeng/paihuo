@@ -424,6 +424,22 @@ func (s *Server) sessionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/sessions/{id}/messages", s.sessionMessages)
 	mux.HandleFunc("GET /api/v1/sessions/{id}/state", s.sessionState)
 	mux.HandleFunc("GET /api/v1/sessions/{id}/transcript", s.sessionTranscript)
+	mux.HandleFunc("GET /api/v1/sessions/{id}/tasks", s.sessionTasks)
+}
+
+// sessionTasks 返回编排者会话名下的派生子任务树（扁平，带父链字段）。
+// 编排者视图 = 会话 + 子树聚合：前端按键把节点挂到父 task 下递归渲染。
+func (s *Server) sessionTasks(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	children, err := s.st.ListChildrenBySession(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, children)
 }
 
 func parseID(s string) (int64, error) {

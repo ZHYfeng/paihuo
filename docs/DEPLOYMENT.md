@@ -83,10 +83,10 @@ systemctl --user enable --now paihuo.service
 PaiHuo 只支持当前 schema，不提供数据库迁移链。**同一 schema / 领域模型版本
 内的重新部署默认保留全部业务状态**：`paihuo.db`（Role、Project、
 Task、Session、Workflow、Schedule 等）、`sessions/` worktree、`artifacts/`
-以及 tmux 中仍在执行的 Task 全部保留。唯一例外：
-`workflow_runs.project_id` 列（v2026.08.16-2 新增）带幂等迁移
-（`migrateWorkflowRunsProjectColumn`），旧库打开时自动加列并用节点任务
-回填，**保存数据部署即可**。其余涉及 schema 或领域模型变更的版本替换才
+以及 tmux 中仍在执行的 Task 全部保留。已带幂等迁移的增量列（旧库打开时
+自动加列、默认值/回填）包括：`workflow_runs.project_id`、`tasks.parent_session_id` /
+`tasks.parent_task_id`、`roles.delegation_enabled` / `roles.delegation_max_perm`；
+这些变更**保存数据部署即可**。其余涉及 schema 或领域模型变更的版本替换才
 执行「全新部署（清空数据）」。
 
 替换前先确认没有需要继续运行的 Task，然后执行：

@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS roles (
   runtime_id    TEXT NOT NULL,
   role_config   TEXT NOT NULL DEFAULT '{}',
   max_concurrency INTEGER NOT NULL DEFAULT 1 CHECK(max_concurrency >= 1),
+  delegation_enabled INTEGER NOT NULL DEFAULT 0, -- 编排委托开关（可派生子任务）
+  delegation_max_perm TEXT NOT NULL DEFAULT 'review', -- 子任务最大权限 full|review
   enabled       INTEGER NOT NULL DEFAULT 1,
   revision      INTEGER NOT NULL DEFAULT 1,
   created_at    TEXT NOT NULL,
@@ -76,6 +78,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   terminal_rows INTEGER NOT NULL DEFAULT 0,
   session_id    INTEGER REFERENCES tasks(id), -- 会话交付的收编任务回链
   workflow_run_id INTEGER REFERENCES workflow_runs(id) ON DELETE CASCADE,
+  parent_session_id INTEGER REFERENCES tasks(id), -- 编排者会话（树的根）
+  parent_task_id     INTEGER REFERENCES tasks(id), -- 产生本次 spawn 的任务（再派活链）
   -- 定时属性（正交：任何形态可挂；cron 非空 = 定时定义，永不直接执行）
   cron            TEXT NOT NULL DEFAULT '',
   enabled         INTEGER NOT NULL DEFAULT 1,
@@ -107,6 +111,8 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project_sort ON tasks(project_id, sort_orde
 CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_depends_on ON tasks(depends_on);
 CREATE INDEX IF NOT EXISTS idx_tasks_workflow_run ON tasks(workflow_run_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent_session ON tasks(parent_session_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent_task ON tasks(parent_task_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_merge_of_unique ON tasks(merge_of) WHERE merge_of IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_external_key_unique ON tasks(external_key) WHERE external_key <> '';
 
@@ -253,6 +259,14 @@ func Open(path string) (*Store, error) {
 			db.Close()
 			return nil, err
 		}
+		if err := migrateTaskParentColumns(db); err != nil {
+			db.Close()
+			return nil, err
+		}
+		if err := migrateRoleDelegationColumns(db); err != nil {
+			db.Close()
+			return nil, err
+		}
 		// Unsupported databases are inspected before any schema statement runs.
 		// Rejection must not leave current-version tables or indexes behind.
 		if err := verifyCurrentSchema(db); err != nil {
@@ -377,6 +391,62 @@ func migrateTaskExternalKeyColumn(db *sql.DB) error {
 	return nil
 }
 
+// migrateTaskParentColumns 为存量库补编排归属列（幂等）：新库由 schema 直接
+// 建出；旧库 ALTER ADD COLUMN，存量任务无编排归属（保持 NULL）。
+func migrateTaskParentColumns(db *sql.DB) error {
+	checks := []struct {
+		name string
+		ddl  string
+	}{
+		{"parent_session_id", "ALTER TABLE tasks ADD COLUMN parent_session_id INTEGER REFERENCES tasks(id)"},
+		{"parent_task_id", "ALTER TABLE tasks ADD COLUMN parent_task_id INTEGER REFERENCES tasks(id)"},
+	}
+	for _, col := range checks {
+		var has int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name=?`, col.name).Scan(&has); err != nil {
+			return fmt.Errorf("检查 tasks.%s 失败: %w", col.name, err)
+		}
+		if has > 0 {
+			continue
+		}
+		if _, err := db.Exec(col.ddl); err != nil {
+			return fmt.Errorf("迁移 tasks.%s 失败: %w", col.name, err)
+		}
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_parent_session ON tasks(parent_session_id)`); err != nil {
+		return fmt.Errorf("创建 tasks.parent_session_id 索引失败: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_parent_task ON tasks(parent_task_id)`); err != nil {
+		return fmt.Errorf("创建 tasks.parent_task_id 索引失败: %w", err)
+	}
+	return nil
+}
+
+// migrateRoleDelegationColumns 为存量库补角色委托列（幂等）：新库由 schema
+// 直接建出；旧库 ALTER ADD COLUMN，存量角色默认不委托。
+func migrateRoleDelegationColumns(db *sql.DB) error {
+	checks := []struct {
+		name string
+		ddl  string
+	}{
+		{"delegation_enabled", "ALTER TABLE roles ADD COLUMN delegation_enabled INTEGER NOT NULL DEFAULT 0"},
+		{"delegation_max_perm", "ALTER TABLE roles ADD COLUMN delegation_max_perm TEXT NOT NULL DEFAULT 'review'"},
+	}
+	for _, col := range checks {
+		var has int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('roles') WHERE name=?`, col.name).Scan(&has); err != nil {
+			return fmt.Errorf("检查 roles.%s 失败: %w", col.name, err)
+		}
+		if has > 0 {
+			continue
+		}
+		if _, err := db.Exec(col.ddl); err != nil {
+			return fmt.Errorf("迁移 roles.%s 失败: %w", col.name, err)
+		}
+	}
+	return nil
+}
+
 func verifyCurrentSchema(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
@@ -385,7 +455,7 @@ func verifyCurrentSchema(db *sql.DB) error {
 	for _, query := range []string{
 		"SELECT revision, runtime_id FROM roles LIMIT 0",
 		"SELECT revision, project_dir, github_repo, github_role_id, github_auto_issues, github_auto_prs, github_auto_security FROM projects LIMIT 0",
-		"SELECT revision, type, cron, enabled, role_id, project_id, terminal_cols, terminal_rows, session_id, workflow_run_id, spec, spec_hash, external_key FROM tasks LIMIT 0",
+		"SELECT revision, type, cron, enabled, role_id, project_id, terminal_cols, terminal_rows, session_id, workflow_run_id, spec, spec_hash, external_key, parent_session_id, parent_task_id FROM tasks LIMIT 0",
 		"SELECT task_id, depends_on, on_failure FROM task_dependencies LIMIT 0",
 		"SELECT role_id FROM templates LIMIT 0",
 		"SELECT seq, event_type, role_id, payload FROM event_log LIMIT 0",
@@ -623,15 +693,20 @@ type scanner interface {
 // Role
 
 const roleCols = `a.id, a.name, a.description, a.runtime_id, a.role_config,
-	a.max_concurrency, a.enabled, a.revision, a.created_at, a.updated_at`
+	a.max_concurrency, a.delegation_enabled, a.delegation_max_perm, a.enabled, a.revision, a.created_at, a.updated_at`
 
 func scanRole(rows scanner) (Role, error) {
 	var a Role
 	var rc string
+	var delegationEnabled int64
 	err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.RuntimeID, &rc,
-		&a.MaxConcurrency, &a.Enabled, &a.Revision, &a.CreatedAt, &a.UpdatedAt)
+		&a.MaxConcurrency, &delegationEnabled, &a.DelegationMaxPerm, &a.Enabled, &a.Revision, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		return a, err
+	}
+	a.DelegationEnabled = delegationEnabled != 0
+	if a.DelegationMaxPerm == "" {
+		a.DelegationMaxPerm = PermReview
 	}
 	if rc != "" {
 		_ = json.Unmarshal([]byte(rc), &a.RoleConfig)
@@ -678,9 +753,9 @@ func (s *Store) CreateRole(a Role) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := s.db.Exec(`INSERT INTO roles (name, description, runtime_id, role_config, max_concurrency, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.Name, a.Description, a.RuntimeID, string(rc), a.MaxConcurrency, a.Enabled, a.CreatedAt, a.UpdatedAt)
+	res, err := s.db.Exec(`INSERT INTO roles (name, description, runtime_id, role_config, max_concurrency, delegation_enabled, delegation_max_perm, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Name, a.Description, a.RuntimeID, string(rc), a.MaxConcurrency, a.DelegationEnabled, a.DelegationMaxPerm, a.Enabled, a.CreatedAt, a.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -734,7 +809,7 @@ func (s *Store) DeleteRole(id int64) error {
 // taskCols 完整列（详情页用：含完整 body，驳回重做会追加修改意见）。
 const taskCols = `t.id, t.type, t.title, t.body, t.status, t.perm, t.run_mode, t.concurrent, t.role_id, COALESCE(a.name, ''),
 t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.sort_order,
+t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.parent_session_id, t.parent_task_id, t.sort_order,
 t.cron, t.enabled, t.last_run_at, t.next_run_at, t.worktree_path, t.session_dir, t.last_message_at, t.message_count, t.suspended_at, t.delivered_at, t.spec, t.violations, t.spec_hash, t.external_key,
 t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows, t.revision`
 
@@ -742,7 +817,7 @@ t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.term
 // 避免大提示词把列表接口载荷撑爆。列序与 taskCols 完全一致（scanTask 共用）。
 const taskColsBrief = `t.id, t.type, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.run_mode, t.concurrent, t.role_id, COALESCE(a.name, ''),
 t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.sort_order,
+t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.parent_session_id, t.parent_task_id, t.sort_order,
 t.cron, t.enabled, t.last_run_at, t.next_run_at, t.worktree_path, t.session_dir, t.last_message_at, t.message_count, t.suspended_at, t.delivered_at, t.spec, t.violations, t.spec_hash, t.external_key,
 t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows, t.revision`
 
@@ -752,11 +827,11 @@ func scanTask(rows scanner) (Task, error) {
 	var roleName, projectName string
 	var concurrent, blockOnFailure int64
 	var started, finished, lastRun, nextRun, suspendedAt, deliveredAt sql.NullString
-	var resumeOf, mergeOf, sessionID, workflowRunID sql.NullInt64
+	var resumeOf, mergeOf, sessionID, workflowRunID, parentSessionID, parentTaskID sql.NullInt64
 	var enabled, messageCount int64
 	err := rows.Scan(&tk.ID, &tk.Type, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &tk.RunMode, &concurrent, &roleID, &roleName,
 		&projectID, &projectName, &tk.ProjectDir, &parentID, &dependsOn, &tk.DependencyMode, &blockOnFailure, &scheduleID, &tk.Error, &exitCode,
-		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &sessionID, &workflowRunID, &tk.SortOrder,
+		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &sessionID, &workflowRunID, &parentSessionID, &parentTaskID, &tk.SortOrder,
 		&tk.Cron, &enabled, &lastRun, &nextRun, &tk.WorktreePath, &tk.SessionDir, &tk.LastMessageAt, &messageCount, &suspendedAt, &deliveredAt, &tk.Spec, &tk.Violations, &tk.SpecHash, &tk.ExternalKey,
 		&tk.CreatedAt, &started, &finished, &tk.UpdatedAt, &tk.TerminalCols, &tk.TerminalRows, &tk.Revision)
 	if err != nil {
@@ -793,6 +868,12 @@ func scanTask(rows scanner) (Task, error) {
 	}
 	if workflowRunID.Valid {
 		tk.WorkflowRunID = &workflowRunID.Int64
+	}
+	if parentSessionID.Valid {
+		tk.ParentSessionID = &parentSessionID.Int64
+	}
+	if parentTaskID.Valid {
+		tk.ParentTaskID = &parentTaskID.Int64
 	}
 	tk.ProjectName = projectName
 	if parentID.Valid {
@@ -1045,12 +1126,12 @@ func prepareTaskForInsert(t *Task) {
 }
 
 func insertTask(execer sqlExecer, t Task) (int64, error) {
-	res, err := execer.Exec(`INSERT INTO tasks (type, title, body, status, perm, run_mode, concurrent, role_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, session_id, workflow_run_id, worktree_branch, base_commit, review_rounds, finished_at, exit_code, sort_order,
+	res, err := execer.Exec(`INSERT INTO tasks (type, title, body, status, perm, run_mode, concurrent, role_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, session_id, workflow_run_id, parent_session_id, parent_task_id, worktree_branch, base_commit, review_rounds, finished_at, exit_code, sort_order,
 		cron, enabled, last_run_at, next_run_at, worktree_path, session_dir, last_message_at, message_count, suspended_at, delivered_at, spec, violations, spec_hash, external_key,
 		created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.Type, t.Title, t.Body, t.Status, t.Perm, t.RunMode, boolInt(t.Concurrent), nullInt64(t.RoleID), nullInt64(t.ProjectID), t.ProjectDir,
-		nullInt64(t.ParentID), nullInt64(t.DependsOn), t.DependencyMode, boolInt(t.BlockOnFailure), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), nullInt64(t.SessionID), nullInt64(t.WorkflowRunID), t.WorktreeBranch, t.BaseCommit,
+		nullInt64(t.ParentID), nullInt64(t.DependsOn), t.DependencyMode, boolInt(t.BlockOnFailure), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), nullInt64(t.SessionID), nullInt64(t.WorkflowRunID), nullInt64(t.ParentSessionID), nullInt64(t.ParentTaskID), t.WorktreeBranch, t.BaseCommit,
 		t.ReviewRounds, nullStrPtr(t.FinishedAt), nullIntPtr(t.ExitCode), t.SortOrder,
 		t.Cron, boolInt(t.Enabled), nullStrPtr(t.LastRunAt), nullStrPtr(t.NextRunAt), t.WorktreePath, t.SessionDir, t.LastMessageAt, t.MessageCount, nullStrPtr(t.SuspendedAt), nullStrPtr(t.DeliveredAt), t.Spec, t.Violations, t.SpecHash, t.ExternalKey,
 		t.CreatedAt, t.UpdatedAt)
@@ -2132,7 +2213,7 @@ func (s *Store) ListTaskDeletionOrder(rootID int64) ([]Task, error) {
 }
 
 func (s *Store) listTaskDeletionChildren(parentID int64) ([]Task, error) {
-	rows, err := s.db.Query("SELECT "+taskCols+taskFrom+" WHERE t.parent_id=? OR t.merge_of=? ORDER BY t.created_at, t.id", parentID, parentID)
+	rows, err := s.db.Query("SELECT "+taskCols+taskFrom+" WHERE t.parent_id=? OR t.merge_of=? OR t.parent_session_id=? OR t.parent_task_id=? ORDER BY t.created_at, t.id", parentID, parentID, parentID, parentID)
 	if err != nil {
 		return nil, err
 	}
@@ -2149,7 +2230,7 @@ func (s *Store) listTaskDeletionChildren(parentID int64) ([]Task, error) {
 }
 
 func deleteTaskTree(tx *sql.Tx, id int64) error {
-	rows, err := tx.Query("SELECT id FROM tasks WHERE parent_id=? OR merge_of=? ORDER BY id", id, id)
+	rows, err := tx.Query("SELECT id FROM tasks WHERE parent_id=? OR merge_of=? OR parent_session_id=? OR parent_task_id=? ORDER BY id", id, id, id, id)
 	if err != nil {
 		return err
 	}
@@ -2189,6 +2270,44 @@ func (s *Store) HasTask(id int64) (bool, error) {
 // ListChildren 返回某任务的全部子任务（旧→新）。
 func (s *Store) ListChildren(parentID int64) ([]Task, error) {
 	rows, err := s.db.Query("SELECT "+taskCols+taskFrom+" WHERE t.parent_id=? ORDER BY t.created_at, t.id", parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out = make([]Task, 0)
+	for rows.Next() {
+		tk, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, tk)
+	}
+	return out, rows.Err()
+}
+
+// ListChildrenBySession 返回某编排者会话名下的全部派生子任务（扁平，旧→新）。
+// 会话树按 parent_session_id 聚合：v1 只有编排者会话调用平台工具派生，
+// 因此每个子任务都以会话为根；列被设计为支持子任务再派活的链（parent_task_id）。
+func (s *Store) ListChildrenBySession(sessionID int64) ([]Task, error) {
+	rows, err := s.db.Query("SELECT "+taskCols+taskFrom+" WHERE t.parent_session_id=? ORDER BY t.created_at, t.id", sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out = make([]Task, 0)
+	for rows.Next() {
+		tk, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, tk)
+	}
+	return out, rows.Err()
+}
+
+// ListChildrenByParentTask 返回某任务的直接派生子任务（parent_task_id 指向它，旧→新）。
+func (s *Store) ListChildrenByParentTask(parentTaskID int64) ([]Task, error) {
+	rows, err := s.db.Query("SELECT "+taskCols+taskFrom+" WHERE t.parent_task_id=? ORDER BY t.created_at, t.id", parentTaskID)
 	if err != nil {
 		return nil, err
 	}

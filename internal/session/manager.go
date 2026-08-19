@@ -16,6 +16,7 @@ import (
 
 	"paihuo/internal/events"
 	"paihuo/internal/exec"
+	"paihuo/internal/orchestrator"
 	"paihuo/internal/store"
 	"paihuo/internal/workspace"
 )
@@ -37,6 +38,9 @@ type Manager struct {
 
 	mu    sync.Mutex
 	procs map[int64]sessionChannel // pi/omp RPC 进程 / dsh HTTP 会话通道
+	// 编排委托：给声明了 delegation 的会话进程注入平台工具面环境（地址 + 令牌）。
+	mcpBaseURL string
+	mcpSecret  string
 	// stopping 置位后禁止再启动新进程（服务关闭）
 	stopping bool
 	stopIdle chan struct{} // 空闲挂起巡检停止信号（Stop 时关闭）
@@ -61,6 +65,29 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sessionsRo
 		dshHosts:        newDSHHostPool(runtimeSessions),
 		procs:           make(map[int64]sessionChannel),
 		stopIdle:        make(chan struct{}),
+	}
+}
+
+// SetDelegationEnv 配置平台工具面端点地址。声明了 delegation 的会话进程
+// 会收到 PAIHUO_MCP_* 环境变量；签名密钥从 settings.mcp_auth_secret 解析
+// （与 server 同一来源，保证签发可被校验）。
+func (m *Manager) SetDelegationEnv(mcpBaseURL string) {
+	m.mcpBaseURL = mcpBaseURL
+	if v, err := m.st.GetSetting("mcp_auth_secret"); err == nil && v != "" {
+		m.mcpSecret = v
+	}
+}
+
+// delegationEnv 为委托会话构造注入环境：URL + 会话令牌 + 会话 id。
+// 令牌用 HMAC 绑定会话；进程只在本机回连平台 HTTP 端点。
+func (m *Manager) delegationEnv(ss *store.Task, agent store.Role) []string {
+	if !agent.DelegationEnabled || m.mcpBaseURL == "" {
+		return nil
+	}
+	return []string{
+		"PAIHUO_MCP_URL=" + m.mcpBaseURL + "/api/v1/mcp",
+		"PAIHUO_MCP_TOKEN=" + orchestrator.SignToken(m.mcpSecret, ss.ID),
+		"PAIHUO_SESSION_ID=" + strconv.FormatInt(ss.ID, 10),
 	}
 }
 
@@ -330,6 +357,8 @@ func (m *Manager) spawn(ss *store.Task, agent store.Role, cwd string) (*rpcProc,
 	if err != nil {
 		return nil, err
 	}
+	// 委托会话注入平台工具面环境（编排者 agent 通过扩展/CLI 回连平台）。
+	spec.Env = append(spec.Env, m.delegationEnv(ss, agent)...)
 	proc, err := newRPCProc(ss.ID, spec.Bin, spec.Args, spec.Env, cwd, ss.SessionDir, m.stderrPathOf(ss.ID))
 	if err != nil {
 		return nil, err

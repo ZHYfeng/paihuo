@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CirclePlus, Layers, Copy, Pause, Send, Square, Trash2, Truck } from "lucide-react";
-import { ChangeEvent, FormEvent, KeyboardEvent, SyntheticEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, KeyboardEvent, ReactNode, SyntheticEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Markdown } from "../components/markdown";
 import { PageHeader } from "../components/shell";
 import { Badge, Button, Card, Dialog, Empty, Field, inputClass, Spinner, useToast } from "../components/ui";
 import { api, keys } from "../lib/api";
-import type { Project, Role, Session, TaskTemplate } from "../types";
+import { PERM_LABEL } from "../lib/taskmeta";
+import type { Project, Role, Session, Task, TaskTemplate } from "../types";
+import { TaskStatus } from "./tasks";
 
 const sessionTone: Record<string, "neutral" | "good" | "warn" | "info"> = { created: "neutral", active: "good", suspended: "warn", delivered: "info", deleted: "neutral" };
 const sessionLabel: Record<string, string> = { created: "未启动", active: "活跃", suspended: "已挂起", delivered: "已交付", deleted: "已删除" };
@@ -56,7 +58,7 @@ export function SessionsPage() {
       <div className="flex flex-wrap gap-1 rounded-xl border border-line bg-elevated p-0.5">{FILTERS.map(([value, label]) => <button key={value} className={`rounded-[10px] px-2.5 py-1 text-[13px] ${filter === value ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setFilter(value)}>{label}</button>)}</div>
       <span className="text-sm text-muted sm:ml-auto">{filtered.length} 个会话</span>
     </Card>
-    {sessions.isLoading ? <Spinner /> : filtered.length ? <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{filtered.map(item => <Link key={item.id} to={`/sessions/${item.id}`} className="min-w-0 rounded-xl border border-line bg-surface p-3.5 shadow-card transition hover:border-brand/35 hover:bg-hover focus-visible:ring-2 focus-visible:ring-focus"><div className="flex min-w-0 items-center gap-2"><span className="text-xs text-faint">#{item.id}</span><h2 className="min-w-0 truncate font-semibold">{item.title}</h2><Badge tone={sessionTone[item.status] || "neutral"}>{sessionLabel[item.status] || item.status}</Badge></div><div className="mt-2 flex flex-wrap gap-2 text-sm text-muted"><span className="min-w-0">{item.role_name}</span>{item.project_name && <span className="min-w-0">· {item.project_name}</span>}<span className="min-w-0">· {item.message_count} 条消息</span><span className="ml-auto">{formatTime(item.updated_at)}</span></div></Link>)}</div> : <Empty title={filter === "all" ? "还没有会话" : "没有匹配的会话"} copy="会话保存完整的结构化对话，可在后续交付为任务。" />}
+    {sessions.isLoading ? <Spinner /> : filtered.length ? <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{filtered.map(item => <Link key={item.id} to={`/sessions/${item.id}`} className="min-w-0 rounded-xl border border-line bg-surface p-3.5 shadow-card transition hover:border-brand/35 hover:bg-hover focus-visible:ring-2 focus-visible:ring-focus"><div className="flex min-w-0 items-center gap-2"><span className="text-xs text-faint">#{item.id}</span><h2 className="min-w-0 truncate font-semibold">{item.title}</h2>{roles.data?.find(r => r.id === item.role_id)?.delegation_enabled ? <Badge tone="good">编排者</Badge> : null}<Badge tone={sessionTone[item.status] || "neutral"}>{sessionLabel[item.status] || item.status}</Badge></div><div className="mt-2 flex flex-wrap gap-2 text-sm text-muted"><span className="min-w-0">{item.role_name}</span>{item.project_name && <span className="min-w-0">· {item.project_name}</span>}<span className="min-w-0">· {item.message_count} 条消息</span><span className="ml-auto">{formatTime(item.updated_at)}</span></div></Link>)}</div> : <Empty title={filter === "all" ? "还没有会话" : "没有匹配的会话"} copy="会话保存完整的结构化对话，可在后续交付为任务。" />}
     <Dialog open={open} onOpenChange={setOpen} title="新建会话"><form className="grid gap-4" onSubmit={(e: FormEvent) => { e.preventDefault(); create.mutate(); }}><Field label="角色"><select className={inputClass} required value={roleID} onChange={e => setRoleID(e.target.value)}><option value="">请选择</option>{eligible.map(role => <option key={role.id} value={role.id}>{role.name} · {role.runtime_id}</option>)}</select></Field><Field label="项目"><select className={inputClass} value={projectID} onChange={e => setProjectID(e.target.value)}><option value="">不绑定项目</option>{projects.data?.filter(p => p.status === "active").map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field><Field label="权限"><select className={inputClass} value={perm} onChange={e => setPerm(e.target.value)}><option value="full">自动整合（免审批）</option><option value="review">人工审批</option></select><span className="text-xs text-faint">dsh 会话按此路由到 full / review 宿主；pi/omp 不使用</span></Field><Field label="初始指令"><textarea className={inputClass + " min-h-20 py-3"} placeholder="可选：创建后自动启动并发起首条消息…" value={initialPrompt} onChange={e => setInitialPrompt(e.target.value)} /></Field><div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setOpen(false)}>取消</Button><Button type="submit" variant="primary" disabled={create.isPending}>创建并启动</Button></div></form></Dialog>
   </>;
 }
@@ -327,6 +329,7 @@ export function SessionDetailPage() {
   const transcript = useQuery({ queryKey: ["sessions", id, "transcript"], queryFn: () => api<{ entries: TranscriptEntry[]; total: number }>(`/sessions/${id}/transcript?limit=200`), enabled: !!session.data, refetchInterval: session.data?.status === "active" ? 3_000 : false });
   const canInput = !!(session.data && !["delivered", "deleted"].includes(session.data.status));
   const templates = useQuery({ queryKey: ["templates"], queryFn: () => api<TaskTemplate[]>("/templates"), enabled: canInput });
+  const children = useQuery({ queryKey: ["sessions", id, "tasks"], queryFn: () => api<Task[]>("/sessions/" + id + "/tasks"), refetchInterval: 10_000 });
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -631,6 +634,7 @@ export function SessionDetailPage() {
         </> : <Empty title="还没有消息" copy="会话启动后，消息会实时显示在这里。" />}
       </div>
     </Card>
+    {(children.data?.length || 0) > 0 && <Card className="mt-3"><ChildTaskTree tasks={children.data || []} rootID={id} /></Card>}
     {canInput && <form className="sticky bottom-4 mt-3 flex flex-col gap-3 rounded-xl border border-line bg-surface/95 p-3 shadow-pop backdrop-blur sm:flex-row" onSubmit={e => { e.preventDefault(); send(); }}>
       <div className="grid min-w-0 flex-1 gap-2">
         <div className="relative">
@@ -675,4 +679,41 @@ function formatTime(value?: string | null) {
   if (!value) return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+/** 编排者树状视图：会话及其派生子任务按父链聚合，一张图看整棵任务树与状态。 */
+function ChildTaskTree({ tasks, rootID }: { tasks: Task[]; rootID: number }) {
+  const byParent = useMemo(() => {
+    const map = new Map<number, Task[]>();
+    for (const t of tasks) map.set(t.parent_task_id ?? rootID, [...(map.get(t.parent_task_id ?? rootID) || []), t]);
+    const sortByCreated = (a: Task, b: Task) => a.created_at.localeCompare(b.created_at) || a.id - b.id;
+    for (const key of map.keys()) map.set(key, map.get(key)!.sort(sortByCreated));
+    return map;
+  }, [tasks, rootID]);
+  const total = tasks.length;
+  const done = tasks.filter(t => t.status === "succeeded" || t.status === "failed" || t.status === "cancelled").length;
+  const renderLevel = (parent: number, depth: number): ReactNode[] => {
+    const kids = byParent.get(parent) || [];
+    return kids.map(t => (
+      <div key={t.id}>
+        <Link to={`/tasks/${t.id}`} className="group flex items-center gap-2 rounded-xl px-2 py-1.5 text-sm transition hover:bg-hover" style={t.parent_task_id && t.parent_task_id !== rootID ? { marginLeft: `${Math.min(10, depth * 3)}rem` } : undefined}>
+          <span className="w-1 self-stretch rounded-full bg-line group-hover:bg-brand/50" />
+          <span className={`min-w-0 flex-1 truncate`} title={t.title}><span className="text-faint">{t.id} · </span><span className="text-ink group-hover:text-brand-soft">{t.title}</span></span>
+          <TaskStatus status={t.status} />
+          {t.status === "awaiting_review" && <Badge tone="warn">待审批</Badge>}
+          <span className="hidden shrink-0 text-xs text-faint md:inline">{t.role_name || "—"}</span>
+          <span className="hidden shrink-0 text-xs text-faint md:inline">{PERM_LABEL[t.perm as "full" | "review"] || t.perm}</span>
+          {t.error && <span className="shrink-0 text-xs text-danger" title={t.error}>✕</span>}
+        </Link>
+        {renderLevel(t.id, depth + 1)}
+      </div>
+    ));
+  };
+  return <>
+    <div className="mb-3 flex items-center justify-between">
+      <h2 className="flex items-center gap-2 text-sm font-semibold">派生子任务（编排者视图）<span className="rounded-full bg-elevated px-2 py-0.5 text-xs text-muted">{total}</span></h2>
+      <span className="text-xs text-muted">已结束 {done}/{total} · 含合并子任务；点击进入任务详情</span>
+    </div>
+    {renderLevel(rootID, 0)}
+  </>;
 }

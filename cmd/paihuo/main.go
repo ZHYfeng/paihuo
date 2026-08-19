@@ -76,6 +76,9 @@ func main() {
 
 	srv := server.New(st, hub, ex, sc, sess, wf, token, filepath.Join(filepath.Dir(db), "skills"))
 	srv.SetSecureCookies(secureCookie)
+	// 编排委托工具面：服务端先写入 settings.mcp_auth_secret，再让会话管理器
+	// 从同一来源解析——签名密钥一致，签发令牌才可被端点校验。
+	sess.SetDelegationEnv(mcpBaseURLOf(addr))
 	srv.Start(ctx)
 	// 不设置 WriteTimeout：SSE 是长连接，写超时会中断正常的实时日志流。
 	httpSrv := &http.Server{
@@ -114,6 +117,22 @@ func main() {
 	defer cancel()
 	_ = httpSrv.Shutdown(shCtx)
 	log.Println("已关闭")
+}
+
+// mcpBaseURLOf 把监听地址规整为会话进程回连平台的内网 URL：空主机名回退
+// 127.0.0.1（编排会话永远与平台同主机）。地址为 IPv6 时用方括号包裹。
+func mcpBaseURLOf(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		host, port = addr, "8080"
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		host = "[" + host + "]"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }
 
 // isLoopbackAddr reports whether an HTTP listen address only accepts local

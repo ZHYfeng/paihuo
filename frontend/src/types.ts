@@ -19,6 +19,8 @@ export interface Role {
   runtime_id: string;
   role_config: RoleConfig;
   max_concurrency: number;
+  delegation_enabled: boolean;
+  delegation_max_perm: "full" | "review";
   enabled: boolean;
   revision: number;
   created_at: string;
@@ -43,6 +45,8 @@ export interface Task {
   project_name?: string;
   project_dir?: string;
   parent_id?: ID | null;
+  parent_session_id?: ID | null;
+  parent_task_id?: ID | null;
   depends_on?: ID | null;
   dependency_mode: "none" | "weak" | "strong";
   block_on_failure: boolean;
@@ -274,6 +278,8 @@ export interface RoleStudioDraft {
   description: string;
   runtime_id: string;
   max_concurrency: number;
+  delegation_enabled: boolean;
+  delegation_max_perm: string;
   role_config: RoleConfig;
 }
 

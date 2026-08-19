@@ -1,0 +1,11 @@
+{
+  "name": "paihuo-orchestrator",
+  "version": "1.0.0",
+  "description": "PaiHuo orchestrator tool adapter: spawn/await/list/result/fetch_artifact for delegation-enabled sessions",
+  "type": "module",
+  "main": "index.ts",
+  "dependencies": {
+    "typebox": "*",
+    "@earendil-works/pi-ai": "*"
+  }
+}

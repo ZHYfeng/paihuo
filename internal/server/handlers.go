@@ -806,7 +806,10 @@ type roleIn struct {
 	RuntimeID      string           `json:"runtime_id"`
 	RoleConfig     store.RoleConfig `json:"role_config"`
 	MaxConcurrency int              `json:"max_concurrency"`
-	Enabled        *bool            `json:"enabled"`
+	// 编排委托：角色可派生子任务（子任务复用其他角色执行）。
+	DelegationEnabled *bool  `json:"delegation_enabled"`
+	DelegationMaxPerm string `json:"delegation_max_perm"` // full/review（空=review）
+	Enabled           *bool  `json:"enabled"`
 }
 
 func (s *Server) createRole(w http.ResponseWriter, r *http.Request) {
@@ -822,11 +825,15 @@ func (s *Server) createRole(w http.ResponseWriter, r *http.Request) {
 	if in.Enabled != nil {
 		enabled = *in.Enabled
 	}
+	delegationPerm := normalizeDelegationMaxPerm(in.DelegationMaxPerm)
+	delegationEnabled := in.DelegationEnabled != nil && *in.DelegationEnabled
 	id, err := s.st.CreateRole(store.Role{
 		Name: in.Name, Description: in.Description, RuntimeID: in.RuntimeID,
-		RoleConfig:     in.RoleConfig,
-		MaxConcurrency: in.MaxConcurrency,
-		Enabled:        enabled,
+		RoleConfig:        in.RoleConfig,
+		MaxConcurrency:    in.MaxConcurrency,
+		DelegationEnabled: delegationEnabled,
+		DelegationMaxPerm: delegationPerm,
+		Enabled:           enabled,
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -838,6 +845,14 @@ func (s *Server) createRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, a)
+}
+
+// normalizeDelegationMaxPerm 把委托上限收敛为合法值：full/review/空 → review。
+func normalizeDelegationMaxPerm(perm string) string {
+	if perm == store.PermFull {
+		return store.PermFull
+	}
+	return store.PermReview
 }
 
 func (s *Server) validateRole(in *roleIn) error {
@@ -869,7 +884,7 @@ func (s *Server) patchRole(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "name", "description", "runtime_id", "role_config", "max_concurrency", "enabled")
+	set, ok := patchMap(w, r, "name", "description", "runtime_id", "role_config", "max_concurrency", "enabled", "delegation_enabled", "delegation_max_perm")
 	if !ok {
 		return
 	}
@@ -894,6 +909,22 @@ func (s *Server) patchRole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		set["max_concurrency"] = n
+	}
+	if v, ok := set["delegation_max_perm"]; ok {
+		p, _ := v.(string)
+		if p != "" && p != store.PermFull && p != store.PermReview {
+			writeErr(w, http.StatusBadRequest, "委托最大权限只能是 full 或 review")
+			return
+		}
+		set["delegation_max_perm"] = normalizeDelegationMaxPerm(p)
+	}
+	if v, ok := set["delegation_enabled"]; ok {
+		b, ok := v.(bool)
+		if !ok {
+			writeErr(w, http.StatusBadRequest, "delegation_enabled 必须是布尔值")
+			return
+		}
+		set["delegation_enabled"] = b
 	}
 	if err := s.st.UpdateAtRevision("role", id, revision, set); err != nil {
 		if errors.Is(err, store.ErrRevisionConflict) {
