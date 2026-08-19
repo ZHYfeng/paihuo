@@ -19,6 +19,7 @@ type CreateTaskRequest struct {
 	Body           string `json:"body"`
 	RoleID         *int64 `json:"role_id"`
 	ProjectID      *int64 `json:"project_id"`
+	ExternalKey    string `json:"external_key,omitempty"`
 	Permission     string `json:"perm"`
 	RunMode        string `json:"run_mode"`
 	Concurrent     bool   `json:"concurrent"`
@@ -54,7 +55,7 @@ func (s *TaskLifecycle) Create(request CreateTaskRequest) (*store.Task, error) {
 		return nil, fmt.Errorf("非法执行方式: %s", request.RunMode)
 	}
 	task := store.Task{Title: request.Title, Body: request.Body, Status: store.StatusQueued, Perm: request.Permission, RunMode: request.RunMode,
-		Concurrent: request.Concurrent, RoleID: request.RoleID, ProjectID: request.ProjectID, ParentID: request.ParentID, ResumeOf: request.ResumeOf,
+		Concurrent: request.Concurrent, RoleID: request.RoleID, ProjectID: request.ProjectID, ParentID: request.ParentID, ResumeOf: request.ResumeOf, ExternalKey: request.ExternalKey,
 		DependencyMode: request.DependencyMode, DependsOn: request.DependsOn, BlockOnFailure: request.BlockOnFailure,
 		Cron: request.Cron, Enabled: request.Enabled}
 	if request.ProjectID != nil {

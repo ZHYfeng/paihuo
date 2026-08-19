@@ -54,6 +54,14 @@ paths:
   /projects/{id}:
     patch: {tags: [Resources], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Project updated}, '409': {$ref: '#/components/responses/Error'}}}
     delete: {tags: [Resources], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'204': {description: Project deleted}}}
+  /projects/{id}/github/sync:
+    post:
+      tags: [Resources]
+      summary: Manually sync GitHub issues, PRs and security alerts for a project
+      parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: GitHub sync finished}
+        '500': {$ref: '#/components/responses/Error'}
   /roles:
     get: {tags: [Resources], responses: {'200': {description: Roles}}}
     post: {tags: [Resources], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Role created}}}

@@ -27,6 +27,7 @@ import (
 	"paihuo/internal/artifact"
 	"paihuo/internal/events"
 	"paihuo/internal/exec"
+	"paihuo/internal/github"
 	"paihuo/internal/sched"
 	"paihuo/internal/session"
 	"paihuo/internal/store"
@@ -43,6 +44,7 @@ type Server struct {
 	tasks        *application.TaskLifecycle
 	workspaces   *application.WorkspaceService
 	artifacts    artifact.Store
+	gh           *github.Client
 	token        string
 	skillsDir    string // 技能库工作目录（<db目录>/skills，导入或扫描发现的技能复制到这里）
 	sessionsRoot string // 任务 worktree 根目录（<db目录>/sessions）
@@ -72,6 +74,7 @@ func (s *Server) Start(ctx context.Context) {
 	log.Printf("会话空闲自动挂起阈值: %v（发消息自动恢复）", idle)
 	s.sess.StartIdleMonitor(idle)
 	s.workflows.StartMonitor(ctx)
+	go s.startGitHubSync(ctx)
 	go func() {
 		<-ctx.Done()
 		s.sess.Stop()
@@ -147,6 +150,7 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.
 	s := &Server{
 		st:           st,
 		hub:          hub,
+		gh:           github.NewClient(),
 		ex:           ex,
 		sess:         sess,
 		sched:        sc,
@@ -255,6 +259,7 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.
 	m.HandleFunc("PUT /api/v1/projects/{id}/tasks/order", s.reorderProjectTasks)
 	m.HandleFunc("PATCH /api/v1/projects/{id}/tasks/order", s.reorderProjectTasks)
 	m.HandleFunc("DELETE /api/v1/projects/{id}", s.deleteProject)
+	m.HandleFunc("POST /api/v1/projects/{id}/github/sync", s.syncGitHubProjectHandler)
 
 	m.HandleFunc("GET /api/v1/stats/overview", s.overviewStats)
 	m.HandleFunc("GET /api/v1/stats/roles/{id}", s.roleStats)

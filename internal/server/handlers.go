@@ -1162,7 +1162,7 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "name", "description", "status", "project_dir")
+	set, ok := patchMap(w, r, "name", "description", "status", "project_dir", "github_repo", "github_role_id", "github_auto_issues", "github_auto_prs", "github_auto_security")
 	if !ok {
 		return
 	}
@@ -1177,6 +1177,24 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 		if sv != "active" && sv != "archived" {
 			writeErr(w, http.StatusBadRequest, "非法项目状态: "+sv)
 			return
+		}
+	}
+	if v, ok := set["github_role_id"]; ok {
+		if v == nil {
+			set["github_role_id"] = nil
+		} else if idf, ok := v.(float64); ok && idf > 0 {
+			set["github_role_id"] = int64(idf)
+		} else {
+			writeErr(w, http.StatusBadRequest, "github_role_id 必须是正整数或 null")
+			return
+		}
+	}
+	for _, key := range []string{"github_auto_issues", "github_auto_prs", "github_auto_security"} {
+		if v, ok := set[key]; ok {
+			if _, ok := v.(bool); !ok {
+				writeErr(w, http.StatusBadRequest, key+" 必须是布尔值")
+				return
+			}
 		}
 	}
 	if err := s.st.UpdateAtRevision("project", id, revision, set); err != nil {

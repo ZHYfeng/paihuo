@@ -35,6 +35,11 @@ CREATE TABLE IF NOT EXISTS projects (
   description TEXT NOT NULL DEFAULT '',
   status      TEXT NOT NULL DEFAULT 'active', -- active | archived
   project_dir TEXT NOT NULL DEFAULT '',
+  github_repo TEXT NOT NULL DEFAULT '',
+  github_role_id INTEGER REFERENCES roles(id),
+  github_auto_issues INTEGER NOT NULL DEFAULT 0,
+  github_auto_prs INTEGER NOT NULL DEFAULT 0,
+  github_auto_security INTEGER NOT NULL DEFAULT 0,
   revision    INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL
@@ -87,6 +92,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   spec            TEXT NOT NULL DEFAULT '',
   violations      TEXT NOT NULL DEFAULT '[]',
   spec_hash       TEXT NOT NULL DEFAULT '',
+  -- 外部系统去重键（GitHub 集成等）
+  external_key    TEXT NOT NULL DEFAULT '',
   revision      INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL,
   started_at  TEXT,
@@ -101,6 +108,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_depends_on ON tasks(depends_on);
 CREATE INDEX IF NOT EXISTS idx_tasks_workflow_run ON tasks(workflow_run_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_merge_of_unique ON tasks(merge_of) WHERE merge_of IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_external_key_unique ON tasks(external_key) WHERE external_key <> '';
 
 CREATE TABLE IF NOT EXISTS task_dependencies (
   task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -237,6 +245,14 @@ func Open(path string) (*Store, error) {
 			db.Close()
 			return nil, err
 		}
+		if err := migrateProjectGitHubColumns(db); err != nil {
+			db.Close()
+			return nil, err
+		}
+		if err := migrateTaskExternalKeyColumn(db); err != nil {
+			db.Close()
+			return nil, err
+		}
 		// Unsupported databases are inspected before any schema statement runs.
 		// Rejection must not leave current-version tables or indexes behind.
 		if err := verifyCurrentSchema(db); err != nil {
@@ -318,6 +334,49 @@ func migrateSkillsCategoryColumn(db *sql.DB) error {
 	return nil
 }
 
+func migrateProjectGitHubColumns(db *sql.DB) error {
+	checks := []struct {
+		name string
+		ddl  string
+	}{
+		{"github_repo", "ALTER TABLE projects ADD COLUMN github_repo TEXT NOT NULL DEFAULT ''"},
+		{"github_role_id", "ALTER TABLE projects ADD COLUMN github_role_id INTEGER REFERENCES roles(id)"},
+		{"github_auto_issues", "ALTER TABLE projects ADD COLUMN github_auto_issues INTEGER NOT NULL DEFAULT 0"},
+		{"github_auto_prs", "ALTER TABLE projects ADD COLUMN github_auto_prs INTEGER NOT NULL DEFAULT 0"},
+		{"github_auto_security", "ALTER TABLE projects ADD COLUMN github_auto_security INTEGER NOT NULL DEFAULT 0"},
+	}
+	for _, col := range checks {
+		var has int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('projects') WHERE name=?`, col.name).Scan(&has); err != nil {
+			return fmt.Errorf("检查 projects.%s 失败: %w", col.name, err)
+		}
+		if has > 0 {
+			continue
+		}
+		if _, err := db.Exec(col.ddl); err != nil {
+			return fmt.Errorf("迁移 projects.%s 失败: %w", col.name, err)
+		}
+	}
+	return nil
+}
+
+func migrateTaskExternalKeyColumn(db *sql.DB) error {
+	var has int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name='external_key'`).Scan(&has); err != nil {
+		return fmt.Errorf("检查 tasks.external_key 失败: %w", err)
+	}
+	if has > 0 {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN external_key TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("迁移 tasks.external_key 失败: %w", err)
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_external_key_unique ON tasks(external_key) WHERE external_key <> ''`); err != nil {
+		return fmt.Errorf("创建 tasks.external_key 唯一索引失败: %w", err)
+	}
+	return nil
+}
+
 func verifyCurrentSchema(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
@@ -325,8 +384,8 @@ func verifyCurrentSchema(db *sql.DB) error {
 	}
 	for _, query := range []string{
 		"SELECT revision, runtime_id FROM roles LIMIT 0",
-		"SELECT revision, project_dir FROM projects LIMIT 0",
-		"SELECT revision, type, cron, enabled, role_id, project_id, terminal_cols, terminal_rows, session_id, workflow_run_id, spec, spec_hash FROM tasks LIMIT 0",
+		"SELECT revision, project_dir, github_repo, github_role_id, github_auto_issues, github_auto_prs, github_auto_security FROM projects LIMIT 0",
+		"SELECT revision, type, cron, enabled, role_id, project_id, terminal_cols, terminal_rows, session_id, workflow_run_id, spec, spec_hash, external_key FROM tasks LIMIT 0",
 		"SELECT task_id, depends_on, on_failure FROM task_dependencies LIMIT 0",
 		"SELECT role_id FROM templates LIMIT 0",
 		"SELECT seq, event_type, role_id, payload FROM event_log LIMIT 0",
@@ -674,18 +733,18 @@ func (s *Store) DeleteRole(id int64) error {
 
 // taskCols 完整列（详情页用：含完整 body，驳回重做会追加修改意见）。
 const taskCols = `t.id, t.type, t.title, t.body, t.status, t.perm, t.run_mode, t.concurrent, t.role_id, COALESCE(a.name, ''),
-	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.sort_order,
-	t.cron, t.enabled, t.last_run_at, t.next_run_at, t.worktree_path, t.session_dir, t.last_message_at, t.message_count, t.suspended_at, t.delivered_at, t.spec, t.violations, t.spec_hash,
-	t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows, t.revision`
+t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
+t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.sort_order,
+t.cron, t.enabled, t.last_run_at, t.next_run_at, t.worktree_path, t.session_dir, t.last_message_at, t.message_count, t.suspended_at, t.delivered_at, t.spec, t.violations, t.spec_hash, t.external_key,
+t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows, t.revision`
 
 // taskColsBrief 列表列（看板/历史/项目页用）：body 截断到 400 字符，
 // 避免大提示词把列表接口载荷撑爆。列序与 taskCols 完全一致（scanTask 共用）。
 const taskColsBrief = `t.id, t.type, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.run_mode, t.concurrent, t.role_id, COALESCE(a.name, ''),
-	t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-	t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.sort_order,
-	t.cron, t.enabled, t.last_run_at, t.next_run_at, t.worktree_path, t.session_dir, t.last_message_at, t.message_count, t.suspended_at, t.delivered_at, t.spec, t.violations, t.spec_hash,
-	t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows, t.revision`
+t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
+t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.sort_order,
+t.cron, t.enabled, t.last_run_at, t.next_run_at, t.worktree_path, t.session_dir, t.last_message_at, t.message_count, t.suspended_at, t.delivered_at, t.spec, t.violations, t.spec_hash, t.external_key,
+t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows, t.revision`
 
 func scanTask(rows scanner) (Task, error) {
 	var tk Task
@@ -698,7 +757,7 @@ func scanTask(rows scanner) (Task, error) {
 	err := rows.Scan(&tk.ID, &tk.Type, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &tk.RunMode, &concurrent, &roleID, &roleName,
 		&projectID, &projectName, &tk.ProjectDir, &parentID, &dependsOn, &tk.DependencyMode, &blockOnFailure, &scheduleID, &tk.Error, &exitCode,
 		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &sessionID, &workflowRunID, &tk.SortOrder,
-		&tk.Cron, &enabled, &lastRun, &nextRun, &tk.WorktreePath, &tk.SessionDir, &tk.LastMessageAt, &messageCount, &suspendedAt, &deliveredAt, &tk.Spec, &tk.Violations, &tk.SpecHash,
+		&tk.Cron, &enabled, &lastRun, &nextRun, &tk.WorktreePath, &tk.SessionDir, &tk.LastMessageAt, &messageCount, &suspendedAt, &deliveredAt, &tk.Spec, &tk.Violations, &tk.SpecHash, &tk.ExternalKey,
 		&tk.CreatedAt, &started, &finished, &tk.UpdatedAt, &tk.TerminalCols, &tk.TerminalRows, &tk.Revision)
 	if err != nil {
 		return tk, err
@@ -927,6 +986,16 @@ func (s *Store) GetTask(id int64) (*Task, error) {
 	return &tk, nil
 }
 
+// TaskExistsByExternalKey 判断是否已为某个外部对象（GitHub issue/PR/告警）创建过任务。
+func (s *Store) TaskExistsByExternalKey(key string) (bool, error) {
+	if key == "" {
+		return false, nil
+	}
+	var exists int
+	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM tasks WHERE external_key=?)`, key).Scan(&exists)
+	return exists != 0, err
+}
+
 // boolInt 把任务并发开关收敛为 SQLite 可存整数。
 func boolInt(b bool) int {
 	if b {
@@ -977,13 +1046,13 @@ func prepareTaskForInsert(t *Task) {
 
 func insertTask(execer sqlExecer, t Task) (int64, error) {
 	res, err := execer.Exec(`INSERT INTO tasks (type, title, body, status, perm, run_mode, concurrent, role_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, session_id, workflow_run_id, worktree_branch, base_commit, review_rounds, finished_at, exit_code, sort_order,
-		cron, enabled, last_run_at, next_run_at, worktree_path, session_dir, last_message_at, message_count, suspended_at, delivered_at, spec, violations, spec_hash,
+		cron, enabled, last_run_at, next_run_at, worktree_path, session_dir, last_message_at, message_count, suspended_at, delivered_at, spec, violations, spec_hash, external_key,
 		created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.Type, t.Title, t.Body, t.Status, t.Perm, t.RunMode, boolInt(t.Concurrent), nullInt64(t.RoleID), nullInt64(t.ProjectID), t.ProjectDir,
 		nullInt64(t.ParentID), nullInt64(t.DependsOn), t.DependencyMode, boolInt(t.BlockOnFailure), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), nullInt64(t.SessionID), nullInt64(t.WorkflowRunID), t.WorktreeBranch, t.BaseCommit,
 		t.ReviewRounds, nullStrPtr(t.FinishedAt), nullIntPtr(t.ExitCode), t.SortOrder,
-		t.Cron, boolInt(t.Enabled), nullStrPtr(t.LastRunAt), nullStrPtr(t.NextRunAt), t.WorktreePath, t.SessionDir, t.LastMessageAt, t.MessageCount, nullStrPtr(t.SuspendedAt), nullStrPtr(t.DeliveredAt), t.Spec, t.Violations, t.SpecHash,
+		t.Cron, boolInt(t.Enabled), nullStrPtr(t.LastRunAt), nullStrPtr(t.NextRunAt), t.WorktreePath, t.SessionDir, t.LastMessageAt, t.MessageCount, nullStrPtr(t.SuspendedAt), nullStrPtr(t.DeliveredAt), t.Spec, t.Violations, t.SpecHash, t.ExternalKey,
 		t.CreatedAt, t.UpdatedAt)
 	if err != nil {
 		return 0, err
@@ -2424,11 +2493,19 @@ func (s *Store) DeleteTemplate(id int64) error {
 // ---------------------------------------------------------------------------
 // 项目（projects）
 
-const projectCols = "id, name, description, status, project_dir, revision, created_at, updated_at"
+const projectCols = "id, name, description, status, project_dir, github_repo, github_role_id, github_auto_issues, github_auto_prs, github_auto_security, revision, created_at, updated_at"
 
 func scanProject(rows scanner) (Project, error) {
 	var p Project
-	err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Status, &p.ProjectDir, &p.Revision, &p.CreatedAt, &p.UpdatedAt)
+	var roleID sql.NullInt64
+	var autoIssues, autoPRs, autoSecurity int64
+	err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Status, &p.ProjectDir, &p.GitHubRepo, &roleID, &autoIssues, &autoPRs, &autoSecurity, &p.Revision, &p.CreatedAt, &p.UpdatedAt)
+	if roleID.Valid {
+		p.GitHubRoleID = &roleID.Int64
+	}
+	p.GitHubAutoIssues = autoIssues != 0
+	p.GitHubAutoPRs = autoPRs != 0
+	p.GitHubAutoSecurity = autoSecurity != 0
 	return p, err
 }
 
@@ -2468,8 +2545,8 @@ func (s *Store) CreateProject(p Project) (int64, error) {
 	if p.Status == "" {
 		p.Status = "active"
 	}
-	res, err := s.db.Exec("INSERT INTO projects (name, description, status, project_dir, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-		p.Name, p.Description, p.Status, p.ProjectDir, p.CreatedAt, p.UpdatedAt)
+	res, err := s.db.Exec("INSERT INTO projects (name, description, status, project_dir, github_repo, github_role_id, github_auto_issues, github_auto_prs, github_auto_security, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		p.Name, p.Description, p.Status, p.ProjectDir, p.GitHubRepo, nullInt64(p.GitHubRoleID), boolInt(p.GitHubAutoIssues), boolInt(p.GitHubAutoPRs), boolInt(p.GitHubAutoSecurity), p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		return 0, err
 	}

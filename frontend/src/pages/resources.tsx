@@ -156,6 +156,7 @@ function StatusBarHTML({ counts }: { counts: StatusCount[] }) {
 export function ProjectsPage() {
   const query = useQuery({ queryKey: keys.projects, queryFn: () => api<Project[]>("/projects") });
   const tasks = useQuery({ queryKey: keys.tasks, queryFn: () => api<Task[]>("/tasks") });
+  const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
   const qc = useQueryClient();
   const toast = useToast();
   const [search, setSearch] = useState("");
@@ -163,7 +164,7 @@ export function ProjectsPage() {
   const [dirOpen, setDirOpen] = useState(false);
   const save = useMutation({
     mutationFn: (value: Partial<Project>) => value.id
-      ? api<Project>(`/projects/${value.id}`, { method: "PATCH", revision: value.revision, body: { name: value.name, description: value.description, project_dir: value.project_dir, status: value.status } })
+      ? api<Project>(`/projects/${value.id}`, { method: "PATCH", revision: value.revision, body: { name: value.name, description: value.description, project_dir: value.project_dir, status: value.status, github_repo: value.github_repo || "", github_role_id: value.github_role_id ?? null, github_auto_issues: !!value.github_auto_issues, github_auto_prs: !!value.github_auto_prs, github_auto_security: !!value.github_auto_security } })
       : api<Project>("/projects", { method: "POST", body: value }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: keys.projects }); setEditing(null); toast("项目已保存"); }
   });
@@ -209,6 +210,15 @@ export function ProjectsPage() {
         <Field label="名称"><input className={inputClass} required value={editing.name || ""} onChange={e => setEditing({ ...editing, name: e.target.value })} /></Field>
         <Field label="说明"><textarea className={inputClass + " min-h-24 py-3"} value={editing.description || ""} onChange={e => setEditing({ ...editing, description: e.target.value })} /></Field>
         <Field label="代码目录" hint="使用主机上的绝对路径，或浏览选择目录。"><div className="flex gap-2"><input className={inputClass} value={editing.project_dir || ""} onChange={e => setEditing({ ...editing, project_dir: e.target.value })} /><Button type="button" onClick={() => setDirOpen(true)}><FolderKanban size={16} />浏览</Button></div></Field>
+        <div className="rounded-xl border border-line bg-elevated p-3"><div className="mb-2 text-sm font-semibold">GitHub 集成</div>
+          <div className="grid gap-3">
+            <Field label="GitHub 仓库" hint="例如 owner/repo；留空表示不启用 GitHub 集成。"><input className={inputClass} value={editing.github_repo || ""} onChange={e => setEditing({ ...editing, github_repo: e.target.value })} placeholder="owner/repo" /></Field>
+            <Field label="自动处理角色" hint="自动创建的 GitHub 任务默认指派给该角色；可不选，稍后手动指派。"><select className={inputClass} value={editing.github_role_id ?? ""} onChange={e => setEditing({ ...editing, github_role_id: e.target.value ? Number(e.target.value) : null })}><option value="">不自动指派</option>{roles.data?.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}</select></Field>
+            <label className="flex min-h-10 items-center gap-2 text-sm"><input type="checkbox" checked={!!editing.github_auto_issues} onChange={e => setEditing({ ...editing, github_auto_issues: e.target.checked })} />自动处理 Issue</label>
+            <label className="flex min-h-10 items-center gap-2 text-sm"><input type="checkbox" checked={!!editing.github_auto_prs} onChange={e => setEditing({ ...editing, github_auto_prs: e.target.checked })} />自动处理 PR</label>
+            <label className="flex min-h-10 items-center gap-2 text-sm"><input type="checkbox" checked={!!editing.github_auto_security} onChange={e => setEditing({ ...editing, github_auto_security: e.target.checked })} />自动处理安全告警</label>
+          </div>
+        </div>
         {editing.id && <Field label="状态"><select className={inputClass} value={editing.status} onChange={e => setEditing({ ...editing, status: e.target.value as Project["status"] })}><option value="active">活跃</option><option value="archived">归档</option></select></Field>}
         <MutationError value={save.error} /><div className="flex justify-end"><Button variant="primary" disabled={save.isPending}>保存</Button></div>
       </form>}

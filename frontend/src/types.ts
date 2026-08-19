@@ -115,6 +115,11 @@ export interface Project {
   status: "active" | "archived";
   project_dir: string;
   is_git: boolean;
+  github_repo: string;
+  github_role_id?: ID | null;
+  github_auto_issues: boolean;
+  github_auto_prs: boolean;
+  github_auto_security: boolean;
   revision: number;
   created_at: string;
   updated_at: string;

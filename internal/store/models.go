@@ -158,14 +158,15 @@ type Task struct {
 	SuspendedAt   *string `json:"suspended_at"`
 	DeliveredAt   *string `json:"delivered_at"`
 	// 工作流字段（type=workflow）
-	Spec       string  `json:"spec,omitempty"`       // workflow.Spec JSON（提案/冻结共用）
-	Violations string  `json:"violations,omitempty"` // 校验结果 JSON（workflow.Violation[]）
-	SpecHash   string  `json:"spec_hash,omitempty"`  // 采纳（冻结）时写入，之后不可变
-	Revision   int64   `json:"revision"`
-	CreatedAt  string  `json:"created_at"`
-	StartedAt  *string `json:"started_at"`
-	FinishedAt *string `json:"finished_at"`
-	UpdatedAt  string  `json:"updated_at"`
+	Spec        string  `json:"spec,omitempty"`         // workflow.Spec JSON（提案/冻结共用）
+	Violations  string  `json:"violations,omitempty"`   // 校验结果 JSON（workflow.Violation[]）
+	SpecHash    string  `json:"spec_hash,omitempty"`    // 采纳（冻结）时写入，之后不可变
+	ExternalKey string  `json:"external_key,omitempty"` // 外部系统去重键（如 github:issue:owner/repo:123）
+	Revision    int64   `json:"revision"`
+	CreatedAt   string  `json:"created_at"`
+	StartedAt   *string `json:"started_at"`
+	FinishedAt  *string `json:"finished_at"`
+	UpdatedAt   string  `json:"updated_at"`
 }
 
 // NewMergeTask 创建用于整合 source 代码的专属子任务。它自身带有 MergeOf，
@@ -229,9 +230,15 @@ type Project struct {
 	Status      string `json:"status"` // active | archived
 	ProjectDir  string `json:"project_dir"`
 	IsGit       bool   `json:"is_git"` // git 仓库（列表时探测，非存储字段）
-	Revision    int64  `json:"revision"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	// GitHub 集成（使用本机 gh CLI，不内置 API client）
+	GitHubRepo         string `json:"github_repo"`
+	GitHubRoleID       *int64 `json:"github_role_id"`
+	GitHubAutoIssues   bool   `json:"github_auto_issues"`
+	GitHubAutoPRs      bool   `json:"github_auto_prs"`
+	GitHubAutoSecurity bool   `json:"github_auto_security"`
+	Revision           int64  `json:"revision"`
+	CreatedAt          string `json:"created_at"`
+	UpdatedAt          string `json:"updated_at"`
 }
 
 // Skill 是注册到 paihuo 工作目录的技能（角色配置时按名称勾选，执行时注入目录）。
