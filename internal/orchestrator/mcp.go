@@ -124,20 +124,22 @@ func (s *Service) toolList() map[string]any {
 	return map[string]any{"tools": []toolSchema{
 		{
 			Name:        toolSpawnTask,
-			Description: "在平台上创建一条真实子任务（复用目标的 Role、落入项目 worktree、上板可见、走既有交付/审批/合并链），立即返回回执，不阻塞。可并行扇出多批。子任务权限不得超过编排者 delegation 上限。",
+			Description: "在平台上创建一条真实子任务（复用目标的 Role、落入项目 worktree、上板可见、走既有交付/审批/合并链）。异步模式（sync=false，默认）立即返回回执，可并行扇出，之后用 await_tasks 轮询；同步模式（sync=true）创建后阻塞到停止点（终态或待人工审批）并直接返回结果，无需轮询——任务完成即自动交回控制权。子任务权限不得超过编排者 delegation 上限。",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"role_id":          map[string]any{"type": "integer", "description": "执行子任务的已有 Role id（必须启用）"},
-					"title":            map[string]any{"type": "string", "description": "子任务标题"},
-					"body":             map[string]any{"type": "string", "description": "子任务提示词：目标 + 上下文 + 验收标准"},
-					"project_id":       map[string]any{"type": "integer", "description": "子任务所属项目 id（无则不填）"},
-					"perm":             map[string]any{"type": "string", "enum": []string{"full", "review"}, "description": "默认 full；review=完成后需人工审批（危险活应由人把关）"},
-					"run_mode":         map[string]any{"type": "string", "enum": []string{"batch"}, "description": "v1 只支持 batch"},
-					"concurrent":       map[string]any{"type": "boolean", "description": "允许并发（默认 false=同项目串行）"},
-					"dependency_mode":  map[string]any{"type": "string", "enum": []string{"none", "weak", "strong"}, "description": "默认 none；weak=按项目创建顺序排队；strong=需 depends_on"},
-					"depends_on":       map[string]any{"type": "integer", "description": "strong 依赖的前置任务 id"},
-					"block_on_failure": map[string]any{"type": "boolean", "description": "前序失败时是否阻塞本任务"},
+					"role_id":              map[string]any{"type": "integer", "description": "执行子任务的已有 Role id（必须启用）"},
+					"title":                map[string]any{"type": "string", "description": "子任务标题"},
+					"body":                 map[string]any{"type": "string", "description": "子任务提示词：目标 + 上下文 + 验收标准"},
+					"project_id":           map[string]any{"type": "integer", "description": "子任务所属项目 id（无则不填）"},
+					"perm":                 map[string]any{"type": "string", "enum": []string{"full", "review"}, "description": "默认 full（无需审批，自动合并/交付）；review=完成后需人工审批（危险活应由人把关）"},
+					"run_mode":             map[string]any{"type": "string", "enum": []string{"batch"}, "description": "v1 只支持 batch"},
+					"concurrent":           map[string]any{"type": "boolean", "description": "允许并发（默认 false=同项目串行）"},
+					"dependency_mode":      map[string]any{"type": "string", "enum": []string{"none", "weak", "strong"}, "description": "默认 none；weak=按项目创建顺序排队；strong=需 depends_on"},
+					"depends_on":           map[string]any{"type": "integer", "description": "strong 依赖的前置任务 id"},
+					"block_on_failure":     map[string]any{"type": "boolean", "description": "前序失败时是否阻塞本任务"},
+					"sync":                 map[string]any{"type": "boolean", "description": "默认 false=异步（返回回执后 await_tasks 轮询）；true=同步，阻塞到任务完成并返回结果"},
+					"sync_timeout_seconds": map[string]any{"type": "integer", "description": "同步模式最长阻塞秒数，默认 600，上限 1800"},
 				},
 				"required": []string{"role_id", "title"},
 			},
@@ -209,7 +211,11 @@ func (s *Service) callTool(ctx context.Context, sessionID int64, paramsRaw json.
 		if uerr := json.Unmarshal(params.Arguments, &args); uerr != nil {
 			return nil, jsonRPCError(codeInvalidParams, "spawn_task 参数非法: "+uerr.Error())
 		}
-		payload, err = s.Spawn(ctx, sessionID, args)
+		if args.Sync {
+			payload, err = s.SpawnSync(ctx, sessionID, args)
+		} else {
+			payload, err = s.Spawn(ctx, sessionID, args)
+		}
 	case toolAwaitTasks:
 		var args awaitArgs
 		if uerr := json.Unmarshal(params.Arguments, &args); uerr != nil {

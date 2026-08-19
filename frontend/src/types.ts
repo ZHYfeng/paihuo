@@ -55,6 +55,7 @@ export interface Task {
   review_note?: string;
   review_rounds: number;
   merge_of?: ID | null;
+  merge_skipped?: boolean;
   session_id?: ID | null;
   workflow_run_id?: ID | null;
   resume_of?: ID | null;

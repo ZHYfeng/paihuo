@@ -161,6 +161,7 @@ type Task struct {
 	BaseCommit     string `json:"base_commit"`     // 创建 worktree 时主分支 HEAD
 	ResumeOf       *int64 `json:"resume_of"`       // 续跑自哪个任务（复用其会话目录）
 	MergeOf        *int64 `json:"merge_of"`        // 合并任务整合自哪个源任务
+	MergeSkipped   bool   `json:"merge_skipped"`   // 判定无改动：直接视为已交付，不创建/补建合并任务
 	SessionID      *int64 `json:"session_id"`      // 会话交付创建的收编任务回链（指向 type=session 的任务）
 	WorkflowRunID  *int64 `json:"workflow_run_id"` // Workflow Run 原子实例化的归属
 	SortOrder      int64  `json:"sort_order"`      // 项目内执行顺序（合并任务不参与排序）

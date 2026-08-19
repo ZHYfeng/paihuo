@@ -54,35 +54,43 @@ Bearer 令牌）提供服务，工具语义即本文档表格。Pi/omp 会话是
 
 | 工具 | 语义 |
 |---|---|
-| `spawn_task(project, role_id, intent, perm, type=task, deps?)` | 创建真任务，立即返回 task_id + 回执（不阻塞，支持并行扇出） |
+| `spawn_task(..., sync=false, sync_timeout_seconds?)` | 创建真任务，复用目标的 Role、落入项目 worktree、上板可见、走既有交付/审批/合并链。**异步（默认）**立即返回 task_id + 回执，可并行扇出，之后 `await_tasks` 轮询；**同步（sync=true）**创建后阻塞到停止点（终态或待人工审批）并直接返回结果摘要——任务完成后控制权自动交回编排者，无需轮询 |
 | `await_tasks(ids, timeout)` | 阻塞到指定任务全部到达停止点（终态或待人工审批），返回每个的结果摘要；超时返回当前进度 + `timed_out` |
 | `list_children(parent_id?, session_id?)` | 列出自任务树与状态 |
 | `get_task_result(task_id)` | 单个结果摘要（终态、交付状态、artifact 引用、简短 summary） |
 | `fetch_artifact(artifact_id)` | 按需拉 artifact 内容（受控注入，默认只回摘要/引用；默认 256KB、上限 1MB） |
 | `spawn_workflow_run(workflow_id, project, task)`（v2） | 派发一个 Workflow Run，原子实例化节点任务 |
 
-## 4. 执行模型：异步并行 + 结果反馈环
+## 4. 执行模型：异步并行 + 结果反馈环（同步/异步两种派活）
 
-编排者的主循环：
+编排者的主循环有两种派活方式，由 `spawn_task(sync)` 决定：
 
-1. **spawn 一批**（并行，`wait=false`，各自独立上下文 → 省 token）；
-2. **await_tasks 等齐**（若干子任务仍在后台真正并行，平台级并发由现有 Role 并发
-   策略约束）；
-3. 对每个结果压成**结构化摘要 + artifact 引用**，作为新一轮输入**喂回编排者会话**；
-4. LLM 依据结果决定下一批：再拆分、修复失败项、或收尾。重复直到达成大目标。
+- **同步（sync=true）**：创建子任务后平台**阻塞到停止点**，把结果摘要直接返回给
+  编排者——任务完成/合并即自动交回控制权（无需轮询），编排者在本轮收到的就是最终
+  结果，继续下一步。适合「等我结果再决定」的串行步骤。超时返回当前进度 + `timed_out`，
+  编排者可再 `await_tasks` 续等。
+- **异步（sync=false，默认）**：立即返回回执，子任务并行跑；编排者用 `await_tasks`
+  主动轮询。适合并行扇出。异步任务**不做后台推送**——完成后是否继续全凭编排者主动
+  轮询，避免静默打断其当前回合。
 
-**await_tasks 的停止点语义**：终态（succeeded/failed/cancelled）**或待人工审批**
-（`awaiting_review`）都算停止点并返回——审批闸口永远握在人类手里，拒绝让
-编排者无谓地阻塞或自我审批；待审任务作为状态返回，编排者据此决定继续等或
+同步 / 异步是**每任务调用时的选择**，同一批可混用。上下文控制不变量：**只向编排者
+注入摘要与 artifact 引用，不灌原始日志**；编排者按需 `fetch_artifact`。这是"隔离"
+收益的核心，防止编排者上下文被撑爆。
+
+**await_tasks / 同步等待的停止点语义**：终态（succeeded/failed/cancelled）**或
+待人工审批**（`awaiting_review`）都算停止点并返回——审批闸口永远握在人类手里，
+拒绝让编排者无谓地阻塞或自我审批；待审任务作为状态返回，编排者据此决定继续等或
 派别的活。超时返回当前进度 + `timed_out=true`。
 
-上下文控制不变量：**只向编排者注入摘要与 artifact 引用，不灌原始日志**；编排者按需
-`fetch_artifact`。这是"隔离"收益的核心，防止编排者上下文被撑爆。
+## 5. 权限、审批与交付（不变量）
 
-## 5. 权限与审批（不变量）
-
+- **缺省无审批**：full 上限的编排者，spawn 缺省 `perm=full` → 普通子任务免审批、
+  完成后自动合并/交付；只有显式 `perm=review`（或编排者上限为 review 时）才走人工审批。
 - **无提权**：每个子任务的 perm ≤ 编排者 Role 的 `delegation.max_perm`（在平台
   侧 spawn 时强制，调用方无法伪造）。
+- **无改动 = 跳过合并任务，审批仍保留**：判定子任务分支与主 HEAD 无差异时，不再
+  创建空合并任务节点——但 `review` 任务**仍走人工审批**（审批与合并是两个独立的事）。
+  命中时置 `merge_skipped=1`：交付直接终态、自动补建合并任务的对账集合也排除它。
 - **机密读取面 = 会话子树**：get_task_result / await_tasks / fetch_artifact 只允许
   读取本会话名下（`parent_session_id` 指向自己）的任务与 artifact；树外不可见。
 - **审批门禁不绕过**：含危险动作（`full_permission` / `install_runtime` /
@@ -108,7 +116,8 @@ parent_task_id     INTEGER REFERENCES tasks(id), -- 指向派生子任务（子�
 
 索引：`idx_tasks_parent_session` / `idx_tasks_parent_task`。对新库直接建列；存量库走
 幂等 `ALTER TABLE ADD COLUMN`（与 `external_key` 同机制），存量任务为 NULL。
-`roles` 增加 `delegation_enabled`（默认 0）与 `delegation_max_perm`（默认 `review`）。
+`roles` 增加 `delegation_enabled`（默认 0）与 `delegation_max_perm`（默认 `review`）；
+`tasks` 另含 `merge_skipped`（默认 0，判定无改动后跳过合并任务）。
 按项目既有策略**无历史迁移**：schema 变化时重建数据库（保留 token.env 与 skills/）。
 
 v1 语义：只有编排者会话调用平台工具，因此派生子任务的 **两个父列都指向会话**
@@ -170,6 +179,14 @@ v1 语义：只有编排者会话调用平台工具，因此派生子任务的 *
 - **令牌无状态**：`HMAC(secret, "session:<id>")`，secret 常驻 `settings.mcp_auth_secret`
   （首次解析写库，跨重启稳定）；只在委托会话进程注入
   `PAIHUO_MCP_URL` / `PAIHUO_MCP_TOKEN` / `PAIHUO_SESSION_ID`。
+- **同步 / 异步派活**：`spawn_task(sync)` 每任务可选。默认异步=返回回执+`await_tasks`
+  轮询；同步=平台阻塞到停止点、把结果直接返回（任务完成即自动交回控制权，无需轮询）。
+  异步**不做后台推送**（避免静默打断编排者当前回合），要结果必须主动轮询。
+  同步解决了「编排者在收到完成/合并后不再继续」的体感——停止点是决定，不是失控。
+- **缺省无审批**：full 上限编排者的 spawn 缺省 `perm=full`，普通子任务免审批自动合
+  并/交付；只有显式 review（或上限为 review）才人工审批。
+- **无改动 = 跳过合并任务，审批仍保留**：`merge_skipped=1` 时直接交付终态、排除在
+  自动补建合并集合外；`review` 任务仍走人工审批——「审批」与「合并」是两个独立的事。
 - **await 停止点**：终态或 `awaiting_review` 即返回；超时返回进度 + `timed_out`。
 - **子任务 v1 只批处理**：interactive 直接拒绝（不静默改写），避免编排者误判。
 - **无提权在平台侧强制**：spawn 时检验 perm ≤ delegation 上限；读面收口到会话子树。

@@ -1,8 +1,8 @@
 # 部署指南
 
-> 当前生产基线：Debian，用户 `yu`，PaiHuo `v2026.08.17-15`（会话斜杠命令菜单）。服务以
-> systemd 用户服务 `paihuo.service` 运行，目录为 `/home/yu/paihuo`，监听
-> `0.0.0.0:8080`。
+> 当前生产基线：Debian，用户 `yu`，PaiHuo `v2026.08.19-2`（编排者会话 v1 增强：
+> 同步/异步派活、无改动跳过合并任务）。服务以 systemd 用户服务
+> `paihuo.service` 运行，目录为 `/home/yu/paihuo`，监听 `0.0.0.0:8080`。
 
 ## 部署形态
 
@@ -85,9 +85,9 @@ PaiHuo 只支持当前 schema，不提供数据库迁移链。**同一 schema / 
 Task、Session、Workflow、Schedule 等）、`sessions/` worktree、`artifacts/`
 以及 tmux 中仍在执行的 Task 全部保留。已带幂等迁移的增量列（旧库打开时
 自动加列、默认值/回填）包括：`workflow_runs.project_id`、`tasks.parent_session_id` /
-`tasks.parent_task_id`、`roles.delegation_enabled` / `roles.delegation_max_perm`；
-这些变更**保存数据部署即可**。其余涉及 schema 或领域模型变更的版本替换才
-执行「全新部署（清空数据）」。
+`tasks.parent_task_id`、`tasks.merge_skipped`、`roles.delegation_enabled` /
+`roles.delegation_max_perm`；这些变更**保存数据部署即可**。其余涉及 schema 或
+领域模型变更的版本替换才执行「全新部署（清空数据）」。
 
 替换前先确认没有需要继续运行的 Task，然后执行：
 

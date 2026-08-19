@@ -1091,6 +1091,8 @@ func (e *Executor) finishRun(tk store.Task, code int, runErr error, canceled boo
 	}
 	// 普通 Git 任务不会直接改主分支：先固化源分支，再派发一个专属的
 	// MergeOf 子任务。只有子任务完成时才真正 squash 合并，避免递归派发。
+	// 判定无改动（Snapshot 后任务分支与主 HEAD 一致）则跳过合并任务，
+	// 直接视为已交付——不产生无实际内容的空合并节点。
 	if tk.MergeOf == nil && tk.WorktreeBranch != "" {
 		if _, err := workspace.Snapshot(tk, e.sessionsRoot); err != nil {
 			msg := "准备代码合并任务失败: " + err.Error()
@@ -1098,6 +1100,15 @@ func (e *Executor) finishRun(tk store.Task, code int, runErr error, canceled boo
 				"status": store.StatusFailed, "finished_at": store.Now(), "exit_code": code, "error": msg,
 			})
 			e.log(tk.ID, "sys", "✗ "+msg)
+			e.publishTask(tk.ID)
+			return
+		}
+		changed, derr := workspace.HasTaskBranchChanges(tk.ProjectDir, tk)
+		if derr == nil && !changed {
+			e.log(tk.ID, "sys", "✓ 完成（无改动，跳过合并任务）")
+			_ = e.st.UpdateTask(tk.ID, map[string]any{
+				"status": store.StatusSucceeded, "finished_at": store.Now(), "exit_code": 0, "merge_skipped": true,
+			})
 			e.publishTask(tk.ID)
 			return
 		}

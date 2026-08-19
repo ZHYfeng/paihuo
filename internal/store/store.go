@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   base_commit   TEXT NOT NULL DEFAULT '',
   resume_of     INTEGER REFERENCES tasks(id),
   merge_of      INTEGER,
+  merge_skipped INTEGER NOT NULL DEFAULT 0, -- 判定无改动：直接视为已交付，不再创建/补建合并任务
   sort_order    INTEGER NOT NULL DEFAULT 0,
   terminal_cols INTEGER NOT NULL DEFAULT 0,
   terminal_rows INTEGER NOT NULL DEFAULT 0,
@@ -267,6 +268,10 @@ func Open(path string) (*Store, error) {
 			db.Close()
 			return nil, err
 		}
+		if err := migrateTaskMergeSkippedColumn(db); err != nil {
+			db.Close()
+			return nil, err
+		}
 		// Unsupported databases are inspected before any schema statement runs.
 		// Rejection must not leave current-version tables or indexes behind.
 		if err := verifyCurrentSchema(db); err != nil {
@@ -447,6 +452,22 @@ func migrateRoleDelegationColumns(db *sql.DB) error {
 	return nil
 }
 
+// migrateTaskMergeSkippedColumn 为存量库补 merge_skipped 列（幂等）：新库由
+// schema 直接建出；旧库 ALTER ADD COLUMN，存量任务默认不标记（0）。
+func migrateTaskMergeSkippedColumn(db *sql.DB) error {
+	var has int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name='merge_skipped'`).Scan(&has); err != nil {
+		return fmt.Errorf("检查 tasks.merge_skipped 失败: %w", err)
+	}
+	if has > 0 {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN merge_skipped INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("迁移 tasks.merge_skipped 失败: %w", err)
+	}
+	return nil
+}
+
 func verifyCurrentSchema(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
@@ -455,7 +476,7 @@ func verifyCurrentSchema(db *sql.DB) error {
 	for _, query := range []string{
 		"SELECT revision, runtime_id FROM roles LIMIT 0",
 		"SELECT revision, project_dir, github_repo, github_role_id, github_auto_issues, github_auto_prs, github_auto_security FROM projects LIMIT 0",
-		"SELECT revision, type, cron, enabled, role_id, project_id, terminal_cols, terminal_rows, session_id, workflow_run_id, spec, spec_hash, external_key, parent_session_id, parent_task_id FROM tasks LIMIT 0",
+		"SELECT revision, type, cron, enabled, role_id, project_id, terminal_cols, terminal_rows, session_id, workflow_run_id, spec, spec_hash, external_key, parent_session_id, parent_task_id, merge_skipped FROM tasks LIMIT 0",
 		"SELECT task_id, depends_on, on_failure FROM task_dependencies LIMIT 0",
 		"SELECT role_id FROM templates LIMIT 0",
 		"SELECT seq, event_type, role_id, payload FROM event_log LIMIT 0",
@@ -809,7 +830,7 @@ func (s *Store) DeleteRole(id int64) error {
 // taskCols 完整列（详情页用：含完整 body，驳回重做会追加修改意见）。
 const taskCols = `t.id, t.type, t.title, t.body, t.status, t.perm, t.run_mode, t.concurrent, t.role_id, COALESCE(a.name, ''),
 t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.parent_session_id, t.parent_task_id, t.sort_order,
+t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.merge_skipped, t.session_id, t.workflow_run_id, t.parent_session_id, t.parent_task_id, t.sort_order,
 t.cron, t.enabled, t.last_run_at, t.next_run_at, t.worktree_path, t.session_dir, t.last_message_at, t.message_count, t.suspended_at, t.delivered_at, t.spec, t.violations, t.spec_hash, t.external_key,
 t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows, t.revision`
 
@@ -817,7 +838,7 @@ t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.term
 // 避免大提示词把列表接口载荷撑爆。列序与 taskCols 完全一致（scanTask 共用）。
 const taskColsBrief = `t.id, t.type, t.title, substr(t.body,1,400) AS body, t.status, t.perm, t.run_mode, t.concurrent, t.role_id, COALESCE(a.name, ''),
 t.project_id, COALESCE(p.name, ''), t.project_dir, t.parent_id, t.depends_on, t.dependency_mode, t.block_on_failure, t.schedule_id, t.error, t.exit_code,
-t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.session_id, t.workflow_run_id, t.parent_session_id, t.parent_task_id, t.sort_order,
+t.review_note, t.review_rounds, t.tmux_log_offset, t.worktree_branch, t.base_commit, t.resume_of, t.merge_of, t.merge_skipped, t.session_id, t.workflow_run_id, t.parent_session_id, t.parent_task_id, t.sort_order,
 t.cron, t.enabled, t.last_run_at, t.next_run_at, t.worktree_path, t.session_dir, t.last_message_at, t.message_count, t.suspended_at, t.delivered_at, t.spec, t.violations, t.spec_hash, t.external_key,
 t.created_at, t.started_at, t.finished_at, t.updated_at, t.terminal_cols, t.terminal_rows, t.revision`
 
@@ -828,10 +849,10 @@ func scanTask(rows scanner) (Task, error) {
 	var concurrent, blockOnFailure int64
 	var started, finished, lastRun, nextRun, suspendedAt, deliveredAt sql.NullString
 	var resumeOf, mergeOf, sessionID, workflowRunID, parentSessionID, parentTaskID sql.NullInt64
-	var enabled, messageCount int64
+	var enabled, messageCount, mergeSkipped int64
 	err := rows.Scan(&tk.ID, &tk.Type, &tk.Title, &tk.Body, &tk.Status, &tk.Perm, &tk.RunMode, &concurrent, &roleID, &roleName,
 		&projectID, &projectName, &tk.ProjectDir, &parentID, &dependsOn, &tk.DependencyMode, &blockOnFailure, &scheduleID, &tk.Error, &exitCode,
-		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &sessionID, &workflowRunID, &parentSessionID, &parentTaskID, &tk.SortOrder,
+		&tk.ReviewNote, &tk.ReviewRounds, &tk.TmuxLogOffset, &tk.WorktreeBranch, &tk.BaseCommit, &resumeOf, &mergeOf, &mergeSkipped, &sessionID, &workflowRunID, &parentSessionID, &parentTaskID, &tk.SortOrder,
 		&tk.Cron, &enabled, &lastRun, &nextRun, &tk.WorktreePath, &tk.SessionDir, &tk.LastMessageAt, &messageCount, &suspendedAt, &deliveredAt, &tk.Spec, &tk.Violations, &tk.SpecHash, &tk.ExternalKey,
 		&tk.CreatedAt, &started, &finished, &tk.UpdatedAt, &tk.TerminalCols, &tk.TerminalRows, &tk.Revision)
 	if err != nil {
@@ -849,6 +870,7 @@ func scanTask(rows scanner) (Task, error) {
 	tk.Concurrent = concurrent != 0
 	tk.BlockOnFailure = blockOnFailure != 0
 	tk.Enabled = enabled != 0
+	tk.MergeSkipped = mergeSkipped != 0
 	tk.MessageCount = int(messageCount)
 	if roleID.Valid {
 		tk.RoleID = &roleID.Int64
@@ -1126,12 +1148,12 @@ func prepareTaskForInsert(t *Task) {
 }
 
 func insertTask(execer sqlExecer, t Task) (int64, error) {
-	res, err := execer.Exec(`INSERT INTO tasks (type, title, body, status, perm, run_mode, concurrent, role_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, session_id, workflow_run_id, parent_session_id, parent_task_id, worktree_branch, base_commit, review_rounds, finished_at, exit_code, sort_order,
+	res, err := execer.Exec(`INSERT INTO tasks (type, title, body, status, perm, run_mode, concurrent, role_id, project_id, project_dir, parent_id, depends_on, dependency_mode, block_on_failure, schedule_id, resume_of, merge_of, merge_skipped, session_id, workflow_run_id, parent_session_id, parent_task_id, worktree_branch, base_commit, review_rounds, finished_at, exit_code, sort_order,
 		cron, enabled, last_run_at, next_run_at, worktree_path, session_dir, last_message_at, message_count, suspended_at, delivered_at, spec, violations, spec_hash, external_key,
 		created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.Type, t.Title, t.Body, t.Status, t.Perm, t.RunMode, boolInt(t.Concurrent), nullInt64(t.RoleID), nullInt64(t.ProjectID), t.ProjectDir,
-		nullInt64(t.ParentID), nullInt64(t.DependsOn), t.DependencyMode, boolInt(t.BlockOnFailure), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), nullInt64(t.SessionID), nullInt64(t.WorkflowRunID), nullInt64(t.ParentSessionID), nullInt64(t.ParentTaskID), t.WorktreeBranch, t.BaseCommit,
+		nullInt64(t.ParentID), nullInt64(t.DependsOn), t.DependencyMode, boolInt(t.BlockOnFailure), nullInt64(t.ScheduleID), nullInt64(t.ResumeOf), nullInt64(t.MergeOf), boolInt(t.MergeSkipped), nullInt64(t.SessionID), nullInt64(t.WorkflowRunID), nullInt64(t.ParentSessionID), nullInt64(t.ParentTaskID), t.WorktreeBranch, t.BaseCommit,
 		t.ReviewRounds, nullStrPtr(t.FinishedAt), nullIntPtr(t.ExitCode), t.SortOrder,
 		t.Cron, boolInt(t.Enabled), nullStrPtr(t.LastRunAt), nullStrPtr(t.NextRunAt), t.WorktreePath, t.SessionDir, t.LastMessageAt, t.MessageCount, nullStrPtr(t.SuspendedAt), nullStrPtr(t.DeliveredAt), t.Spec, t.Violations, t.SpecHash, t.ExternalKey,
 		t.CreatedAt, t.UpdatedAt)
@@ -1379,6 +1401,23 @@ func (s *Store) ApproveTaskAndCreateMerge(sourceID int64, merge Task) (int64, er
 		return 0, err
 	}
 	return id, nil
+}
+
+// ApproveTaskDeliver 审批通过但该任务判定无改动（merge_skipped=1）：不创建
+// 合并任务，直接把源任务落成 succeeded 终态。审批闸口原样保留，只跳过合并
+// ——「审批」与「合并」是两个独立的事。
+func (s *Store) ApproveTaskDeliver(sourceID int64) error {
+	now := Now()
+	res, err := s.db.Exec(`UPDATE tasks
+		SET status='succeeded', merge_skipped=1, finished_at=COALESCE(finished_at, ?), exit_code=COALESCE(exit_code, 0), updated_at=?, revision=revision+1
+		WHERE id=? AND status='awaiting_review'`, now, now, sourceID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return errors.New("任务已审批或当前不在待审批状态")
+	}
+	return nil
 }
 
 func prepareMergeTask(sourceID int64, merge *Task) {
@@ -1869,6 +1908,9 @@ func (s *Store) deliveryStateOf(source Task) (deliveryState, string, error) {
 	case StatusCancelled:
 		return deliveryFailed, fmt.Sprintf("任务 #%d 已取消", source.ID), nil
 	case StatusSucceeded:
+		if source.MergeSkipped {
+			return deliverySucceeded, fmt.Sprintf("任务 #%d 已完成（无改动，跳过合并）", source.ID), nil
+		}
 		merge, err := s.GetMergeTaskForSource(source.ID)
 		if err == sql.ErrNoRows {
 			if source.WorktreeBranch != "" {
@@ -1903,6 +1945,7 @@ func (s *Store) ListCompletedGitTasksWithoutMerge() ([]Task, error) {
 		WHERE t.status=?
 		  AND t.merge_of IS NULL
 		  AND t.worktree_branch<>''
+		  AND t.merge_skipped=0
 		  AND NOT EXISTS (SELECT 1 FROM tasks m WHERE m.merge_of=t.id)
 		ORDER BY t.created_at, t.id`, StatusSucceeded)
 	if err != nil {

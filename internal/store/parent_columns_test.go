@@ -97,3 +97,61 @@ func TestRoleDelegationColumns(t *testing.T) {
 		t.Fatal("full 上限应允许 full 与 review 子任务")
 	}
 }
+
+// merge_skipped：判定无改动后跳过合并任务，交付直接终态，且不进入自动补建
+// 合并任务的对账集合。
+func TestMergeSkippedDeliveryAndReconciliation(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	roleID, _ := st.CreateRole(Role{Name: "r", RuntimeID: "pi", Enabled: true})
+
+	// 审批但无改动：awaiting_review → succeeded + merge_skipped=1
+	reviewID, err := st.CreateTask(Task{Type: TaskTypeTask, Title: "review-child", Status: StatusAwaitingReview, Perm: PermReview, RoleID: &roleID, WorktreeBranch: "paihuo/task-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ApproveTaskDeliver(reviewID); err != nil {
+		t.Fatalf("ApproveTaskDeliver 失败: %v", err)
+	}
+	got, _ := st.GetTask(reviewID)
+	if got.Status != StatusSucceeded || !got.MergeSkipped {
+		t.Fatalf("无改动审批应落成 succeeded+merge_skipped: %+v", got)
+	}
+	terminal, ok, err := st.TaskDeliveryResult(reviewID)
+	if err != nil || !terminal || !ok {
+		t.Fatalf("merge_skipped 任务应直接交付（terminal=%v ok=%v err=%v）", terminal, ok, err)
+	}
+
+	// 对账补齐集合应排除 merge_skipped 任务
+	cleanID, err := st.CreateTask(Task{Type: TaskTypeTask, Title: "clean", Status: StatusSucceeded, Perm: PermFull, RoleID: &roleID, WorktreeBranch: "paihuo/task-2", MergeSkipped: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = cleanID
+	normalID, err := st.CreateTask(Task{Type: TaskTypeTask, Title: "normal", Status: StatusSucceeded, Perm: PermFull, RoleID: &roleID, WorktreeBranch: "paihuo/task-3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := st.ListCompletedGitTasksWithoutMerge()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundNormal, foundSkipped := false, false
+	for _, tk := range pending {
+		if tk.ID == normalID {
+			foundNormal = true
+		}
+		if tk.ID == reviewID || tk.ID == cleanID {
+			foundSkipped = true
+		}
+	}
+	if !foundNormal {
+		t.Fatal("未标记的 succeeded git 任务应在补建集合")
+	}
+	if foundSkipped {
+		t.Fatal("merge_skipped 任务不应进入自动补建合并集合")
+	}
+}

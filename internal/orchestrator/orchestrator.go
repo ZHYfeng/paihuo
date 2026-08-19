@@ -263,6 +263,18 @@ type spawnArgs struct {
 	DependencyMode string `json:"dependency_mode"`
 	DependsOn      *int64 `json:"depends_on"`
 	BlockOnFailure bool   `json:"block_on_failure"`
+	// 同步模式（默认 false=异步）：true 时创建后阻塞到停止点，返回回执 + 结果。
+	// 同步=「完成任务后自动通知编排者」：阻塞的工具调用返回即把控制权交回
+	// LLM，无需编排者轮询。超时返回进度 + timed_out，编排者可再 await_tasks。
+	Sync               bool `json:"sync,omitempty"`
+	SyncTimeoutSeconds int  `json:"sync_timeout_seconds,omitempty"`
+}
+
+// spawnSyncOutcome 同步 spawn 的回执 + 结果摘要。
+type spawnSyncOutcome struct {
+	Receipt  spawnReceipt `json:"receipt"`
+	Result   *TaskResult  `json:"result,omitempty"`
+	TimedOut bool         `json:"timed_out"`
 }
 
 type spawnReceipt struct {
@@ -282,6 +294,30 @@ type spawnReceipt struct {
 // Spawn 创建一条真实子任务并挂到编排者会话名下。返回回执（非阻塞，支持并行
 // 扇出）。权限不变量在这里强制：子任务 perm ≤ delegation.max_perm。
 func (s *Service) Spawn(ctx context.Context, sessionID int64, args spawnArgs) (spawnReceipt, error) {
+	return s.spawnCreate(ctx, sessionID, args)
+}
+
+// SpawnSync 创建子任务并同步等待到停止点（终态或待人工审批）：一键完成
+// 「派活 → 等结果 → 拿结果」，编排者无需轮询。awaiting_review 是停止点而非
+// 错误——审批闸口在人类手里。超时返回当前进度 + timed_out（调用方可再 await）。
+func (s *Service) SpawnSync(ctx context.Context, sessionID int64, args spawnArgs) (spawnSyncOutcome, error) {
+	receipt, err := s.spawnCreate(ctx, sessionID, args)
+	if err != nil {
+		return spawnSyncOutcome{}, err
+	}
+	timeout := args.SyncTimeoutSeconds
+	if timeout <= 0 {
+		timeout = int(defaultAwaitTimeout.Seconds())
+	}
+	outcomes, timedOut, err := s.Await(ctx, sessionID, awaitArgs{TaskIDs: []int64{receipt.TaskID}, TimeoutSeconds: timeout})
+	if err != nil {
+		return spawnSyncOutcome{Receipt: receipt}, err
+	}
+	res := outcomes[receipt.TaskID].Result
+	return spawnSyncOutcome{Receipt: receipt, Result: &res, TimedOut: timedOut}, nil
+}
+
+func (s *Service) spawnCreate(ctx context.Context, sessionID int64, args spawnArgs) (spawnReceipt, error) {
 	ss, err := s.sessionContext(ctx, sessionID)
 	if err != nil {
 		return spawnReceipt{}, err

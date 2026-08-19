@@ -92,7 +92,7 @@ export default function (pi: ExtensionAPI) {
     tool(
       "spawn_task",
       "派生任务",
-      "在 PaiHuo 平台上创建一条真实子任务并立即返回回执（不阻塞，可并行扇出）。子任务复用已有 Role、落入目标项目 worktree、上板可见、走既有交付/审批/合并链。子任务权限不得超过本会话的 delegation 上限；含危险动作的子任务会进入人工审批。",
+      "在 PaiHuo 平台上创建一条真实子任务，复用已有 Role、落入目标项目 worktree、上板可见、走既有交付/审批/合并链。异步模式（sync=false，默认）立即返回回执，可并行扇出，之后用 await_tasks 轮询；同步模式（sync=true）创建后阻塞到停止点（终态或待人工审批）并直接返回结果——任务完成即自动交回控制权，无需轮询。子任务权限不得超过本会话的 delegation 上限；含危险动作的子任务会进入人工审批。",
       Type.Object({
         role_id: Type.Integer({ description: "执行子任务的已有 Role id（必须启用）" }),
         title: Type.String({ description: "子任务标题" }),
@@ -103,6 +103,8 @@ export default function (pi: ExtensionAPI) {
         dependency_mode: Type.Optional(StringEnum(["none", "weak", "strong"] as const)),
         depends_on: Type.Optional(Type.Integer({ description: "strong 依赖的前置任务 id" })),
         block_on_failure: Type.Optional(Type.Boolean()),
+        sync: Type.Optional(Type.Boolean({ description: "默认 false=异步（返回回执后 await_tasks 轮询）；true=同步，阻塞到任务完成并返回结果" })),
+        sync_timeout_seconds: Type.Optional(Type.Integer({ description: "同步模式最长阻塞秒数，默认 600，上限 1800" })),
       }),
       (args, signal) => callTool("spawn_task", args, signal),
     ),

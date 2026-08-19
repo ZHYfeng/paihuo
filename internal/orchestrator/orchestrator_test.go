@@ -201,3 +201,105 @@ func TestFetchArtifactEnforcesSubtree(t *testing.T) {
 }
 
 var _ = time.Now // keep time import for Await duration semantics
+
+// SpawnSync 同步派活：创建子任务后阻塞到停止点并返回结果，无需轮询。
+func TestSpawnSyncWaitsForTerminal(t *testing.T) {
+	svc, st, sessionID := newTestService(t, true, store.PermFull)
+	workerID, err := st.CreateRole(store.Role{Name: "wsync", RuntimeID: "pi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type out = spawnSyncOutcome
+	ch := make(chan struct {
+		out out
+		err error
+	}, 1)
+	ctx := context.Background()
+	go func() {
+		o, err := svc.SpawnSync(ctx, sessionID, spawnArgs{RoleID: workerID, Title: "sync-child", Sync: true, SyncTimeoutSeconds: 8})
+		ch <- struct {
+			out out
+			err error
+		}{o, err}
+	}()
+	// 等创建完成，再把子任务置为 succeeded，模拟执行器收尾
+	deadline := time.Now().Add(3 * time.Second)
+	var childID int64
+	for time.Now().Before(deadline) {
+		children, _ := st.ListChildrenBySession(sessionID)
+		if len(children) == 1 {
+			childID = children[0].ID
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if childID == 0 {
+		t.Fatal("同步 spawn 应已创建子任务")
+	}
+	time.Sleep(100 * time.Millisecond) // 确保 spawn 已进入等待
+	if err := st.UpdateTask(childID, map[string]any{"status": store.StatusSucceeded}); err != nil {
+		t.Fatal(err)
+	}
+	res := <-ch
+	if res.err != nil {
+		t.Fatalf("SpawnSync 失败: %v", res.err)
+	}
+	if res.out.TimedOut {
+		t.Fatal("子任务已终态，不应超时")
+	}
+	if res.out.Result == nil || res.out.Result.TaskID != childID || res.out.Result.Status != store.StatusSucceeded {
+		t.Fatalf("SpawnSync 应返回子任务结果: %+v", res.out.Result)
+	}
+	if res.out.Receipt.TaskID != childID {
+		t.Fatalf("回执应指向子任务: %+v", res.out.Receipt)
+	}
+}
+
+// SpawnSync 遇到待审停止点返回（不是错误），编排者据此知道要等人类审批。
+func TestSpawnSyncStopsOnAwaitingReview(t *testing.T) {
+	svc, st, sessionID := newTestService(t, true, store.PermFull)
+	workerID, err := st.CreateRole(store.Role{Name: "wsync2", RuntimeID: "pi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type out = spawnSyncOutcome
+	ch := make(chan struct {
+		out out
+		err error
+	}, 1)
+	ctx := context.Background()
+	go func() {
+		o, err := svc.SpawnSync(ctx, sessionID, spawnArgs{RoleID: workerID, Title: "review-child", Perm: store.PermReview, Sync: true, SyncTimeoutSeconds: 8})
+		ch <- struct {
+			out out
+			err error
+		}{o, err}
+	}()
+	deadline := time.Now().Add(3 * time.Second)
+	var childID int64
+	for time.Now().Before(deadline) {
+		children, _ := st.ListChildrenBySession(sessionID)
+		if len(children) == 1 {
+			childID = children[0].ID
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if childID == 0 {
+		t.Fatal("同步 spawn 应已创建子任务")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := st.UpdateTask(childID, map[string]any{"status": store.StatusAwaitingReview}); err != nil {
+		t.Fatal(err)
+	}
+	res := <-ch
+	if res.err != nil {
+		t.Fatalf("待审批是停止点，不应报错: %v", res.err)
+	}
+	if res.out.TimedOut {
+		t.Fatal("待审停止点不应判超时")
+	}
+	if res.out.Result == nil || res.out.Result.Status != store.StatusAwaitingReview {
+		t.Fatalf("应返回 awaitint_review 结果: %+v", res.out.Result)
+	}
+}

@@ -662,3 +662,21 @@ func treesDiffer(dir, left, right string) (bool, error) {
 	}
 	return false, err
 }
+
+// HasTaskBranchChanges 判断任务分支相对主分支是否有差异，供「无改动则跳过
+// 合并任务」决策使用。调用方必须先 Snapshot（把工作区未提交改动落上分支），
+// 否则未提交的修改会被漏判。分支选取与合并路径一致：优先 WorktreeBranch，
+// 兜底任务分支。git 缺失/分支异常等一律按「有改动」处理（保守，不丢合并）。
+func HasTaskBranchChanges(projectDir string, tk store.Task) (bool, error) {
+	if projectDir == "" {
+		return true, nil
+	}
+	if !isGitRepo(projectDir) {
+		return true, nil // 非 git 项目不走代码合并语义，保持既有路径
+	}
+	ref := tk.WorktreeBranch
+	if ref == "" {
+		ref = Branch(tk.ID)
+	}
+	return treesDiffer(projectDir, "HEAD", ref)
+}
