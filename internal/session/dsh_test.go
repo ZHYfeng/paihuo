@@ -131,7 +131,7 @@ func jsonEqual(a, b json.RawMessage) bool {
 	return string(a) == string(b)
 }
 
-// 转录归一化：user/assistant 合并、工具配对、压缩。
+// 转录归一化：user/assistant/think/工具/压缩各自成为独立条目。
 func TestBuildDshTranscriptEntries(t *testing.T) {
 	event := func(typ string, seq int64, data string) json.RawMessage {
 		raw, _ := json.Marshal(map[string]any{
@@ -153,31 +153,67 @@ func TestBuildDshTranscriptEntries(t *testing.T) {
 	}
 
 	entries := buildDshTranscriptEntries(events)
-	if len(entries) != 3 {
-		t.Fatalf("期望 3 条 entry（user + 合并 assistant + compaction），得到 %d: %+v", len(entries), entries)
+	if len(entries) != 6 {
+		t.Fatalf("期望 6 条 entry（user + text + thinking + glob + text + compaction），得到 %d: %+v", len(entries), entries)
 	}
 	user := entries[0]
 	um := user["message"].(map[string]any)
 	if um["role"] != "user" || um["id"] != "u1" {
 		t.Fatalf("user entry 形状错误: %+v", user)
 	}
-	asst := entries[1]["message"].(map[string]any)
-	if asst["role"] != "assistant" {
+	asst1 := entries[1]["message"].(map[string]any)
+	if asst1["role"] != "assistant" {
 		t.Fatalf("assistant entry: %+v", entries[1])
 	}
-	content := asst["content"].([]map[string]any)
-	if len(content) != 4 { // 两段 assistant/message 合并：text + thinking + toolCall + text
-		t.Fatalf("助手消息应合并为 text/thinking/toolCall/text 四块，得到 %+v", content)
+	content1 := asst1["content"].([]map[string]any)
+	if len(content1) != 1 || content1[0]["text"] != "好的" {
+		t.Fatalf("第一段助手文本应为独立条目: %+v", entries[1])
 	}
-	if content[1]["type"] != "thinking" || content[2]["type"] != "toolCall" {
-		t.Fatalf("块类型错误: %+v", content)
+	think := entries[2]
+	if think["type"] != "custom_message" || think["customType"] != "thinking" || think["content"] != "先看代码" {
+		t.Fatalf("thinking 应为独立条目: %+v", think)
 	}
-	results := asst["toolResults"].(map[string]any)
-	if _, ok := results["c1"]; !ok {
-		t.Fatalf("工具结果应按 callId 聚合: %+v", results)
+	tool := entries[3]
+	if tool["type"] != "custom_message" || tool["customType"] != "glob" || tool["content"] != "a.go b.go" {
+		t.Fatalf("glob 工具应为独立条目: %+v", tool)
 	}
-	if entries[2]["customType"] != "compaction" {
-		t.Fatalf("压缩事件: %+v", entries[2])
+	asst2 := entries[4]["message"].(map[string]any)
+	if asst2["role"] != "assistant" {
+		t.Fatalf("第二段助手文本应为独立条目: %+v", entries[4])
+	}
+	if entries[5]["customType"] != "compaction" {
+		t.Fatalf("压缩事件: %+v", entries[5])
+	}
+}
+
+// 转录归一化：bash 工具应转成独立的 bashExecution 条目。
+func TestBuildDshTranscriptEntriesBash(t *testing.T) {
+	event := func(typ string, seq int64, data string) json.RawMessage {
+		raw, _ := json.Marshal(map[string]any{
+			"type": typ, "seq": seq, "time": 1700000000000 + seq,
+			"data": json.RawMessage(data),
+		})
+		return raw
+	}
+	events := []json.RawMessage{
+		event("user/message", 1, `{"content":[{"type":"text","text":"跑一下"}],"id":"u1"}`),
+		event("assistant/message", 2, `{"message":{"content":[{"type":"text","text":"马上"}]}}`),
+		event("tool/call", 3, `{"callId":"b1","name":"bash","arguments":"{\"command\":\"ls -la\"}"}`),
+		event("tool/result", 4, `{"message":{"content":[{"type":"tool-result","toolCallId":"b1","isError":false,"content":[{"type":"text","text":"total 0"}]}]}}`),
+		event("turn/end", 5, `{}`),
+	}
+
+	entries := buildDshTranscriptEntries(events)
+	if len(entries) != 3 {
+		t.Fatalf("期望 3 条 entry（user + assistant + bash），得到 %d: %+v", len(entries), entries)
+	}
+	bash := entries[2]
+	bm := bash["message"].(map[string]any)
+	if bm["role"] != "bashExecution" || bm["command"] != "ls -la" || bm["output"] != "total 0" {
+		t.Fatalf("bash 条目形状错误: %+v", bash)
+	}
+	if bm["isError"] != false {
+		t.Fatalf("bash isError 应为 false: %+v", bash)
 	}
 }
 

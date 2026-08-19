@@ -861,6 +861,15 @@ a {
   color: var(--success);
 }
 
+.msg-card.thinking {
+  border-color: color-mix(in srgb, var(--brand) 30%, transparent);
+  background: color-mix(in srgb, var(--brand) 5%, var(--surface));
+}
+
+.msg-card.thinking .msg-label {
+  color: var(--brand-soft);
+}
+
 .msg-meta {
   color: var(--faint);
   cursor: pointer;

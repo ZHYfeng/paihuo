@@ -402,6 +402,9 @@ func (s *Server) sessionTranscript(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"error": err.Error()})
 		return
 	}
+	if entries == nil {
+		entries = []map[string]any{}
+	}
 	writeJSON(w, 200, map[string]any{"entries": entries, "total": total})
 }
 

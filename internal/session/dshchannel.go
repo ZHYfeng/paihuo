@@ -279,16 +279,17 @@ func (c *dshChannel) lastEventTime() time.Time {
 // ---------------------------------------------------------------------------
 // 转录归一化：dsh 会话事件流 → pi 形状的 transcript entries。
 
-// buildDshTranscriptEntries 把 session.history 的事件列表翻译成前端已有的
-// pi transcript entry 形状（buildRenderItems 直接消费）：
+// buildDshTranscriptEntries 把 session.history 的事件列表翻译成前端可渲染的
+// transcript entries。与 dsh web 一致，think、bash 等会作为独立条目展示：
 //   - user/message → role=user 消息
-//   - assistant/message → role=assistant（同一回合的多次分段合并为一条，
-//     块含 text/thinking；tool/call 转 toolCall 块，tool/result 聚合到
-//     msg.toolResults，前端按 callId 配对渲染工具卡片）
-//   - tool/call、tool/result → 并入所属的助手消息
+//   - assistant/message 的 text → role=assistant 消息（连续文本合并为一条）
+//   - assistant/message 的 reasoning → custom_message(customType=thinking)
+//   - tool/call + tool/result → 独立条目：bash 用 role=bashExecution；
+//     其它工具用 custom_message(customType=工具名)
 //   - compaction/summary → 压缩事件
 //
-// entry.id 采用 dsh 的 seq（分页游标：beforeSeq）。
+// entry.id 采用 dsh 的 seq 作为数字前缀（分页游标：beforeSeq）；同一事件派生出
+// 多条条目时附加序号保证唯一。
 func buildDshTranscriptEntries(events []json.RawMessage) []map[string]any {
 	type dshMsg struct {
 		Type string          `json:"type"`
@@ -296,39 +297,100 @@ func buildDshTranscriptEntries(events []json.RawMessage) []map[string]any {
 		Time int64           `json:"time"`
 		Data json.RawMessage `json:"data"`
 	}
-	var out []map[string]any
-	var cur map[string]any // 当前助手消息（回合内累积）
+	type pendingTool struct {
+		seq       int64
+		ts        string
+		callID    string
+		name      string
+		arguments any
+	}
+	type toolResult struct {
+		content []map[string]any
+		isError bool
+	}
 
-	finishAssistant := func() {
-		if cur == nil {
+	var out []map[string]any
+	var pendingText []map[string]any
+	var textSeq int64
+	var textTS string
+	pendingTools := map[string]pendingTool{}
+	var toolOrder []string
+	entryNo := 0
+	entryID := func(seq int64) string {
+		entryNo++
+		return fmt.Sprintf("%d-%d", seq, entryNo)
+	}
+
+	flushText := func() {
+		if len(pendingText) == 0 {
 			return
 		}
-		ts, _ := cur["timestamp"].(string)
-		content, _ := cur["content"].([]map[string]any)
-		results, _ := cur["toolResults"].(map[string]any)
-		seq, _ := cur["seq"].(int64)
 		out = append(out, map[string]any{
-			"type": "message", "id": fmt.Sprintf("%d", seq),
-			"message": map[string]any{
-				"role": "assistant", "content": content, "timestamp": ts, "toolResults": results,
-			},
+			"type": "message", "id": entryID(textSeq),
+			"message": map[string]any{"role": "assistant", "content": pendingText, "timestamp": textTS},
 		})
-		cur = nil
+		pendingText = nil
 	}
-	ensureCur := func(seq int64, ts string) {
-		if cur == nil {
-			cur = map[string]any{"seq": seq, "timestamp": ts, "content": []map[string]any{}, "toolResults": map[string]any{}}
+	textOf := func(blocks []map[string]any) string {
+		var b strings.Builder
+		for i, block := range blocks {
+			if i > 0 {
+				b.WriteByte('\n')
+			}
+			if s, ok := block["text"].(string); ok {
+				b.WriteString(s)
+			}
 		}
+		return b.String()
 	}
-	appendTextOrReasoning := func(block map[string]any) {
-		bt, _ := block["type"].(string)
-		switch bt {
-		case "text":
-			cur["content"] = append(cur["content"].([]map[string]any), block)
-		case "reasoning":
-			cur["content"] = append(cur["content"].([]map[string]any),
-				map[string]any{"type": "thinking", "thinking": block["text"]})
+	emitTool := func(p pendingTool, res *toolResult) {
+		if p.name == "bash" {
+			command := ""
+			if args, ok := p.arguments.(map[string]any); ok {
+				command, _ = args["command"].(string)
+			}
+			if command == "" && p.arguments != nil {
+				command = fmt.Sprint(p.arguments)
+			}
+			output := ""
+			isErr := false
+			if res != nil {
+				output = textOf(res.content)
+				isErr = res.isError
+			}
+			out = append(out, map[string]any{
+				"type": "message", "id": entryID(p.seq),
+				"message": map[string]any{
+					"role": "bashExecution", "command": command, "output": output,
+					"isError": isErr, "timestamp": p.ts, "toolCallId": p.callID,
+				},
+			})
+			return
 		}
+		content := ""
+		if res != nil {
+			content = textOf(res.content)
+		}
+		if content == "" && p.arguments != nil {
+			content = fmt.Sprint(p.arguments)
+		}
+		out = append(out, map[string]any{
+			"type": "custom_message", "id": entryID(p.seq),
+			"customType": p.name, "content": content, "timestamp": p.ts,
+		})
+	}
+	flushTools := func() {
+		for _, callID := range toolOrder {
+			if p, ok := pendingTools[callID]; ok {
+				emitTool(p, nil)
+			}
+		}
+		pendingTools = map[string]pendingTool{}
+		toolOrder = nil
+	}
+	flushAll := func() {
+		flushText()
+		flushTools()
 	}
 
 	for _, raw := range events {
@@ -346,18 +408,17 @@ func buildDshTranscriptEntries(events []json.RawMessage) []map[string]any {
 		ts := time.UnixMilli(e.Time).UTC().Format(time.RFC3339)
 		switch e.Type {
 		case "user/message":
-			finishAssistant()
+			flushAll()
 			var data struct {
 				Content []map[string]any `json:"content"`
 				ID      string           `json:"id"`
 			}
 			_ = json.Unmarshal(e.Data, &data)
 			out = append(out, map[string]any{
-				"type": "message", "id": fmt.Sprintf("%d", e.Seq),
+				"type": "message", "id": entryID(e.Seq),
 				"message": map[string]any{"role": "user", "content": data.Content, "id": data.ID, "timestamp": ts},
 			})
 		case "assistant/message":
-			ensureCur(e.Seq, ts)
 			var data struct {
 				Message struct {
 					Content []map[string]any `json:"content"`
@@ -365,16 +426,34 @@ func buildDshTranscriptEntries(events []json.RawMessage) []map[string]any {
 			}
 			_ = json.Unmarshal(e.Data, &data)
 			for _, block := range data.Message.Content {
-				appendTextOrReasoning(block)
+				bt, _ := block["type"].(string)
+				switch bt {
+				case "text":
+					if len(pendingText) == 0 {
+						textSeq = e.Seq
+						textTS = ts
+					}
+					pendingText = append(pendingText, block)
+				case "reasoning":
+					flushText()
+					text, _ := block["text"].(string)
+					out = append(out, map[string]any{
+						"type": "custom_message", "id": entryID(e.Seq),
+						"customType": "thinking", "content": text, "timestamp": ts,
+					})
+				}
 			}
 		case "tool/call":
-			ensureCur(e.Seq, "")
+			flushText()
 			var data struct {
 				CallID    string `json:"callId"`
 				Name      string `json:"name"`
 				Arguments string `json:"arguments"`
 			}
 			_ = json.Unmarshal(e.Data, &data)
+			if data.CallID == "" {
+				continue
+			}
 			var args any = data.Arguments
 			if len(data.Arguments) > 0 {
 				var parsed any
@@ -382,12 +461,13 @@ func buildDshTranscriptEntries(events []json.RawMessage) []map[string]any {
 					args = parsed
 				}
 			}
-			cur["content"] = append(cur["content"].([]map[string]any),
-				map[string]any{"type": "toolCall", "id": data.CallID, "name": data.Name, "arguments": args})
-		case "tool/result":
-			if cur == nil {
-				continue
+			if _, exists := pendingTools[data.CallID]; !exists {
+				toolOrder = append(toolOrder, data.CallID)
 			}
+			pendingTools[data.CallID] = pendingTool{
+				seq: e.Seq, ts: ts, callID: data.CallID, name: data.Name, arguments: args,
+			}
+		case "tool/result":
 			var data struct {
 				Message struct {
 					Content []map[string]any `json:"content"`
@@ -421,23 +501,33 @@ func buildDshTranscriptEntries(events []json.RawMessage) []map[string]any {
 			if callID == "" {
 				continue
 			}
-			results := cur["toolResults"].(map[string]any)
-			results[callID] = map[string]any{"content": resultText, "isError": isErr}
+			p, ok := pendingTools[callID]
+			if !ok {
+				continue
+			}
+			emitTool(p, &toolResult{content: resultText, isError: isErr})
+			delete(pendingTools, callID)
+			for i, id := range toolOrder {
+				if id == callID {
+					toolOrder = append(toolOrder[:i], toolOrder[i+1:]...)
+					break
+				}
+			}
 		case "turn/end":
-			finishAssistant()
+			flushAll()
 		case "compaction/summary":
+			flushAll()
 			var data struct {
 				Summary string `json:"summary"`
 			}
 			_ = json.Unmarshal(e.Data, &data)
 			out = append(out, map[string]any{
-				"type": "custom", "id": fmt.Sprintf("%d", e.Seq),
+				"type": "custom", "id": entryID(e.Seq),
 				"customType": "compaction", "content": "上下文已压缩", "summary": data.Summary,
 			})
-			finishAssistant()
 		}
 	}
-	finishAssistant()
+	flushAll()
 	return out
 }
 

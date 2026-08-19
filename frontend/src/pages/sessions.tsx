@@ -130,7 +130,7 @@ function buildRenderItems(entries: Array<Record<string, unknown>>): RenderItem[]
       case "branch_summary": items.push({ kind: "custom", msg: { customType: "branch", content: `分支摘要${e.summary ? `: ${String(e.summary).slice(0, 60)}` : ""}` }, key }); break;
       case "custom_message": {
         if (e.display === false) break;
-        items.push({ kind: "custom", msg: { customType: e.customType, content: e.content, details: e.details }, key });
+        items.push({ kind: "custom", msg: { customType: e.customType, content: e.content, details: e.details, timestamp: e.timestamp }, key });
         break;
       }
       case "custom": {
@@ -238,6 +238,12 @@ function MessageCard({ item }: { item: RenderItem }) {
     if (customType === "model-change" || customType === "thinking-change" || customType === "compaction" || customType === "branch") {
       return <div className="pw-event" title={String(msg.summary || "")}>{String(msg.content || "")}</div>;
     }
+    if (customType === "thinking") {
+      return <div className="msg-card thinking">
+        <div className="msg-head"><b className="msg-label">思考</b>{meta ? <span className="msg-meta" title={meta}>{meta}</span> : null}</div>
+        <div className="markdown"><Markdown>{String(msg.content || "")}</Markdown></div>
+      </div>;
+    }
     return <div className="rounded-xl border border-line bg-elevated p-3">
       <div className="text-xs uppercase tracking-wide text-brand-soft">{customType}</div>
       {qa && qa.length ? <div className="mt-2 grid gap-2">{qa.map((q, index) => <div key={index} className="border-l-2 border-line pl-2"><div className="markdown font-semibold"><Markdown>{String((q.question as Record<string, unknown>)?.question || "")}</Markdown></div><div className="mt-0.5 text-sm text-muted">→ {askAnsweredText(q)}</div></div>)}</div> : <div className="markdown mt-1"><Markdown>{String(msg.content || "")}</Markdown></div>}
@@ -319,7 +325,7 @@ export function SessionDetailPage() {
       setOlder(prev => {
         const seen = new Set<string>();
         const merged: TranscriptEntry[] = [];
-        for (const entry of [...page.entries, ...prev]) {
+        for (const entry of [...(page.entries ?? []), ...prev]) {
           const key = typeof entry.id === "string" && entry.id ? entry.id : JSON.stringify(entry);
           if (seen.has(key)) continue;
           seen.add(key);
@@ -352,7 +358,7 @@ export function SessionDetailPage() {
   const visibleEcho = useMemo(() => {
     if (!localEcho.length || !transcript.data) return localEcho;
     const byText = new Map<string, number>();
-    for (const entry of transcript.data.entries) {
+    for (const entry of (transcript.data.entries ?? [])) {
       if (entry.type !== "message") continue;
       const msg = (entry.message as Record<string, unknown>) || {};
       if (String(msg.role || "") !== "user") continue;

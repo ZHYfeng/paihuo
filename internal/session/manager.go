@@ -743,6 +743,11 @@ func (m *Manager) dshTranscript(ctx context.Context, ss *store.Task, limit int, 
 	}
 	api := newDSHAPI(addr)
 	var beforeSeq int64
+	// dsh 转录里同一 seq 可能派生出多条条目（think/bash 等），id 形如
+	// "<seq>-<n>"；分页游标只取数字前缀。
+	if i := strings.IndexByte(before, '-'); i > 0 {
+		before = before[:i]
+	}
 	if n, err := strconv.ParseInt(before, 10, 64); err == nil && n > 0 {
 		beforeSeq = n
 	}
