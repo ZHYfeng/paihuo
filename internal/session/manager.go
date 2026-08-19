@@ -271,10 +271,36 @@ func (m *Manager) spawnDsh(ss *store.Task, agent store.Role, cwd string) (*dshCh
 		return nil, fmt.Errorf("启动 dsh 会话失败: %w", err)
 	}
 	persistDSHSessionID(ss.SessionDir, ch.dshSession)
+	// 新会话应用角色里的 dsh ModelSelection（provider/model/reasoningEffort）；
+	// 恢复已有会话时不覆盖其已经选择的模型。模型选择失败不阻断会话启动，
+	// 与 dsh web 的行为一致：会话仍可用，只是沿用当前/默认模型。
+	if resume == "" {
+		if err := applyDSHRoleModel(ch, agent.RoleConfig); err != nil {
+			log.Printf("⚠ 会话 %d 应用 dsh 角色模型失败（继续使用默认）: %v", ss.ID, err)
+		}
+	}
 	ch.setEventHandler(func(ev rpcEvent) { m.handleEvent(ss.ID, ev) })
 	ch.setExitHandler(func() { m.handleExit(ss.ID) })
 	ch.start()
 	return ch, nil
+}
+
+// applyDSHRoleModel 把角色配置中的 provider/model/reasoning_effort 应用到新建
+// dsh 会话。dsh web 的 session.create 不接收模型，需在创建后调用
+// session.selectModel；只有 provider 和 model 都填写时才执行。
+func applyDSHRoleModel(ch *dshChannel, role store.RoleConfig) error {
+	model := strings.TrimSpace(role.Model)
+	provider := strings.TrimSpace(role.Custom["provider"])
+	if model == "" || provider == "" {
+		return nil
+	}
+	effort := strings.TrimSpace(role.Custom["reasoning_effort"])
+	if effort == "" {
+		effort = strings.TrimSpace(role.Custom["reasoningEffort"])
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return ch.api.selectModel(ctx, ch.dshSession, provider, model, effort)
 }
 
 // spawn 启动 pi/omp RPC 进程并注入事件/退出回调。

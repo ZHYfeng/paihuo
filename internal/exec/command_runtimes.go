@@ -740,7 +740,7 @@ func (a *dshAdapter) Build(o ExecutionRequest) (string, []string, []string, erro
 	args = append(args, o.Prompt)
 	env := mergeEnv(o.Role.Env)
 	// dsh 原生模式（profile 组合的 cordis 配置直接读这些环境变量）：
-	//   - DSH_TUI_PRESET：agent 预设（standard / minimal 极简 / 自定义 roster）；空=roster 默认
+	//   - DSH_TUI_PRESET：agent 预设（standard / code / minimal / cordis / 自定义 roster）；空=roster 默认
 	//   - DSH_TUI_PERSONA：系统提示词（@deepseek-ai/dsh-system-prompt 的 persona 配置）
 	//   - DSH_PERMISSION_MODE：沙箱与审批模式（danger-full-access 免审批无沙箱；
 	//     workspace-write 沙箱+人工审批 / read-only 只读），按任务权限映射
@@ -761,8 +761,8 @@ func (a *dshAdapter) Build(o ExecutionRequest) (string, []string, []string, erro
 
 func (a *dshAdapter) Warnings(o ExecutionRequest) []string {
 	var ws []string
-	if m := o.Role.Model; m != "" {
-		ws = append(ws, "dsh 模型与提供商在 profile 插件配置或 TUI 内（/model）选择，role.model 不生效")
+	if o.Role.Model != "" || o.Role.Custom["provider"] != "" {
+		ws = append(ws, "dsh 批处理不使用 role.model/provider；会话需同时填写 provider+model 才会经 session.selectModel 应用")
 	}
 	if len(o.Role.Skills) > 0 {
 		ws = append(ws, "dsh 技能走 profile 插件体系（dsh plugin --profile ... add）与 agent 预设（preset），角色 skills 字段暂不生效")
@@ -773,29 +773,40 @@ func (a *dshAdapter) Warnings(o ExecutionRequest) []string {
 	return ws
 }
 
-// dshPresetCandidates 返回可选的 agent 预设：roster 目录（$DSH_HOME/.agent-presets）下
-// 已安装的预设 id + 内置标准候选。供 schema 的 preset 字段做下拉候选。
+// dshPresetCandidates 返回可选的 agent 预设：dsh web 随附的 system preset
+// （standard/code/minimal/cordis）+ $DSH_HOME/.agent-presets 下已安装的自定义
+// 预设。供 schema 的 preset 字段做下拉候选。
 func dshPresetCandidates() []string {
-	out := []string{"", "standard", "minimal"}
+	out := []string{"", "standard", "code", "minimal", "cordis"}
+	seen := map[string]bool{"": true, "standard": true, "code": true, "minimal": true, "cordis": true}
 	entries, err := os.ReadDir(filepath.Join(dshHome(), ".agent-presets"))
 	if err != nil {
 		return out
 	}
 	for _, e := range entries {
-		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-			out = append(out, e.Name())
+		name := e.Name()
+		if e.IsDir() && !strings.HasPrefix(name, ".") && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
 		}
 	}
 	return out
 }
 
-// dsh 无逐模型字段；schema 暴露通用角色字段（system_prompt→persona、preset→模式）
-// 与 profile 选择。
+// dsh schema 对齐 dsh web 的实现：preset 选 agent 组装，provider/model/
+// reasoning_effort 构成 ModelSelection（会话创建后经 session.selectModel 应用），
+// 同时保留通用角色字段（system_prompt→persona）与批处理 profile 选择。
 func (a *dshAdapter) Schema() []Field {
 	return []Field{
 		{Key: "model", Label: "模型", Type: "text", Group: "模型与指令",
-			Placeholder: "在 dsh profile / TUI 内配置",
-			Help:        "dsh 模型取自 profile 插件配置（agent-default-model）或 TUI 内 /model 切换；此处仅作角色备注，不传给 CLI"},
+			Placeholder: "如 deepseek-chat",
+			Help:        "dsh 会话创建后会结合 provider 通过 session.selectModel 应用；批处理仍由 profile 的 agent-default-model 决定，不直接传 CLI"},
+		{Key: "provider", Label: "模型提供商", Type: "text", Group: "模型与指令",
+			Placeholder: "如 deepseek / pi-ai",
+			Help:        "dsh web 的 ModelSelection.provider；与 model 一起填写时，会话创建后会调用 session.selectModel"},
+		{Key: "reasoning_effort", Label: "推理强度", Type: "text", Group: "模型与指令",
+			Placeholder: "如 low / medium / high",
+			Help:        "dsh web 的 ModelSelection.reasoningEffort；可选，与 provider/model 一起在会话创建后应用"},
 		{Key: "system_prompt", Label: "系统提示词", Type: "textarea", Group: "模型与指令",
 			Placeholder: "角色定位、行为规范",
 			Help:        "原生映射为 DSH_TUI_PERSONA（dsh-system-prompt 的 persona）：替换默认角色定位；如需保留默认请把默认内容并进这里"},
@@ -804,12 +815,12 @@ func (a *dshAdapter) Schema() []Field {
 			Help:        "与系统提示词不同：这是每次任务的固定指令前缀，在任务提示词之前注入（dsh 以提示词文本方式生效）"},
 		{Key: "preset", Label: "Agent 预设（模式）", Type: "text", Group: "执行",
 			Suggestions: dshPresetCandidates(),
-			Placeholder: "留空用 roster 默认；如 minimal（极简双工具）/ installed presets",
-			Help:        "原生映射为 DSH_TUI_PRESET：按 dsh-agent-presets 的 roster 选择 agent 模式（工具组合/提示词结构），如 minimal 极简、standard、或 $DSH_HOME/.agent-presets 下已安装的自定义预设"},
+			Placeholder: "留空用 roster 默认；如 standard / code / minimal / cordis",
+			Help:        "原生映射为 DSH_TUI_PRESET / session.create 的 agentPreset：按 dsh-agent-presets 的 roster 选择 agent 模式（工具组合/提示词结构），如 standard、code、minimal、cordis 或 $DSH_HOME/.agent-presets 下已安装的自定义预设"},
 		{Key: "profile", Label: "dsh profile", Type: "text", Group: "执行",
-			Suggestions: []string{"", "headless", "web"},
+			Suggestions: []string{"", "headless"},
 			Placeholder: "留空用 headless（一次性批处理）",
-			Help:        "要启动的 dsh profile（$DSH_HOME/profiles 下的插件栈）；批处理默认 headless，会话默认 web 宿主；可自定义已安装 profile"},
+			Help:        "要启动的 dsh profile（$DSH_HOME/profiles 下的插件栈）；此字段仅影响批处理，会话固定使用 web 宿主，因此不需要填 web"},
 		{Key: "extra_args", Label: "额外内容", Type: "text", Group: "执行",
 			Placeholder: "追加到任务文本的固定说明",
 			Help:        "dsh 无独立标志位：这里的内容会并入任务文本（headless 不接受 -- 开头的参数）"},
