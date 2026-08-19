@@ -819,6 +819,22 @@ a {
   box-shadow: var(--shadow-card);
 }
 
+.msg-card > summary,
+.rounded-xl.border > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.msg-card > summary::-webkit-details-marker,
+.rounded-xl.border > summary::-webkit-details-marker {
+  display: none;
+}
+
+.msg-card[open] > summary {
+  margin-bottom: 6px;
+}
+
 .msg-card.user {
   border-color: color-mix(in srgb, var(--brand) 38%, transparent);
   background: color-mix(in srgb, var(--brand) 7%, var(--surface));

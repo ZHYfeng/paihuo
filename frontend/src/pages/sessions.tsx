@@ -170,6 +170,40 @@ function toolArg(name: string, args: unknown): string {
   return "";
 }
 
+function liveItemsFromMsg(msg: Record<string, unknown>): RenderItem[] {
+  const items: RenderItem[] = [];
+  const blocks = msgContentOf(msg);
+  let textBuffer: Array<Record<string, unknown>> = [];
+  let textKey = "live-text";
+  const flushText = () => {
+    if (!textBuffer.length) return;
+    items.push({ kind: "assistant", msg: { role: "assistant", content: textBuffer, timestamp: msg.timestamp }, key: textKey });
+    textBuffer = [];
+  };
+  blocks.forEach((block, index) => {
+    const type = String(block.type || "");
+    if (type === "text") {
+      if (!textBuffer.length) textKey = `live-text-${index}`;
+      textBuffer.push(block);
+      return;
+    }
+    flushText();
+    if (type === "thinking") {
+      items.push({ kind: "custom", msg: { customType: "thinking", content: String(block.thinking || ""), timestamp: msg.timestamp }, key: `live-think-${index}` });
+    } else if (type === "toolCall" || type === "toolExecution") {
+      const name = String(block.name || block.toolName || "tool");
+      const arg = toolArg(name, block.arguments) || (typeof block.arguments === "string" ? block.arguments : "");
+      if (name === "bash") {
+        items.push({ kind: "bash", msg: { role: "bashExecution", command: arg, pending: true, timestamp: msg.timestamp }, key: `live-bash-${index}` });
+      } else {
+        items.push({ kind: "custom", msg: { customType: name, content: arg ? `等待结果 · ${arg}` : "等待结果", timestamp: msg.timestamp }, key: `live-tool-${index}` });
+      }
+    }
+  });
+  flushText();
+  return items.length ? items : [{ kind: "assistant", msg, key: "live" }];
+}
+
 function diffLineClass(line: string): string {
   if (line.startsWith("+") && !line.startsWith("+++")) return "added";
   if (line.startsWith("-") && !line.startsWith("---")) return "removed";
@@ -221,15 +255,20 @@ function MessageCard({ item }: { item: RenderItem }) {
   const meta = pwMeta(msg);
   const streaming = kind === "assistant" && String(msg.stopReason || "") === "pending";
   if (kind === "bash") {
-    const err = Boolean(msg.isError) || (msg.exitCode != null && msg.exitCode !== 0);
+    const pending = Boolean(msg.pending);
+    const err = !pending && (Boolean(msg.isError) || (msg.exitCode != null && msg.exitCode !== 0));
     const lines: string[] = [];
     if (msg.command) lines.push(`$ ${String(msg.command)}`);
     if (msg.output) lines.push(String(msg.output));
-    lines.push(`${err ? "✗ 失败" : "✓ 成功"}${msg.exitCode != null ? ` · exit ${String(msg.exitCode)}` : ""}${msg.truncated ? " · 已截断" : ""}`);
-    return <div className={`msg-card bash ${streaming ? "streaming" : ""}`}>
-      <div className="msg-head"><b className="msg-label">bash</b><span className="msg-meta" title={meta}>{meta}</span></div>
+    lines.push(pending ? "⋯ 等待执行结果" : `${err ? "✗ 失败" : "✓ 成功"}${msg.exitCode != null ? ` · exit ${String(msg.exitCode)}` : ""}${msg.truncated ? " · 已截断" : ""}`);
+    return <details className={`msg-card bash ${streaming ? "streaming" : ""}`}>
+      <summary className="flex cursor-pointer select-none items-center justify-between gap-2">
+        <b className="msg-label">bash</b>
+        {msg.command ? <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted">{String(msg.command)}</code> : null}
+        <span className="msg-meta" title={meta}>{meta}</span>
+      </summary>
       <pre className="shell-output">{lines.join("\n")}</pre>
-    </div>;
+    </details>;
   }
   if (kind === "custom") {
     const customType = String(msg.customType || "custom");
@@ -239,15 +278,27 @@ function MessageCard({ item }: { item: RenderItem }) {
       return <div className="pw-event" title={String(msg.summary || "")}>{String(msg.content || "")}</div>;
     }
     if (customType === "thinking") {
-      return <div className="msg-card thinking">
-        <div className="msg-head"><b className="msg-label">思考</b>{meta ? <span className="msg-meta" title={meta}>{meta}</span> : null}</div>
+      return <details className="msg-card thinking">
+        <summary className="flex cursor-pointer select-none items-center justify-between gap-2">
+          <b className="msg-label">思考</b>
+          {meta ? <span className="msg-meta" title={meta}>{meta}</span> : null}
+        </summary>
         <div className="markdown"><Markdown>{String(msg.content || "")}</Markdown></div>
+      </details>;
+    }
+    if (qa && qa.length) {
+      return <div className="rounded-xl border border-line bg-elevated p-3">
+        <div className="text-xs uppercase tracking-wide text-brand-soft">{customType}</div>
+        <div className="mt-2 grid gap-2">{qa.map((q, index) => <div key={index} className="border-l-2 border-line pl-2"><div className="markdown font-semibold"><Markdown>{String((q.question as Record<string, unknown>)?.question || "")}</Markdown></div><div className="mt-0.5 text-sm text-muted">→ {askAnsweredText(q)}</div></div>)}</div>
       </div>;
     }
-    return <div className="rounded-xl border border-line bg-elevated p-3">
-      <div className="text-xs uppercase tracking-wide text-brand-soft">{customType}</div>
-      {qa && qa.length ? <div className="mt-2 grid gap-2">{qa.map((q, index) => <div key={index} className="border-l-2 border-line pl-2"><div className="markdown font-semibold"><Markdown>{String((q.question as Record<string, unknown>)?.question || "")}</Markdown></div><div className="mt-0.5 text-sm text-muted">→ {askAnsweredText(q)}</div></div>)}</div> : <div className="markdown mt-1"><Markdown>{String(msg.content || "")}</Markdown></div>}
-    </div>;
+    return <details className="rounded-xl border border-line bg-elevated p-3">
+      <summary className="flex cursor-pointer select-none items-center justify-between gap-2">
+        <span className="text-xs uppercase tracking-wide text-brand-soft">{customType}</span>
+        {meta ? <span className="msg-meta" title={meta}>{meta}</span> : null}
+      </summary>
+      <div className="markdown mt-1"><Markdown>{String(msg.content || "")}</Markdown></div>
+    </details>;
   }
   if (kind === "user") {
     return <div className="msg-card user">
@@ -575,7 +626,7 @@ export function SessionDetailPage() {
       <div ref={listRef} onScroll={e => { const el = e.currentTarget; const max = el.scrollHeight - el.clientHeight; setScrollPct(max > 0 ? Math.min(100, Math.round(el.scrollTop / max * 100)) : 0); }} className="min-h-0 flex-1 overflow-y-auto">
         {transcript.isLoading ? <Spinner /> : renderItems.length || liveAsks.length ? <>
           <div className="mb-3 text-center"><Button size="sm" variant="ghost" disabled={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? "加载中…" : "加载更早消息"}</Button></div>
-          <div className="grid gap-3">{renderItems.map(item => <MessageCard key={item.key} item={item} />)}{visibleEcho.map(echo => <MessageCard key={echo.echoId} item={{ kind: "user", msg: { role: "user", content: [{ type: "text", text: echo.text }] }, key: echo.echoId }} />)}{liveMsg ? <MessageCard item={{ kind: "assistant", msg: liveMsg, key: "live" }} /> : null}{liveAsks.map((entry, index) => { const entryKey = String(entry.id || `ask-${index}`); return <ExtensionRequestCard key={`ask-${entryKey}`} entry={entry} answered={!!answered[entryKey]} onAsk={body => ask.mutate(body)} />; })}</div>
+          <div className="grid gap-3">{renderItems.map(item => <MessageCard key={item.key} item={item} />)}{visibleEcho.map(echo => <MessageCard key={echo.echoId} item={{ kind: "user", msg: { role: "user", content: [{ type: "text", text: echo.text }] }, key: echo.echoId }} />)}{liveMsg ? liveItemsFromMsg(liveMsg).map(item => <MessageCard key={item.key} item={item} />) : null}{liveAsks.map((entry, index) => { const entryKey = String(entry.id || `ask-${index}`); return <ExtensionRequestCard key={`ask-${entryKey}`} entry={entry} answered={!!answered[entryKey]} onAsk={body => ask.mutate(body)} />; })}</div>
         {item.status === "active" && agentRunning ? <div className="activity-dock active"><span className="dot" />Agent 正在执行…</div> : null}
         </> : <Empty title="还没有消息" copy="会话启动后，消息会实时显示在这里。" />}
       </div>
