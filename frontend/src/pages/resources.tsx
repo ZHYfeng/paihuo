@@ -271,6 +271,37 @@ function formatTime(value?: string | null) {
 
 type RoleDraft = Partial<Role> & { role_config: RoleConfig };
 
+/** 运行时字段分组渲染：
+ *  - shorts（text/select）：两列并排，高度统一；
+ *  - talls（textarea/list/额外参数）：两列并排，高度统一；
+ *  - fulls（技能/扩展选择器、env）：独占一行。
+ *
+ * 避免把 36px 的输入框和 160px 的选择器放进同一网格行——CSS grid 会把
+ * 整行撑到最高控件，短控件下方空一大片（留白）。
+ */
+function RoleFieldGroups({ fields, draft, setDraft, skills }: { fields: RuntimeField[]; draft: RoleDraft; setDraft(draft: RoleDraft): void; skills?: Skill[] }) {
+  if (!fields.length) return null;
+  const shorts: RuntimeField[] = [];
+  const talls: RuntimeField[] = [];
+  const fulls: RuntimeField[] = [];
+  for (const field of fields) {
+    if (field.source === "skills" || field.source === "extensions" || field.type === "env") fulls.push(field);
+    else if (field.type === "textarea" || field.type === "list" || field.key === "extra_args") talls.push(field);
+    else shorts.push(field);
+  }
+  const render = (field: RuntimeField) => {
+    const setRoleField = (value: unknown) => setDraft({ ...draft, role_config: field.builtin ? { ...draft.role_config, [field.key]: value } : { ...draft.role_config, custom: { ...draft.role_config.custom, [field.key]: String(value) } } });
+    return field.source === "skills"
+      ? <RoleSkillPicker key={field.key} skills={skills} value={field.builtin ? draft.role_config[field.key as keyof RoleConfig] : draft.role_config.custom?.[field.key]} onChange={setRoleField} />
+      : <RuntimeFieldInput key={field.key} field={resolveRuntimeField(field, draft.role_config, skills)} value={field.builtin ? draft.role_config[field.key as keyof RoleConfig] : draft.role_config.custom?.[field.key]} onChange={setRoleField} />;
+  };
+  return <div className="grid gap-4">
+    {shorts.length ? <div className="grid gap-4 md:grid-cols-2">{shorts.map(render)}</div> : null}
+    {talls.length ? <div className="grid gap-4 md:grid-cols-2">{talls.map(render)}</div> : null}
+    <div className="grid gap-4">{fulls.map(render)}</div>
+  </div>;
+}
+
 export function RolesPage() {
   const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
   const tasks = useQuery({ queryKey: keys.tasks, queryFn: () => api<Task[]>("/tasks") });
@@ -368,7 +399,7 @@ export function RolesPage() {
       {draft && <form className="grid gap-4" onSubmit={(event: FormEvent) => { event.preventDefault(); save.mutate(draft); }}>
         <div className="grid gap-4 md:grid-cols-2"><Field label="名称"><input className={inputClass} required value={draft.name || ""} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="Runtime"><select className={inputClass} value={draft.runtime_id} onChange={e => setDraft({ ...draft, runtime_id: e.target.value, role_config: {} })}>{runtimes.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field></div>
         <Field label="职责说明"><textarea className={inputClass + " min-h-24 py-3"} value={draft.description || ""} onChange={e => setDraft({ ...draft, description: e.target.value })} /></Field>
-        <div className="grid gap-4 md:grid-cols-2">{selected?.fields.map(field => field.source === "skills" ? <RoleSkillPicker key={field.key} skills={skills.data} value={field.builtin ? draft.role_config[field.key as keyof RoleConfig] : draft.role_config.custom?.[field.key]} onChange={value => setDraft({ ...draft, role_config: field.builtin ? { ...draft.role_config, [field.key]: value } : { ...draft.role_config, custom: { ...draft.role_config.custom, [field.key]: String(value) } } })} /> : <RuntimeFieldInput key={field.key} field={resolveRuntimeField(field, draft.role_config, skills.data)} value={field.builtin ? draft.role_config[field.key as keyof RoleConfig] : draft.role_config.custom?.[field.key]} onChange={value => setDraft({ ...draft, role_config: field.builtin ? { ...draft.role_config, [field.key]: value } : { ...draft.role_config, custom: { ...draft.role_config.custom, [field.key]: String(value) } } })} />)}</div>
+        <div>{selected?.fields?.length ? <RoleFieldGroups fields={selected.fields} draft={draft} setDraft={setDraft} skills={skills.data} /> : null}</div>
         <div className="grid gap-4 md:grid-cols-2"><Field label="最大并发"><input className={inputClass} type="number" min="1" value={draft.max_concurrency || 1} onChange={e => setDraft({ ...draft, max_concurrency: Number(e.target.value) })} /></Field><label className="flex min-h-11 items-center gap-3 self-end rounded-xl border border-line bg-elevated px-3 text-sm"><input type="checkbox" checked={draft.enabled ?? true} onChange={e => setDraft({ ...draft, enabled: e.target.checked })} />启用角色</label></div>
         <DelegationFields draft={draft} setDraft={setDraft} />
         <MutationError value={save.error} /><div className="flex justify-end"><Button variant="primary" disabled={save.isPending}>保存角色</Button></div>

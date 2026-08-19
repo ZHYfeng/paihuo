@@ -1,43 +1,43 @@
 {
-  "_api-d0Yed99Z.js": {
-    "file": "assets/api-d0Yed99Z.js",
+  "_api-DizFq1na.js": {
+    "file": "assets/api-DizFq1na.js",
     "name": "api",
     "imports": [
       "index.html"
     ]
   },
-  "_directory-picker-BZO09ZyD.js": {
-    "file": "assets/directory-picker-BZO09ZyD.js",
+  "_directory-picker-CkNg8aJF.js": {
+    "file": "assets/directory-picker-CkNg8aJF.js",
     "name": "directory-picker",
     "imports": [
-      "_api-d0Yed99Z.js",
+      "_api-DizFq1na.js",
       "index.html"
     ]
   },
-  "_markdown-Dh6Ijd1A.js": {
-    "file": "assets/markdown-Dh6Ijd1A.js",
+  "_markdown-DM3KZXVA.js": {
+    "file": "assets/markdown-DM3KZXVA.js",
     "name": "markdown",
     "imports": [
       "index.html"
     ]
   },
-  "_rotate-ccw-DoDa36uL.js": {
-    "file": "assets/rotate-ccw-DoDa36uL.js",
+  "_rotate-ccw-BKGJWxSV.js": {
+    "file": "assets/rotate-ccw-BKGJWxSV.js",
     "name": "rotate-ccw",
     "imports": [
       "index.html"
     ]
   },
-  "_workflows-CIqLZ_M8.js": {
-    "file": "assets/workflows-CIqLZ_M8.js",
+  "_workflows-DzAnkrwF.js": {
+    "file": "assets/workflows-DzAnkrwF.js",
     "name": "workflows",
     "imports": [
-      "_api-d0Yed99Z.js",
+      "_api-DizFq1na.js",
       "index.html"
     ]
   },
   "index.html": {
-    "file": "assets/index-BMHr08fA.js",
+    "file": "assets/index-CAVM6MmY.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -47,7 +47,7 @@
       "src/pages/resources.tsx",
       "src/pages/management.tsx",
       "src/pages/sessions.tsx",
-      "_workflows-CIqLZ_M8.js"
+      "_workflows-DzAnkrwF.js"
     ],
     "css": [
       "assets/index-DBtQYmAf.css"
@@ -66,66 +66,66 @@
     "src": "src/fonts/inter-latin.woff2"
   },
   "src/pages/approvals.tsx": {
-    "file": "assets/approvals-C79h08w-.js",
+    "file": "assets/approvals-CPOWIT_6.js",
     "name": "approvals",
     "src": "src/pages/approvals.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_api-d0Yed99Z.js",
-      "_rotate-ccw-DoDa36uL.js",
+      "_api-DizFq1na.js",
+      "_rotate-ccw-BKGJWxSV.js",
       "index.html"
     ]
   },
   "src/pages/management.tsx": {
-    "file": "assets/management-DudaBMbu.js",
+    "file": "assets/management-Bxe4fyYB.js",
     "name": "management",
     "src": "src/pages/management.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_api-d0Yed99Z.js",
-      "_workflows-CIqLZ_M8.js",
-      "_directory-picker-BZO09ZyD.js",
+      "_api-DizFq1na.js",
+      "_workflows-DzAnkrwF.js",
+      "_directory-picker-CkNg8aJF.js",
       "index.html",
-      "_markdown-Dh6Ijd1A.js",
+      "_markdown-DM3KZXVA.js",
       "src/pages/tasks.tsx"
     ]
   },
   "src/pages/resources.tsx": {
-    "file": "assets/resources-DRk_8YcC.js",
+    "file": "assets/resources-DxXWOGId.js",
     "name": "resources",
     "src": "src/pages/resources.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_api-d0Yed99Z.js",
-      "_rotate-ccw-DoDa36uL.js",
-      "_workflows-CIqLZ_M8.js",
-      "_directory-picker-BZO09ZyD.js",
+      "_api-DizFq1na.js",
+      "_rotate-ccw-BKGJWxSV.js",
+      "_workflows-DzAnkrwF.js",
+      "_directory-picker-CkNg8aJF.js",
       "index.html",
       "src/pages/tasks.tsx"
     ]
   },
   "src/pages/sessions.tsx": {
-    "file": "assets/sessions-CH8paCYf.js",
+    "file": "assets/sessions-0mZya0Vo.js",
     "name": "sessions",
     "src": "src/pages/sessions.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_api-d0Yed99Z.js",
-      "_workflows-CIqLZ_M8.js",
+      "_api-DizFq1na.js",
+      "_workflows-DzAnkrwF.js",
       "index.html",
-      "_markdown-Dh6Ijd1A.js",
+      "_markdown-DM3KZXVA.js",
       "src/pages/tasks.tsx"
     ]
   },
   "src/pages/tasks.tsx": {
-    "file": "assets/tasks-CsQo5vYY.js",
+    "file": "assets/tasks-i_IeQd8N.js",
     "name": "tasks",
     "src": "src/pages/tasks.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_api-d0Yed99Z.js",
-      "_rotate-ccw-DoDa36uL.js",
-      "_workflows-CIqLZ_M8.js",
+      "_api-DizFq1na.js",
+      "_rotate-ccw-BKGJWxSV.js",
+      "_workflows-DzAnkrwF.js",
       "index.html"
     ]
   }
