@@ -523,7 +523,11 @@ function RuntimeFieldInput({ field, value, onChange }: { field: RuntimeField; va
     else if (field.type === "env") onChange(Object.fromEntries(e.target.value.split("\n").map(line => line.split("=", 2)).filter(parts => parts[0]).map(([key, item = ""]) => [key.trim(), item])));
     else onChange(e.target.value);
   }} /></Field>;
-  if (field.type === "select") return <Field label={field.label} hint={field.help}><select className={inputClass} value={text} onChange={e => onChange(e.target.value)}><option value="">使用智能体默认值</option>{field.options?.map(option => <option key={option}>{option}</option>)}</select></Field>;
+  if (field.type === "select") {
+    const options = field.options || [];
+    const allOptions = text && !options.includes(text) ? [text, ...options] : options;
+    return <Field label={field.label} hint={field.help}><select className={inputClass} value={text} onChange={e => onChange(e.target.value)}><option value="">使用智能体默认值</option>{allOptions.map(option => <option key={option} value={option}>{option}</option>)}</select></Field>;
+  }
   return <Field label={field.label} hint={field.help}><input className={inputClass} list={`runtime-${field.key}`} placeholder={field.placeholder} value={text} onChange={e => onChange(e.target.value)} />{field.suggestions?.length ? <datalist id={`runtime-${field.key}`}>{field.suggestions.map(option => <option key={option} value={option} />)}</datalist> : null}</Field>;
 }
 

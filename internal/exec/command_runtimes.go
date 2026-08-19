@@ -793,19 +793,111 @@ func dshPresetCandidates() []string {
 	return out
 }
 
+// dshSettingsLines 读取 $DSH_HOME/settings.yaml（不存在时返回 nil）。
+func dshSettingsLines() []string {
+	b, err := os.ReadFile(filepath.Join(dshHome(), "settings.yaml"))
+	if err != nil {
+		return nil
+	}
+	return strings.Split(string(b), "\n")
+}
+
+// dshProviderCandidates 返回 dsh web 可选的 provider 路由：内置
+// deepseek-official，加上 settings.yaml 中 llm-pi-ai.providers 下声明的路由，
+// 以及 agent-default-model.provider 当前使用的路由。
+func dshProviderCandidates() []string {
+	seen := map[string]bool{"deepseek-official": true}
+	out := []string{"deepseek-official"}
+	inProviders := false
+	providersIndent := -1
+	providerIndent := -1
+	for _, line := range dshSettingsLines() {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		if strings.HasPrefix(trimmed, "providers:") {
+			inProviders = true
+			providersIndent = indent
+			providerIndent = -1
+			continue
+		}
+		if inProviders {
+			if indent <= providersIndent {
+				inProviders = false
+				providerIndent = -1
+			} else if strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, "-") {
+				if providerIndent == -1 {
+					providerIndent = indent
+				}
+				if indent == providerIndent {
+					name := strings.TrimSuffix(trimmed, ":")
+					if name != "" && !seen[name] {
+						seen[name] = true
+						out = append(out, name)
+					}
+				}
+			}
+		}
+		if strings.HasPrefix(trimmed, "provider:") {
+			name := strings.TrimSpace(strings.TrimPrefix(trimmed, "provider:"))
+			if name != "" && !seen[name] {
+				seen[name] = true
+				out = append(out, name)
+			}
+		}
+	}
+	return out
+}
+
+// dshModelCandidates 返回 dsh web 可选的模型 id：settings.yaml 中的模型 id /
+// agent-default-model.model，并补充 DeepSeek 官方默认模型。
+func dshModelCandidates() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name != "" && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	for _, line := range dshSettingsLines() {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "id:") {
+			add(strings.TrimPrefix(trimmed, "id:"))
+		}
+		if strings.HasPrefix(trimmed, "model:") {
+			add(strings.TrimPrefix(trimmed, "model:"))
+		}
+	}
+	for _, m := range []string{"deepseek-v4-flash", "deepseek-v4-pro"} {
+		add(m)
+	}
+	return out
+}
+
 // dsh schema 对齐 dsh web 的实现：preset 选 agent 组装，provider/model/
 // reasoning_effort 构成 ModelSelection（会话创建后经 session.selectModel 应用），
 // 同时保留通用角色字段（system_prompt→persona）与批处理 profile 选择。
 func (a *dshAdapter) Schema() []Field {
+	presets := dshPresetCandidates()
+	if len(presets) > 0 {
+		presets = presets[1:] // 空值由前端“使用智能体默认值”提供
+	}
 	return []Field{
-		{Key: "model", Label: "模型", Type: "text", Group: "模型与指令",
-			Placeholder: "如 deepseek-chat",
+		{Key: "model", Label: "模型", Type: "select", Group: "模型与指令",
+			Options:     dshModelCandidates(),
+			Placeholder: "选择模型",
 			Help:        "dsh 会话创建后会结合 provider 通过 session.selectModel 应用；批处理仍由 profile 的 agent-default-model 决定，不直接传 CLI"},
-		{Key: "provider", Label: "模型提供商", Type: "text", Group: "模型与指令",
-			Placeholder: "如 deepseek / pi-ai",
+		{Key: "provider", Label: "模型提供商", Type: "select", Group: "模型与指令",
+			Options:     dshProviderCandidates(),
+			Placeholder: "选择提供商",
 			Help:        "dsh web 的 ModelSelection.provider；与 model 一起填写时，会话创建后会调用 session.selectModel"},
-		{Key: "reasoning_effort", Label: "推理强度", Type: "text", Group: "模型与指令",
-			Placeholder: "如 low / medium / high",
+		{Key: "reasoning_effort", Label: "推理强度", Type: "select", Group: "模型与指令",
+			Options:     []string{"low", "medium", "high", "max"},
+			Placeholder: "选择推理强度",
 			Help:        "dsh web 的 ModelSelection.reasoningEffort；可选，与 provider/model 一起在会话创建后应用"},
 		{Key: "system_prompt", Label: "系统提示词", Type: "textarea", Group: "模型与指令",
 			Placeholder: "角色定位、行为规范",
@@ -813,13 +905,13 @@ func (a *dshAdapter) Schema() []Field {
 		{Key: "instructions", Label: "指令", Type: "textarea", Group: "模型与指令",
 			Placeholder: "任务指令模板：每次执行前固定追加的指示",
 			Help:        "与系统提示词不同：这是每次任务的固定指令前缀，在任务提示词之前注入（dsh 以提示词文本方式生效）"},
-		{Key: "preset", Label: "Agent 预设（模式）", Type: "text", Group: "执行",
-			Suggestions: dshPresetCandidates(),
-			Placeholder: "留空用 roster 默认；如 standard / code / minimal / cordis",
+		{Key: "preset", Label: "Agent 预设（模式）", Type: "select", Group: "执行",
+			Options:     presets,
+			Placeholder: "选择 Agent 预设",
 			Help:        "原生映射为 DSH_TUI_PRESET / session.create 的 agentPreset：按 dsh-agent-presets 的 roster 选择 agent 模式（工具组合/提示词结构），如 standard、code、minimal、cordis 或 $DSH_HOME/.agent-presets 下已安装的自定义预设"},
-		{Key: "profile", Label: "dsh profile", Type: "text", Group: "执行",
-			Suggestions: []string{"", "headless"},
-			Placeholder: "留空用 headless（一次性批处理）",
+		{Key: "profile", Label: "dsh profile", Type: "select", Group: "执行",
+			Options:     []string{"headless"},
+			Placeholder: "选择 dsh profile",
 			Help:        "要启动的 dsh profile（$DSH_HOME/profiles 下的插件栈）；此字段仅影响批处理，会话固定使用 web 宿主，因此不需要填 web"},
 		{Key: "extra_args", Label: "额外内容", Type: "text", Group: "执行",
 			Placeholder: "追加到任务文本的固定说明",
