@@ -1121,10 +1121,15 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// git 识别：标记哪些项目支持 worktree 隔离
+	// git 识别：标记哪些项目支持 worktree 隔离；GitHub 仓库为空时默认读取 origin remote。
 	for i := range projects {
 		if projects[i].ProjectDir != "" {
 			projects[i].IsGit = workspace.IsGitRepo(projects[i].ProjectDir)
+			if projects[i].GitHubRepo == "" && projects[i].IsGit {
+				if repo, err := workspace.RemoteRepo(projects[i].ProjectDir); err == nil && repo != "" {
+					projects[i].GitHubRepo = repo
+				}
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, projects)
@@ -1139,6 +1144,11 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	if in.Name == "" {
 		writeErr(w, http.StatusBadRequest, "项目名不能为空")
 		return
+	}
+	if strings.TrimSpace(in.GitHubRepo) == "" && strings.TrimSpace(in.ProjectDir) != "" {
+		if repo, err := workspace.RemoteRepo(in.ProjectDir); err == nil && repo != "" {
+			in.GitHubRepo = repo
+		}
 	}
 	id, err := s.st.CreateProject(in)
 	if err != nil {
@@ -1170,6 +1180,23 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(fmt.Sprint(v)) == "" {
 			writeErr(w, http.StatusBadRequest, "项目名不能为空")
 			return
+		}
+	}
+	// 未显式填写 github_repo 时，默认从本地 git origin remote 自动识别。
+	if _, hasRepo := set["github_repo"]; !hasRepo {
+		cur, err := s.st.GetProject(id)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, "项目不存在")
+			return
+		}
+		dir := cur.ProjectDir
+		if v, ok := set["project_dir"]; ok {
+			dir = fmt.Sprint(v)
+		}
+		if cur.GitHubRepo == "" && dir != "" {
+			if repo, err := workspace.RemoteRepo(dir); err == nil && repo != "" {
+				set["github_repo"] = repo
+			}
 		}
 	}
 	if v, ok := set["status"]; ok {

@@ -351,3 +351,20 @@ func TestGitErrorIncludesOutput(t *testing.T) {
 		t.Fatalf("错误未包含 git 真实输出: %v", err)
 	}
 }
+
+func TestNormalizeGitHubRepo(t *testing.T) {
+	cases := map[string]string{
+		"git@github.com:owner/repo.git":       "owner/repo",
+		"https://github.com/owner/repo.git":   "owner/repo",
+		"https://github.com/owner/repo":       "owner/repo",
+		"ssh://git@github.com/owner/repo.git": "owner/repo",
+		"owner/repo":                          "owner/repo",
+		"git@gitlab.com:owner/repo.git":       "",
+		"https://gitlab.com/owner/repo.git":   "",
+	}
+	for input, want := range cases {
+		if got := NormalizeGitHubRepo(input); got != want {
+			t.Errorf("NormalizeGitHubRepo(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

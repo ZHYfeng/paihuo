@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, CirclePlus, Copy, Download, FlaskConical, FolderKanban, MessagesSquare, Pencil, RefreshCcw, RotateCcw, Search, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, CirclePlus, Copy, Download, FlaskConical, FolderKanban, MessagesSquare, Pencil, RefreshCcw, RotateCcw, Search, Settings, Trash2 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { DirectoryPicker } from "../components/directory-picker";
@@ -22,7 +22,10 @@ export function ProjectDetailPage() {
   const project = useQuery({ queryKey: [...keys.projects, id], queryFn: () => api<Project[]>("/projects").then(list => list.find(item => item.id === id)) });
   const stats = useQuery({ queryKey: ["stats", "project", id], queryFn: () => api<ProjectStats>(`/stats/project/${id}`) });
   const tasks = useQuery({ queryKey: ["tasks", "project", id], queryFn: () => api<Task[]>(`/tasks?project_id=${id}`) });
+  const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
   const [createOpen, setCreateOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState<Partial<Project> | null>(null);
   const implementations = useMemo(() => (tasks.data || []).filter(task => task.merge_of == null).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)), [tasks.data]);
   const merges = useMemo(() => (tasks.data || []).filter(task => task.merge_of != null), [tasks.data]);
   const [dragging, setDragging] = useState<number | null>(null);
@@ -41,6 +44,11 @@ export function ProjectDetailPage() {
   const removeTask = useMutation({
     mutationFn: (task: Task) => api(`/tasks/${task.id}`, { method: "DELETE", revision: task.revision }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["tasks", "project", id] }); qc.invalidateQueries({ queryKey: keys.tasks }); },
+    onError: error => toast((error as Error).message, "bad")
+  });
+  const saveSettings = useMutation({
+    mutationFn: (value: Partial<Project>) => api<Project>(`/projects/${value.id}`, { method: "PATCH", revision: value.revision, body: { name: value.name, description: value.description, project_dir: value.project_dir, status: value.status, github_repo: value.github_repo || "", github_role_id: value.github_role_id ?? null, github_auto_issues: !!value.github_auto_issues, github_auto_prs: !!value.github_auto_prs, github_auto_security: !!value.github_auto_security } }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: keys.projects }); setSettingsOpen(false); toast("项目设置已保存"); },
     onError: error => toast((error as Error).message, "bad")
   });
   const pendingItems = implementations.filter(task => task.status === "queued");
@@ -79,6 +87,7 @@ export function ProjectDetailPage() {
     <PageHeader title={value.name} copy={value.description || value.project_dir || undefined} actions={<>
       <Badge tone={value.status === "active" ? "good" : "neutral"}>{value.status === "active" ? "进行中" : "已归档"}</Badge>{value.is_git && <Badge tone="info">Git</Badge>}
       <Button variant="ghost" onClick={() => navigate("/projects")}>返回</Button>
+      <Button variant="ghost" onClick={() => { setSettings({ ...value, github_repo: value.github_repo || "", github_auto_issues: !!value.github_auto_issues, github_auto_prs: !!value.github_auto_prs, github_auto_security: !!value.github_auto_security }); setSettingsOpen(true); }}><Settings size={16} />设置</Button>
       <Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={16} />新建任务</Button>
     </>} />
     {value.description ? <div className="detail-desc mt-1">{value.description}</div> : null}
@@ -119,6 +128,20 @@ export function ProjectDetailPage() {
       {merges.length ? <><h3 className="mb-2 mt-4 text-sm font-semibold text-muted">代码合并 {merges.length}</h3><div className="grid gap-2">{merges.map(task => <Link key={task.id} to={`/tasks/${task.id}`} className="flex items-center gap-2 rounded-xl border border-line bg-elevated px-3 py-2.5"><span className="chip merge">合并 #{task.merge_of}</span><span className="min-w-0 flex-1 truncate text-sm font-medium hover:text-brand-soft">{task.title}</span><TaskStatus status={task.status} /></Link>)}</div></> : null}
     </Card>
     {agents.length ? <Card className="mt-4"><h2 className="font-semibold">成员统计</h2><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[36rem] text-left text-sm"><thead><tr className="border-b border-line text-xs uppercase tracking-wide text-muted"><th className="py-2 pr-3 font-medium">角色</th><th className="py-2 pr-3 font-medium">任务</th><th className="py-2 pr-3 font-medium">完成</th><th className="py-2 pr-3 font-medium">失败</th><th className="py-2 pr-3 font-medium">审批轮次</th><th className="py-2 pr-3 font-medium">成功率</th><th className="py-2 font-medium">平均耗时</th></tr></thead><tbody className="divide-y divide-line">{agents.map(agent => <tr key={agent.role_id}><td className="py-2.5 pr-3"><span className="grid size-5 place-items-center rounded-full bg-brand/10 text-[10px] font-semibold text-brand-soft">{String(agent.role_name || "?").slice(0, 1)}</span><span className="ml-1">{agent.role_name || `角色 #${agent.role_id}`}</span></td><td className="py-2.5 pr-3">{agent.total}</td><td className="py-2.5 pr-3">{agent.succeeded}</td><td className="py-2.5 pr-3">{agent.failed}</td><td className="py-2.5 pr-3">{agent.reviews || 0}</td><td className="py-2.5 pr-3">{fmtPct(agent.success_rate)}</td><td className="py-3">{fmtDur(agent.avg_duration)}</td></tr>)}</tbody></table></div></Card> : null}
+    <Dialog open={settingsOpen} onOpenChange={setSettingsOpen} title="项目设置">
+      {settings && <form className="grid gap-4" onSubmit={(event: FormEvent) => { event.preventDefault(); saveSettings.mutate(settings); }}>
+        <div className="rounded-xl border border-line bg-elevated p-3"><div className="mb-2 text-sm font-semibold">GitHub 集成</div>
+          <div className="grid gap-3">
+            <Field label="GitHub 仓库" hint="默认读取本地 git origin remote；可手动修改。"><input className={inputClass} value={settings.github_repo || ""} onChange={e => setSettings({ ...settings, github_repo: e.target.value })} placeholder="owner/repo" /></Field>
+            <Field label="自动处理角色" hint="自动创建的 GitHub 任务默认指派给该角色；可不选，稍后手动指派。"><select className={inputClass} value={settings.github_role_id ?? ""} onChange={e => setSettings({ ...settings, github_role_id: e.target.value ? Number(e.target.value) : null })}><option value="">不自动指派</option>{roles.data?.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}</select></Field>
+            <label className="flex min-h-10 items-center gap-2 text-sm"><input type="checkbox" checked={!!settings.github_auto_issues} onChange={e => setSettings({ ...settings, github_auto_issues: e.target.checked })} />自动处理 Issue</label>
+            <label className="flex min-h-10 items-center gap-2 text-sm"><input type="checkbox" checked={!!settings.github_auto_prs} onChange={e => setSettings({ ...settings, github_auto_prs: e.target.checked })} />自动处理 PR</label>
+            <label className="flex min-h-10 items-center gap-2 text-sm"><input type="checkbox" checked={!!settings.github_auto_security} onChange={e => setSettings({ ...settings, github_auto_security: e.target.checked })} />自动处理安全告警</label>
+          </div>
+        </div>
+        <MutationError value={saveSettings.error} /><div className="flex justify-end"><Button variant="primary" disabled={saveSettings.isPending}>保存设置</Button></div>
+      </form>}
+    </Dialog>
     <NewTaskDialog open={createOpen} onOpenChange={setCreateOpen} initialProjectID={id} />
   </>;
 }

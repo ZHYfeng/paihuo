@@ -597,6 +597,44 @@ func IsGitRepo(dir string) bool {
 	return err == nil && strings.TrimSpace(out) == "true"
 }
 
+// RemoteRepo 读取本地 git 仓库的 origin remote，并转换为 GitHub 的 owner/repo。
+// 不是 GitHub remote、没有 origin 或不是 git 仓库时返回空字符串，不报错。
+func RemoteRepo(dir string) (string, error) {
+	if dir == "" || !IsGitRepo(dir) {
+		return "", nil
+	}
+	out, err := git(dir, "remote", "get-url", "origin")
+	if err != nil {
+		return "", nil
+	}
+	return NormalizeGitHubRepo(strings.TrimSpace(out)), nil
+}
+
+// NormalizeGitHubRepo 把常见 GitHub remote URL 归一化为 owner/repo。
+func NormalizeGitHubRepo(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	// 去掉 .git 后缀
+	raw = strings.TrimSuffix(raw, ".git")
+	// git@github.com:owner/repo
+	if i := strings.Index(raw, "github.com:"); i >= 0 {
+		raw = raw[i+len("github.com:"):]
+		return strings.Trim(raw, "/")
+	}
+	// https://github.com/owner/repo 或 ssh://git@github.com/owner/repo
+	if i := strings.Index(raw, "github.com/"); i >= 0 {
+		raw = raw[i+len("github.com/"):]
+		return strings.Trim(raw, "/")
+	}
+	// 已经是 owner/repo
+	if strings.Count(raw, "/") == 1 && !strings.Contains(raw, "://") && !strings.HasPrefix(raw, "git@") {
+		return raw
+	}
+	return ""
+}
+
 func mergeConflicts(dir string) []string {
 	out, err := git(dir, "diff", "--name-only", "--diff-filter=U")
 	if err != nil {
