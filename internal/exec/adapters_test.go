@@ -568,19 +568,19 @@ func TestDshPresetCandidates(t *testing.T) {
 }
 
 // dsh schema：通用角色字段（system_prompt→persona）+ profile/preset 模式选择；
-// 无逐模型/技能字段。
+// 支持 skills 挂载到项目 .agents/skills；无 thinking/plugins 字段。
 func TestDshSchemaAndWarnings(t *testing.T) {
 	a := &dshAdapter{baseAdapter{id: "dsh", name: "DSH", bin: "dsh"}}
 	keys := map[string]*Field{}
 	for i := range a.Schema() {
 		keys[a.Schema()[i].Key] = &a.Schema()[i]
 	}
-	for _, want := range []string{"model", "system_prompt", "instructions", "preset", "profile", "extra_args", "env"} {
+	for _, want := range []string{"model", "provider", "reasoning_effort", "system_prompt", "instructions", "skills", "preset", "profile", "extra_args", "env"} {
 		if keys[want] == nil {
 			t.Fatalf("schema 缺少 %s", want)
 		}
 	}
-	for _, absent := range []string{"thinking", "skills", "plugins"} {
+	for _, absent := range []string{"thinking", "plugins"} {
 		if keys[absent] != nil {
 			t.Fatalf("dsh schema 不应有 %s", absent)
 		}
@@ -592,14 +592,14 @@ func TestDshSchemaAndWarnings(t *testing.T) {
 		t.Fatalf("Docs=%q", got)
 	}
 
-	// system_prompt 已原生支持（DSH_TUI_PERSONA），不再告警；model/skills/plugins 告警
+	// system_prompt/skills 已原生支持，不再告警；model/provider 与 plugins 仍告警
 	if ws := a.Warnings(ExecutionRequest{Role: store.RoleConfig{
 		Model: "deepseek-v4-flash", Skills: []string{"/sk"}, Plugins: []string{"/p"},
-	}}); len(ws) != 3 {
-		t.Fatalf("model/skills/plugins 各应有一条警告，得到 %v", ws)
+	}}); len(ws) != 2 {
+		t.Fatalf("model/plugins 各应有一条警告，得到 %v", ws)
 	}
-	if ws := a.Warnings(ExecutionRequest{Role: store.RoleConfig{SystemPrompt: "sys"}}); len(ws) != 0 {
-		t.Fatalf("system_prompt 应受支持，不应有警告: %v", ws)
+	if ws := a.Warnings(ExecutionRequest{Role: store.RoleConfig{SystemPrompt: "sys", Skills: []string{"/sk"}}}); len(ws) != 0 {
+		t.Fatalf("system_prompt/skills 应受支持，不应有警告: %v", ws)
 	}
 	if ws := a.Warnings(ExecutionRequest{Role: store.RoleConfig{}}); len(ws) != 0 {
 		t.Fatalf("空角色不应有警告: %v", ws)

@@ -764,9 +764,6 @@ func (a *dshAdapter) Warnings(o ExecutionRequest) []string {
 	if o.Role.Model != "" || o.Role.Custom["provider"] != "" {
 		ws = append(ws, "dsh 批处理不使用 role.model/provider；会话需同时填写 provider+model 才会经 session.selectModel 应用")
 	}
-	if len(o.Role.Skills) > 0 {
-		ws = append(ws, "dsh 技能走 profile 插件体系（dsh plugin --profile ... add）与 agent 预设（preset），角色 skills 字段暂不生效")
-	}
 	if len(o.Role.Plugins) > 0 {
 		ws = append(ws, "dsh 插件在 profile 层管理，角色 plugins 字段不生效")
 	}
@@ -905,6 +902,9 @@ func (a *dshAdapter) Schema() []Field {
 		{Key: "instructions", Label: "指令", Type: "textarea", Group: "模型与指令",
 			Placeholder: "任务指令模板：每次执行前固定追加的指示",
 			Help:        "与系统提示词不同：这是每次任务的固定指令前缀，在任务提示词之前注入（dsh 以提示词文本方式生效）"},
+		{Key: "skills", Label: "技能", Type: "list", Group: "技能", Source: "skills",
+			Placeholder: "勾选已注册到 paihuo 工作目录的技能",
+			Help:        "执行器把所选技能挂载到任务/会话的 .agents/skills，由 dsh 的 skill-filesystem 原生发现"},
 		{Key: "preset", Label: "Agent 预设（模式）", Type: "select", Group: "执行",
 			Options:     presets,
 			Placeholder: "选择 Agent 预设",

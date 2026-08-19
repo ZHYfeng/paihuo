@@ -665,6 +665,14 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 			return
 		}
 	}
+	// dsh 通过项目 .agents/skills 原生发现技能：把角色选择的技能复制到
+	// 任务工作区，清单由既有任务结算逻辑清理。
+	if agent.RuntimeID == "dsh" && len(agent.RoleConfig.Skills) > 0 {
+		if _, _, _, err := PrepareRoleSkillsForWorkspace(dir, "dsh", e.runner.skillManifestPath(tk.ID), tk.ID, agent.RoleConfig.Skills); err != nil {
+			fail("挂载 dsh 角色技能失败: " + err.Error())
+			return
+		}
+	}
 	ro := ExecutionRequest{
 		Dir:        dir,
 		Prompt:     taskPrompt(tk),

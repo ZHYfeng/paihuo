@@ -216,8 +216,8 @@ func hasSymlinkComponent(path, workspaceDir string) bool {
 
 func nativeSkillRoot(cli string) (string, bool) {
 	switch cli {
-	case "omp", "codex", "pi":
-		// .agents/skills 是 Role Skills/Codex/OMP 共同支持的项目根目录。
+	case "omp", "codex", "pi", "dsh":
+		// .agents/skills 是 Role Skills/Codex/OMP/DSH 共同支持的项目根目录。
 		return ".agents/skills", true
 	case "claude":
 		return ".claude/skills", true

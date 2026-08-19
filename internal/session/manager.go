@@ -266,6 +266,13 @@ func (m *Manager) spawnDsh(ss *store.Task, agent store.Role, cwd string) (*dshCh
 		resume = readDSHSessionID(ss.SessionDir)
 	}
 	preset := strings.TrimSpace(agent.RoleConfig.Custom["preset"])
+	// dsh 通过项目 .agents/skills 原生发现技能：新会话先把角色技能复制到
+	// 会话工作区；恢复会话沿用工作区里已挂载的技能。
+	if resume == "" && len(agent.RoleConfig.Skills) > 0 {
+		if _, _, _, err := exec.PrepareRoleSkillsForWorkspace(cwd, "dsh", filepath.Join(m.sessionDirOf(ss.ID), "role-skills.json"), ss.ID, agent.RoleConfig.Skills); err != nil {
+			return nil, fmt.Errorf("挂载 dsh 会话技能失败: %w", err)
+		}
+	}
 	ch, err := newDSHChannel(ss.ID, addr, perm, cwd, preset, resume)
 	if err != nil {
 		return nil, fmt.Errorf("启动 dsh 会话失败: %w", err)
