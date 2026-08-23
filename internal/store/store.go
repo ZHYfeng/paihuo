@@ -649,6 +649,244 @@ func (s *Store) UpdateAtRevision(resource string, id, expected int64, set map[st
 	return nil
 }
 
+// TaskDependencyUpdateError is returned when a user edit would violate the
+// ordinary-task dependency invariants. It lets the HTTP layer report a useful
+// 400 instead of treating a bad dependency selection as a storage failure.
+type TaskDependencyUpdateError struct {
+	Message string
+}
+
+func (e *TaskDependencyUpdateError) Error() string { return e.Message }
+
+// UpdateTaskAtRevision applies a browser task edit that may also change the
+// ordinary task's delivery dependency. Dependency validation and the revision
+// check share one transaction so a stale or invalid edit cannot leave a half-
+// updated task behind.
+func (s *Store) UpdateTaskAtRevision(id, expected int64, set map[string]any) error {
+	_, changesDependency := set["dependency_mode"]
+	_, changesTarget := set["depends_on"]
+	if !changesDependency && !changesTarget {
+		return s.UpdateAtRevision("task", id, expected, set)
+	}
+	if expected < 1 || len(set) == 0 {
+		return ErrRevisionConflict
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var taskType, currentMode, cron string
+	var currentProject, mergeOf, currentDependsOn sql.NullInt64
+	var currentRevision int64
+	if err := tx.QueryRow(`SELECT type, project_id, merge_of, dependency_mode,
+		depends_on, cron, revision FROM tasks WHERE id=?`, id).Scan(
+		&taskType, &currentProject, &mergeOf, &currentMode, &currentDependsOn,
+		&cron, &currentRevision); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrRevisionConflict
+		}
+		return err
+	}
+	if currentRevision != expected {
+		return ErrRevisionConflict
+	}
+	if mergeOf.Valid {
+		return &TaskDependencyUpdateError{Message: "代码合并任务不能修改前置交付"}
+	}
+	if taskType != TaskTypeTask {
+		return &TaskDependencyUpdateError{Message: "只有普通任务可以修改前置交付"}
+	}
+	if cron != "" {
+		return &TaskDependencyUpdateError{Message: "定时定义不能设置前置交付"}
+	}
+
+	projectID := int64(0)
+	if currentProject.Valid {
+		projectID = currentProject.Int64
+	}
+	if value, ok := set["project_id"]; ok {
+		switch v := value.(type) {
+		case nil:
+			projectID = 0
+		case int64:
+			if v <= 0 {
+				return &TaskDependencyUpdateError{Message: "project_id 非法"}
+			}
+			projectID = v
+		case int:
+			if v <= 0 {
+				return &TaskDependencyUpdateError{Message: "project_id 非法"}
+			}
+			projectID = int64(v)
+		default:
+			return &TaskDependencyUpdateError{Message: "project_id 非法"}
+		}
+	}
+
+	mode := currentMode
+	if mode == "" {
+		if currentDependsOn.Valid {
+			mode = DependencyStrong
+		} else {
+			mode = DependencyNone
+		}
+	}
+	if value, ok := set["dependency_mode"]; ok {
+		var valid bool
+		mode, valid = value.(string)
+		if !valid || !validDependencyMode(mode) {
+			return &TaskDependencyUpdateError{Message: "非法依赖模式"}
+		}
+	}
+
+	var target *int64
+	if currentDependsOn.Valid {
+		value := currentDependsOn.Int64
+		target = &value
+	}
+	if value, ok := set["depends_on"]; ok {
+		switch v := value.(type) {
+		case nil:
+			target = nil
+		case int64:
+			if v <= 0 {
+				return &TaskDependencyUpdateError{Message: "前置任务 ID 非法"}
+			}
+			target = &v
+		case int:
+			if v <= 0 {
+				return &TaskDependencyUpdateError{Message: "前置任务 ID 非法"}
+			}
+			converted := int64(v)
+			target = &converted
+		default:
+			return &TaskDependencyUpdateError{Message: "前置任务 ID 非法"}
+		}
+	}
+
+	switch mode {
+	case DependencyNone:
+		target = nil
+	case DependencyWeak:
+		if projectID == 0 {
+			return &TaskDependencyUpdateError{Message: "无项目任务不能使用自动前置依赖"}
+		}
+		if changesTarget && target != nil {
+			return &TaskDependencyUpdateError{Message: "自动顺序不能指定固定前置任务"}
+		}
+		target, err = previousProjectTask(tx, projectID, id)
+		if err != nil {
+			return err
+		}
+	case DependencyStrong:
+		if projectID == 0 {
+			return &TaskDependencyUpdateError{Message: "明确前置依赖只能用于项目任务"}
+		}
+		if target == nil {
+			return &TaskDependencyUpdateError{Message: "明确依赖必须指定前置任务"}
+		}
+		if err := validateDependencyTarget(tx, projectID, *target); err != nil {
+			return &TaskDependencyUpdateError{Message: err.Error()}
+		}
+		if *target == id {
+			return &TaskDependencyUpdateError{Message: "任务不能以前置任务自身"}
+		}
+		cycle, err := dependencyReaches(tx, *target, id)
+		if err != nil {
+			return err
+		}
+		if cycle {
+			return &TaskDependencyUpdateError{Message: "前置依赖会形成循环"}
+		}
+	}
+
+	updated := make(map[string]any, len(set)+2)
+	for key, value := range set {
+		updated[key] = value
+	}
+	updated["dependency_mode"] = mode
+	updated["depends_on"] = nullInt64(target)
+	cols := make([]string, 0, len(updated)+2)
+	values := make([]any, 0, len(updated)+2)
+	for key, value := range updated {
+		cols = append(cols, key+"=?")
+		values = append(values, value)
+	}
+	values = append(values, Now(), id, expected)
+	cols = append(cols, "updated_at=?", "revision=revision+1")
+	result, err := tx.Exec(fmt.Sprintf("UPDATE tasks SET %s WHERE id=? AND revision=?", strings.Join(cols, ", ")), values...)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return ErrRevisionConflict
+	}
+	if projectID > 0 {
+		if err := validateProjectDependencyGraph(tx, projectID); err != nil {
+			return &TaskDependencyUpdateError{Message: err.Error()}
+		}
+	}
+	return tx.Commit()
+}
+
+func previousProjectTask(tx *sql.Tx, projectID, taskID int64) (*int64, error) {
+	rows, err := tx.Query(`SELECT id FROM tasks
+		WHERE project_id=? AND merge_of IS NULL AND cron='' ORDER BY
+		CASE WHEN sort_order > 0 THEN sort_order ELSE 9223372036854775807 END,
+		created_at, id`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var previous *int64
+	for rows.Next() {
+		var candidate int64
+		if err := rows.Scan(&candidate); err != nil {
+			return nil, err
+		}
+		if candidate == taskID {
+			return previous, nil
+		}
+		value := candidate
+		previous = &value
+	}
+	return previous, rows.Err()
+}
+
+func dependencyReaches(tx *sql.Tx, start, wanted int64) (bool, error) {
+	seen := map[int64]bool{}
+	current := start
+	for current > 0 {
+		if current == wanted {
+			return true, nil
+		}
+		if seen[current] {
+			return false, nil
+		}
+		seen[current] = true
+		var next sql.NullInt64
+		err := tx.QueryRow("SELECT depends_on FROM tasks WHERE id=?", current).Scan(&next)
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if !next.Valid {
+			return false, nil
+		}
+		current = next.Int64
+	}
+	return false, nil
+}
+
 func (s *Store) AssertRevision(resource string, id, expected int64) error {
 	table, _ := revisionTable(resource)
 	if table == "" || expected < 1 {
@@ -1285,13 +1523,20 @@ func validateDependencyTarget(tx *sql.Tx, projectID, dependencyID int64) error {
 	if dependencyID <= 0 {
 		return errors.New("前置任务 ID 非法")
 	}
+	var dependencyType, cron string
 	var dependencyProject, mergeOf sql.NullInt64
-	err := tx.QueryRow("SELECT project_id, merge_of FROM tasks WHERE id=?", dependencyID).Scan(&dependencyProject, &mergeOf)
+	err := tx.QueryRow("SELECT type, project_id, merge_of, cron FROM tasks WHERE id=?", dependencyID).Scan(&dependencyType, &dependencyProject, &mergeOf, &cron)
 	if err == sql.ErrNoRows {
 		return errors.New("前置任务不存在")
 	}
 	if err != nil {
 		return err
+	}
+	if dependencyType != TaskTypeTask {
+		return errors.New("前置任务必须是普通实现任务")
+	}
+	if cron != "" {
+		return errors.New("前置任务不能是定时定义")
 	}
 	if mergeOf.Valid {
 		return errors.New("前置任务必须是实现任务，不能直接依赖代码合并任务")

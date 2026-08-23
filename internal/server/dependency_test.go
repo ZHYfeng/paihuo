@@ -121,6 +121,82 @@ func TestCreateTaskDefaultsToWeakProjectDependencyAndProtectsReferencedDelete(t 
 	}
 }
 
+func TestPatchTaskCanChangePermissionAndDeliveryDependency(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	hub := events.NewEventStream()
+	executor := exec.NewForTest(st, hub, t.TempDir(), "server-patch-dependency-test.db", "server-patch-dependency-test")
+	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
+	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
+	sc := sched.New(st, hub, executor, sess, wf)
+	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
+	roleID, err := st.CreateRole(store.Role{Name: "patch-agent", RuntimeID: "pi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, err := st.CreateProject(store.Project{Name: "patch-project", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	create := func(title string) store.Task {
+		t.Helper()
+		body := fmt.Sprintf(`{"title":%q,"role_id":%d,"project_id":%d}`, title, roleID, projectID)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body))
+		resp := httptest.NewRecorder()
+		s.createTask(resp, req)
+		if resp.Code != http.StatusCreated {
+			t.Fatalf("创建任务失败: code=%d body=%s", resp.Code, resp.Body.String())
+		}
+		var task store.Task
+		if err := json.Unmarshal(resp.Body.Bytes(), &task); err != nil {
+			t.Fatal(err)
+		}
+		return task
+	}
+	first := create("first")
+	second := create("second")
+
+	patch := func(taskID int64, body string) store.Task {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(taskID), strings.NewReader(body))
+		req.SetPathValue("id", itoa(taskID))
+		setTaskRevision(t, st, taskID, req)
+		resp := httptest.NewRecorder()
+		s.patchTask(resp, req)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("PATCH 任务失败: code=%d body=%s", resp.Code, resp.Body.String())
+		}
+		var task store.Task
+		if err := json.Unmarshal(resp.Body.Bytes(), &task); err != nil {
+			t.Fatal(err)
+		}
+		return task
+	}
+
+	updated := patch(second.ID, fmt.Sprintf(`{"perm":"review","dependency_mode":"strong","depends_on":%d}`, first.ID))
+	if updated.Perm != store.PermReview || updated.DependencyMode != store.DependencyStrong || updated.DependsOn == nil || *updated.DependsOn != first.ID {
+		t.Fatalf("权限和前置交付未更新: %+v", updated)
+	}
+
+	cycleReq := httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(first.ID), strings.NewReader(fmt.Sprintf(`{"dependency_mode":"strong","depends_on":%d}`, second.ID)))
+	cycleReq.SetPathValue("id", itoa(first.ID))
+	setTaskRevision(t, st, first.ID, cycleReq)
+	cycleResp := httptest.NewRecorder()
+	s.patchTask(cycleResp, cycleReq)
+	if cycleResp.Code != http.StatusBadRequest || !strings.Contains(cycleResp.Body.String(), "循环") {
+		t.Fatalf("循环前置依赖应被拒绝: code=%d body=%s", cycleResp.Code, cycleResp.Body.String())
+	}
+
+	updated = patch(second.ID, `{"perm":"full","dependency_mode":"none","depends_on":null}`)
+	if updated.Perm != store.PermFull || updated.DependencyMode != store.DependencyNone || updated.DependsOn != nil {
+		t.Fatalf("清除前置交付或恢复权限失败: %+v", updated)
+	}
+}
+
 func TestReorderProjectTasksEndpoint(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {

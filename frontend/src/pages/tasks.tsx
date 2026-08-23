@@ -67,6 +67,46 @@ function DependencyStateChip({ task, tasks }: { task: Task; tasks: Task[] }) {
   return null;
 }
 
+type TaskDependencyMode = "none" | "weak" | "strong";
+
+function taskDependencyMode(task: Task): TaskDependencyMode {
+  if (task.dependency_mode === "weak" || task.dependency_mode === "strong") return task.dependency_mode;
+  return "none";
+}
+
+function TaskDependencyEditor({ task, tasks, disabled, onChange }: { task: Task; tasks: Task[]; disabled?: boolean; onChange(body: Record<string, unknown>): void }) {
+  const [mode, setMode] = useState<TaskDependencyMode>(() => taskDependencyMode(task));
+  const [target, setTarget] = useState(task.depends_on ? String(task.depends_on) : "");
+  const candidates = useMemo(() => tasks
+    .filter(item => item.id !== task.id && item.type === "task" && !isMergeTask(item) && !item.cron && item.project_id === task.project_id)
+    .sort((a, b) => b.id - a.id), [task.id, task.project_id, tasks]);
+  const selectMode = (next: TaskDependencyMode) => {
+    setMode(next);
+    if (next === "strong") {
+      if (target) onChange({ dependency_mode: next, depends_on: Number(target) });
+      return;
+    }
+    setTarget("");
+    onChange({ dependency_mode: next, depends_on: null });
+  };
+  const selectTarget = (value: string) => {
+    setTarget(value);
+    if (value) onChange({ dependency_mode: "strong", depends_on: Number(value) });
+  };
+  return <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+    <select className={inputClass + " py-0.5 text-xs"} value={mode} disabled={disabled} aria-label="前置交付模式" onChange={e => selectMode(e.target.value as TaskDependencyMode)}>
+      <option value="none">独立执行</option>
+      <option value="weak">自动顺序</option>
+      <option value="strong">明确前置</option>
+    </select>
+    {mode === "strong" ? <select className={inputClass + " min-w-40 py-0.5 text-xs"} value={target} disabled={disabled} aria-label="前置任务" onChange={e => selectTarget(e.target.value)}>
+      <option value="">选择前置任务</option>
+      {candidates.map(item => <option key={item.id} value={item.id}>#{item.id} · {item.title}</option>)}
+    </select> : null}
+    {mode === "strong" && !target ? <span className="text-xs text-warning">请选择前置任务</span> : null}
+  </span>;
+}
+
 function SourceMergeChip({ task, tasks }: { task: Task; tasks: Task[] }) {
   if (isMergeTask(task)) return null;
   const merge = mergeTaskFor(task, tasks);
@@ -630,9 +670,11 @@ export function TaskDetailPage() {
               <div className="prop-row"><span className="k">状态</span><span className="v"><select className={inputClass} onChange={e => mutate.mutate({ status: e.target.value })}>{statusOpts}</select></span></div>
               <div className="prop-row"><span className="k">项目</span><span className="v"><select className={inputClass} disabled={!canMoveProject} title={canMoveProject ? undefined : "有前置依赖的任务不能改项目"} onChange={e => mutate.mutate({ project_id: e.target.value ? Number(e.target.value) : null })}>{pOpts}</select></span></div>
               <div className="prop-row"><span className="k">角色</span><span className="v"><select className={inputClass} aria-label="任务角色" onChange={e => mutate.mutate({ role_id: e.target.value ? Number(e.target.value) : null })}>{agentOpts}</select></span></div>
-              <div className="prop-row"><span className="k">权限</span><span className="v">{value.perm === "full" ? "自动合并" : "审批后合并"}</span></div>
+              <div className="prop-row"><span className="k">权限</span><span className="v"><select className={inputClass} value={value.perm} disabled={mutate.isPending} aria-label="任务权限" onChange={e => mutate.mutate({ perm: e.target.value })}><option value="full">自动整合</option><option value="review">人工审批</option></select></span></div>
               <div className="prop-row"><span className="k">方式</span><span className="v">{runMode}</span></div>
-              <div className="prop-row"><span className="k">前置交付</span><span className="v"><DependencyChip task={value} tasks={all} />{dependency.state !== "ready" ? <span title={dependency.reason || ""}>{dependency.stateLabel || dependency.reason || "等待"}</span> : null}</span></div>
+              <div className="prop-row"><span className="k">前置交付</span><span className="v">{value.type === "task" && !value.cron
+                ? <TaskDependencyEditor key={`${value.id}-${value.project_id ?? "none"}-${value.dependency_mode}-${value.depends_on ?? "none"}`} task={value} tasks={all} disabled={mutate.isPending} onChange={body => mutate.mutate(body)} />
+                : <><DependencyChip task={value} tasks={all} />{value.cron ? <span className="text-xs text-faint">定时定义不参与前置交付</span> : null}{dependency.state !== "ready" ? <span title={dependency.reason || ""}>{dependency.stateLabel || dependency.reason || "等待"}</span> : null}</>}</span></div>
               <div className="prop-row"><span className="k">失败后</span><span className="v"><select className={inputClass} onChange={e => mutate.mutate({ block_on_failure: e.target.value === "1" })}><option value="0" selected={!value.block_on_failure}>后续弱依赖可跳过</option><option value="1" selected={value.block_on_failure}>阻塞后续弱依赖</option></select></span></div>
               <div className="prop-row"><span className="k">并发</span><span className="v"><select className={inputClass} onChange={e => mutate.mutate({ concurrent: e.target.value === "1" })}><option value="0" selected={!value.concurrent}>不重叠执行（默认）</option><option value="1" selected={value.concurrent}>允许资源并发</option></select></span></div>
             </div>

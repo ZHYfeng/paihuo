@@ -271,9 +271,28 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	set, ok := patchMap(w, r, "title", "body", "role_id", "perm", "status", "review_note", "parent_id", "project_id", "concurrent", "block_on_failure", "cron", "enabled")
+	set, ok := patchMap(w, r, "title", "body", "role_id", "perm", "status", "review_note", "parent_id", "project_id", "concurrent", "block_on_failure", "dependency_mode", "depends_on", "cron", "enabled")
 	if !ok {
 		return
+	}
+	dependencyChanged := false
+	if v, ok := set["dependency_mode"]; ok {
+		mode, isString := v.(string)
+		if !isString || (mode != store.DependencyNone && mode != store.DependencyWeak && mode != store.DependencyStrong) {
+			writeErr(w, http.StatusBadRequest, "非法依赖模式")
+			return
+		}
+		set["dependency_mode"] = mode
+		dependencyChanged = true
+	}
+	if v, ok := set["depends_on"]; ok {
+		target, valid := optionalTaskID(v)
+		if !valid {
+			writeErr(w, http.StatusBadRequest, "前置任务 ID 非法")
+			return
+		}
+		set["depends_on"] = target
+		dependencyChanged = true
 	}
 	// 定时属性（正交）：cron/enabled 只对定时定义（cron 非空）有意义；
 	// 修改后调度器立即重载。cron 非空时任务成为定时定义，永不直接执行。
@@ -475,11 +494,21 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.st.UpdateAtRevision("task", id, revision, set); err != nil {
-		if errors.Is(err, store.ErrRevisionConflict) {
-			writeErr(w, http.StatusConflict, err.Error())
-		} else {
-			writeErr(w, http.StatusInternalServerError, err.Error())
+	var updateErr error
+	if dependencyChanged {
+		updateErr = s.st.UpdateTaskAtRevision(id, revision, set)
+	} else {
+		updateErr = s.st.UpdateAtRevision("task", id, revision, set)
+	}
+	if updateErr != nil {
+		var dependencyErr *store.TaskDependencyUpdateError
+		switch {
+		case errors.Is(updateErr, store.ErrRevisionConflict):
+			writeErr(w, http.StatusConflict, updateErr.Error())
+		case errors.As(updateErr, &dependencyErr):
+			writeErr(w, http.StatusBadRequest, updateErr.Error())
+		default:
+			writeErr(w, http.StatusInternalServerError, updateErr.Error())
 		}
 		return
 	}
@@ -491,6 +520,10 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, ok := set["block_on_failure"]; ok {
 		// 修改失败阻塞策略后，等待中的弱依赖任务应立即重新判定。
+		s.ex.Wake()
+	}
+	if dependencyChanged {
+		// 修改前置交付后，等待中的任务应立即重新判定。
 		s.ex.Wake()
 	}
 	tk, err := s.st.GetTask(id)
@@ -972,6 +1005,20 @@ func (s *Server) patchRole(w http.ResponseWriter, r *http.Request) {
 	// 提高并发数或重新启用角色后，不必等下一次一秒轮询才派发队列。
 	s.ex.Wake()
 	writeJSON(w, http.StatusOK, a)
+}
+
+// optionalTaskID 将 PATCH 中的 depends_on 收敛为可存储的整数或 nil。
+// JSON 数字先解码为 float64；任务 ID 不应超过 JavaScript 的安全整数范围。
+func optionalTaskID(v any) (any, bool) {
+	if v == nil {
+		return nil, true
+	}
+	n, ok := v.(float64)
+	if !ok || n < 1 || math.Trunc(n) != n || n > 9007199254740991 {
+		return nil, false
+	}
+	id := int64(n)
+	return id, id > 0
 }
 
 // positiveInt 将 patchMap 的 JSON number（float64）收敛为数据库可存的正整数。

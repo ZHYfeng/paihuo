@@ -219,6 +219,9 @@ components:
         perm: {type: string, enum: [full, review], default: full}
         run_mode: {type: string, enum: [batch, interactive], default: batch}
         concurrent: {type: boolean, default: false}
+        dependency_mode: {type: string, enum: [none, weak, strong], description: 前置交付策略；weak=按项目顺序，strong=明确前置}
+        depends_on: {type: [integer, 'null'], format: int64, description: strong 模式的前置普通任务 ID}
+        block_on_failure: {type: boolean, default: false}
         cron: {type: string, description: 定时属性（正交）：非空时创建定时定义任务，永不直接执行}
         enabled: {type: boolean, default: true}
     Task:
