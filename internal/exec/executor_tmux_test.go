@@ -510,6 +510,8 @@ func TestExecutorWaitsForDelayedDetachedExitCodeAfterConfirmedAgentEnd(t *testin
 
 	sessionsRoot := t.TempDir()
 	e := New(st, events.NewEventStream(), sessionsRoot, "late-detached-result-test.db")
+	e.waitTmuxTiming.pollInterval = 10 * time.Millisecond
+	e.waitTmuxTiming.detachedResultSettleTimeout = 500 * time.Millisecond
 	r := newTmuxRunnerAt(sessionsRoot, fmt.Sprintf("paihuo-missing-pane-%d", os.Getpid()))
 	e.runner = r
 	if err := os.MkdirAll(r.taskDir(taskID), 0o700); err != nil {
@@ -530,11 +532,11 @@ func TestExecutorWaitsForDelayedDetachedExitCodeAfterConfirmedAgentEnd(t *testin
 	}
 	resultWriteErr := make(chan error, 1)
 	go func() {
-		time.Sleep(4 * time.Second)
+		time.Sleep(100 * time.Millisecond)
 		resultWriteErr <- writeTestAgentExitCode(r.agentExitPath(taskID), 0)
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	code, err := e.waitTmux(ctx, ctx, &store.Task{ID: taskID})
 	if writeErr := <-resultWriteErr; writeErr != nil {
@@ -564,6 +566,8 @@ func TestExecutorKeepsWatchingUnknownDetachedAgentWithOutputHeartbeat(t *testing
 
 	sessionsRoot := t.TempDir()
 	e := New(st, events.NewEventStream(), sessionsRoot, "unknown-detached-result-test.db")
+	e.waitTmuxTiming.pollInterval = 10 * time.Millisecond
+	e.waitTmuxTiming.detachedUnknownQuietTimeout = 100 * time.Millisecond
 	r := newTmuxRunnerAt(sessionsRoot, fmt.Sprintf("paihuo-unknown-pane-%d", os.Getpid()))
 	e.runner = r
 	if err := os.MkdirAll(r.taskDir(taskID), 0o700); err != nil {
@@ -586,7 +590,7 @@ func TestExecutorKeepsWatchingUnknownDetachedAgentWithOutputHeartbeat(t *testing
 	stopOutput := make(chan struct{})
 	writerErr := make(chan error, 1)
 	go func() {
-		ticker := time.NewTicker(100 * time.Millisecond)
+		ticker := time.NewTicker(20 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
@@ -615,11 +619,13 @@ func TestExecutorKeepsWatchingUnknownDetachedAgentWithOutputHeartbeat(t *testing
 	resultWriteErr := make(chan error, 1)
 	go func() {
 		defer close(resultWritten)
-		time.Sleep(4 * time.Second)
+		// 结果延迟是 quiet timeout 的 5 倍；只有持续输出反复重置 quiet
+		// window，waitTmux 才能等到退出码，而不是碰巧在超时前完成。
+		time.Sleep(500 * time.Millisecond)
 		resultWriteErr <- writeTestAgentExitCode(r.agentExitPath(taskID), 0)
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	code, waitErr := e.waitTmux(ctx, ctx, &store.Task{ID: taskID})
 	<-resultWritten

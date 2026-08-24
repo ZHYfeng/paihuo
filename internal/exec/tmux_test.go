@@ -12,6 +12,9 @@ import (
 
 func requireTmuxIntegration(t *testing.T) string {
 	t.Helper()
+	if testing.Short() {
+		t.Skip("short 模式跳过真实 tmux 集成测试")
+	}
 	if os.Getenv(taskNestedTmuxSkipEnv) == "1" {
 		t.Skip("派活任务内跳过嵌套 tmux 集成测试；本地与 CI 仍完整执行")
 	}
@@ -24,6 +27,9 @@ func requireTmuxIntegration(t *testing.T) string {
 
 func requireUserSystemdRun(t *testing.T) string {
 	t.Helper()
+	if testing.Short() {
+		t.Skip("short 模式跳过真实 user systemd 集成测试")
+	}
 	bin, err := osexec.LookPath("systemd-run")
 	if err != nil {
 		t.Skip("systemd-run 未安装")

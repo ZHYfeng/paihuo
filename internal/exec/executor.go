@@ -23,16 +23,17 @@ import (
 // 项目级并发门禁只管理物理执行重叠；代码基线顺序由 Store 的依赖交付判定
 // 管理。弱依赖会按项目执行顺序串起任务（默认按创建时间），强依赖只在前置交付成功后放行。
 type Executor struct {
-	st           *store.Store
-	hub          *events.EventStream
-	sessionsRoot string // 任务工作空间根目录（<db目录>/sessions）
-	taskSessions *taskSessionStore
-	runner       *tmuxRunner
-	runtimes     *RuntimeService
-	mu           sync.Mutex
-	active       map[int64]int // 每个 Role 当前已占用的执行槽位数
-	activeProj   map[int64]int // 每个 Project 当前活跃的任务数（非并发任务的串行门禁）
-	activeRuns   map[int64]int // 每个 Workflow Run 当前活跃的节点数
+	st             *store.Store
+	hub            *events.EventStream
+	sessionsRoot   string // 任务工作空间根目录（<db目录>/sessions）
+	taskSessions   *taskSessionStore
+	runner         *tmuxRunner
+	runtimes       *RuntimeService
+	waitTmuxTiming waitTmuxTimingConfig
+	mu             sync.Mutex
+	active         map[int64]int // 每个 Role 当前已占用的执行槽位数
+	activeProj     map[int64]int // 每个 Project 当前活跃的任务数（非并发任务的串行门禁）
+	activeRuns     map[int64]int // 每个 Workflow Run 当前活跃的节点数
 	// cancels 是任务级取消句柄
 	cancels map[int64]context.CancelFunc
 	wake    chan struct{}
@@ -76,6 +77,7 @@ func NewWithRuntime(st *store.Store, hub *events.EventStream, sessionsRoot, inst
 		taskSessions:         newTaskSessionStore(sessionsRoot, instanceID),
 		runner:               newTmuxRunner(sessionsRoot),
 		runtimes:             runtimes,
+		waitTmuxTiming:       defaultWaitTmuxTiming(),
 		active:               make(map[int64]int),
 		activeProj:           make(map[int64]int),
 		activeRuns:           make(map[int64]int),
@@ -1065,19 +1067,28 @@ const (
 	// tmux；下限避免 resize-window 拒绝极小窗口，上限防止误传巨值刷爆 pane。
 	minInteractiveCols, maxInteractiveCols = 20, 1000
 	minInteractiveRows, maxInteractiveRows = 5, 300
-
-	// detachedResultSettleTimeout 只适用于已确认独立 Codex service 正在收尾
-	// 或已经结束、但 agent-exit-code 尚未写入的最终结算窗口。该文件由同一
-	// agent wrapper 在退出前原子写入；15 秒覆盖 systemd --collect 与文件
-	// 落盘竞态，同时仍能让真正丢失的任务在有限时间内失败。
-	detachedResultSettleTimeout = 15 * time.Second
-
-	// detachedUnknownQuietTimeout 适用于 pane 已丢、但 systemctl 暂时不能
-	// 确认独立 agent 状态的观测故障。原始输出每次增长都会重置此计时；因此
-	// agent 仍在工作的任务不会因一次 D-Bus/systemd 查询失败被误判。即使
-	// 完全无输出，也保留足以覆盖历史 8 分钟 pane 丢失的长观察窗口。
-	detachedUnknownQuietTimeout = 15 * time.Minute
 )
+
+type waitTmuxTimingConfig struct {
+	pollInterval                time.Duration
+	detachedResultSettleTimeout time.Duration
+	detachedUnknownQuietTimeout time.Duration
+	windowLostGracePeriod       time.Duration
+}
+
+func defaultWaitTmuxTiming() waitTmuxTimingConfig {
+	return waitTmuxTimingConfig{
+		pollInterval: 250 * time.Millisecond,
+		// 已确认独立 Codex service 正在收尾或已经结束、但 agent-exit-code
+		// 尚未写入时，15 秒覆盖 systemd --collect 与文件落盘竞态。
+		detachedResultSettleTimeout: 15 * time.Second,
+		// systemctl 暂时不能确认独立 agent 状态时，原始输出增长会重置
+		// quiet window；15 分钟覆盖历史 8 分钟 pane 丢失。
+		detachedUnknownQuietTimeout: 15 * time.Minute,
+		// 普通 window 消失后短暂等待 run.sh 的退出码原子落盘。
+		windowLostGracePeriod: 3 * time.Second,
+	}
+}
 
 // waitTmux 将 tmux pipe-pane 文件增量同步到 SQLite，并等待 window 内命令退出。
 // serviceCtx 取消表示 paihuo 自身退出，此时保留 task window；taskCtx 取消才终止任务。
@@ -1089,7 +1100,7 @@ func (e *Executor) pollTmux(tk *store.Task) (tmuxObservation, error) {
 }
 
 func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task) (int, error) {
-	ticker := time.NewTicker(250 * time.Millisecond)
+	ticker := time.NewTicker(e.waitTmuxTiming.pollInterval)
 	defer ticker.Stop()
 	var awaitingResultSince time.Time
 	var unknownQuietSince time.Time
@@ -1133,7 +1144,7 @@ func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task)
 				awaitingResultSince = now
 			}
 			unknownQuietSince = time.Time{}
-			if now.Sub(awaitingResultSince) < detachedResultSettleTimeout {
+			if now.Sub(awaitingResultSince) < e.waitTmuxTiming.detachedResultSettleTimeout {
 				select {
 				case <-serviceCtx.Done():
 				case <-taskCtx.Done():
@@ -1151,7 +1162,7 @@ func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task)
 			} else if outputProgressed {
 				unknownQuietSince = now
 			}
-			if now.Sub(unknownQuietSince) < detachedUnknownQuietTimeout {
+			if now.Sub(unknownQuietSince) < e.waitTmuxTiming.detachedUnknownQuietTimeout {
 				select {
 				case <-serviceCtx.Done():
 				case <-taskCtx.Done():
@@ -1170,7 +1181,7 @@ func (e *Executor) waitTmux(serviceCtx, taskCtx context.Context, tk *store.Task)
 			select {
 			case <-serviceCtx.Done():
 			case <-taskCtx.Done():
-			case <-time.After(3 * time.Second):
+			case <-time.After(e.waitTmuxTiming.windowLostGracePeriod):
 			}
 			obs, err = e.pollTmux(tk)
 			if err != nil {
