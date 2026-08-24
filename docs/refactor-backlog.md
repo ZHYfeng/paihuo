@@ -13,8 +13,9 @@
 - **第 3 节**是 19 项改造任务。每项写清了「现在是什么样、为什么是问题、要做什么、怎么算做完」。
 - **第 4 节**讲这些任务之间的关系：哪些能并行、哪些会撞车、先做哪三个。
 
-每项任务都是**范围独立**的：单独开分支、单独合入、单独验收，不需要等别的任务先完成。
-但有几项会改同一个文件，同时开分支会有合并冲突——第 4 节列了具体是哪几组。
+多数任务在**合入范围**上独立：应单独开分支、单独合入、单独验收。
+但它们并非全部适合任意顺序执行：除同文件冲突外，构建目标和数据迁移各有一处
+必须先定方案的顺序约束——第 4 节列出具体关系和分阶段执行建议。
 
 ---
 
@@ -53,7 +54,7 @@
 
 ### 1.2 编译产物进了 git，于是每次改前端都要付两遍钱
 
-`internal/web/dist/` 下 15 个带 hash 的构建产物是**入库的**，因为 Go 用 `go:embed` 把它们
+`internal/web/dist/` 下 17 个构建产物（其中 14 个在 `assets/` 下）是**入库的**，因为 Go 用 `go:embed` 把它们
 打进单二进制。这个设计本身合理（生产环境不跑 Node），但产物入库带来两笔开销：
 
 **第一笔，diff 噪声。** Vite 每次构建都会改文件名 hash，所以任何前端改动都会产生一批
@@ -128,7 +129,7 @@ find . -name '*.go' -not -path './node_modules/*' | xargs wc -l | tail -1
 # 32852 行 Go 代码
 
 git ls-files | wc -l
-# 186 个跟踪文件，其中 15 个是 internal/web/dist 下的构建产物
+# 186 个跟踪文件，其中 17 个是 internal/web/dist 下的构建产物
 ```
 
 单文件 Top 8：
@@ -146,19 +147,31 @@ git ls-files | wc -l
 
 ### 2.2 API 契约漂移
 
-```bash
-grep -ohE '"(GET|POST|PATCH|PUT|DELETE) /api/v1[^"]*"' internal/server/*.go | sort -u | wc -l
-# 58 条已注册路由
+路由和 OpenAPI 要分别按「operation（method + path）」和「path」比较，不能把一边的
+operation 数与另一边的 path 数直接相减：
 
+```bash
+# 已注册 operation / 唯一 path
+grep -ohE '"(GET|POST|PATCH|PUT|DELETE) /api/v1[^"]*"' internal/server/*.go | sort -u | wc -l
+# 87 个 operation
+grep -ohE '"(GET|POST|PATCH|PUT|DELETE) /api/v1[^"]*"' internal/server/*.go \
+  | sed -E 's/^"(GET|POST|PATCH|PUT|DELETE) //' | sort -u | wc -l
+# 63 个 path
+
+# OpenAPI operation / path
+grep -cE '^    (get|post|patch|put|delete):' internal/server/openapi.yaml
+# 54 个 operation
 grep -cE '^  /' internal/server/openapi.yaml
-# 34 条 OpenAPI path
+# 34 个 path
 ```
 
-完全没写进契约的有：`/skills/*`、`/extensions/*`、`/fs/*`、`/stats/*`、
-`/workspace/*`、`/role-studio/*`、`/mcp`、`/tasks/{id}/children`、`/tasks/cleanup`。
+以 OpenAPI 的 `servers.url=/api/v1` 归一化后，契约没有多写的 operation，但少写了
+**33 个 operation（分布在 29 个 path）**。缺口包括 `/extensions/*`、`/fs/*`、
+`/stats/*`、`/workspace/*`、`/role-studio/*`、`/mcp`，以及 skills、sessions、tasks、
+templates、project task order 的部分操作。
 
 守卫测试 `openapi_test.go` 的全部内容是断言 9 个字符串在 yaml 里出现过——
-它永远抓不到「新加了路由但没写契约」。
+它永远抓不到「新加了路由但没写契约」或「已有 operation 没写完整」。
 
 ### 2.3 分层采纳率
 
@@ -460,7 +473,7 @@ CI 继续跑全量 `check`（不放松），本地按改动面挑。`CONTRIBUTIN
 
 ---
 
-### 三、结构拆分（6 项）
+### 三、结构拆分（7 项）
 
 **这一组全部是纯移动或等价重构，不改任何行为。**
 测试应当一行不改就通过——这既是约束也是验收标准。
@@ -764,10 +777,11 @@ hooks/useTasks.ts         全部 mutation
 
 **现状**
 
-见 2.2。58 条路由 vs 34 条 path，守卫测试形同虚设。
+见 2.2。87 个已注册 operation（63 个 path）vs 54 个 OpenAPI operation
+（34 个 path），守卫测试形同虚设。
 
 现在这个状态是最坏的：契约存在、有端点（`GET /api/v1/openapi.yaml`）对外提供、
-架构文档还把它列为卖点，但它只描述了 59% 的 API。
+架构文档还把它列为卖点，但它只描述了约 62% 的 API operation。
 按它写客户端的人会踩坑，而且不知道自己踩了。
 
 **做什么**
@@ -777,8 +791,8 @@ hooks/useTasks.ts         全部 mutation
 1. 重构路由注册，让所有 `method + path` 能被程序枚举
    （最简单的做法：注册时同时往一个 `[]route` 切片里追加；
    如果先做了 `HTTP-1`，register 函数已经是收口的，这一步更简单）
-2. 写测试：提取路由集合，与 `openapi.yaml` 的 paths 做**双向**比对，任一侧多出即失败
-3. 一次性补齐缺的 24 条
+2. 写测试：提取 `method + path` operation 集合，与 `openapi.yaml` 做**双向**比对，任一侧多出即失败
+3. 一次性补齐缺的 33 个 operation
 
 **方案 B**——确认没有外部消费者后，删掉 `openapi.yaml`、`openapi.go`、
 `/api/v1/openapi.yaml` 端点，并把 `docs/TECHNOLOGY_EVOLUTION.md` 里的说法改掉。
@@ -1060,8 +1074,15 @@ var migrations = []struct{
 
 ### 4.1 独立性
 
-19 项在**范围**上互不依赖：任何一项单独做完都能合入并产生价值，
-不需要等其他任务先完成。
+多数任务单独做完都能合入并产生价值，但有两处不是纯粹的「任意顺序」：
+
+- `GATE-1` 与 `GATE-2` 必须共同确定 Make 目标关系，否则 `build` 依赖 `frontend` 后，
+  `check-go` 再依赖 `build`，纯 Go 门禁仍会触发 Vite，违背 `GATE-2` 的目标。
+- `MIG-1` 的策略选择必须早于 `MODEL-1` 发布。SQLite 给现有 `tasks` 表增加
+  `CHECK` 约束通常需要重建表；保留存量库时它必须成为版本迁移，只支持全新库时则应
+  明确拒绝旧 schema，不能先做模型约束再决定旧库怎么办。
+
+其他关系主要是降低冲突和重复劳动的推荐顺序，不是编译依赖。
 
 ### 4.2 会撞车的组合
 
@@ -1103,6 +1124,49 @@ var migrations = []struct{
   没有任何问题，上面所有痛点都是「同一事实写多份」和「文件太大」造成的，
   换 ORM 或 Web 框架只会增加一层新的映射需要维护。
 
+### 4.6 工作量判断
+
+按第 3 节逐项估算直接相加：
+
+| 组别 | 人日 |
+|---|---:|
+| 清理 | 1.5 |
+| 门禁与构建 | 2.5–3.5 |
+| 结构拆分 | 7.5–9.5 |
+| 契约与边界 | 4.5–7.5 |
+| 数据模型 | 5–7 |
+| **合计** | **21–29** |
+
+这还没有计入 PR review、分支同步、手工 E2E、生产数据核对和发布观察。按 15%–25%
+缓冲排期约为 **25–35 人日**，单人全职约 **5–7 周**。因此这不是一次重构 PR，
+而是一组中大型改造计划；大爆炸式合入会让回归定位和回滚边界都不可接受。
+
+截至 `f0aa772`，核心指标仍在：`store.go` 3572 行、`handlers.go` 2275 行、
+`tasks.tsx` 931 行、12 个 server 测试文件重复 bootstrap、17 个 dist 文件仍被跟踪，
+server 对 store/application 的调用仍是 107/17。也就是说，基线之后的功能提交没有
+实质缩小这份清单。
+
+### 4.7 建议分阶段执行
+
+| 阶段 | 内容 | 预计 | 退出条件 |
+|---|---|---:|---|
+| **0 · 安全热修** | `JUNK-1`，尤其是轮换泄漏 token | 0.5 天 | 旧 token 返回 401；临时文件不再被跟踪 |
+| **1 · 基线与门禁** | `DEAD-1`、`DOC-1`、`TEST-1`、`GATE-1/2/3` | 4–5 天 | 全新 clone 可构建；Go/Web 门禁可独立运行；测试行为不变 |
+| **2 · 等价拆分** | `HTTP-1 → HTTP-2`、`STORE-1 → STORE-2`；`RT-1`、`FE-1` 可并行 | 7–9 天 | 大文件拆开，原断言全绿，UI 截图无变化 |
+| **3 · 契约与边界** | `API-2 → API-1`、`TYPE-1`、`ARCH-1` | 4.5–7.5 天 | 路由/OpenAPI 双向守卫、类型同步门禁、application 层结论写入 ADR |
+| **4 · 数据里程碑** | 先决定 `MIG-1` A/B，再做 `MIG-1 → MODEL-1` | 5–7 天 | 旧库策略可验证；非法形态组合被拒；独立发布观察 |
+
+执行约束：
+
+1. 每个任务一个 PR，不把「纯移动」「行为重构」「schema 变更」混在同一提交里。
+2. `GATE-1/2` 的目标关系应设计成：`check-go` 不依赖生产 `build`；全量 `check`
+   通过 `check-web` 只构建一次前端，再执行嵌入产物的二进制构建。
+3. `ARCH-1` 和 `MIG-1` 都先记录方案选择，再实现；它们不是可以边写边定的机械任务。
+4. 每阶段结束跑全量 `make check`；涉及前端/API 的阶段再跑 E2E；第 4 阶段单独备份、
+   验证和发布，不与普通功能版本混发。
+5. 可以在第 3 阶段结束后暂停。第 4 阶段风险最高，应由真实存量数据和形态约束收益
+   决定是否立即投入，不能为了“清空 backlog”顺手做。
+
 ---
 
 ## 附录：一次性复现全部体检数据
@@ -1111,8 +1175,11 @@ var migrations = []struct{
 # 规模
 find . -name '*.go' -not -path './node_modules/*' | xargs wc -l | sort -rn | head -10
 
-# 路由 vs 契约
+# 路由 vs 契约（operation 和 path 分开统计）
 grep -ohE '"(GET|POST|PATCH|PUT|DELETE) /api/v1[^"]*"' internal/server/*.go | sort -u | wc -l
+grep -ohE '"(GET|POST|PATCH|PUT|DELETE) /api/v1[^"]*"' internal/server/*.go \
+  | sed -E 's/^"(GET|POST|PATCH|PUT|DELETE) //' | sort -u | wc -l
+grep -cE '^    (get|post|patch|put|delete):' internal/server/openapi.yaml
 grep -cE '^  /' internal/server/openapi.yaml
 
 # 分层采纳率
