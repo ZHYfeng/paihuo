@@ -36,11 +36,16 @@ Application ── TaskLifecycle / WorkflowService / Session / WorkspaceService
         └── Workspace / tmux
 ```
 
-HTTP handler 不定义 Runtime 命令、不直接拥有 Workflow 策略，也不实现工作区规则。应用服务负责用例编排；领域模块负责状态与不变量；Store 提供事务边界和持久化能力。
+HTTP handler 只负责 decode、认证、`If-Match` revision 解析以及 HTTP 状态/错误
+映射，不定义 Runtime 命令、不直接拥有 Workflow 策略，也不实现工作区规则。
+Application 负责 Task 用例、状态机和跨 Store/Executor/Workspace/Session/EventStream
+的副作用编排；领域模块负责状态与不变量；Store 提供事务边界和持久化能力。
+简单 Role/Project/Skill CRUD、普通 Task 字段 PATCH 和纯读取不强行增加 application
+薄包装。该边界由 [ADR-0002](adr/0002-application-use-case-boundary.md) 确立。
 
 ## 领域边界
 
-- `TaskLifecycle` 校验任务目标、Role、Project、权限、运行方式和依赖，创建后唤醒执行器。人工状态变更必须符合状态机。
+- `TaskLifecycle` 校验任务目标、Role、Project、权限、运行方式和依赖，并统一编排创建、审批、驳回/重排、取消、续跑和删除；它在副作用前检查 revision/当前状态，状态变化后按既定顺序发布事件、管理 Runtime Session/Workspace 并唤醒执行器。
 - `WorkflowService` 管理工作流定义（增删查改）、确定性 Policy 和 Run。Run 在同一事务内创建全部 Task 与多边依赖，执行器不会观察到半张图。
 - `RuntimeService` 通过 capability 选择执行提供者。`ExecutionRequest` 被翻译为可审计 `CommandSpec`；Task 与 Workflow 不理解厂商 flag。
 - `SessionDriver` 只由支持结构化多轮消息的 Runtime 实现。Pi 与 OMP 用 `--mode rpc` 的 stdin/stdout JSONL 通道（rpcProc）；DSH 用其原生 HTTP ApiProxy——常驻 `dsh --profile web` 宿主（full/review 两个权限模式宿主），会话经 `session.create/prompt/history/cancel` 驱动、SSE 事件流订阅，事件在服务端归一化为统一 rpcEvent 形状；其他 Runtime 保持批处理。
