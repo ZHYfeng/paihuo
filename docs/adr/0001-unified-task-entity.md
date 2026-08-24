@@ -1,8 +1,11 @@
 # 任务系统四形态统一（彻底物理统一）
 
-> 状态：设计定稿。目标：把「任务 / 会话 / 工作流 / 定时」四种形态统一进
-> `tasks` 单一实体表，对齐 `CONTEXT.md` 领域语言：Task 是唯一实体，
-> 四种形态只是创建方式的差异。
+> 状态：Accepted
+> 生效并落地：2026-08-16
+>
+> 本 ADR 保留「任务 / 会话 / 工作流 / 定时」统一进 `tasks` 单一实体表的决策推导。
+> [`CONTEXT.md`](../../CONTEXT.md) 是领域术语的唯一权威；本文件记录已接受决策，
+> 不作为第二份领域词汇表。后续术语发生冲突时以 `CONTEXT.md` 为准。
 
 ## 1. 目标模型
 
@@ -41,7 +44,9 @@
 
 `tasks` 表扩展以下列；`sessions`、`schedules`、`workflow_proposals`、
 `workflow_plans` 四表删除。`workflow_runs` 保留（实例书签，非实体）。
-项目既有策略：无历史迁移，旧库需重建（verifyCurrentSchema 同步更新）。
+该统一里程碑不提供从旧多表形态升级到单表形态的迁移，旧库需重建。
+落地后的当前实现另有 8 个无版本号的幂等加列迁移；它们只覆盖明确列出的增量，
+不构成从任意历史 schema 升级的通用迁移链，详见[部署指南](../DEPLOYMENT.md)。
 
 ```sql
 -- tasks 新增列
@@ -92,8 +97,9 @@ URL 面尽量保留（前端路由不变），语义全部指向统一 tasks：
 | /workflows（POST 创建；GET 列表）、/workflows/{id}（GET/PUT/DELETE）、/workflows/{id}/runs（GET/POST 启动 Run）、/workflow-runs/{id} | 路径保留，读写 type=workflow 的任务与 Run |
 | /schedules/* | **删除**；定时页改走 /tasks?scheduled=1，CRUD 走 /tasks（创建带 cron；PATCH 改 cron/enabled；DELETE 删定义） |
 
-openapi.yaml 同步：Task schema 加 type/定时/会话/工作流字段，
-Schedule/Proposal/Plan schema 移除。
+设计要求同步 `openapi.yaml`：Task schema 加 type/定时/会话/工作流字段，
+Schedule/Proposal/Plan schema 移除。截至 2026-08-24，OpenAPI 仍只覆盖部分 HTTP
+operation；补全和双向守卫属于后续 API-1，不能把当前文件视为完整或权威合同。
 
 ## 6. 关键实现点
 

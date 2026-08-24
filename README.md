@@ -15,7 +15,7 @@ PaiHuo 是个人自托管的 Coding Agent 调度平台。它把项目、Role、T
 - Workflow 定义经策略校验即可用（可编辑/删除）→ 绑定项目启动原子 Run，
   可按固定工作流执行自定义任务（`{{.task}}` 占位符渲染进节点意图）。
 - 持久 SSE 事件序号、断线补拉、mutation 幂等键与 revision 冲突保护。
-- 内容寻址 ArtifactStore 与受控 VisualizationSpec。
+- 内容寻址 ArtifactStore；前端提供本地类型化 VisualizationSpec renderer（尚未接入或验证 Role 输出）。
 - React + TypeScript 响应式控制台，亮/暗主题和可访问工作流表格。
 
 ## 运行
@@ -53,8 +53,9 @@ journalctl --user -u paihuo.service -f
 - 登录令牌：`/home/yu/paihuo/token.env`
 - 服务定义：`/home/yu/.config/systemd/user/paihuo.service`
 
-本项目不维护数据库迁移链。schema 或领域模型变化时使用全新数据库，只保留
-`token.env` 和独立的 `skills/`；具体替换命令见部署指南。
+本项目不维护按版本编号的数据库迁移链。现有 8 个幂等加列迁移只覆盖部署指南列出的
+增量；其他 schema 或领域模型变化使用全新数据库，只保留 `token.env` 和独立的
+`skills/`。具体替换命令见部署指南。
 
 
 
@@ -79,7 +80,9 @@ Git Project 中每个 Task 使用 `<db-dir>/sessions/<project>/task-<id>` worktr
 
 ## API
 
-HTTP API 仅使用 `/api/v1`。OpenAPI 合同位于 [internal/server/openapi.yaml](internal/server/openapi.yaml)，运行实例也提供 `GET /api/v1/openapi.yaml`。
+HTTP API 仅使用 `/api/v1`。[internal/server/openapi.yaml](internal/server/openapi.yaml)
+是当前部分 operation 的 OpenAPI 3.1 描述，运行实例也提供
+`GET /api/v1/openapi.yaml`；在 API-1 补齐覆盖和双向守卫前，它不是完整或权威合同。
 
 mutation 可带 `Idempotency-Key`。编辑 Task、Role、Project、Schedule 或 Workflow 时，发送资源的 revision：
 

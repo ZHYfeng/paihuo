@@ -119,7 +119,8 @@ parent_task_id     INTEGER REFERENCES tasks(id), -- 指向派生子任务（子�
 幂等 `ALTER TABLE ADD COLUMN`（与 `external_key` 同机制），存量任务为 NULL。
 `roles` 增加 `delegation_enabled`（默认 0）与 `delegation_max_perm`（默认 `review`）；
 `tasks` 另含 `merge_skipped`（默认 0，判定无改动后跳过合并任务）。
-按项目既有策略**无历史迁移**：schema 变化时重建数据库（保留 token.env 与 skills/）。
+项目没有按版本编号的历史迁移链；本节列出的编排父链、Role 委托和跳过合并列
+由现有幂等加列迁移覆盖。其他不兼容 schema 变化仍需重建数据库（保留 token.env 与 skills/）。
 
 v1 语义：只有编排者会话调用平台工具，因此派生子任务的 **两个父列都指向会话**
 （树的根）。`parent_task_id` 列保留「子任务再派活的链」能力（未来的委托子任务

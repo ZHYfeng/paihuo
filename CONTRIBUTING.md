@@ -43,15 +43,15 @@ npm run build:frontend
 make frontend-check
 ```
 
-认证后只有一个 React root。服务端状态使用 Query client，SSE 使用统一 hook，终端使用 `TerminalAdapter`；不要创建全局 window API 或第二套页面实现。Markdown 必须经过现有 DOMPurify renderer，Agent 结果只允许受控 VisualizationSpec。
+认证后只有一个 React root。服务端状态使用 Query client，SSE 使用统一 hook，终端使用 `TerminalAdapter`；不要创建全局 window API 或第二套页面实现。Markdown 必须经过现有 DOMPurify renderer。前端的 `VisualizationSpec` 目前只是本地类型化 renderer，服务端尚未验证 Role 输出；不要把未受信任的 Agent 内容接入该组件。
 
 ## 数据库和执行器改动
 
-- 数据库由 `internal/store` 管理。当前 schema 是唯一支持形态；结构变更直接更新 schema 和当前形态测试，不增加数据库迁移链。发布新应用版本时按[部署指南](docs/DEPLOYMENT.md)创建全新数据库。
+- 数据库由 `internal/store` 管理。项目没有按版本编号的迁移链；`Open` 现有 8 个幂等加列迁移只覆盖部署指南列出的增量。结构变更直接更新 schema 和当前形态测试；未被这些增量覆盖的版本替换按[部署指南](docs/DEPLOYMENT.md)创建全新数据库。
 - 不要用测试触及用户的工作目录。优先使用 `t.TempDir()`，Git 行为在临时仓库中验证。
 - Task、Workspace、tmux、Session、Workflow 与 Artifact 都有结算或清理路径。新增状态或资源时同步覆盖取消、失败、重试、恢复和删除。
 - Role 配置由 Runtime 翻译成宿主机命令。新增 Runtime 通过 CommandRuntime/SessionDriver/Provisioner 注册，不把厂商 flag 泄漏到 TaskLifecycle。
-- API mutation 使用幂等键；用户可编辑资源使用 revision。同步更新 OpenAPI 合同与前端类型。
+- API mutation 使用幂等键；用户可编辑资源使用 revision。同步更新 OpenAPI 描述与前端类型。当前 OpenAPI 只覆盖部分 operation，在 API-1 补齐双向守卫前不能视为完整或权威合同。
 
 ## 安全与隐私
 

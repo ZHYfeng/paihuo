@@ -1,6 +1,6 @@
 # PaiHuo 技术架构
 
-> 当前架构基线，更新日期：2026-08-13。
+> 当前架构基线，更新日期：2026-08-24。
 
 PaiHuo 是面向可信管理员的个人自托管 Agent 调度平台。它保持 Go 单二进制、SQLite、tmux 与 Git worktree 的本机部署优势，同时用稳定应用边界、Runtime capability、声明式 Workflow 和类型化 React 前端承载后续演进。
 
@@ -9,10 +9,10 @@ PaiHuo 是面向可信管理员的个人自托管 Agent 调度平台。它保持
 | 层 | 当前实现 |
 |---|---|
 | 服务端 | Go、`net/http`、应用服务与领域模块 |
-| 数据 | SQLite + WAL，当前 schema 是唯一支持形态 |
+| 数据 | SQLite + WAL；无版本化迁移链，启动时有 8 个幂等加列迁移 |
 | 执行 | RuntimeService、tmux、Git worktree |
 | 事件 | 持久 `EventStream` + SSE 序号续传 |
-| API | `/api/v1`、OpenAPI 3.1、统一错误、幂等键、revision |
+| API | `/api/v1`、部分 OpenAPI 3.1 描述、统一错误、幂等键、revision |
 | 前端 | React 19、TypeScript、Vite、React Router、TanStack Query、Tailwind、Radix |
 | 终端与内容 | xterm.js adapter；Marked + DOMPurify 单一审计渲染器 |
 | 测试 | Go test、Vitest、Testing Library、Playwright |
@@ -80,7 +80,10 @@ Policy 在创建时同步校验，拒绝即不落库：
 
 ## HTTP 合同
 
-API 只暴露 `/api/v1`。权威合同位于 [`internal/server/openapi.yaml`](../internal/server/openapi.yaml)，运行时也可读取 `GET /api/v1/openapi.yaml`。
+API 只暴露 `/api/v1`。[`internal/server/openapi.yaml`](../internal/server/openapi.yaml)
+是一份可由 `GET /api/v1/openapi.yaml` 读取的 OpenAPI 3.1 描述，但目前只记录
+54/87 个 HTTP operation（34/63 个 path），不是完整或权威合同。API-1 将补齐描述
+并增加路由与 OpenAPI 的双向守卫；在此之前应以服务端已注册路由和实现为准。
 
 错误统一为：
 
@@ -100,11 +103,18 @@ API 只暴露 `/api/v1`。权威合同位于 [`internal/server/openapi.yaml`](..
 
 设计使用 primitive → semantic → component 的语义 token，支持亮/暗主题、响应式导航、键盘焦点、reduced motion 与移动端触控尺寸。Dialog 基于 Radix。Workflow 图总有表格等价视图，状态不只依赖颜色。
 
-Agent 输出不能生成可执行 HTML/JS。`VisualizationSpec` 只允许 metric、table、timeline、task graph、diff summary 和 series；服务端验证版本与类型，前端选择本地 renderer。
+前端定义了 `VisualizationSpec` 联合类型和本地 renderer，支持 metric、table、timeline、
+task graph、diff summary 和 series；当前工作流页面直接以本地类型化数据调用其中的
+`TaskGraph`。服务端尚未接入 Role 产出 spec 的调用方，也不验证 Agent 输出，因此这套
+前端类型与 renderer 不是服务端安全边界，不得直接用来渲染未受信任的 Role 输出。
 
 ## 数据与安全
 
-当前 schema 在空数据库上一次创建，不包含数据库升级链。更换到本版本时应使用全新数据库并重新配置；启动检测到其他 schema 会直接拒绝。
+当前没有按版本编号的数据库升级链。空数据库一次创建当前 schema；打开存量库时，
+`Open` 会顺序执行 8 个幂等加列迁移，再运行 `verifyCurrentSchema`。这些迁移只覆盖
+`workflow_runs` 项目/任务、技能分类、项目 GitHub 配置、任务外部键、编排父链、
+Role 委托和跳过合并标记，不承诺从任意历史 schema 升级；其余不兼容形态会被拒绝，
+需按部署指南使用全新数据库。
 
 当前生产基线为 `/home/yu/paihuo` 中的 `v2026.08.17-7`，由
 `paihuo.service` 用户服务托管。架构或 schema 发布采用干净部署：清空数据库、

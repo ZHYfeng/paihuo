@@ -213,9 +213,9 @@ CREATE TABLE IF NOT EXISTS artifacts (
 PRAGMA user_version=1;
 `
 
-// 当前 schema 是唯一受支持的数据库形态；不包含历史迁移路径。
-// 唯一例外：workflow_runs.project_id 为存量库提供单点幂等迁移
-// （migrateWorkflowRunsProjectColumn），其余结构变更仍需全新数据库。
+// 当前没有按版本编号的数据库迁移链。Open 对存量库依次执行 8 个幂等的
+// 加列迁移，再由 verifyCurrentSchema 检查当前形态；这些迁移只覆盖各函数
+// 明确列出的增量，无法升级的历史 schema 仍需使用全新数据库。
 
 // Store 封装 SQLite 访问。SetMaxOpenConns(1) 保证读写顺序一致（WAL 下单写者足够）。
 type Store struct {

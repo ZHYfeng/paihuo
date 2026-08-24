@@ -80,14 +80,26 @@ systemctl --user enable --now paihuo.service
 
 ## 重新部署（默认保存数据）
 
-PaiHuo 只支持当前 schema，不提供数据库迁移链。**同一 schema / 领域模型版本
-内的重新部署默认保留全部业务状态**：`paihuo.db`（Role、Project、
-Task、Session、Workflow、Schedule 等）、`sessions/` worktree、`artifacts/`
-以及 tmux 中仍在执行的 Task 全部保留。已带幂等迁移的增量列（旧库打开时
-自动加列、默认值/回填）包括：`workflow_runs.project_id`、`tasks.parent_session_id` /
-`tasks.parent_task_id`、`tasks.merge_skipped`、`roles.delegation_enabled` /
-`roles.delegation_max_perm`；这些变更**保存数据部署即可**。其余涉及 schema 或
-领域模型变更的版本替换才执行「全新部署（清空数据）」。
+PaiHuo 没有按版本编号的数据库迁移链，只支持能被校验为当前 schema 的数据库。
+**同一 schema / 领域模型版本内的重新部署默认保留全部业务状态**：`paihuo.db`
+（Role、Project、Task、Session、Workflow、Schedule 等）、`sessions/` worktree、
+`artifacts/` 以及 tmux 中仍在执行的 Task 全部保留。
+
+打开存量库时，`Open` 会按固定顺序执行以下 8 个幂等加列迁移，再运行
+`verifyCurrentSchema`：
+
+1. `workflow_runs.project_id`；
+2. `workflow_runs.task`；
+3. `skills.category`；
+4. `projects.github_repo`、`github_role_id`、`github_auto_issues`、
+   `github_auto_prs`、`github_auto_security`；
+5. `tasks.external_key`；
+6. `tasks.parent_session_id`、`parent_task_id`；
+7. `roles.delegation_enabled`、`delegation_max_perm`；
+8. `tasks.merge_skipped`。
+
+这些明确覆盖的增量可保存数据部署，但它们不是从任意历史 schema 升级的通用路径。
+其余涉及 schema 或领域模型变更的版本替换执行「全新部署（清空数据）」。
 
 替换前先确认没有需要继续运行的 Task，然后执行：
 
