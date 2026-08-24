@@ -42,7 +42,7 @@ func TestMigrateWorkflowRunsProjectColumn(t *testing.T) {
   updated_at  TEXT NOT NULL
 );`, 1)
 	legacy = strings.Replace(legacy, "CREATE INDEX IF NOT EXISTS idx_workflow_runs_project ON workflow_runs(project_id);\n", "", 1)
-	legacy = strings.Replace(legacy, "PRAGMA user_version=9;", "PRAGMA user_version=1;", 1)
+	legacy = strings.Replace(legacy, "PRAGMA user_version=10;", "PRAGMA user_version=1;", 1)
 	if _, err := db.Exec(legacy); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestMigrateSkillsCategoryColumn(t *testing.T) {
   source_path TEXT NOT NULL DEFAULT '',
   created_at  TEXT NOT NULL
 );`, 1)
-	legacy = strings.Replace(legacy, "PRAGMA user_version=9;", "PRAGMA user_version=3;", 1)
+	legacy = strings.Replace(legacy, "PRAGMA user_version=10;", "PRAGMA user_version=3;", 1)
 	if _, err := db.Exec(legacy); err != nil {
 		t.Fatal(err)
 	}

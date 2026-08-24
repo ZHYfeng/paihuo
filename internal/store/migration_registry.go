@@ -10,7 +10,7 @@ import (
 
 const (
 	minimumSchemaVersion = 1
-	currentSchemaVersion = 9
+	currentSchemaVersion = 10
 )
 
 type migration struct {
@@ -29,6 +29,7 @@ var migrationRegistry = []migration{
 	{version: 7, name: "tasks parent columns", up: migrateTaskParentColumns},
 	{version: 8, name: "roles delegation columns", up: migrateRoleDelegationColumns},
 	{version: 9, name: "tasks.merge_skipped", up: migrateTaskMergeSkippedColumn},
+	{version: 10, name: "Task shape constraints", up: migrateTaskShapeConstraints, requiresForeignKeysOff: true},
 }
 
 type unsupportedSchemaVersionError struct {

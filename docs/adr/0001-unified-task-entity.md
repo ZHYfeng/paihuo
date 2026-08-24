@@ -44,9 +44,10 @@
 
 `tasks` 表扩展以下列；`sessions`、`schedules`、`workflow_proposals`、
 `workflow_plans` 四表删除。`workflow_runs` 保留（实例书签，非实体）。
-该统一里程碑不提供从旧多表形态升级到单表形态的迁移，旧库需重建。
-落地后的当前实现另有 8 个无版本号的幂等加列迁移；它们只覆盖明确列出的增量，
-不构成从任意历史 schema 升级的通用迁移链，详见[部署指南](../DEPLOYMENT.md)。
+该统一里程碑不提供从旧多表形态升级到单表形态的迁移，旧库需重建。统一后的
+schema 是当前最低支持版本 v1；后续 8 个幂等增量已固定编号为 v2–v9，Task 形态
+约束是 v10。升级边界见 [ADR-0003](0003-numbered-sqlite-migrations.md) 与
+[部署指南](../DEPLOYMENT.md)。
 
 ```sql
 -- tasks 新增列

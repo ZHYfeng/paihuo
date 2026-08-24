@@ -1,6 +1,6 @@
 # 采用编号化 SQLite 迁移
 
-> 状态：Accepted  
+> 状态：Accepted
 > 生效：2026-08-24
 
 ## 背景

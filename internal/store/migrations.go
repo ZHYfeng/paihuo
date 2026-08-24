@@ -3,10 +3,12 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 type migrationDB interface {
 	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
 	QueryRow(query string, args ...any) *sql.Row
 }
 
@@ -199,6 +201,28 @@ func verifyCurrentSchema(db *sql.DB) error {
 	} {
 		if _, err := db.Exec(query); err != nil {
 			return &schemaShapeError{Version: version, Err: err}
+		}
+	}
+	var taskSQL string
+	if err := db.QueryRow("SELECT sql FROM sqlite_schema WHERE type='table' AND name='tasks'").Scan(&taskSQL); err != nil {
+		return &schemaShapeError{Version: version, Err: err}
+	}
+	for _, marker := range []string{
+		"type IN ('task', 'session', 'workflow')",
+		"type = 'workflow' OR",
+		"type = 'session' OR",
+	} {
+		if !strings.Contains(taskSQL, marker) {
+			return &schemaShapeError{Version: version, Err: fmt.Errorf("tasks 缺少形态约束 %q", marker)}
+		}
+	}
+	for index := range standardTaskIndexes {
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_schema WHERE type='index' AND name=? AND tbl_name='tasks'", index).Scan(&count); err != nil {
+			return &schemaShapeError{Version: version, Err: err}
+		}
+		if count != 1 {
+			return &schemaShapeError{Version: version, Err: fmt.Errorf("tasks 缺少索引 %s", index)}
 		}
 	}
 	return nil

@@ -94,8 +94,8 @@ systemctl --user enable --now paihuo.service
 ## 重新部署（默认保存数据）
 
 重新部署默认保留 `paihuo.db` 中的全部业务状态、`sessions/` Workspace、
-`artifacts/` 以及 tmux 中仍在执行的 Task。当前 binary 的 schema 最新版本是 v9，
-支持从 v1–v9 打开：v1 会按顺序执行 v2–v9；任一中间版本只执行后续迁移；v9
+`artifacts/` 以及 tmux 中仍在执行的 Task。当前 binary 的 schema 最新版本是 v10，
+支持从 v1–v10 打开：v1 会按顺序执行 v2–v10；任一中间版本只执行后续迁移；v10
 重复打开不执行迁移。不要根据列是否存在手工修改 `user_version`。
 
 停止服务后可检查备份副本的版本：
@@ -104,8 +104,10 @@ systemctl --user enable --now paihuo.service
 sqlite3 /backup/paihuo.db 'PRAGMA user_version;'
 ```
 
-升级前必须先按「数据保护」停止写入并整体备份 SQLite 与 Artifact。替换前确认没有
-需要继续运行的 Task，然后执行：
+升级前必须先按「数据保护」停止写入并整体备份 SQLite 与 Artifact。v10 会在单个
+写事务中复制 `tasks` 全表并重建索引/触发器，持有写锁的时间与 Task 行数和索引规模
+近似线性相关；必须在生产数据库副本上实测，并按实测时间加维护余量，不能在线猜测。
+替换前确认没有需要继续运行的 Task，然后执行：
 
 ```bash
 cd /home/yu/Agents/paihuo
@@ -130,10 +132,55 @@ systemctl --user start paihuo.service
 
 首次启动在一个事务中执行全部待执行迁移，并把每个迁移与相应
 `PRAGMA user_version` 推进放在同一事务里；失败会回滚整条待执行路径并拒绝启动。
-启动后再次查询版本应为 v9，并按「验证」检查服务。版本低于 v1、高于 v9或 v9
+启动后再次查询版本应为 v10，并按「验证」检查服务。版本低于 v1、高于 v10或 v10
 关键结构损坏都不会被自动修补。发生这些错误时保持服务停止，保留错误日志并恢复
 “旧 binary + 整体备份”；不得清空、改写数据或让旧 binary 打开已经升级的数据库。
 编号迁移没有 downgrade。
+
+### v10 Task 形态预检
+
+在**停止写入后的数据库副本**上执行；结果应只有版本号、`ok`，且三个违规查询均为
+空。非 Workflow 的 `violations` 允许 schema 默认值 `[]` 和既有应用写入的等价空值
+`''`，其他非空载荷都视为违规。发现违规时不要改写或清空，记录 type/数量并停止发布。
+
+```bash
+sqlite3 -readonly /backup/paihuo.db <<'SQL'
+PRAGMA user_version;
+SELECT type, COUNT(*) FROM tasks
+WHERE type NOT IN ('task', 'session', 'workflow') GROUP BY type;
+SELECT type, COUNT(*) FROM tasks
+WHERE type <> 'workflow'
+  AND (spec <> '' OR spec_hash <> '' OR violations NOT IN ('', '[]'))
+GROUP BY type;
+SELECT type, COUNT(*) FROM tasks
+WHERE type <> 'session'
+  AND (worktree_path <> '' OR session_dir <> '' OR last_message_at <> '' OR
+       message_count <> 0 OR suspended_at IS NOT NULL OR delivered_at IS NOT NULL)
+GROUP BY type;
+PRAGMA foreign_key_check;
+PRAGMA integrity_check;
+SQL
+```
+
+v10 使用 SQLite 官方 table-rebuild 顺序：创建 `tasks_new`、显式列复制、删除旧表、
+改名、重建全部标准索引及原有自定义索引/触发器、恢复 `sqlite_sequence`，最后执行
+`foreign_key_check`。任何预检、复制、索引、外键或提交错误都会回滚，数据库版本保持
+迁移前值。
+
+### v10 人工发布 checklist
+
+1. 停止生产写入；确认没有需继续运行的 Task，停止服务。
+2. 把 SQLite（含已 checkpoint 的 WAL）与 `artifacts/` 作为同一恢复点整体备份；记录旧
+   binary 版本和 `PRAGMA user_version`。
+3. 在备份副本执行上述预检；用干净构建的新 binary 指向副本启动两次，第一次完成
+   v1/v9→v10，第二次验证幂等。
+4. 对迁移前后业务表导出做逐表逐行比较；核对关键表行数、Task ID、Artifact
+   `content_hash`、`sqlite_sequence`，并确认 `foreign_key_check` 为空、
+   `integrity_check` 为 `ok`。
+5. 以副本实测的 table-rebuild 时间确定维护窗口，再安装新 binary 并启动生产服务。
+6. 确认生产 `user_version=10`、启动日志无迁移错误、API/浏览器验证通过后再恢复写入。
+7. 任一步失败都停止发布，恢复“旧 binary + SQLite/Artifact 整体备份”；v10 无
+   downgrade，旧 binary 不得打开 v10 数据库。
 
 ## 全新部署（清空数据）
 

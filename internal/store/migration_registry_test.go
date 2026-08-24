@@ -26,7 +26,7 @@ func TestOpenMigratesEverySupportedVersionToCurrent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			fixtureSchema := strings.Replace(schema, "PRAGMA user_version=9;", fmt.Sprintf("PRAGMA user_version=%d;", version), 1)
+			fixtureSchema := strings.Replace(schema, "PRAGMA user_version=10;", fmt.Sprintf("PRAGMA user_version=%d;", version), 1)
 			if _, err := db.Exec(fixtureSchema); err != nil {
 				t.Fatal(err)
 			}

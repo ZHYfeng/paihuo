@@ -115,12 +115,12 @@ parent_session_id INTEGER REFERENCES tasks(id), -- 指向编排者会话任务 i
 parent_task_id     INTEGER REFERENCES tasks(id), -- 指向派生子任务（子任务再派活的链）
 ```
 
-索引：`idx_tasks_parent_session` / `idx_tasks_parent_task`。对新库直接建列；存量库走
-幂等 `ALTER TABLE ADD COLUMN`（与 `external_key` 同机制），存量任务为 NULL。
-`roles` 增加 `delegation_enabled`（默认 0）与 `delegation_max_perm`（默认 `review`）；
-`tasks` 另含 `merge_skipped`（默认 0，判定无改动后跳过合并任务）。
-项目没有按版本编号的历史迁移链；本节列出的编排父链、Role 委托和跳过合并列
-由现有幂等加列迁移覆盖。其他不兼容 schema 变化仍需重建数据库（保留 token.env 与 skills/）。
+索引：`idx_tasks_parent_session` / `idx_tasks_parent_task`。对新库直接建列；存量库由
+编号迁移 v7 幂等 `ALTER TABLE ADD COLUMN`（与 v6 `external_key` 同机制），存量任务为
+NULL。`roles` 的 `delegation_enabled`（默认 0）与 `delegation_max_perm`（默认
+`review`）由 v8 增加；`tasks.merge_skipped`（默认 0，判定无改动后跳过合并任务）由
+v9 增加。迁移版本与支持边界以 [ADR-0003](../adr/0003-numbered-sqlite-migrations.md)
+和部署指南为准。
 
 v1 语义：只有编排者会话调用平台工具，因此派生子任务的 **两个父列都指向会话**
 （树的根）。`parent_task_id` 列保留「子任务再派活的链」能力（未来的委托子任务

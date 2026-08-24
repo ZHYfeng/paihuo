@@ -1,6 +1,6 @@
 package store
 
-const schema = `
+const schemaBeforeTasks = `
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
@@ -34,8 +34,9 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL
 );
+`
 
-CREATE TABLE IF NOT EXISTS tasks (
+const taskTableColumnsSchema = `CREATE TABLE IF NOT EXISTS tasks (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   type        TEXT NOT NULL DEFAULT 'task', -- task | session | workflow（TaskType*）
   title       TEXT NOT NULL,
@@ -91,9 +92,21 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at  TEXT NOT NULL,
   started_at  TEXT,
   finished_at TEXT,
-  updated_at  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+  updated_at  TEXT NOT NULL`
+
+const taskShapeChecksSchema = `,
+  CHECK (type IN ('task', 'session', 'workflow')),
+  CHECK (type = 'workflow' OR (
+    spec = '' AND spec_hash = '' AND violations IN ('', '[]')
+  )),
+  CHECK (type = 'session' OR (
+    worktree_path = '' AND session_dir = '' AND last_message_at = '' AND
+    message_count = 0 AND suspended_at IS NULL AND delivered_at IS NULL
+  ))`
+
+const tasksTableSchema = taskTableColumnsSchema + taskShapeChecksSchema + "\n);\n"
+
+const taskIndexesSchema = `CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_role ON tasks(role_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_project_sort ON tasks(project_id, sort_order);
@@ -104,7 +117,9 @@ CREATE INDEX IF NOT EXISTS idx_tasks_parent_session ON tasks(parent_session_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_parent_task ON tasks(parent_task_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_merge_of_unique ON tasks(merge_of) WHERE merge_of IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_external_key_unique ON tasks(external_key) WHERE external_key <> '';
+`
 
+const schemaAfterTasks = `
 CREATE TABLE IF NOT EXISTS task_dependencies (
   task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   depends_on INTEGER NOT NULL REFERENCES tasks(id) ON DELETE RESTRICT,
@@ -198,8 +213,10 @@ CREATE TABLE IF NOT EXISTS artifacts (
   created_at  TEXT NOT NULL,
   CHECK ((task_id IS NOT NULL) <> (run_id IS NOT NULL))
 );
-PRAGMA user_version=9;
+PRAGMA user_version=10;
 `
+
+var schema = schemaBeforeTasks + tasksTableSchema + taskIndexesSchema + schemaAfterTasks
 
 // 空库直接创建当前 schema。非空库只通过 migrationRegistry 按
 // PRAGMA user_version 顺序升级，不使用列存在性推断数据库版本。
