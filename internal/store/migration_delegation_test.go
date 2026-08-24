@@ -47,7 +47,7 @@ CREATE TABLE tasks (
   worktree_path TEXT NOT NULL DEFAULT '', session_dir TEXT NOT NULL DEFAULT '',
   last_message_at TEXT NOT NULL DEFAULT '', message_count INTEGER NOT NULL DEFAULT 0,
   suspended_at TEXT, delivered_at TEXT, spec TEXT NOT NULL DEFAULT '', violations TEXT NOT NULL DEFAULT '[]',
-  spec_hash TEXT NOT NULL DEFAULT '', external_key TEXT NOT NULL DEFAULT '',
+  spec_hash TEXT NOT NULL DEFAULT '',
   revision INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL,
   started_at TEXT, finished_at TEXT, updated_at TEXT NOT NULL);
 CREATE TABLE task_dependencies (task_id INTEGER NOT NULL, depends_on INTEGER NOT NULL, on_failure TEXT NOT NULL DEFAULT 'block', PRIMARY KEY(task_id, depends_on));
@@ -64,6 +64,15 @@ PRAGMA user_version=1;
 	if err != nil {
 		t.Fatal(err)
 	}
+	now := Now()
+	if _, err := db.Exec(`INSERT INTO roles (name, runtime_id, enabled, created_at, updated_at)
+		VALUES ('legacy', 'pi', 1, ?, ?);
+		INSERT INTO projects (name, project_dir, created_at, updated_at)
+		VALUES ('legacy-project', '/tmp/legacy', ?, ?);
+		INSERT INTO tasks (title, status, project_id, created_at, updated_at)
+		VALUES ('legacy-task', 'queued', 1, ?, ?)`, now, now, now, now, now, now); err != nil {
+		t.Fatal(err)
+	}
 	_ = db.Close()
 
 	st, err := Open(dbPath)
@@ -71,6 +80,31 @@ PRAGMA user_version=1;
 		t.Fatalf("Open 存量库应自动补列，而不是拒绝: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
+
+	legacyRole, err := st.GetRole(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyRole.Name != "legacy" || legacyRole.DelegationEnabled || legacyRole.DelegationMaxPerm != PermReview {
+		t.Fatalf("存量角色数据或 v8 默认值错误: %+v", legacyRole)
+	}
+	legacyProject, err := st.GetProject(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyProject.Name != "legacy-project" || legacyProject.GitHubRepo != "" || legacyProject.GitHubRoleID != nil || legacyProject.GitHubAutoIssues || legacyProject.GitHubAutoPRs || legacyProject.GitHubAutoSecurity {
+		t.Fatalf("存量项目数据或 v5 默认值错误: %+v", legacyProject)
+	}
+	legacyTask, err := st.GetTask(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyTask.Title != "legacy-task" || legacyTask.ExternalKey != "" || legacyTask.ParentSessionID != nil || legacyTask.ParentTaskID != nil || legacyTask.MergeSkipped {
+		t.Fatalf("存量任务数据或 v6/v7/v9 默认值错误: %+v", legacyTask)
+	}
+	assertIndexExists(t, st.db, "idx_tasks_external_key_unique")
+	assertIndexExists(t, st.db, "idx_tasks_parent_session")
+	assertIndexExists(t, st.db, "idx_tasks_parent_task")
 
 	roleID, err := st.CreateRole(Role{Name: "orch", RuntimeID: "pi", Enabled: true, DelegationEnabled: true, DelegationMaxPerm: PermFull})
 	if err != nil {

@@ -5,20 +5,27 @@ import (
 	"fmt"
 )
 
-func migrateWorkflowRunsProjectColumn(db *sql.DB) error {
+type migrationDB interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+func migrateWorkflowRunsProjectColumn(db migrationDB) error {
 	var has int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('workflow_runs') WHERE name='project_id'`).Scan(&has); err != nil {
 		return fmt.Errorf("检查 workflow_runs 结构失败: %w", err)
 	}
-	if has > 0 {
-		return nil
+	if has == 0 {
+		if _, err := db.Exec(`ALTER TABLE workflow_runs ADD COLUMN project_id INTEGER REFERENCES projects(id)`); err != nil {
+			return fmt.Errorf("迁移 workflow_runs.project_id 失败: %w", err)
+		}
+		if _, err := db.Exec(`UPDATE workflow_runs SET project_id = COALESCE(
+			(SELECT project_id FROM tasks WHERE workflow_run_id = workflow_runs.id AND project_id IS NOT NULL LIMIT 1), 0)`); err != nil {
+			return fmt.Errorf("回填 workflow_runs.project_id 失败: %w", err)
+		}
 	}
-	if _, err := db.Exec(`ALTER TABLE workflow_runs ADD COLUMN project_id INTEGER REFERENCES projects(id)`); err != nil {
-		return fmt.Errorf("迁移 workflow_runs.project_id 失败: %w", err)
-	}
-	if _, err := db.Exec(`UPDATE workflow_runs SET project_id = COALESCE(
-		(SELECT project_id FROM tasks WHERE workflow_run_id = workflow_runs.id AND project_id IS NOT NULL LIMIT 1), 0)`); err != nil {
-		return fmt.Errorf("回填 workflow_runs.project_id 失败: %w", err)
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_workflow_runs_project ON workflow_runs(project_id)`); err != nil {
+		return fmt.Errorf("创建 workflow_runs.project_id 索引失败: %w", err)
 	}
 	return nil
 }
@@ -26,7 +33,7 @@ func migrateWorkflowRunsProjectColumn(db *sql.DB) error {
 // migrateWorkflowRunsTaskColumn 为存量库补 workflow_runs.task 列（幂等）：
 // 新库由 schema 直接建出该列；旧库 ALTER ADD COLUMN，存量 Run 默认为空
 // （无自定义任务，纯模板执行）。
-func migrateWorkflowRunsTaskColumn(db *sql.DB) error {
+func migrateWorkflowRunsTaskColumn(db migrationDB) error {
 	var has int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('workflow_runs') WHERE name='task'`).Scan(&has); err != nil {
 		return fmt.Errorf("检查 workflow_runs 结构失败: %w", err)
@@ -42,7 +49,7 @@ func migrateWorkflowRunsTaskColumn(db *sql.DB) error {
 
 // migrateSkillsCategoryColumn 为存量库补 skills.category 列（幂等）：新库由
 // schema 直接建出；旧库 ALTER ADD COLUMN，存量技能默认为未分类。
-func migrateSkillsCategoryColumn(db *sql.DB) error {
+func migrateSkillsCategoryColumn(db migrationDB) error {
 	var has int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('skills') WHERE name='category'`).Scan(&has); err != nil {
 		return fmt.Errorf("检查 skills 结构失败: %w", err)
@@ -56,7 +63,7 @@ func migrateSkillsCategoryColumn(db *sql.DB) error {
 	return nil
 }
 
-func migrateProjectGitHubColumns(db *sql.DB) error {
+func migrateProjectGitHubColumns(db migrationDB) error {
 	checks := []struct {
 		name string
 		ddl  string
@@ -82,16 +89,15 @@ func migrateProjectGitHubColumns(db *sql.DB) error {
 	return nil
 }
 
-func migrateTaskExternalKeyColumn(db *sql.DB) error {
+func migrateTaskExternalKeyColumn(db migrationDB) error {
 	var has int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name='external_key'`).Scan(&has); err != nil {
 		return fmt.Errorf("检查 tasks.external_key 失败: %w", err)
 	}
-	if has > 0 {
-		return nil
-	}
-	if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN external_key TEXT NOT NULL DEFAULT ''`); err != nil {
-		return fmt.Errorf("迁移 tasks.external_key 失败: %w", err)
+	if has == 0 {
+		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN external_key TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("迁移 tasks.external_key 失败: %w", err)
+		}
 	}
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_external_key_unique ON tasks(external_key) WHERE external_key <> ''`); err != nil {
 		return fmt.Errorf("创建 tasks.external_key 唯一索引失败: %w", err)
@@ -101,7 +107,7 @@ func migrateTaskExternalKeyColumn(db *sql.DB) error {
 
 // migrateTaskParentColumns 为存量库补编排归属列（幂等）：新库由 schema 直接
 // 建出；旧库 ALTER ADD COLUMN，存量任务无编排归属（保持 NULL）。
-func migrateTaskParentColumns(db *sql.DB) error {
+func migrateTaskParentColumns(db migrationDB) error {
 	checks := []struct {
 		name string
 		ddl  string
@@ -132,7 +138,7 @@ func migrateTaskParentColumns(db *sql.DB) error {
 
 // migrateRoleDelegationColumns 为存量库补角色委托列（幂等）：新库由 schema
 // 直接建出；旧库 ALTER ADD COLUMN，存量角色默认不委托。
-func migrateRoleDelegationColumns(db *sql.DB) error {
+func migrateRoleDelegationColumns(db migrationDB) error {
 	checks := []struct {
 		name string
 		ddl  string
@@ -157,7 +163,7 @@ func migrateRoleDelegationColumns(db *sql.DB) error {
 
 // migrateTaskMergeSkippedColumn 为存量库补 merge_skipped 列（幂等）：新库由
 // schema 直接建出；旧库 ALTER ADD COLUMN，存量任务默认不标记（0）。
-func migrateTaskMergeSkippedColumn(db *sql.DB) error {
+func migrateTaskMergeSkippedColumn(db migrationDB) error {
 	var has int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name='merge_skipped'`).Scan(&has); err != nil {
 		return fmt.Errorf("检查 tasks.merge_skipped 失败: %w", err)
@@ -172,9 +178,12 @@ func migrateTaskMergeSkippedColumn(db *sql.DB) error {
 }
 
 func verifyCurrentSchema(db *sql.DB) error {
-	var version int
-	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
-		return fmt.Errorf("数据库不是当前 schema；本版本不包含历史迁移，请使用全新数据库")
+	version, err := readSchemaVersion(db)
+	if err != nil {
+		return err
+	}
+	if version != currentSchemaVersion {
+		return &unsupportedSchemaVersionError{Version: version, Minimum: minimumSchemaVersion, Latest: currentSchemaVersion}
 	}
 	for _, query := range []string{
 		"SELECT revision, runtime_id FROM roles LIMIT 0",
@@ -189,7 +198,7 @@ func verifyCurrentSchema(db *sql.DB) error {
 		"SELECT task_id, run_id, content_hash, locator FROM artifacts LIMIT 0",
 	} {
 		if _, err := db.Exec(query); err != nil {
-			return fmt.Errorf("数据库不是当前 schema；本版本不包含历史迁移，请使用全新数据库: %w", err)
+			return &schemaShapeError{Version: version, Err: err}
 		}
 	}
 	return nil

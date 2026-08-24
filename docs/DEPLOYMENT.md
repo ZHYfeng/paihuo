@@ -93,28 +93,19 @@ systemctl --user enable --now paihuo.service
 
 ## 重新部署（默认保存数据）
 
-PaiHuo 没有按版本编号的数据库迁移链，只支持能被校验为当前 schema 的数据库。
-**同一 schema / 领域模型版本内的重新部署默认保留全部业务状态**：`paihuo.db`
-（Role、Project、Task、Session、Workflow、Schedule 等）、`sessions/` worktree、
-`artifacts/` 以及 tmux 中仍在执行的 Task 全部保留。
+重新部署默认保留 `paihuo.db` 中的全部业务状态、`sessions/` Workspace、
+`artifacts/` 以及 tmux 中仍在执行的 Task。当前 binary 的 schema 最新版本是 v9，
+支持从 v1–v9 打开：v1 会按顺序执行 v2–v9；任一中间版本只执行后续迁移；v9
+重复打开不执行迁移。不要根据列是否存在手工修改 `user_version`。
 
-打开存量库时，`Open` 会按固定顺序执行以下 8 个幂等加列迁移，再运行
-`verifyCurrentSchema`：
+停止服务后可检查备份副本的版本：
 
-1. `workflow_runs.project_id`；
-2. `workflow_runs.task`；
-3. `skills.category`；
-4. `projects.github_repo`、`github_role_id`、`github_auto_issues`、
-   `github_auto_prs`、`github_auto_security`；
-5. `tasks.external_key`；
-6. `tasks.parent_session_id`、`parent_task_id`；
-7. `roles.delegation_enabled`、`delegation_max_perm`；
-8. `tasks.merge_skipped`。
+```bash
+sqlite3 /backup/paihuo.db 'PRAGMA user_version;'
+```
 
-这些明确覆盖的增量可保存数据部署，但它们不是从任意历史 schema 升级的通用路径。
-其余涉及 schema 或领域模型变更的版本替换执行「全新部署（清空数据）」。
-
-替换前先确认没有需要继续运行的 Task，然后执行：
+升级前必须先按「数据保护」停止写入并整体备份 SQLite 与 Artifact。替换前确认没有
+需要继续运行的 Task，然后执行：
 
 ```bash
 cd /home/yu/Agents/paihuo
@@ -125,6 +116,7 @@ make build VERSION=v2026.08.15
 ./bin/paihuo --version
 
 systemctl --user stop paihuo.service
+sqlite3 /home/yu/paihuo/paihuo.db 'PRAGMA user_version;'
 
 install -m 0755 bin/paihuo /home/yu/paihuo/paihuo
 install -m 0644 deploy/systemd/paihuo.service \
@@ -136,9 +128,12 @@ systemctl --user daemon-reload
 systemctl --user start paihuo.service
 ```
 
-此流程不删除任何业务数据，不重启 tmux server。升级前建议先按「数据保护」
-备份数据库与 Artifact。若新版本 schema 不兼容，服务启动会提示 schema 不受
-支持——此时停止服务并执行「全新部署（清空数据）」。
+首次启动在一个事务中执行全部待执行迁移，并把每个迁移与相应
+`PRAGMA user_version` 推进放在同一事务里；失败会回滚整条待执行路径并拒绝启动。
+启动后再次查询版本应为 v9，并按「验证」检查服务。版本低于 v1、高于 v9或 v9
+关键结构损坏都不会被自动修补。发生这些错误时保持服务停止，保留错误日志并恢复
+“旧 binary + 整体备份”；不得清空、改写数据或让旧 binary 打开已经升级的数据库。
+编号迁移没有 downgrade。
 
 ## 全新部署（清空数据）
 

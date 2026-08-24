@@ -28,50 +28,17 @@ func Open(path string) (*Store, error) {
 			db.Close()
 			return nil, fmt.Errorf("初始化数据库失败: %w", err)
 		}
-	} else {
-		// 迁移必须在任何 schema 语句执行前完成，且不留半迁移状态。
-		if err := migrateWorkflowRunsProjectColumn(db); err != nil {
-			db.Close()
-			return nil, err
-		}
-		if err := migrateWorkflowRunsTaskColumn(db); err != nil {
-			db.Close()
-			return nil, err
-		}
-		if err := migrateSkillsCategoryColumn(db); err != nil {
-			db.Close()
-			return nil, err
-		}
-		if err := migrateProjectGitHubColumns(db); err != nil {
-			db.Close()
-			return nil, err
-		}
-		if err := migrateTaskExternalKeyColumn(db); err != nil {
-			db.Close()
-			return nil, err
-		}
-		if err := migrateTaskParentColumns(db); err != nil {
-			db.Close()
-			return nil, err
-		}
-		if err := migrateRoleDelegationColumns(db); err != nil {
-			db.Close()
-			return nil, err
-		}
-		if err := migrateTaskMergeSkippedColumn(db); err != nil {
-			db.Close()
-			return nil, err
-		}
-		// Unsupported databases are inspected before any schema statement runs.
-		// Rejection must not leave current-version tables or indexes behind.
-		if err := verifyCurrentSchema(db); err != nil {
-			db.Close()
-			return nil, err
-		}
-		if _, err := db.Exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;"); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("配置数据库连接失败: %w", err)
-		}
+	} else if err := migrateToCurrent(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := verifyCurrentSchema(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := configureDatabase(db); err != nil {
+		db.Close()
+		return nil, err
 	}
 	if fresh {
 		if err := seedDefaultTemplate(db); err != nil {
@@ -89,9 +56,23 @@ func databaseIsEmpty(db *sql.DB) (bool, error) {
 	return count == 0, err
 }
 
-// migrateWorkflowRunsProjectColumn 为存量库补 workflow_runs.project_id 列
-// （幂等）：新库由 schema 直接建出该列；旧库先加列，再用节点任务的
-// project_id 回填存量 Run（旧版 Run 的节点任务都带 spec.ProjectID）。
+func configureDatabase(db *sql.DB) error {
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		return fmt.Errorf("配置数据库 journal_mode 失败: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
+		return fmt.Errorf("启用数据库外键失败: %w", err)
+	}
+	var enabled int
+	if err := db.QueryRow("PRAGMA foreign_keys").Scan(&enabled); err != nil {
+		return fmt.Errorf("检查数据库外键配置失败: %w", err)
+	}
+	if enabled != 1 {
+		return fmt.Errorf("启用数据库外键失败: PRAGMA foreign_keys=%d", enabled)
+	}
+	return nil
+}
+
 func (s *Store) Close() error { return s.db.Close() }
 
 func Now() string { return time.Now().UTC().Format(time.RFC3339) }

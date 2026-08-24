@@ -198,9 +198,8 @@ CREATE TABLE IF NOT EXISTS artifacts (
   created_at  TEXT NOT NULL,
   CHECK ((task_id IS NOT NULL) <> (run_id IS NOT NULL))
 );
-PRAGMA user_version=1;
+PRAGMA user_version=9;
 `
 
-// 当前没有按版本编号的数据库迁移链。Open 对存量库依次执行 8 个幂等的
-// 加列迁移，再由 verifyCurrentSchema 检查当前形态；这些迁移只覆盖各函数
-// 明确列出的增量，无法升级的历史 schema 仍需使用全新数据库。
+// 空库直接创建当前 schema。非空库只通过 migrationRegistry 按
+// PRAGMA user_version 顺序升级，不使用列存在性推断数据库版本。
