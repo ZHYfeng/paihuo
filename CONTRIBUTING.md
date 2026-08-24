@@ -47,7 +47,7 @@ make check-web
 
 ## 数据库和执行器改动
 
-- 数据库由 `internal/store` 管理。项目没有按版本编号的迁移链；`Open` 现有 8 个幂等加列迁移只覆盖部署指南列出的增量。结构变更直接更新 schema 和当前形态测试；未被这些增量覆盖的版本替换按[部署指南](docs/DEPLOYMENT.md)创建全新数据库。
+- 数据库由 `internal/store` 管理。空库直接创建最新 schema；非空库按 `PRAGMA user_version` 顺序执行 `internal/store` 注册的编号迁移。结构变更必须同时更新当前 schema、迁移、schema shape 校验和迁移测试，并按[部署指南](docs/DEPLOYMENT.md)在数据库副本上演练。
 - 不要用测试触及用户的工作目录。优先使用 `t.TempDir()`，Git 行为在临时仓库中验证。
 - Task、Workspace、tmux、Session、Workflow 与 Artifact 都有结算或清理路径。新增状态或资源时同步覆盖取消、失败、重试、恢复和删除。
 - Role 配置由 Runtime 翻译成宿主机命令。新增 Runtime 通过 CommandRuntime/SessionDriver/Provisioner 注册，不把厂商 flag 泄漏到 TaskLifecycle。

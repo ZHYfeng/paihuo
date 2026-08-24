@@ -1,8 +1,8 @@
 # 部署指南
 
-> 当前生产基线：Debian，用户 `yu`，PaiHuo `v2026.08.19-2`（编排者会话 v1 增强：
-> 同步/异步派活、无改动跳过合并任务）。服务以 systemd 用户服务
-> `paihuo.service` 运行，目录为 `/home/yu/paihuo`，监听 `0.0.0.0:8080`。
+> 当前生产基线：Debian，用户 `yu`。服务以 systemd 用户服务 `paihuo.service`
+> 运行，目录为 `/home/yu/paihuo`，监听 `0.0.0.0:8080`。实际版本以
+> `/home/yu/paihuo/paihuo --version` 为准。
 
 ## 部署形态
 
@@ -69,7 +69,9 @@ loginctl enable-linger yu
 cd /home/yu/Agents/paihuo
 npm ci
 make check
-make build VERSION=v2026.08.15
+make test-race
+VERSION="v$(git show -s --format=%cd --date=format:%Y.%m.%d HEAD)-$(git rev-parse --short HEAD)"
+make release VERSION="$VERSION"
 
 install -d -m 0755 /home/yu/paihuo
 install -m 0755 bin/paihuo /home/yu/paihuo/paihuo
@@ -93,42 +95,26 @@ systemctl --user enable --now paihuo.service
 
 ## 重新部署（默认保存数据）
 
-重新部署默认保留 `paihuo.db` 中的全部业务状态、`sessions/` Workspace、
-`artifacts/` 以及 tmux 中仍在执行的 Task。当前 binary 的 schema 最新版本是 v10，
-支持从 v1–v10 打开：v1 会按顺序执行 v2–v10；任一中间版本只执行后续迁移；v10
-重复打开不执行迁移。不要根据列是否存在手工修改 `user_version`。
-
-停止服务后可检查备份副本的版本：
-
-```bash
-sqlite3 /backup/paihuo.db 'PRAGMA user_version;'
-```
-
-升级前必须先按「数据保护」停止写入并整体备份 SQLite 与 Artifact。v10 会在单个
-写事务中复制 `tasks` 全表并重建索引/触发器，持有写锁的时间与 Task 行数和索引规模
-近似线性相关；必须在生产数据库副本上实测，并按实测时间加维护余量，不能在线猜测。
-替换前确认没有需要继续运行的 Task，然后执行：
+标准目录中的已有实例使用仓库脚本部署：
 
 ```bash
 cd /home/yu/Agents/paihuo
-npm ci
-make check
-make test-race
-make build VERSION=v2026.08.15
-./bin/paihuo --version
-
-systemctl --user stop paihuo.service
-sqlite3 /home/yu/paihuo/paihuo.db 'PRAGMA user_version;'
-
-install -m 0755 bin/paihuo /home/yu/paihuo/paihuo
-install -m 0644 deploy/systemd/paihuo.service \
-  /home/yu/.config/systemd/user/paihuo.service
-install -m 0644 deploy/systemd/paihuo.service.d/task-safe-restart.conf \
-  /home/yu/.config/systemd/user/paihuo.service.d/task-safe-restart.conf
-
-systemctl --user daemon-reload
-systemctl --user start paihuo.service
+git pull --ff-only
+scripts/deploy-local.sh
 ```
+
+脚本会运行完整门禁并构建 release binary，然后停止服务、拒绝在仍有运行中
+Task/Session 时继续、checkpoint SQLite、把旧 binary/SQLite/Artifact 保存到
+`/home/yu/paihuo/backups/`，原子替换 binary，最后验证 systemd、HTTP 和 SQLite。
+默认版本由提交日期和短 SHA 生成；需要指定发布名时使用：
+
+```bash
+VERSION=v2026.08.24-1 scripts/deploy-local.sh
+```
+
+重新部署保留 `paihuo.db`、`sessions/`、`skills/` 和 `artifacts/`。当前 binary 的 schema
+最新版本是 v10，支持从 v1–v10 打开；不要根据列是否存在手工修改 `user_version`。
+涉及 schema 迁移的发布仍须先按下文在停止写入后的数据库副本演练并对账，再执行脚本。
 
 首次启动在一个事务中执行全部待执行迁移，并把每个迁移与相应
 `PRAGMA user_version` 推进放在同一事务里；失败会回滚整条待执行路径并拒绝启动。
@@ -195,7 +181,8 @@ cd /home/yu/Agents/paihuo
 npm ci
 make check
 make test-race
-make build VERSION=v2026.08.15
+VERSION="v$(git show -s --format=%cd --date=format:%Y.%m.%d HEAD)-$(git rev-parse --short HEAD)"
+make release VERSION="$VERSION"
 ./bin/paihuo --version
 
 systemctl --user stop paihuo.service

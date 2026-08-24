@@ -29,7 +29,7 @@ export PAIHUO_TOKEN="$(openssl rand -hex 32)"
 ./bin/paihuo
 ```
 
-浏览器访问 `http://127.0.0.1:8080`。默认数据库是当前目录的 `paihuo.db`。当前版本只接受当前 schema；从其他数据库形态切换时使用全新数据库。
+浏览器访问 `http://127.0.0.1:8080`。默认数据库是当前目录的 `paihuo.db`。SQLite 使用 `PRAGMA user_version` 编号迁移；不支持的版本或损坏的 schema 会拒绝启动。
 
 公开监听必须设置令牌，并应放在 HTTPS 反向代理后：
 
@@ -41,9 +41,10 @@ export PAIHUO_TOKEN="$(openssl rand -hex 32)"
 
 ### 当前本机部署
 
-当前实例运行 `v2026.08.17-15`（会话斜杠命令菜单），由用户级 systemd 托管：
+当前实例由用户级 systemd 托管：
 
 ```bash
+/home/yu/paihuo/paihuo --version
 systemctl --user status paihuo.service
 journalctl --user -u paihuo.service -f
 ```
@@ -53,11 +54,14 @@ journalctl --user -u paihuo.service -f
 - 登录令牌：`/home/yu/paihuo/token.env`
 - 服务定义：`/home/yu/.config/systemd/user/paihuo.service`
 
-本项目不维护按版本编号的数据库迁移链。现有 8 个幂等加列迁移只覆盖部署指南列出的
-增量；其他 schema 或领域模型变化使用全新数据库，只保留 `token.env` 和独立的
-`skills/`。具体替换命令见部署指南。
+已有实例从最新 `main` 重新部署：
 
+```bash
+git pull --ff-only
+scripts/deploy-local.sh
+```
 
+脚本执行构建与门禁、停止服务、确认没有运行中任务、备份 SQLite/Artifact、安装带提交版本号的 release binary，并在启动后验证 HTTP 与数据库。编号迁移和人工恢复步骤见[部署指南](docs/DEPLOYMENT.md)。
 
 Git Project 中每个 Task 使用 `<db-dir>/sessions/<project>/task-<id>` worktree。Runtime 在专用 `tmux -L paihuo` server 中执行；PaiHuo 重启后会重新接管存活窗口。
 
