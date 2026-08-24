@@ -2996,10 +2996,6 @@ func (s *Store) CreateProject(p Project) (int64, error) {
 	return res.LastInsertId()
 }
 
-func (s *Store) UpdateProject(id int64, set map[string]any) error {
-	return updateOne(s.db, "projects", id, set)
-}
-
 // DeleteProject 删除项目；项目下任务改为「无项目」而非级联删除。
 func (s *Store) DeleteProject(id int64) error {
 	if _, err := s.db.Exec("UPDATE tasks SET project_id=NULL, updated_at=?, revision=revision+1 WHERE project_id=?", Now(), id); err != nil {

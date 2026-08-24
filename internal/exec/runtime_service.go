@@ -132,12 +132,6 @@ func (s *RuntimeService) Register(runtime CommandRuntime) {
 	s.mu.Unlock()
 }
 
-func (s *RuntimeService) RegisterSession(id string, driver SessionDriver) {
-	s.mu.Lock()
-	s.sessions[id] = driver
-	s.mu.Unlock()
-}
-
 func (s *RuntimeService) Prepare(id string, request ExecutionRequest) (CommandSpec, error) {
 	s.mu.RLock()
 	runtime, ok := s.commands[id]

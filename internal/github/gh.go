@@ -110,18 +110,6 @@ func (c *Client) ListSecretScanningAlerts(ctx context.Context, repo string) ([]A
 	return items, nil
 }
 
-func (c *Client) CreatePullRequest(ctx context.Context, repo, head, base, title, body string) (string, error) {
-	args := []string{"pr", "create", "--repo", repo, "--head", head, "--base", base, "--title", title}
-	if body != "" {
-		args = append(args, "--body", body)
-	}
-	out, err := c.run(ctx, args...)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
 func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	out, err := cmd.Output()
