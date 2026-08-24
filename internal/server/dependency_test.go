@@ -226,11 +226,11 @@ func TestReorderProjectTasksEndpoint(t *testing.T) {
 	}
 	first, second, third := create("first"), create("second"), create("third")
 
+	path := "/api/v1/projects/" + itoa(projectID) + "/tasks/order"
 	orderBody := fmt.Sprintf(`{"task_ids":[%d,%d,%d]}`, third.ID, first.ID, second.ID)
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/projects/"+itoa(projectID)+"/tasks/order", strings.NewReader(orderBody))
-	req.SetPathValue("id", itoa(projectID))
+	req := httptest.NewRequest(http.MethodPut, path, strings.NewReader(orderBody))
 	resp := httptest.NewRecorder()
-	s.reorderProjectTasks(resp, req)
+	s.Handler().ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("重排接口失败: code=%d body=%s", resp.Code, resp.Body.String())
 	}
@@ -240,5 +240,12 @@ func TestReorderProjectTasksEndpoint(t *testing.T) {
 	}
 	if len(tasks) != 3 || tasks[0].ID != third.ID || tasks[1].ID != first.ID || tasks[2].ID != second.ID {
 		t.Fatalf("接口返回顺序异常: %+v", tasks)
+	}
+
+	alias := httptest.NewRequest(http.MethodPatch, path, strings.NewReader(orderBody))
+	aliasResp := httptest.NewRecorder()
+	s.Handler().ServeHTTP(aliasResp, alias)
+	if aliasResp.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("PATCH 完整排序别名应被删除: code=%d body=%s", aliasResp.Code, aliasResp.Body.String())
 	}
 }

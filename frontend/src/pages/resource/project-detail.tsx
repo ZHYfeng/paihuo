@@ -18,7 +18,7 @@ export function ProjectDetailPage() {
   const qc = useQueryClient();
   const toast = useToast();
   const project = useQuery({ queryKey: [...keys.projects, id], queryFn: () => api<Project[]>("/projects").then(list => list.find(item => item.id === id)) });
-  const stats = useQuery({ queryKey: ["stats", "project", id], queryFn: () => api<ProjectStats>(`/stats/project/${id}`) });
+  const stats = useQuery({ queryKey: ["stats", "project", id], queryFn: () => api<ProjectStats>(`/stats/projects/${id}`) });
   const tasks = useQuery({ queryKey: ["tasks", "project", id], queryFn: () => api<Task[]>(`/tasks?project_id=${id}`) });
   const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
   const [createOpen, setCreateOpen] = useState(false);

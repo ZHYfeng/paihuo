@@ -80,10 +80,12 @@ Policy 在创建时同步校验，拒绝即不落库：
 
 ## HTTP 合同
 
-API 只暴露 `/api/v1`。[`internal/server/openapi.yaml`](../internal/server/openapi.yaml)
-是一份可由 `GET /api/v1/openapi.yaml` 读取的 OpenAPI 3.1 描述，但目前只记录
-54/87 个 HTTP operation（34/63 个 path），不是完整或权威合同。API-1 将补齐描述
-并增加路由与 OpenAPI 的双向守卫；在此之前应以服务端已注册路由和实现为准。
+API 只暴露 `/api/v1`，资源路径段使用复数名称。完整替换使用 `PUT`，局部修改
+使用 `PATCH`；同一操作不以多个 method 或 path 提供别名。
+[`internal/server/openapi.yaml`](../internal/server/openapi.yaml) 是一份可由
+`GET /api/v1/openapi.yaml` 读取的 OpenAPI 3.1 描述，但目前只记录 54/86 个 HTTP
+operation（34/63 个 path），不是完整或权威合同。API-1 将补齐描述并增加路由与
+OpenAPI 的双向守卫；在此之前应以服务端已注册路由和实现为准。
 
 错误统一为：
 

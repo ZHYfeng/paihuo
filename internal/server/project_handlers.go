@@ -15,7 +15,6 @@ func (s *Server) registerProjectRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/projects", s.createProject)
 	mux.HandleFunc("PATCH /api/v1/projects/{id}", s.patchProject)
 	mux.HandleFunc("PUT /api/v1/projects/{id}/tasks/order", s.reorderProjectTasks)
-	mux.HandleFunc("PATCH /api/v1/projects/{id}/tasks/order", s.reorderProjectTasks)
 	mux.HandleFunc("DELETE /api/v1/projects/{id}", s.deleteProject)
 	mux.HandleFunc("POST /api/v1/projects/{id}/github/sync", s.syncGitHubProjectHandler)
 }

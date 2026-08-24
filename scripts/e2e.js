@@ -31,6 +31,17 @@ try {
     if (!response.ok) throw new Error(await response.text());
     return response.json();
   }, `e2e-${Date.now()}`);
+  const [statsResponse] = await Promise.all([
+    page.waitForResponse(response => new URL(response.url()).pathname === `/api/v1/stats/projects/${project.id}`),
+    page.goto(`${baseURL}/projects/${project.id}`, { waitUntil: "domcontentloaded" })
+  ]);
+  if (!statsResponse.ok()) throw new Error(`project stats failed: ${statsResponse.status()}`);
+  await page.getByRole("heading", { name: project.name }).waitFor();
+  await page.getByRole("heading", { name: "任务", exact: true }).waitFor();
+  await page.evaluate(async item => {
+    const response = await fetch(`/api/v1/projects/${item.id}/tasks/order`, { method: "PUT", headers: { "Content-Type": "application/json", "If-Match": `"${item.revision}"`, "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ task_ids: [] }) });
+    if (!response.ok) throw new Error(await response.text());
+  }, project);
   await page.evaluate(async item => {
     const response = await fetch(`/api/v1/projects/${item.id}`, { method: "DELETE", headers: { "If-Match": `"${item.revision}"`, "Idempotency-Key": crypto.randomUUID() } });
     if (!response.ok) throw new Error(await response.text());

@@ -5,7 +5,7 @@ import "net/http"
 func (s *Server) registerStatsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/stats/overview", s.overviewStats)
 	mux.HandleFunc("GET /api/v1/stats/roles/{id}", s.roleStats)
-	mux.HandleFunc("GET /api/v1/stats/project/{id}", s.projectStats)
+	mux.HandleFunc("GET /api/v1/stats/projects/{id}", s.projectStats)
 }
 
 func (s *Server) overviewStats(w http.ResponseWriter, r *http.Request) {
