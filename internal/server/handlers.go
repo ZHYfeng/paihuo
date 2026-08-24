@@ -464,12 +464,15 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		}
 		if v == nil {
 			set["project_id"] = nil
+			set["project_dir"] = ""
 		} else if pid, isNum := v.(float64); isNum && pid > 0 {
-			if _, err := s.st.GetProject(int64(pid)); err != nil {
+			project, err := s.st.GetProject(int64(pid))
+			if err != nil || project == nil {
 				writeErr(w, http.StatusBadRequest, "项目不存在")
 				return
 			}
 			set["project_id"] = int64(pid)
+			set["project_dir"] = project.ProjectDir
 		} else {
 			writeErr(w, http.StatusBadRequest, "project_id 非法")
 			return

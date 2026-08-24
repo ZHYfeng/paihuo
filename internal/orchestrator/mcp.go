@@ -130,9 +130,9 @@ func (s *Service) toolList() map[string]any {
 				"properties": map[string]any{
 					"role_id":              map[string]any{"type": "integer", "description": "执行子任务的已有 Role id（必须启用）"},
 					"title":                map[string]any{"type": "string", "description": "子任务标题"},
-					"body":                 map[string]any{"type": "string", "description": "子任务提示词：目标 + 上下文 + 验收标准"},
-					"project_id":           map[string]any{"type": "integer", "description": "子任务所属项目 id（无则不填）"},
-					"perm":                 map[string]any{"type": "string", "enum": []string{"full", "review"}, "description": "默认 full（无需审批，自动合并/交付）；review=完成后需人工审批（危险活应由人把关）"},
+					"body":                 map[string]any{"type": "string", "description": "子任务提示词：目标 + 上下文 + 验收标准；没有真实任务内容时不要创建空任务"},
+					"project_id":           map[string]any{"type": "integer", "description": "子任务所属项目 id；省略时继承当前编排会话项目（若有）"},
+					"perm":                 map[string]any{"type": "string", "enum": []string{"full", "review"}, "description": "未指定时采用编排者允许的最高权限：full 上限默认 full，review 上限默认 review；review=完成后需人工审批（危险活应由人把关）"},
 					"run_mode":             map[string]any{"type": "string", "enum": []string{"batch"}, "description": "v1 只支持 batch"},
 					"concurrent":           map[string]any{"type": "boolean", "description": "允许并发（默认 false=同项目串行）"},
 					"dependency_mode":      map[string]any{"type": "string", "enum": []string{"none", "weak", "strong"}, "description": "默认 none；weak=按项目创建顺序排队；strong=需 depends_on"},
@@ -141,7 +141,7 @@ func (s *Service) toolList() map[string]any {
 					"sync":                 map[string]any{"type": "boolean", "description": "默认 false=异步（返回回执后 await_tasks 轮询）；true=同步，阻塞到任务完成并返回结果"},
 					"sync_timeout_seconds": map[string]any{"type": "integer", "description": "同步模式最长阻塞秒数，默认 600，上限 1800"},
 				},
-				"required": []string{"role_id", "title"},
+				"required": []string{"role_id", "title", "body"},
 			},
 		},
 		{

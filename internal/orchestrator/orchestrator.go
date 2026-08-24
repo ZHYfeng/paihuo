@@ -330,6 +330,10 @@ func (s *Service) spawnCreate(ctx context.Context, sessionID int64, args spawnAr
 	if title == "" {
 		return spawnReceipt{}, errors.New("title 不能为空")
 	}
+	body := strings.TrimSpace(args.Body)
+	if body == "" {
+		return spawnReceipt{}, errors.New("body 不能为空：禁止创建空任务")
+	}
 	if args.RoleID < 1 {
 		return spawnReceipt{}, errors.New("role_id 必填")
 	}
@@ -342,7 +346,12 @@ func (s *Service) spawnCreate(ctx context.Context, sessionID int64, args spawnAr
 	}
 	perm := args.Perm
 	if perm == "" {
+		// 缺省采用编排者允许的最高权限：full 上限保持 full，review
+		// 上限收敛为 review，避免默认值本身被权限上限拒绝。
 		perm = store.PermFull
+		if !agent.DelegationPermAllowed(perm) {
+			perm = store.PermReview
+		}
 	}
 	if perm != store.PermFull && perm != store.PermReview {
 		return spawnReceipt{}, errors.New("非法权限模式（full/review）")
@@ -365,18 +374,23 @@ func (s *Service) spawnCreate(ctx context.Context, sessionID int64, args spawnAr
 	if dependencyMode == "" {
 		dependencyMode = store.DependencyNone
 	}
-	var projectRef *store.Project
-	if args.ProjectID != nil {
-		projectRef, err = s.st.GetProject(*args.ProjectID)
+	projectID := args.ProjectID
+	if projectID == nil && ss.ProjectID != nil {
+		// 编排会话绑定项目时，子任务默认落入同一项目，避免模型必须
+		// 记忆并重复填写 project_id 才能获得 worktree/合并链。
+		projectID = ss.ProjectID
+	}
+	if projectID != nil {
+		projectRef, err := s.st.GetProject(*projectID)
 		if err != nil || projectRef == nil {
 			return spawnReceipt{}, errors.New("子任务项目不存在")
 		}
 	}
 	created, err := s.task.Create(application.CreateTaskRequest{
 		Title:           title,
-		Body:            args.Body,
+		Body:            body,
 		RoleID:          &args.RoleID,
-		ProjectID:       args.ProjectID,
+		ProjectID:       projectID,
 		Permission:      perm,
 		RunMode:         runMode,
 		Concurrent:      args.Concurrent,

@@ -91,6 +91,16 @@ func (m *Manager) delegationEnv(ss *store.Task, agent store.Role) []string {
 	}
 }
 
+// sessionRoleConfig 返回会话实际使用的 RoleConfig。委托工具与编排规则只在
+// 平台工具面已配置时注入，避免未配置扩展/端点的普通会话收到不可用指令。
+func (m *Manager) sessionRoleConfig(agent store.Role) store.RoleConfig {
+	role := agent.RoleConfig
+	if agent.DelegationEnabled && m.mcpBaseURL != "" {
+		role.SystemPrompt = exec.AppendSystemPrompt(role.SystemPrompt, orchestrator.DelegationSystemPrompt)
+	}
+	return role
+}
+
 // sessionDirOf 返回会话的 pi 会话文件目录。
 func (m *Manager) sessionDirOf(id int64) string {
 	return filepath.Join(m.runtimeSessions, fmt.Sprintf("session-%d", id))
@@ -352,7 +362,7 @@ func (m *Manager) spawn(ss *store.Task, agent store.Role, cwd string) (*rpcProc,
 		log.Printf("⚠ 会话 %d 技能挂载失败: %v", ss.ID, err)
 	}
 	spec, err := driver.PrepareSession(exec.SessionRequest{
-		Role: agent.RoleConfig, SkillMount: mount, SessionDir: ss.SessionDir,
+		Role: m.sessionRoleConfig(agent), SkillMount: mount, SessionDir: ss.SessionDir,
 	})
 	if err != nil {
 		return nil, err

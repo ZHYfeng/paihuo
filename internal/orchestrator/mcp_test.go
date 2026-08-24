@@ -88,6 +88,12 @@ func TestMCPEndpointLifecycle(t *testing.T) {
 	if err := json.Unmarshal(out.Result, &resErr); err != nil || !resErr.IsError || len(resErr.Content) == 0 {
 		t.Fatalf("spawn_task 空参数应返回 isError: %+v", out.Result)
 	}
+
+	// API 层也必须拒绝有标题但无正文的空任务，不能只依赖编排者 prompt。
+	_, out = doMCP(t, s, token, `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"spawn_task","arguments":{"role_id":1,"title":"空任务","body":"   "}}}`)
+	if err := json.Unmarshal(out.Result, &resErr); err != nil || !resErr.IsError || len(resErr.Content) == 0 || !strings.Contains(resErr.Content[0].Text, "空任务") {
+		t.Fatalf("spawn_task 空正文应返回空任务错误: %+v", out.Result)
+	}
 }
 
 func TestMCPEndpointSpawnFlow(t *testing.T) {

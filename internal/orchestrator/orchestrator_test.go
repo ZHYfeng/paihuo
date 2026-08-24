@@ -67,16 +67,38 @@ func TestSpawnRequiresDelegation(t *testing.T) {
 	}
 }
 
+func TestSpawnRejectsEmptyTask(t *testing.T) {
+	svc, st, sessionID := newTestService(t, true, store.PermFull)
+	workerRoleID, err := st.CreateRole(store.Role{Name: "empty-worker", RuntimeID: "pi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Spawn(context.Background(), sessionID, spawnArgs{
+		RoleID: workerRoleID, Title: "占位标题", Body: " \n\t ",
+	}); err == nil || !strings.Contains(err.Error(), "空任务") {
+		t.Fatalf("空 body 应被 API 拒绝，got: %v", err)
+	}
+}
+
 func TestSpawnEnforcesPermCap(t *testing.T) {
 	svc, st, sessionID := newTestService(t, true, store.PermReview) // 上限=review
 	workerRoleID, _ := st.CreateRole(store.Role{Name: "worker2", RuntimeID: "pi", Enabled: true})
 
 	// full 子任务超过上限 → 拒绝
-	if _, err := svc.Spawn(context.Background(), sessionID, spawnArgs{RoleID: workerRoleID, Title: "full", Perm: store.PermFull}); err == nil {
+	if _, err := svc.Spawn(context.Background(), sessionID, spawnArgs{RoleID: workerRoleID, Title: "full", Body: "执行 full 测试", Perm: store.PermFull}); err == nil {
 		t.Fatal("full 子任务超过 review 上限应被拒绝")
 	}
+	// 未指定权限时，默认值应收敛到编排者上限，而不是因 full 默认值失败。
+	defaultRC, err := svc.Spawn(context.Background(), sessionID, spawnArgs{RoleID: workerRoleID, Title: "default-review-child", Body: "执行默认权限测试"})
+	if err != nil {
+		t.Fatalf("省略权限时应使用 review 默认值: %v", err)
+	}
+	if defaultRC.Perm != store.PermReview {
+		t.Fatalf("省略权限时应默认为 review，got %s", defaultRC.Perm)
+	}
+
 	// review 子任务 → 允许
-	rc, err := svc.Spawn(context.Background(), sessionID, spawnArgs{RoleID: workerRoleID, Title: "review-child", Perm: store.PermReview})
+	rc, err := svc.Spawn(context.Background(), sessionID, spawnArgs{RoleID: workerRoleID, Title: "review-child", Body: "执行 review 测试", Perm: store.PermReview})
 	if err != nil {
 		t.Fatalf("review 子任务应被允许: %v", err)
 	}
@@ -95,10 +117,43 @@ func TestSpawnEnforcesPermCap(t *testing.T) {
 	}
 }
 
+func TestSpawnInheritsSessionProject(t *testing.T) {
+	svc, st, sessionID := newTestService(t, true, store.PermFull)
+	projectDir := t.TempDir()
+	projectID, err := st.CreateProject(store.Project{Name: "session-project", ProjectDir: projectDir, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateTask(sessionID, map[string]any{"project_id": projectID, "project_dir": projectDir}); err != nil {
+		t.Fatal(err)
+	}
+	roleID, err := st.CreateRole(store.Role{Name: "project-worker", RuntimeID: "pi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	receipt, err := svc.Spawn(context.Background(), sessionID, spawnArgs{
+		RoleID: roleID, Title: "继承会话项目", Body: "执行实际目标",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.ProjectID == nil || *receipt.ProjectID != projectID {
+		t.Fatalf("应继承当前会话项目，得到 %+v", receipt)
+	}
+	child, err := st.GetTask(receipt.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.ProjectDir != projectDir {
+		t.Fatalf("子任务应继承项目目录，got %q want %q", child.ProjectDir, projectDir)
+	}
+}
+
 func TestSpawnRejectsDisabledChildRole(t *testing.T) {
 	svc, st, sessionID := newTestService(t, true, store.PermFull)
 	roleID, _ := st.CreateRole(store.Role{Name: "off", RuntimeID: "pi", Enabled: false})
-	if _, err := svc.Spawn(context.Background(), sessionID, spawnArgs{RoleID: roleID, Title: "x"}); err == nil {
+	if _, err := svc.Spawn(context.Background(), sessionID, spawnArgs{RoleID: roleID, Title: "x", Body: "执行禁用角色测试"}); err == nil {
 		t.Fatal("未启用角色不应被用于子任务")
 	}
 }
@@ -216,7 +271,7 @@ func TestSpawnSyncWaitsForTerminal(t *testing.T) {
 	}, 1)
 	ctx := context.Background()
 	go func() {
-		o, err := svc.SpawnSync(ctx, sessionID, spawnArgs{RoleID: workerID, Title: "sync-child", Sync: true, SyncTimeoutSeconds: 8})
+		o, err := svc.SpawnSync(ctx, sessionID, spawnArgs{RoleID: workerID, Title: "sync-child", Body: "执行同步测试", Sync: true, SyncTimeoutSeconds: 8})
 		ch <- struct {
 			out out
 			err error
@@ -269,7 +324,7 @@ func TestSpawnSyncStopsOnAwaitingReview(t *testing.T) {
 	}, 1)
 	ctx := context.Background()
 	go func() {
-		o, err := svc.SpawnSync(ctx, sessionID, spawnArgs{RoleID: workerID, Title: "review-child", Perm: store.PermReview, Sync: true, SyncTimeoutSeconds: 8})
+		o, err := svc.SpawnSync(ctx, sessionID, spawnArgs{RoleID: workerID, Title: "review-child", Body: "执行待审同步测试", Perm: store.PermReview, Sync: true, SyncTimeoutSeconds: 8})
 		ch <- struct {
 			out out
 			err error

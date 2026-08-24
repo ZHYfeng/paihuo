@@ -96,8 +96,8 @@ export default function (pi: ExtensionAPI) {
       Type.Object({
         role_id: Type.Integer({ description: "执行子任务的已有 Role id（必须启用）" }),
         title: Type.String({ description: "子任务标题" }),
-        body: Type.Optional(Type.String({ description: "子任务提示词：目标 + 上下文 + 验收标准" })),
-        project_id: Type.Optional(Type.Integer({ description: "子任务所属项目 id（无则不填）" })),
+        body: Type.String({ description: "子任务提示词：目标 + 上下文 + 验收标准；不能为空，不创建空任务" }),
+        project_id: Type.Optional(Type.Integer({ description: "子任务所属项目 id；省略时继承当前编排会话项目（若有）" })),
         perm: Type.Optional(StringEnum(["full", "review"] as const)),
         concurrent: Type.Optional(Type.Boolean({ description: "允许并发（默认 false=同项目串行）" })),
         dependency_mode: Type.Optional(StringEnum(["none", "weak", "strong"] as const)),
