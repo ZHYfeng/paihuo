@@ -2,7 +2,9 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
+	"errors"
 	"io"
 	"mime"
 	"net/http"
@@ -14,7 +16,16 @@ import (
 
 const maxArtifactBody = 16 << 20
 
-func (s *Server) artifactRoutes(mux *http.ServeMux) {
+// openArtifact 暴露 artifact 内容给编排工具（受控注入：限制在托管根部，
+// LocalStore 已约束路径）。
+func (s *Server) openArtifact(locator string) (io.ReadCloser, error) {
+	if s.artifacts == nil {
+		return nil, errors.New("ArtifactStore 不可用")
+	}
+	return s.artifacts.Open(context.Background(), locator)
+}
+
+func (s *Server) registerArtifactRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/artifacts", s.listArtifacts)
 	mux.HandleFunc("POST /api/v1/artifacts", s.createArtifact)
 	mux.HandleFunc("GET /api/v1/artifacts/{id}", s.getArtifact)

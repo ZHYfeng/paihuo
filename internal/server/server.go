@@ -82,15 +82,6 @@ func mcpSecretFromSettings(st *store.Store, token string) string {
 	return v
 }
 
-// openArtifact 暴露 artifact 内容给编排工具（受控注入：限制在托管根部，
-// LocalStore 已约束路径）。
-func (s *Server) openArtifact(locator string) (io.ReadCloser, error) {
-	if s.artifacts == nil {
-		return nil, errors.New("ArtifactStore 不可用")
-	}
-	return s.artifacts.Open(context.Background(), locator)
-}
-
 // Start reconciles persisted sessions and starts bounded background services.
 // It must be called once before serving requests.
 func (s *Server) Start(ctx context.Context) {
@@ -235,74 +226,25 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.
 		w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(r.URL.Path)))
 		w.Write(b)
 	}))
-	m.HandleFunc("GET /api/v1/events", s.sse)
-	m.HandleFunc("POST /api/v1/mcp", s.orchestrator.HandleHTTP)
-	s.sessionRoutes(m)
-	s.workflowRoutes(m)
-
-	m.HandleFunc("GET /api/v1/tasks", s.listTasks)
-	m.HandleFunc("POST /api/v1/tasks", s.createTask)
-	m.HandleFunc("GET /api/v1/tasks/{id}", s.getTask)
-	m.HandleFunc("PATCH /api/v1/tasks/{id}", s.patchTask)
-	m.HandleFunc("DELETE /api/v1/tasks/{id}", s.deleteTask)
-	m.HandleFunc("POST /api/v1/tasks/{id}/resume", s.resumeTask)
-	m.HandleFunc("POST /api/v1/tasks/{id}/input", s.sendTaskInput)
-	m.HandleFunc("POST /api/v1/tasks/{id}/resize", s.resizeTask)
-	m.HandleFunc("POST /api/v1/tasks/{id}/end-session", s.endSession)
-	m.HandleFunc("GET /api/v1/tasks/{id}/logs", s.getTaskLogs)
-	m.HandleFunc("GET /api/v1/tasks/{id}/diff", s.taskDiff)
-	m.HandleFunc("GET /api/v1/tasks/{id}/children", s.getTaskChildren)
-	m.HandleFunc("POST /api/v1/tasks/cleanup", s.cleanupTasks)
-
-	m.HandleFunc("GET /api/v1/settings", s.getSettings)
-	m.HandleFunc("PUT /api/v1/settings", s.putSettings)
-
-	m.HandleFunc("GET /api/v1/templates", s.listTemplates)
-	m.HandleFunc("POST /api/v1/templates", s.createTemplate)
-	m.HandleFunc("PATCH /api/v1/templates/{id}", s.patchTemplate)
-	m.HandleFunc("DELETE /api/v1/templates/{id}", s.deleteTemplate)
-
-	m.HandleFunc("GET /api/v1/roles", s.listRoles)
-	m.HandleFunc("POST /api/v1/roles", s.createRole)
-	m.HandleFunc("PATCH /api/v1/roles/{id}", s.patchRole)
-	m.HandleFunc("DELETE /api/v1/roles/{id}", s.deleteRole)
-	m.HandleFunc("GET /api/v1/runtimes", s.listRuntimes)
-	m.HandleFunc("POST /api/v1/runtimes/refresh", s.refreshRuntimes)
-	m.HandleFunc("POST /api/v1/role-studio/chat", s.roleStudioChat)
-	m.HandleFunc("POST /api/v1/role-studio/test", s.roleStudioTest)
-	m.HandleFunc("POST /api/v1/runtimes/install", s.provisionInstall)
-	m.HandleFunc("GET /api/v1/runtimes/provisioning", s.provisionStatus)
-	m.HandleFunc("GET /api/v1/skills", s.listSkills)
-	m.HandleFunc("POST /api/v1/skills", s.createSkill)
-	m.HandleFunc("PATCH /api/v1/skills", s.patchSkills)
-	m.HandleFunc("DELETE /api/v1/skills", s.deleteSkills)
-	m.HandleFunc("POST /api/v1/skills/scan", s.scanSkills)
-	m.HandleFunc("GET /api/v1/skills/{id}", s.getSkill)
-	m.HandleFunc("PATCH /api/v1/skills/{id}", s.patchSkill)
-	m.HandleFunc("DELETE /api/v1/skills/{id}", s.deleteSkill)
-	m.HandleFunc("GET /api/v1/extensions", s.listExtensions)
-	m.HandleFunc("POST /api/v1/extensions/install", s.installExtension)
-	m.HandleFunc("DELETE /api/v1/extensions/{name}", s.removeExtension)
-	m.HandleFunc("GET /api/v1/workspace/{id}", s.workspaceStatus)
-	m.HandleFunc("POST /api/v1/workspace/{id}/discard", s.workspaceDiscard)
-	m.HandleFunc("POST /api/v1/workspace/git-init", s.workspaceGitInit)
-	m.HandleFunc("GET /api/v1/fs/dirs", s.fsDirs)
-	m.HandleFunc("POST /api/v1/fs/mkdir", s.fsMkdir)
-
-	m.HandleFunc("GET /api/v1/projects", s.listProjects)
-	m.HandleFunc("POST /api/v1/projects", s.createProject)
-	m.HandleFunc("PATCH /api/v1/projects/{id}", s.patchProject)
-	m.HandleFunc("PUT /api/v1/projects/{id}/tasks/order", s.reorderProjectTasks)
-	m.HandleFunc("PATCH /api/v1/projects/{id}/tasks/order", s.reorderProjectTasks)
-	m.HandleFunc("DELETE /api/v1/projects/{id}", s.deleteProject)
-	m.HandleFunc("POST /api/v1/projects/{id}/github/sync", s.syncGitHubProjectHandler)
-
-	m.HandleFunc("GET /api/v1/stats/overview", s.overviewStats)
-	m.HandleFunc("GET /api/v1/stats/roles/{id}", s.roleStats)
-	m.HandleFunc("GET /api/v1/stats/project/{id}", s.projectStats)
-
-	m.HandleFunc("GET /api/v1/openapi.yaml", s.openAPISpec)
-	s.artifactRoutes(m)
+	s.registerEventRoutes(m)
+	s.registerOrchestratorRoutes(m)
+	s.registerSessionRoutes(m)
+	s.registerWorkflowRoutes(m)
+	s.registerTaskRoutes(m)
+	s.registerSettingsRoutes(m)
+	s.registerTemplateRoutes(m)
+	s.registerRoleRoutes(m)
+	s.registerRuntimeCatalogRoutes(m)
+	s.registerRoleStudioRoutes(m)
+	s.registerRuntimeProvisionRoutes(m)
+	s.registerSkillRoutes(m)
+	s.registerExtensionRoutes(m)
+	s.registerWorkspaceRoutes(m)
+	s.registerFSRoutes(m)
+	s.registerProjectRoutes(m)
+	s.registerStatsRoutes(m)
+	s.registerOpenAPIRoutes(m)
+	s.registerArtifactRoutes(m)
 
 	// All authenticated browser routes share one React root. More-specific API,
 	// login and static patterns above always win ServeMux routing.
@@ -430,70 +372,6 @@ func (s *Server) renderLogin(w http.ResponseWriter, data pageData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.loginPage.ExecuteTemplate(w, "base", data); err != nil {
 		log.Printf("模板渲染失败: %v", err)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// SSE
-
-func (s *Server) sse(w http.ResponseWriter, r *http.Request) {
-	fl, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "SSE 不支持", http.StatusInternalServerError)
-		return
-	}
-	after := int64(0)
-	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
-		after, _ = strconv.ParseInt(raw, 10, 64)
-	}
-	if raw := r.URL.Query().Get("after"); raw != "" {
-		if value, err := strconv.ParseInt(raw, 10, 64); err == nil && value > after {
-			after = value
-		}
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	ch := s.hub.Subscribe()
-	defer s.hub.Unsubscribe(ch)
-	w.WriteHeader(http.StatusOK)
-	backlog, err := s.hub.History(after, 1000)
-	if err != nil {
-		return
-	}
-	last := after
-	for _, event := range backlog {
-		if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", event.Seq, event.Type, event.Marshal()); err != nil {
-			return
-		}
-		last = event.Seq
-	}
-	fl.Flush()
-
-	tk := time.NewTicker(15 * time.Second)
-	defer tk.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-s.hub.Closed():
-			return // 服务停机：断开长连接，让 http.Server.Shutdown 立即完成
-		case ev := <-ch:
-			if ev.Seq <= last {
-				continue
-			}
-			if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", ev.Seq, ev.Type, ev.Marshal()); err != nil {
-				return // 客户端已断开，立即释放连接（写失败不等待下一个周期）
-			}
-			last = ev.Seq
-			fl.Flush()
-		case <-tk.C:
-			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
-				return
-			}
-			fl.Flush()
-		}
 	}
 }
 

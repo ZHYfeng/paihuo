@@ -8,6 +8,10 @@ import (
 //go:embed openapi.yaml
 var apiContract embed.FS
 
+func (s *Server) registerOpenAPIRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/v1/openapi.yaml", s.openAPISpec)
+}
+
 func (s *Server) openAPISpec(w http.ResponseWriter, _ *http.Request) {
 	body, err := apiContract.ReadFile("openapi.yaml")
 	if err != nil {

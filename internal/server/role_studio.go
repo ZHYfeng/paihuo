@@ -24,6 +24,11 @@ import (
 	"paihuo/internal/store"
 )
 
+func (s *Server) registerRoleStudioRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/v1/role-studio/chat", s.roleStudioChat)
+	mux.HandleFunc("POST /api/v1/role-studio/test", s.roleStudioTest)
+}
+
 const (
 	// Keep requests bounded, but give skill-heavy roles enough time to finish
 	// instead of failing at the old two-minute cutoff.

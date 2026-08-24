@@ -12,7 +12,7 @@ import (
 	"paihuo/internal/workflow"
 )
 
-func (s *Server) workflowRoutes(mux *http.ServeMux) {
+func (s *Server) registerWorkflowRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/workflows", s.listWorkflows)
 	mux.HandleFunc("POST /api/v1/workflows", s.createWorkflow)
 	mux.HandleFunc("GET /api/v1/workflows/{id}", s.getWorkflow)
