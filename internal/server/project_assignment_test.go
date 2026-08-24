@@ -9,11 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"paihuo/internal/application"
-	"paihuo/internal/events"
-	"paihuo/internal/exec"
-	"paihuo/internal/sched"
-	"paihuo/internal/session"
 	"paihuo/internal/store"
 )
 
@@ -22,18 +17,19 @@ func TestPatchTaskProjectBackfillsDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
 	root := t.TempDir()
 	projectDir := filepath.Join(root, "project")
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	hub := events.NewEventStream()
-	executor := exec.NewForTest(st, hub, filepath.Join(root, "sessions"), filepath.Join(root, "executor.db"), "project-assignment-test")
-	sess := session.New(st, hub, executor, filepath.Join(root, "sessions"), t.TempDir())
-	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
-	sc := sched.New(st, hub, executor, sess, wf)
-	s := New(st, hub, executor, sc, sess, wf, "", filepath.Join(root, "skills"))
+	sessionsRoot := filepath.Join(root, "sessions")
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestRoot(root),
+		withTestExecutor(sessionsRoot, filepath.Join(root, "executor.db"), "project-assignment-test"),
+		withTestSession(sessionsRoot, t.TempDir()),
+	)
+	s := env.server
 
 	roleID, err := st.CreateRole(store.Role{Name: "worker", RuntimeID: "pi", Enabled: true})
 	if err != nil {

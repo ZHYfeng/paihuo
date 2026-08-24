@@ -8,11 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"paihuo/internal/application"
-	"paihuo/internal/events"
-	execpkg "paihuo/internal/exec"
-	"paihuo/internal/sched"
-	"paihuo/internal/session"
 	"paihuo/internal/store"
 	"paihuo/internal/workflow"
 )
@@ -24,13 +19,14 @@ func TestWorkflowCreateAdoptsAndStartBindsProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewEventStream()
-	executor := execpkg.NewForTest(st, hub, filepath.Join(root, "sessions"), filepath.Join(root, "db"), "workflow-handler")
-	sess := session.New(st, hub, executor, filepath.Join(root, "sessions"), t.TempDir())
-	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
-	sc := sched.New(st, hub, executor, sess, wf)
-	s := New(st, hub, executor, sc, sess, wf, "", filepath.Join(root, "skills"))
+	sessionsRoot := filepath.Join(root, "sessions")
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestRoot(root),
+		withTestExecutor(sessionsRoot, filepath.Join(root, "db"), "workflow-handler"),
+		withTestSession(sessionsRoot, t.TempDir()),
+	)
+	s := env.server
 	mux := s.Handler()
 
 	roleID, err := st.CreateRole(store.Role{Name: "builder", RuntimeID: "pi", Enabled: true})
@@ -173,13 +169,14 @@ func TestWorkflowUpdateDeleteHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewEventStream()
-	executor := execpkg.NewForTest(st, hub, filepath.Join(root, "sessions"), filepath.Join(root, "db"), "workflow-handler")
-	sess := session.New(st, hub, executor, filepath.Join(root, "sessions"), t.TempDir())
-	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
-	sc := sched.New(st, hub, executor, sess, wf)
-	s := New(st, hub, executor, sc, sess, wf, "", filepath.Join(root, "skills"))
+	sessionsRoot := filepath.Join(root, "sessions")
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestRoot(root),
+		withTestExecutor(sessionsRoot, filepath.Join(root, "db"), "workflow-handler"),
+		withTestSession(sessionsRoot, t.TempDir()),
+	)
+	s := env.server
 	mux := s.Handler()
 
 	roleID, err := st.CreateRole(store.Role{Name: "builder", RuntimeID: "pi", Enabled: true})

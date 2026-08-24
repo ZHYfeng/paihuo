@@ -6,16 +6,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strconv"
 	"testing"
 
-	"paihuo/internal/application"
 	"paihuo/internal/artifact"
-	"paihuo/internal/events"
-	"paihuo/internal/exec"
-	"paihuo/internal/sched"
-	"paihuo/internal/session"
 	"paihuo/internal/store"
 )
 
@@ -24,17 +18,13 @@ func TestArtifactAPIStoresListsDownloadsAndDeletesContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
 	taskID, err := st.CreateTask(store.Task{Title: "artifact owner", Status: store.StatusQueued})
 	if err != nil {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	hub := events.NewEventStream(st)
-	sess := session.New(st, hub, nil, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, exec.NewDefaultRuntimeService(), nil, hub)
-	sc := sched.New(st, hub, nil, sess, wf)
-	s := New(st, hub, nil, sc, sess, wf, "", filepath.Join(root, "skills"))
+	env := newTestServer(t, withTestStore(st), withTestRoot(root), withPersistentEventStream())
+	s := env.server
 
 	payload := []byte("immutable result\n")
 	requestBody, err := json.Marshal(map[string]any{

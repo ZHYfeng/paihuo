@@ -7,11 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"paihuo/internal/application"
-	"paihuo/internal/events"
-	"paihuo/internal/exec"
-	"paihuo/internal/sched"
-	"paihuo/internal/session"
 	"paihuo/internal/store"
 )
 
@@ -23,13 +18,12 @@ func TestIdempotencyCompletesForNoContentDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewEventStream()
-	executor := exec.NewForTest(st, hub, t.TempDir(), "server-idem-test.db", "server-idem-test")
-	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
-	sc := sched.New(st, hub, executor, sess, wf)
-	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestExecutor(t.TempDir(), "server-idem-test.db", "server-idem-test"),
+		withTestSkillsDir(t.TempDir()),
+	)
+	s := env.server
 	agentID, err := st.CreateRole(store.Role{Name: "agent", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)

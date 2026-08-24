@@ -7,30 +7,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"paihuo/internal/application"
-	"paihuo/internal/events"
-	paiexec "paihuo/internal/exec"
-	"paihuo/internal/sched"
-	"paihuo/internal/session"
-	"paihuo/internal/store"
 )
 
 func newSecurityTestServer(t *testing.T, token string) *Server {
 	t.Helper()
-	st, err := store.Open(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-
 	root := t.TempDir()
-	hub := events.NewEventStream()
-	executor := paiexec.NewForTest(st, hub, filepath.Join(root, "sessions"), filepath.Join(root, "paihuo.db"), "paihuo-security-test")
-	sess := session.New(st, hub, executor, filepath.Join(root, "sessions"), t.TempDir())
-	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
-	sc := sched.New(st, hub, executor, sess, wf)
-	return New(st, hub, executor, sc, sess, wf, token, filepath.Join(root, "skills"))
+	sessionsRoot := filepath.Join(root, "sessions")
+	return newTestServer(t,
+		withTestRoot(root),
+		withTestExecutor(sessionsRoot, filepath.Join(root, "paihuo.db"), "paihuo-security-test"),
+		withTestSession(sessionsRoot, t.TempDir()),
+		withTestToken(token),
+	).server
 }
 
 func TestHandlerAuthenticationAndSecurityHeaders(t *testing.T) {

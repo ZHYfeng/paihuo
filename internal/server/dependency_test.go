@@ -8,11 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"paihuo/internal/application"
-	"paihuo/internal/events"
-	"paihuo/internal/exec"
-	"paihuo/internal/sched"
-	"paihuo/internal/session"
 	"paihuo/internal/store"
 )
 
@@ -21,13 +16,12 @@ func TestCreateTaskDefaultsToWeakProjectDependencyAndProtectsReferencedDelete(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewEventStream()
-	executor := exec.NewForTest(st, hub, t.TempDir(), "server-dependency-test.db", "server-dependency-test")
-	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
-	sc := sched.New(st, hub, executor, sess, wf)
-	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestExecutor(t.TempDir(), "server-dependency-test.db", "server-dependency-test"),
+		withTestSkillsDir(t.TempDir()),
+	)
+	s := env.server
 	agentID, err := st.CreateRole(store.Role{Name: "agent", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -126,13 +120,12 @@ func TestPatchTaskCanChangePermissionAndDeliveryDependency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewEventStream()
-	executor := exec.NewForTest(st, hub, t.TempDir(), "server-patch-dependency-test.db", "server-patch-dependency-test")
-	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
-	sc := sched.New(st, hub, executor, sess, wf)
-	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestExecutor(t.TempDir(), "server-patch-dependency-test.db", "server-patch-dependency-test"),
+		withTestSkillsDir(t.TempDir()),
+	)
+	s := env.server
 	roleID, err := st.CreateRole(store.Role{Name: "patch-agent", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -202,13 +195,12 @@ func TestReorderProjectTasksEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewEventStream()
-	executor := exec.NewForTest(st, hub, t.TempDir(), "server-reorder-test.db", "server-reorder-test")
-	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
-	sc := sched.New(st, hub, executor, sess, wf)
-	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestExecutor(t.TempDir(), "server-reorder-test.db", "server-reorder-test"),
+		withTestSkillsDir(t.TempDir()),
+	)
+	s := env.server
 	agentID, err := st.CreateRole(store.Role{Name: "order-agent", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)

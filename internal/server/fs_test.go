@@ -8,11 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"paihuo/internal/application"
-	"paihuo/internal/events"
-	"paihuo/internal/exec"
-	"paihuo/internal/sched"
-	"paihuo/internal/session"
 	"paihuo/internal/store"
 )
 
@@ -29,12 +24,11 @@ func TestFsDirsEmptyDirReturnsEmptyArray(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewEventStream()
-	sess := session.New(st, hub, nil, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, exec.NewDefaultRuntimeService(), nil, hub)
-	sc := sched.New(st, hub, nil, sess, wf)
-	s := New(st, hub, nil, sc, sess, wf, "", filepath.Join(t.TempDir(), "managed-skills"))
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestSkillsDir(filepath.Join(t.TempDir(), "managed-skills")),
+	)
+	s := env.server
 
 	for _, dir := range []string{empty, withDir} {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/fs/dirs?path="+dir, nil)

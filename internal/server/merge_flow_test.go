@@ -11,11 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"paihuo/internal/application"
-	"paihuo/internal/events"
-	paiexec "paihuo/internal/exec"
-	"paihuo/internal/sched"
-	"paihuo/internal/session"
 	"paihuo/internal/store"
 	"paihuo/internal/workspace"
 )
@@ -49,14 +44,14 @@ func TestApproveReviewTaskSnapshotsChangesAndQueuesMergeAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewEventStream()
 	sessionsRoot := filepath.Join(base, "sessions")
-	executor := paiexec.NewForTest(st, hub, sessionsRoot, "review-merge-test.db", "review-merge-test")
-	sess := session.New(st, hub, executor, sessionsRoot, t.TempDir())
-	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
-	sc := sched.New(st, hub, executor, sess, wf)
-	s := New(st, hub, executor, sc, sess, wf, "", filepath.Join(base, "skills"))
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestRoot(base),
+		withTestExecutor(sessionsRoot, "review-merge-test.db", "review-merge-test"),
+		withTestSession(sessionsRoot, t.TempDir()),
+	)
+	s := env.server
 	agentID, err := st.CreateRole(store.Role{Name: "pi", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -136,14 +131,14 @@ func TestDeleteTaskRemovesTaskTreeWorktrees(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewEventStream()
 	sessionsRoot := filepath.Join(base, "sessions")
-	executor := paiexec.NewForTest(st, hub, sessionsRoot, "delete-worktree-test.db", "delete-worktree-test")
-	sess := session.New(st, hub, executor, sessionsRoot, t.TempDir())
-	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
-	sc := sched.New(st, hub, executor, sess, wf)
-	s := New(st, hub, executor, sc, sess, wf, "", filepath.Join(base, "skills"))
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestRoot(base),
+		withTestExecutor(sessionsRoot, "delete-worktree-test.db", "delete-worktree-test"),
+		withTestSession(sessionsRoot, t.TempDir()),
+	)
+	s := env.server
 	agentID, err := st.CreateRole(store.Role{Name: "pi", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -219,13 +214,12 @@ func TestWorkspaceMergeGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewEventStream()
-	executor := paiexec.NewForTest(st, hub, t.TempDir(), "workspace-merge-guard-test.db", "workspace-merge-guard-test")
-	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
-	sc := sched.New(st, hub, executor, sess, wf)
-	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestExecutor(t.TempDir(), "workspace-merge-guard-test.db", "workspace-merge-guard-test"),
+		withTestSkillsDir(t.TempDir()),
+	)
+	s := env.server
 	taskID, err := st.CreateTask(store.Task{Title: "ordinary", Status: store.StatusSucceeded, Perm: store.PermFull})
 	if err != nil {
 		t.Fatal(err)
@@ -292,13 +286,12 @@ func TestPatchMergeTaskRoleGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewEventStream()
-	executor := paiexec.NewForTest(st, hub, t.TempDir(), "merge-role-guard-test.db", "merge-role-guard-test")
-	sess := session.New(st, hub, executor, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
-	sc := sched.New(st, hub, executor, sess, wf)
-	s := New(st, hub, executor, sc, sess, wf, "", t.TempDir())
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestExecutor(t.TempDir(), "merge-role-guard-test.db", "merge-role-guard-test"),
+		withTestSkillsDir(t.TempDir()),
+	)
+	s := env.server
 	agentA, err := st.CreateRole(store.Role{Name: "a", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)

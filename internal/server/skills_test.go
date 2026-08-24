@@ -10,11 +10,6 @@ import (
 	"strconv"
 	"testing"
 
-	"paihuo/internal/application"
-	"paihuo/internal/events"
-	"paihuo/internal/exec"
-	"paihuo/internal/sched"
-	"paihuo/internal/session"
 	"paihuo/internal/store"
 )
 
@@ -29,18 +24,17 @@ func TestGetSkillReturnsMarkdownDetail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
 	id, err := st.CreateSkill(store.Skill{
 		Name: "reviewer", Description: "review code", Dir: dir, SourcePath: "/source/reviewer",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hub := events.NewEventStream()
-	sess := session.New(st, hub, nil, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, exec.NewDefaultRuntimeService(), nil, hub)
-	sc := sched.New(st, hub, nil, sess, wf)
-	s := New(st, hub, nil, sc, sess, wf, "", filepath.Join(t.TempDir(), "managed-skills"))
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestSkillsDir(filepath.Join(t.TempDir(), "managed-skills")),
+	)
+	s := env.server
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/skills/"+strconv.FormatInt(id, 10), nil)
 	resp := httptest.NewRecorder()
 	s.Handler().ServeHTTP(resp, req)
@@ -70,12 +64,11 @@ func TestSkillImportReadsTagsAndPatchUpdatesThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewEventStream()
-	sess := session.New(st, hub, nil, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, exec.NewDefaultRuntimeService(), nil, hub)
-	sc := sched.New(st, hub, nil, sess, wf)
-	s := New(st, hub, nil, sc, sess, wf, "", filepath.Join(root, "managed-skills"))
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestSkillsDir(filepath.Join(root, "managed-skills")),
+	)
+	s := env.server
 
 	body, err := json.Marshal(map[string]any{"source_path": source, "tags": []string{"team-a", "coding"}})
 	if err != nil {
@@ -128,12 +121,11 @@ func TestSkillCategoryInferenceAndBatchUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewEventStream()
-	sess := session.New(st, hub, nil, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, exec.NewDefaultRuntimeService(), nil, hub)
-	sc := sched.New(st, hub, nil, sess, wf)
-	s := New(st, hub, nil, sc, sess, wf, "", filepath.Join(root, "managed-skills"))
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestSkillsDir(filepath.Join(root, "managed-skills")),
+	)
+	s := env.server
 
 	importSkill := func(source string) store.Skill {
 		t.Helper()
@@ -227,13 +219,9 @@ func TestScanSkillsDiscoversRootAndNestedSkillsWithoutReimportingManagedCopies(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
 	managedDir := filepath.Join(root, "paihuo-managed-skills")
-	hub := events.NewEventStream()
-	sess := session.New(st, hub, nil, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, exec.NewDefaultRuntimeService(), nil, hub)
-	sc := sched.New(st, hub, nil, sess, wf)
-	s := New(st, hub, nil, sc, sess, wf, "", managedDir)
+	env := newTestServer(t, withTestStore(st), withTestSkillsDir(managedDir))
+	s := env.server
 
 	scan := func() (*httptest.ResponseRecorder, skillScanResult) {
 		t.Helper()
@@ -304,12 +292,11 @@ func TestScanSkillsRejectsDirectoryWithoutSkillFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	hub := events.NewEventStream()
-	sess := session.New(st, hub, nil, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, exec.NewDefaultRuntimeService(), nil, hub)
-	sc := sched.New(st, hub, nil, sess, wf)
-	s := New(st, hub, nil, sc, sess, wf, "", filepath.Join(t.TempDir(), "managed-skills"))
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestSkillsDir(filepath.Join(t.TempDir(), "managed-skills")),
+	)
+	s := env.server
 
 	body, err := json.Marshal(map[string]string{"source_path": root})
 	if err != nil {
@@ -329,8 +316,6 @@ func TestDeleteSkillsBatchDeletesRecordsAndCopies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-
 	paths := []string{filepath.Join(root, "one"), filepath.Join(root, "two")}
 	ids := make([]int64, 0, len(paths))
 	for i, dir := range paths {
@@ -348,11 +333,11 @@ func TestDeleteSkillsBatchDeletesRecordsAndCopies(t *testing.T) {
 		}
 	}
 
-	hub := events.NewEventStream()
-	sess := session.New(st, hub, nil, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, exec.NewDefaultRuntimeService(), nil, hub)
-	sc := sched.New(st, hub, nil, sess, wf)
-	s := New(st, hub, nil, sc, sess, wf, "", filepath.Join(root, "managed-skills"))
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestSkillsDir(filepath.Join(root, "managed-skills")),
+	)
+	s := env.server
 	body, err := json.Marshal(map[string]any{"ids": ids})
 	if err != nil {
 		t.Fatal(err)
@@ -393,16 +378,15 @@ func TestDeleteSkillsBatchMissingIDDoesNotPartiallyDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
 	id, err := st.CreateSkill(store.Skill{Name: "one", Dir: filepath.Join(root, "one")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hub := events.NewEventStream()
-	sess := session.New(st, hub, nil, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, exec.NewDefaultRuntimeService(), nil, hub)
-	sc := sched.New(st, hub, nil, sess, wf)
-	s := New(st, hub, nil, sc, sess, wf, "", filepath.Join(root, "managed-skills"))
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestSkillsDir(filepath.Join(root, "managed-skills")),
+	)
+	s := env.server
 	body, err := json.Marshal(map[string]any{"ids": []int64{id, id + 999}})
 	if err != nil {
 		t.Fatal(err)

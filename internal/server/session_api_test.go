@@ -10,11 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"paihuo/internal/application"
-	"paihuo/internal/events"
-	execpkg "paihuo/internal/exec"
-	"paihuo/internal/sched"
-	"paihuo/internal/session"
 	"paihuo/internal/store"
 )
 
@@ -23,17 +18,15 @@ func TestCreateSessionUsesRoleNameAsTitle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-
 	aid, err := st.CreateRole(store.Role{Name: "会话角色", RuntimeID: "pi", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hub := events.NewEventStream()
-	sess := session.New(st, hub, nil, t.TempDir(), t.TempDir())
-	wf := application.NewWorkflowService(st, execpkg.NewDefaultRuntimeService(), nil, hub)
-	sc := sched.New(st, hub, nil, sess, wf)
-	s := New(st, hub, nil, sc, sess, wf, "", filepath.Join(t.TempDir(), "skills"))
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestSkillsDir(filepath.Join(t.TempDir(), "skills")),
+	)
+	s := env.server
 	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"role_id":`+itoa(aid)+`}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
@@ -65,8 +58,6 @@ func TestSessionAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-
 	// git 项目（worktree 隔离验证）
 	projDir := filepath.Join(root, "proj")
 	if err := os.MkdirAll(projDir, 0o755); err != nil {
@@ -90,13 +81,14 @@ func TestSessionAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hub := events.NewEventStream()
 	sessionsRoot := filepath.Join(root, "sessions")
-	executor := execpkg.NewForTest(st, hub, sessionsRoot, filepath.Join(root, "db"), "sess-api")
-	sess := session.New(st, hub, executor, sessionsRoot, t.TempDir())
-	wf := application.NewWorkflowService(st, executor.RuntimeService(), executor, hub)
-	sc := sched.New(st, hub, executor, sess, wf)
-	s := New(st, hub, executor, sc, sess, wf, "", filepath.Join(root, "skills"))
+	env := newTestServer(t,
+		withTestStore(st),
+		withTestRoot(root),
+		withTestExecutor(sessionsRoot, filepath.Join(root, "db"), "sess-api"),
+		withTestSession(sessionsRoot, t.TempDir()),
+	)
+	s := env.server
 	mux := s.Handler()
 
 	do := func(method, path, body string) (int, map[string]any) {
