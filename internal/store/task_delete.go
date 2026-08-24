@@ -18,6 +18,9 @@ func (s *Store) DeleteTask(id int64) error {
 	if err := unlinkTaskDependencies(tx, deleting); err != nil {
 		return err
 	}
+	if err := unlinkTaskSessionReferences(tx, deleting); err != nil {
+		return err
+	}
 	if err := deleteTaskTree(tx, id); err != nil {
 		return err
 	}
@@ -57,6 +60,21 @@ func collectTaskTreeIDs(tx *sql.Tx, id int64, seen map[int64]bool) error {
 	}
 	for _, childID := range children {
 		if err := collectTaskTreeIDs(tx, childID, seen); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// unlinkTaskSessionReferences 先解除交付 Session 对删除树的回链。Application
+// 已在事务前保存受影响 Session id，提交后仍可把它们清理为 deleted；这里负责
+// 保证删除 Task 与解除外键引用属于同一个持久化事务。
+func unlinkTaskSessionReferences(tx *sql.Tx, deleting map[int64]bool) error {
+	now := Now()
+	for taskID := range deleting {
+		if _, err := tx.Exec(`UPDATE tasks
+			SET session_id=NULL, updated_at=?, revision=revision+1
+			WHERE session_id=?`, now, taskID); err != nil {
 			return err
 		}
 	}

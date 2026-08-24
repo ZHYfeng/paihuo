@@ -177,7 +177,6 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.
 		sess:         sess,
 		sched:        sc,
 		workflows:    workflows,
-		tasks:        application.NewTaskLifecycle(st, runtimes, ex),
 		token:        token,
 		skillsDir:    skillsDir,
 		sessionsRoot: filepath.Join(filepath.Dir(skillsDir), "sessions"),
@@ -185,6 +184,10 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.
 		mux:          http.NewServeMux(),
 		provBusy:     map[string]bool{},
 	}
+	s.tasks = application.NewTaskLifecycle(application.TaskLifecycleDeps{
+		Store: st, Runtimes: runtimes, Executor: ex, Events: hub,
+		Sessions: sess, SessionsRoot: s.sessionsRoot, Schedules: sc,
+	})
 	s.workspaces = application.NewWorkspaceService(st, s.sessionsRoot)
 	var artifactErr error
 	s.artifacts, artifactErr = artifact.NewLocalStore(filepath.Join(filepath.Dir(skillsDir), "artifacts"))

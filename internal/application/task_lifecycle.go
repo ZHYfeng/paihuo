@@ -1,17 +1,41 @@
 package application
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"paihuo/internal/events"
 	paiexec "paihuo/internal/exec"
 	"paihuo/internal/store"
 )
 
+type TaskSessionManager interface {
+	Delete(context.Context, int64) error
+}
+
+type ScheduleReloader interface {
+	Reload()
+}
+
+type TaskLifecycleDeps struct {
+	Store        *store.Store
+	Runtimes     *paiexec.RuntimeService
+	Executor     *paiexec.Executor
+	Events       *events.EventStream
+	Sessions     TaskSessionManager
+	SessionsRoot string
+	Schedules    ScheduleReloader
+}
+
 type TaskLifecycle struct {
-	store    *store.Store
-	runtimes *paiexec.RuntimeService
-	executor *paiexec.Executor
+	store        *store.Store
+	runtimes     *paiexec.RuntimeService
+	executor     *paiexec.Executor
+	events       *events.EventStream
+	sessions     TaskSessionManager
+	sessionsRoot string
+	schedules    ScheduleReloader
 }
 
 type CreateTaskRequest struct {
@@ -36,26 +60,30 @@ type CreateTaskRequest struct {
 	Enabled bool   `json:"enabled"`
 }
 
-func NewTaskLifecycle(st *store.Store, runtimes *paiexec.RuntimeService, executor *paiexec.Executor) *TaskLifecycle {
-	return &TaskLifecycle{store: st, runtimes: runtimes, executor: executor}
+func NewTaskLifecycle(deps TaskLifecycleDeps) *TaskLifecycle {
+	return &TaskLifecycle{
+		store: deps.Store, runtimes: deps.Runtimes, executor: deps.Executor,
+		events: deps.Events, sessions: deps.Sessions, sessionsRoot: deps.SessionsRoot,
+		schedules: deps.Schedules,
+	}
 }
 
 func (s *TaskLifecycle) Create(request CreateTaskRequest) (*store.Task, error) {
 	request.Title = strings.TrimSpace(request.Title)
 	if request.Title == "" {
-		return nil, fmt.Errorf("标题不能为空")
+		return nil, taskError(TaskErrorInvalid, "标题不能为空", nil)
 	}
 	if request.Permission == "" {
 		request.Permission = store.PermFull
 	}
 	if request.Permission != store.PermFull && request.Permission != store.PermReview {
-		return nil, fmt.Errorf("非法权限模式: %s", request.Permission)
+		return nil, taskError(TaskErrorInvalid, fmt.Sprintf("非法权限模式: %s", request.Permission), nil)
 	}
 	if request.RunMode == "" {
 		request.RunMode = store.RunModeBatch
 	}
 	if request.RunMode != store.RunModeBatch && request.RunMode != store.RunModeInteractive {
-		return nil, fmt.Errorf("非法执行方式: %s", request.RunMode)
+		return nil, taskError(TaskErrorInvalid, fmt.Sprintf("非法执行方式: %s", request.RunMode), nil)
 	}
 	task := store.Task{Title: request.Title, Body: request.Body, Status: store.StatusQueued, Perm: request.Permission, RunMode: request.RunMode,
 		Concurrent: request.Concurrent, RoleID: request.RoleID, ProjectID: request.ProjectID, ParentID: request.ParentID, ResumeOf: request.ResumeOf, ExternalKey: request.ExternalKey,
@@ -65,35 +93,43 @@ func (s *TaskLifecycle) Create(request CreateTaskRequest) (*store.Task, error) {
 	if request.ProjectID != nil {
 		project, err := s.store.GetProject(*request.ProjectID)
 		if err != nil {
-			return nil, fmt.Errorf("项目不存在")
+			return nil, taskError(TaskErrorInvalid, "项目不存在", err)
 		}
 		task.ProjectDir = project.ProjectDir
 	}
 	if request.RoleID != nil {
 		role, err := s.store.GetRole(*request.RoleID)
 		if err != nil {
-			return nil, fmt.Errorf("角色不存在")
+			return nil, taskError(TaskErrorInvalid, "角色不存在", err)
 		}
 		if !role.Enabled {
-			return nil, fmt.Errorf("角色未启用")
+			return nil, taskError(TaskErrorInvalid, "角色未启用", nil)
 		}
 		if request.RunMode == store.RunModeInteractive && request.ResumeOf == nil && !s.runtimes.Supports(role.RuntimeID, paiexec.CapabilityInteractive) {
-			return nil, fmt.Errorf("Runtime %s 不支持交互式任务", role.RuntimeID)
+			return nil, taskError(TaskErrorInvalid, fmt.Sprintf("Runtime %s 不支持交互式任务", role.RuntimeID), nil)
 		}
 	} else if request.RunMode == store.RunModeInteractive {
-		return nil, fmt.Errorf("交互式任务必须指派角色")
+		return nil, taskError(TaskErrorInvalid, "交互式任务必须指派角色", nil)
 	}
 	if err := normalizeDependency(&task); err != nil {
-		return nil, err
+		return nil, taskError(TaskErrorInvalid, err.Error(), err)
 	}
 	id, err := s.store.CreateTaskWithProjectDependency(task)
 	if err != nil {
-		return nil, err
+		return nil, taskError(TaskErrorInvalid, err.Error(), err)
 	}
-	if s.executor != nil && task.Cron == "" {
+	if task.Cron != "" {
+		if s.schedules != nil {
+			s.schedules.Reload()
+		}
+	} else if s.executor != nil {
 		s.executor.Wake()
 	}
-	return s.store.GetTask(id)
+	created, err := s.store.GetTask(id)
+	if err != nil {
+		return nil, taskError(TaskErrorInvalid, err.Error(), err)
+	}
+	return created, nil
 }
 
 func normalizeDependency(task *store.Task) error {
@@ -131,4 +167,4 @@ var manualTaskTransitions = map[string]map[string]bool{
 	store.StatusSucceeded:      {store.StatusQueued: true}, store.StatusFailed: {store.StatusQueued: true}, store.StatusCancelled: {store.StatusQueued: true},
 }
 
-func (s *TaskLifecycle) CanTransition(from, to string) bool { return manualTaskTransitions[from][to] }
+func canTransitionTask(from, to string) bool { return manualTaskTransitions[from][to] }

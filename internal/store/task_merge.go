@@ -73,8 +73,9 @@ func (s *Store) DeliverTaskAndCreateMerge(sourceID int64, merge Task) (int64, er
 }
 
 // ApproveTaskAndCreateMerge 原子完成 review 审批并创建唯一的合并任务。
-// 条件更新保证重复点击或并发请求不会生成两个合并任务。
-func (s *Store) ApproveTaskAndCreateMerge(sourceID int64, merge Task) (int64, error) {
+// 状态与 expectedRevision 条件更新保证重复点击、陈旧写入或并发请求不会
+// 生成两个合并任务。
+func (s *Store) ApproveTaskAndCreateMerge(sourceID, expectedRevision int64, merge Task) (int64, error) {
 	prepareMergeTask(sourceID, &merge)
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -84,7 +85,7 @@ func (s *Store) ApproveTaskAndCreateMerge(sourceID int64, merge Task) (int64, er
 	now := Now()
 	res, err := tx.Exec(`UPDATE tasks
 		SET status='succeeded', finished_at=COALESCE(finished_at, ?), exit_code=COALESCE(exit_code, 0), updated_at=?, revision=revision+1
-		WHERE id=? AND status='awaiting_review' AND perm='review'`, now, now, sourceID)
+		WHERE id=? AND revision=? AND status='awaiting_review' AND perm='review'`, now, now, sourceID, expectedRevision)
 	if err != nil {
 		return 0, err
 	}
@@ -106,12 +107,12 @@ func (s *Store) ApproveTaskAndCreateMerge(sourceID int64, merge Task) (int64, er
 
 // ApproveTaskDeliver 审批通过但该任务判定无改动（merge_skipped=1）：不创建
 // 合并任务，直接把源任务落成 succeeded 终态。审批闸口原样保留，只跳过合并
-// ——「审批」与「合并」是两个独立的事。
-func (s *Store) ApproveTaskDeliver(sourceID int64) error {
+// ——「审批」与「合并」是两个独立的事；更新同时匹配 expectedRevision。
+func (s *Store) ApproveTaskDeliver(sourceID, expectedRevision int64) error {
 	now := Now()
 	res, err := s.db.Exec(`UPDATE tasks
 		SET status='succeeded', merge_skipped=1, finished_at=COALESCE(finished_at, ?), exit_code=COALESCE(exit_code, 0), updated_at=?, revision=revision+1
-		WHERE id=? AND status='awaiting_review'`, now, now, sourceID)
+		WHERE id=? AND revision=? AND status='awaiting_review'`, now, now, sourceID, expectedRevision)
 	if err != nil {
 		return err
 	}

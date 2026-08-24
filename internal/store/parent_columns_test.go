@@ -113,7 +113,7 @@ func TestMergeSkippedDeliveryAndReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.ApproveTaskDeliver(reviewID); err != nil {
+	if err := st.ApproveTaskDeliver(reviewID, 1); err != nil {
 		t.Fatalf("ApproveTaskDeliver 失败: %v", err)
 	}
 	got, _ := st.GetTask(reviewID)

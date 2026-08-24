@@ -56,6 +56,21 @@ func TestStartTaskAtomic(t *testing.T) {
 	}
 }
 
+func TestResumeTaskRequiresExpectedRevision(t *testing.T) {
+	s := openTest(t)
+	id := mustTask(t, s, "resume", nil, StatusFailed, "")
+	if resumed, err := s.ResumeTask(id, 99); err != nil || resumed {
+		t.Fatalf("stale ResumeTask = (%v, %v), want false, nil", resumed, err)
+	}
+	task, err := s.GetTask(id)
+	if err != nil || task.Status != StatusFailed {
+		t.Fatalf("stale ResumeTask changed task: %+v err=%v", task, err)
+	}
+	if resumed, err := s.ResumeTask(id, task.Revision); err != nil || !resumed {
+		t.Fatalf("current ResumeTask = (%v, %v), want true, nil", resumed, err)
+	}
+}
+
 // 未显式选择执行方式的任务使用批处理；手工选择的交互式方式完整往返保存。
 func TestTaskRunModeDefaultsBatchAndRoundTripsInteractive(t *testing.T) {
 	s := openTest(t)

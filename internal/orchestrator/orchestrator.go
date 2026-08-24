@@ -70,9 +70,11 @@ func New(st *store.Store, runtimes *exec.RuntimeService, ex *exec.Executor, toke
 		sec.key = buf
 	}
 	return &Service{
-		st:             st,
-		ex:             ex,
-		task:           application.NewTaskLifecycle(st, runtimes, ex),
+		st: st,
+		ex: ex,
+		task: application.NewTaskLifecycle(application.TaskLifecycleDeps{
+			Store: st, Runtimes: runtimes, Executor: ex,
+		}),
 		sec:            sec,
 		artifactOpener: artifactOpener,
 	}

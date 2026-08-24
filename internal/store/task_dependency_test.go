@@ -356,14 +356,20 @@ func TestListSessionsForTask(t *testing.T) {
 	if err != nil || ss3.SessionID == nil || *ss3.SessionID != otherID {
 		t.Fatalf("引用其他任务的会话不应被波及: %+v err=%v", ss3, err)
 	}
-	// 会话引用解除（会话任务先删除）后硬删不应再触发外键约束。
+	// 硬删收编任务与解除 Session 回链必须在同一事务完成；Session 记录保留给
+	// application 在提交后清理为 deleted，引用其他任务的 Session 不受影响。
+	if err := s.DeleteTask(taskID); err != nil {
+		t.Fatalf("删除被 Session 引用的任务应成功: %v", err)
+	}
 	for _, sid := range []int64{sid1, sid2} {
-		if err := s.DeleteTask(sid); err != nil {
-			t.Fatalf("删除会话任务 %d 应成功: %v", sid, err)
+		ss, err := s.GetSessionTask(sid)
+		if err != nil || ss == nil || ss.SessionID != nil {
+			t.Fatalf("Session %d 应保留且解除回链: %+v err=%v", sid, ss, err)
 		}
 	}
-	if err := s.DeleteTask(taskID); err != nil {
-		t.Fatalf("解除引用后删除任务应成功: %v", err)
+	ss3, err = s.GetSessionTask(sid2 + 1)
+	if err != nil || ss3.SessionID == nil || *ss3.SessionID != otherID {
+		t.Fatalf("引用其他任务的 Session 不应被解除: %+v err=%v", ss3, err)
 	}
 }
 

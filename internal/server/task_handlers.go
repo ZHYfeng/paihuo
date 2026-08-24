@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"paihuo/internal/application"
-	"paihuo/internal/events"
 	"paihuo/internal/store"
 	"paihuo/internal/workspace"
 )
@@ -79,91 +78,30 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 	task, err := s.tasks.Create(in)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeTaskLifecycleError(w, err)
 		return
-	}
-	if in.Cron != "" {
-		s.sched.Reload()
 	}
 	writeResource(w, http.StatusCreated, task.Revision, task)
 }
 
-// resumeTask 在原任务上续跑。任务 ID 同时绑定 agent 会话目录和 git worktree，
-// 因此不能创建新任务；保留上下文，仅清空本轮执行状态后重新入队。
+// resumeTask 保持现有无 If-Match 的 HTTP 合同：transport 读取当前 revision，
+// TaskLifecycle 在任何副作用前重新读取并核对它。
 func (s *Server) resumeTask(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
-	src, err := s.st.GetTask(id)
+	current, err := s.st.GetTask(id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "任务不存在")
 		return
 	}
-	if src.RoleID == nil {
-		writeErr(w, http.StatusBadRequest, "原任务未指派角色，无法续跑")
-		return
-	}
-	if !isTerminalTaskStatus(src.Status) {
-		writeErr(w, http.StatusConflict, "只有已完成、失败或已取消的任务可以继续对话")
-		return
-	}
-	// 成功的 Git 源任务进入的是「必须合并」链路：无论 child 已经存在还是
-	// 正在由周期对账补建，都不能回头重跑源任务并覆盖已完成的代码结果。
-	if src.Status == store.StatusSucceeded && src.MergeOf == nil {
-		obligated, err := s.sourceHasOrNeedsMerge(*src)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if obligated {
-			writeErr(w, http.StatusConflict, "源任务代码已完成，系统正在或已经执行代码合并；请查看对应合并任务")
-			return
-		}
-	}
-	if src.Status == store.StatusSucceeded && src.MergeOf != nil {
-		writeErr(w, http.StatusConflict, "代码合并任务已成功，不能继续对话或重复合并")
-		return
-	}
-	resumed, err := s.st.ResumeTask(id)
+	resumed, err := s.tasks.Resume(r.Context(), id, current.Revision)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeTaskLifecycleError(w, err)
 		return
 	}
-	if !resumed {
-		writeErr(w, http.StatusConflict, "任务状态已变化，无法继续对话")
-		return
-	}
-	if l, err := s.st.AppendLog(store.TaskLog{
-		TaskID: id, Stream: "sys", Content: "↻ 在原任务中继续：保留会话、工作空间和历史日志",
-	}); err == nil {
-		s.hub.Publish(events.Event{Type: "log", TaskID: id, Payload: l})
-	}
-	tk, err := s.st.GetTask(id)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	s.hub.Publish(events.Event{Type: "task", TaskID: id, Payload: tk})
-	s.ex.Wake()
-	writeJSON(w, http.StatusOK, tk)
-}
-
-func isTerminalTaskStatus(status string) bool {
-	return status == store.StatusSucceeded || status == store.StatusFailed || status == store.StatusCancelled
-}
-
-// sourceHasOrNeedsMerge 覆盖正常 Git 源任务（已有 worktree）与旧数据/竞态
-// （child 已存在但源任务未留下 branch）两种情况，避免成功源任务被回退重跑而
-// 绕过确定性的合并链路。
-func (s *Server) sourceHasOrNeedsMerge(tk store.Task) (bool, error) {
-	if tk.MergeOf != nil {
-		return false, nil
-	}
-	if tk.WorktreeBranch != "" {
-		return true, nil
-	}
-	return s.st.HasMergeTaskForSource(tk.ID)
+	writeJSON(w, http.StatusOK, resumed)
 }
 
 // sendTaskInput 把已登录用户的整行消息或 xterm 原始按键送进运行中的 agent

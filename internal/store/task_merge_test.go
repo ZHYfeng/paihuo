@@ -21,7 +21,10 @@ func TestApproveReviewTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 		Perm: PermFull, RunMode: RunModeBatch, RoleID: &a, ProjectID: &projectID,
 		ProjectDir: t.TempDir(), ParentID: &sourceID, MergeOf: &sourceID,
 	}
-	mergeID, err := s.ApproveTaskAndCreateMerge(sourceID, merge)
+	if _, err := s.ApproveTaskAndCreateMerge(sourceID, 99, merge); err == nil {
+		t.Fatal("陈旧 revision 不应审批或创建合并任务")
+	}
+	mergeID, err := s.ApproveTaskAndCreateMerge(sourceID, 1, merge)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +42,7 @@ func TestApproveReviewTaskCreatesOneMergeTaskAtomically(t *testing.T) {
 	if created.Perm != PermFull || created.Status != StatusQueued || created.RoleID == nil || *created.RoleID != a {
 		t.Fatalf("合并任务执行配置异常: %+v", created)
 	}
-	if _, err := s.ApproveTaskAndCreateMerge(sourceID, merge); err == nil {
+	if _, err := s.ApproveTaskAndCreateMerge(sourceID, 1, merge); err == nil {
 		t.Fatal("重复审批不应再创建合并任务")
 	}
 	children, err := s.ListChildren(sourceID)

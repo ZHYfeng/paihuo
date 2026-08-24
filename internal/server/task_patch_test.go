@@ -92,8 +92,13 @@ func TestPatchTaskPreservesParsingRevisionAndApprovalErrors(t *testing.T) {
 		})
 	}
 
+	resp := request(id, `{"status":"running","perm":"bogus"}`, `"1"`)
+	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "不允许从 queued 转为 running") {
+		t.Fatalf("状态错误应先于普通字段错误: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+
 	reviewID := newTask(store.StatusAwaitingReview)
-	resp := request(reviewID, `{"status":"succeeded","title":"smuggled"}`, `"1"`)
+	resp = request(reviewID, `{"status":"succeeded","title":"smuggled"}`, `"1"`)
 	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "审批通过不能同时修改任务其他字段") {
 		t.Fatalf("审批夹带字段应被拒绝: code=%d body=%s", resp.Code, resp.Body.String())
 	}

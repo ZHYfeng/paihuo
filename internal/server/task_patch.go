@@ -1,10 +1,12 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"math"
 	"net/http"
 
+	"paihuo/internal/application"
 	"paihuo/internal/store"
 )
 
@@ -38,10 +40,17 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, store.ErrRevisionConflict.Error())
 		return
 	}
+	if value, changingStatus := patch.set["status"]; changingStatus {
+		status, _ := value.(string)
+		if err := s.tasks.ValidateTransition(id, revision, status); err != nil {
+			writeTaskLifecycleError(w, err)
+			return
+		}
+	}
 	if !s.authorizeTaskPatch(w, id, cur, &patch) {
 		return
 	}
-	s.applyTaskPatch(w, id, revision, *cur, patch)
+	s.applyTaskPatch(r.Context(), w, id, revision, patch)
 }
 
 // taskPatch keeps the decoded JSON fields as a presence-aware map: a missing
@@ -51,7 +60,6 @@ type taskPatch struct {
 	set               map[string]any
 	dependencyChanged bool
 	scheduleChanged   bool
-	approveReview     bool
 }
 
 func parseTaskPatch(w http.ResponseWriter, r *http.Request) (taskPatch, bool) {
@@ -104,12 +112,22 @@ func validateTaskPatch(w http.ResponseWriter, patch *taskPatch) bool {
 	return true
 }
 
-func (s *Server) applyTaskPatch(w http.ResponseWriter, id, revision int64, cur store.Task, patch taskPatch) {
-	if patch.approveReview {
-		s.approveReviewTask(w, cur)
+func (s *Server) applyTaskPatch(ctx context.Context, w http.ResponseWriter, id, revision int64, patch taskPatch) {
+	set := patch.set
+	if value, changingStatus := set["status"]; changingStatus {
+		status, _ := value.(string)
+		updated, err := s.tasks.Transition(ctx, id, revision, application.TaskTransitionRequest{
+			Status: status, Fields: set,
+			DependencyChanged: patch.dependencyChanged,
+			ScheduleChanged:   patch.scheduleChanged,
+		})
+		if err != nil {
+			writeTaskLifecycleError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, updated)
 		return
 	}
-	set := patch.set
 	var updateErr error
 	if patch.dependencyChanged {
 		updateErr = s.st.UpdateTaskAtRevision(id, revision, set)
@@ -130,9 +148,6 @@ func (s *Server) applyTaskPatch(w http.ResponseWriter, id, revision int64, cur s
 	}
 	if patch.scheduleChanged {
 		s.sched.Reload()
-	}
-	if v, ok := set["status"]; ok && v == store.StatusQueued {
-		s.ex.Wake()
 	}
 	if _, ok := set["block_on_failure"]; ok {
 		// 修改失败阻塞策略后，等待中的弱依赖任务应立即重新判定。

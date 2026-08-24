@@ -3,8 +3,6 @@ package server
 import (
 	"fmt"
 	"net/http"
-	"strings"
-	"time"
 
 	"paihuo/internal/exec"
 	"paihuo/internal/store"
@@ -35,59 +33,6 @@ func (s *Server) authorizeTaskPatch(w http.ResponseWriter, id int64, cur *store.
 			}
 		}
 	}
-	approveReview := false
-
-	// 状态流转校验
-	if st, ok := set["status"]; ok {
-		to, _ := st.(string)
-		if !s.tasks.CanTransition(cur.Status, to) {
-			writeErr(w, http.StatusBadRequest, "不允许从 "+cur.Status+" 转为 "+to)
-			return false
-		}
-		approveReview = cur.Status == store.StatusAwaitingReview && to == store.StatusSucceeded
-		if to == store.StatusQueued && cur.Status == store.StatusSucceeded && cur.MergeOf == nil {
-			obligated, err := s.sourceHasOrNeedsMerge(*cur)
-			if err != nil {
-				writeErr(w, http.StatusInternalServerError, err.Error())
-				return false
-			}
-			if obligated {
-				writeErr(w, http.StatusConflict, "源任务代码已完成，系统正在或已经执行代码合并；请重试对应合并任务")
-				return false
-			}
-		}
-		if to == store.StatusQueued && cur.Status == store.StatusSucceeded && cur.MergeOf != nil {
-			writeErr(w, http.StatusConflict, "代码合并任务已成功，不能重试或重复合并")
-			return false
-		}
-		if to == store.StatusQueued {
-			// 重试：清空执行痕迹
-			set["started_at"] = nil
-			set["finished_at"] = nil
-			set["error"] = ""
-			set["exit_code"] = nil
-		}
-		if to == store.StatusQueued && cur.Status == store.StatusAwaitingReview {
-			// 驳回重做：追加修改意见到提示词，清空会话目录全新执行
-			if note, ok := set["review_note"]; ok {
-				n := strings.TrimSpace(fmt.Sprint(note))
-				if n != "" {
-					body := cur.Body
-					if body != "" {
-						body += "\n\n"
-					}
-					body += fmt.Sprintf("【修改意见 第 %d 轮 %s】%s", cur.ReviewRounds, time.Now().Format("2006-01-02 15:04"), n)
-					set["body"] = body
-				}
-			}
-			delete(set, "review_note")
-			s.ex.ResetTaskSession(id)
-		}
-		if to == store.StatusCancelled {
-			s.ex.CancelTask(id)
-		}
-	}
-
 	// 指派角色不会改变项目工作目录。
 	if v, ok := set["role_id"]; ok {
 		if aid, isNum := v.(float64); isNum && aid > 0 {
@@ -176,12 +121,5 @@ func (s *Server) authorizeTaskPatch(w http.ResponseWriter, id int64, cur *store.
 			return false
 		}
 	}
-	if approveReview {
-		if len(set) != 1 {
-			writeErr(w, http.StatusBadRequest, "审批通过不能同时修改任务其他字段")
-			return false
-		}
-	}
-	patch.approveReview = approveReview
 	return true
 }

@@ -475,14 +475,14 @@ func validateProjectDependencyGraph(tx *sql.Tx, projectID int64) error {
 }
 
 // ResumeTask 原地续跑一个终态任务。任务身份、会话目录和 worktree 都由任务
-// ID 绑定，因此不能新建记录；这里只清空本轮执行痕迹并原子地放回队列。
-// 返回 false 表示任务已不处于可续跑的终态（例如被另一个请求重新领取）。
-func (s *Store) ResumeTask(id int64) (bool, error) {
+// ID 绑定，因此不能新建记录；这里只清空本轮执行痕迹并按 expectedRevision
+// 原子地放回队列。返回 false 表示 revision 或状态已变化。
+func (s *Store) ResumeTask(id, expectedRevision int64) (bool, error) {
 	now := Now()
 	res, err := s.db.Exec(`UPDATE tasks
 		SET status='queued', started_at=NULL, finished_at=NULL, error='', exit_code=NULL,
 			tmux_log_offset=0, updated_at=?, revision=revision+1
-		WHERE id=? AND status IN ('succeeded','failed','cancelled')`, now, id)
+		WHERE id=? AND revision=? AND status IN ('succeeded','failed','cancelled')`, now, id, expectedRevision)
 	if err != nil {
 		return false, err
 	}
