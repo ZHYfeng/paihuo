@@ -22,6 +22,19 @@ server 和本机 Git worktree。生产环境不需要 Node.js。
 `paihuo.db-shm` 与 `paihuo.db-wal` 是服务运行期间的 SQLite 文件。日志由
 systemd journal 管理，不在运行目录保存日志文件。
 
+## SQLite 迁移发布原则
+
+数据库升级采用 [ADR-0003](adr/0003-numbered-sqlite-migrations.md) 的编号迁移：空库直接
+创建最新 schema；非空库按 `PRAGMA user_version` 从当前版本顺序升级。当前最低支持的
+历史版本是 v1，原有 8 个幂等增量编号为 v2–v9；Task 形态约束作为 v10 的表重建迁移。
+低于支持范围、高于当前 binary 或最终 schema 形态损坏时，服务必须拒绝启动。
+
+迁移只向前且不提供 downgrade。schema 发布必须独立于普通功能发布：停止写入后把
+SQLite（包括 WAL 中已提交内容）与 Artifact 作为一个集合备份，先在数据库副本演练并
+完成行数、ID、hash、`foreign_key_check` 和 `integrity_check` 对账，再安排维护窗口。
+失败时恢复“旧 binary + 整体备份”，不得让旧 binary 打开已经升级的数据库。具体版本
+命令和 v10 发布 checklist 随迁移实现一同维护在本文件。
+
 ## systemd 用户服务
 
 仓库模板与安装位置：

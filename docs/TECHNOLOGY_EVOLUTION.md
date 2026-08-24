@@ -9,7 +9,7 @@ PaiHuo 是面向可信管理员的个人自托管 Agent 调度平台。它保持
 | 层 | 当前实现 |
 |---|---|
 | 服务端 | Go、`net/http`、应用服务与领域模块 |
-| 数据 | SQLite + WAL；无版本化迁移链，启动时有 8 个幂等加列迁移 |
+| 数据 | SQLite + WAL；采用 `PRAGMA user_version` 的编号迁移，schema 变更失败即拒绝启动 |
 | 执行 | RuntimeService、tmux、Git worktree |
 | 事件 | 持久 `EventStream` + SSE 序号续传 |
 | API | `/api/v1`、部分 OpenAPI 3.1 描述、统一错误、幂等键、revision |
@@ -118,15 +118,15 @@ task graph、diff summary 和 series；当前工作流页面直接以本地类�
 
 ## 数据与安全
 
-当前没有按版本编号的数据库升级链。空数据库一次创建当前 schema；打开存量库时，
-`Open` 会顺序执行 8 个幂等加列迁移，再运行 `verifyCurrentSchema`。这些迁移只覆盖
-`workflow_runs` 项目/任务、技能分类、项目 GitHub 配置、任务外部键、编排父链、
-Role 委托和跳过合并标记，不承诺从任意历史 schema 升级；其余不兼容形态会被拒绝，
-需按部署指南使用全新数据库。
+SQLite schema 按 [ADR-0003](adr/0003-numbered-sqlite-migrations.md) 编号。空数据库直接
+创建最新 schema；非空数据库从 `PRAGMA user_version` 标明的版本顺序迁移。当前最低
+支持版本为 v1，原有 8 个幂等增量固定映射为 v2–v9，Task 形态 `CHECK` 约束是 v10。
+迁移和版本推进共享事务，失败即回滚并拒绝启动；版本超出支持范围与受支持版本的
+schema shape 损坏分别报告。迁移不提供 downgrade。
 
-当前生产基线为 `/home/yu/paihuo` 中的 `v2026.08.17-7`，由
-`paihuo.service` 用户服务托管。架构或 schema 发布采用干净部署：清空数据库、
-Session/worktree 和 Artifact，保留访问令牌与独立技能库。部署命令以
+schema 发布保留真实 Task、Session、Workflow 与 Artifact 状态，不再默认清库。发布必须
+停止写入，整体备份 SQLite 与 Artifact，在副本上演练逐版本路径，并通过业务数据、外键和
+完整性对账；恢复单位是“旧 binary + 整体备份”。部署命令以
 [部署指南](DEPLOYMENT.md) 为准。
 
 默认 profile 是 `trusted-host`：Runtime 以 PaiHuo 服务用户权限访问主机、项目和凭据。令牌只用于登录，随后使用带 HMAC 的 HttpOnly session cookie。公开监听必须配置令牌；TLS 反向代理部署启用 Secure cookie。
