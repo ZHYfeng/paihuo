@@ -3,6 +3,10 @@
 /bin/
 paihuo.db*
 *.db-journal
+/c.txt
+*.log
+*.tmp.*
+/artifacts/
 /sessions/
 /skills/
 node_modules/
