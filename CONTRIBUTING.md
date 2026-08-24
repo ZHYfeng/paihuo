@@ -29,6 +29,10 @@ make test-race
 3. 门禁（必跑，不可跳过）：**每次 `git commit` 前**运行 `make check`；**每次 `git push` 前**运行 `make check && make test-race`。门禁失败不得提交或推送——先修复并重新跑通门禁，再继续。如果某项无法在本机运行，必须在提交信息或拉取请求中说明原因与替代验证。
 4. 在拉取请求中写清用户可见的结果、验证方式和安全边界。
 
+本地迭代可按改动面选择门禁：纯 Go 改动运行 `make check-go`，纯前端改动运行
+`make check-web`，跨层改动运行 `make check`。提交前仍必须运行完整 `make check`；
+CI 也始终执行完整 `make check`，分层目标不放松合入门禁。
+
 避免把无关格式化、依赖升级和功能改动混在同一个拉取请求中；这样更容易审查和回退。
 
 ## 前端约定
@@ -36,9 +40,7 @@ make test-race
 前端使用 React、TypeScript、React Router、TanStack Query、Tailwind 和 Radix。源码在 `frontend/`，Vite hashed assets 构建到已忽略的 `internal/web/dist/`，由 Go 嵌入但不提交到 Git。修改源码后运行：
 
 ```bash
-make frontend-check
-npm test
-make frontend
+make check-web
 ```
 
 认证后只有一个 React root。服务端状态使用 Query client，SSE 使用统一 hook，终端使用 `TerminalAdapter`；不要创建全局 window API 或第二套页面实现。Markdown 必须经过现有 DOMPurify renderer。前端的 `VisualizationSpec` 目前只是本地类型化 renderer，服务端尚未验证 Role 输出；不要把未受信任的 Agent 内容接入该组件。

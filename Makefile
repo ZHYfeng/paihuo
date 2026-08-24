@@ -6,7 +6,7 @@ GO_BUILD_FLAGS ?= -trimpath -buildvcs=true
 LDFLAGS ?= -X main.version=$(VERSION)
 GO_PACKAGES := ./cmd/... ./internal/...
 
-.PHONY: help build release test test-race test-runtime vet fmt fmt-check mod-tidy-check frontend frontend-check frontend-test e2e check clean
+.PHONY: help build release test test-race test-runtime vet fmt fmt-check mod-tidy-check frontend frontend-check frontend-test e2e check-go check-web check clean
 
 help: ## Show available development commands.
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -58,7 +58,11 @@ frontend-test: ## Run frontend component tests.
 e2e: ## Run browser end-to-end checks against an already-running server.
 	./scripts/e2e.sh
 
-check: fmt-check mod-tidy-check frontend-check frontend-test vet test build ## Run the full quality gate.
+check-go: fmt-check mod-tidy-check vet test ## Run the Go quality gate without Node or Vite.
+
+check-web: frontend-check frontend-test frontend ## Run the Web quality gate and build the embedded frontend.
+
+check: check-go check-web build ## Run the full Go/Web quality gate and build the binary.
 
 clean: ## Remove locally built artifacts.
 	rm -rf ./bin
