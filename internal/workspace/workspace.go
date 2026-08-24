@@ -615,7 +615,11 @@ func Cleanup(sessionsRoot string, retentionDays int, tasks []store.Task) (remove
 		if tk.ProjectDir == "" {
 			continue
 		}
-		managed := tk.WorktreeBranch != "" || tk.WorktreePath != "" || tk.SessionID != nil
+		sessionWorktree := ""
+		if ss, ok := tk.AsSession(); ok {
+			sessionWorktree = ss.WorktreePath
+		}
+		managed := tk.WorktreeBranch != "" || sessionWorktree != "" || tk.SessionID != nil
 		if !managed {
 			if fi, statErr := os.Stat(taskWorktreeDirOf(tk, sessionsRoot)); statErr == nil && fi.IsDir() {
 				managed = true

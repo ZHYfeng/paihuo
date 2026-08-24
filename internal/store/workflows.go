@@ -50,6 +50,9 @@ func (s *Store) GetWorkflowTask(id int64) (*Task, error) {
 	if err != nil {
 		return nil, err
 	}
+	if _, ok := tk.AsWorkflow(); !ok {
+		return nil, nil
+	}
 	return tk, nil
 }
 
@@ -126,7 +129,7 @@ func (s *Store) DeleteWorkflowTask(id, expectedRevision int64) error {
 // projectID，节点任务创建在该项目下。customTask 是本次 Run 的自定义任务描述：
 // 记录到 Run 书签，并渲染进每个节点意图（workflow.RenderIntent：{{.task}}
 // 占位符替换，纯文本意图自动附加）。
-func (s *Store) InstantiateWorkflow(tk Task, projectID int64, customTask string) (*workflow.Run, error) {
+func (s *Store) InstantiateWorkflow(tk WorkflowTask, projectID int64, customTask string) (*workflow.Run, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err

@@ -113,9 +113,19 @@ func (j *scheduleJob) Run() {
 	case store.TaskTypeTask:
 		fired = j.dispatchTask(now)
 	case store.TaskTypeSession:
-		fired = j.dispatchSession(now)
+		sessionTask, ok := tk.AsSession()
+		if !ok {
+			log.Printf("定时会话 %s 形态转换失败，跳过", tk.Title)
+			return
+		}
+		fired = j.dispatchSession(now, sessionTask)
 	case store.TaskTypeWorkflow:
-		fired = j.dispatchWorkflow(now)
+		workflowTask, ok := tk.AsWorkflow()
+		if !ok {
+			log.Printf("定时工作流 %s 形态转换失败，跳过", tk.Title)
+			return
+		}
+		fired = j.dispatchWorkflow(now, workflowTask)
 	default:
 		log.Printf("定时任务 %s 形态非法（%s），跳过", tk.Title, tk.Type)
 		return
@@ -177,8 +187,7 @@ func (j *scheduleJob) dispatchTask(now string) bool {
 }
 
 // dispatchSession 创建会话实例并自动启动、发送初始指令（body 为模板渲染后的 seed）。
-func (j *scheduleJob) dispatchSession(now string) bool {
-	tk := j.tk
+func (j *scheduleJob) dispatchSession(now string, tk store.SessionTask) bool {
 	if tk.ProjectID == nil {
 		log.Printf("定时会话 %s 未关联项目，跳过", tk.Title)
 		return false
@@ -215,8 +224,7 @@ func (j *scheduleJob) dispatchSession(now string) bool {
 // 定义标题作为本次触发的自定义任务（渲染 {{.date}} 等变量，与定时任务
 // 的标题/正文模板一致）：节点意图里的 {{.task}} 拿到触发时上下文，纯文本
 // 意图自动附加，Run 书签记录每次触发的内容。
-func (j *scheduleJob) dispatchWorkflow(now string) bool {
-	tk := j.tk
+func (j *scheduleJob) dispatchWorkflow(now string, tk store.WorkflowTask) bool {
 	if tk.Status != workflow.WorkflowStatusAdopted {
 		log.Printf("定时工作流 %s 定义不可用（status=%s），跳过本次触发", tk.Title, tk.Status)
 		return false

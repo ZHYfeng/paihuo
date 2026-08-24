@@ -1,6 +1,9 @@
 package store
 
-import "database/sql"
+import (
+	"database/sql"
+	"errors"
+)
 
 // ---------------------------------------------------------------------------
 // 会话（Session）
@@ -12,6 +15,9 @@ import "database/sql"
 func (s *Store) CreateSessionTask(ss Task) (int64, error) {
 	if ss.Type == "" {
 		ss.Type = TaskTypeSession
+	}
+	if _, ok := ss.AsSession(); !ok {
+		return 0, errors.New("会话入口只接受 type=session 的 Task")
 	}
 	if ss.Status == "" {
 		ss.Status = SessionStatusCreated
@@ -63,6 +69,9 @@ func (s *Store) GetSessionTask(id int64) (*Task, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	if _, ok := tk.AsSession(); !ok {
+		return nil, nil
 	}
 	return tk, nil
 }

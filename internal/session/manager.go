@@ -80,7 +80,7 @@ func (m *Manager) SetDelegationEnv(mcpBaseURL string) {
 
 // delegationEnv 为委托会话构造注入环境：URL + 会话令牌 + 会话 id。
 // 令牌用 HMAC 绑定会话；进程只在本机回连平台 HTTP 端点。
-func (m *Manager) delegationEnv(ss *store.Task, agent store.Role) []string {
+func (m *Manager) delegationEnv(ss store.SessionTask, agent store.Role) []string {
 	if !agent.DelegationEnabled || m.mcpBaseURL == "" {
 		return nil
 	}
@@ -165,7 +165,9 @@ func (m *Manager) Create(projectID *int64, roleID int64, perm string) (*store.Ta
 	if ss2 == nil {
 		return nil, fmt.Errorf("会话创建后读取失败: %d", id)
 	}
-	ss = *ss2
+	if _, ok := ss2.AsSession(); !ok {
+		return nil, fmt.Errorf("会话 %d 形态非法", id)
+	}
 
 	projDir, projName := projectDirOf(project), projectNameOf(project)
 	dir, branch, base, err := workspace.EnsureSessionWorktree(projDir, m.sessionsRoot, projName, id)
@@ -182,14 +184,32 @@ func (m *Manager) Create(projectID *int64, roleID int64, perm string) (*store.Ta
 	if err := m.st.UpdateTask(id, set); err != nil {
 		return nil, err
 	}
-	ss.WorktreePath, ss.WorktreeBranch, ss.BaseCommit, ss.SessionDir = dir, branch, base, m.sessionDirOf(id)
-	m.publishUpdated(ss)
-	return &ss, nil
+	updated, _, err := m.loadSession(id)
+	if err != nil {
+		return nil, err
+	}
+	if updated == nil {
+		return nil, fmt.Errorf("会话更新后读取失败: %d", id)
+	}
+	m.publishUpdated(*updated)
+	return updated, nil
 }
 
 // Get 返回单个会话。
 func (m *Manager) Get(id int64) (*store.Task, error) {
 	return m.st.GetSessionTask(id)
+}
+
+func (m *Manager) loadSession(id int64) (*store.Task, store.SessionTask, error) {
+	tk, err := m.st.GetSessionTask(id)
+	if err != nil || tk == nil {
+		return tk, store.SessionTask{}, err
+	}
+	ss, ok := tk.AsSession()
+	if !ok {
+		return nil, store.SessionTask{}, fmt.Errorf("会话 %d 形态非法", id)
+	}
+	return tk, ss, nil
 }
 
 // List 列出会话（默认不含 deleted）。
@@ -204,11 +224,11 @@ func (m *Manager) List(f store.SessionFilter) ([]store.Task, error) {
 // 文件，spawn 后 switch_session 接续原会话。
 func (m *Manager) Start(ctx context.Context, id int64) error {
 	_ = ctx // 进程生命周期独立于请求：spawn 不绑定请求 ctx
-	ss, err := m.st.GetSessionTask(id)
+	task, ss, err := m.loadSession(id)
 	if err != nil {
 		return err
 	}
-	if ss == nil {
+	if task == nil {
 		return ErrSessionNotFound
 	}
 	if !CanTransition(ss.Status, store.SessionStatusActive) {
@@ -249,14 +269,14 @@ func (m *Manager) Start(ctx context.Context, id int64) error {
 		m.stopChannel(id)
 		return err
 	}
-	m.publishUpdated(*ss)
+	m.publishUpdated(*task)
 	return nil
 }
 
 // startChannel 按 Runtime 启动会话通道：
 //   - pi/omp：spawn RPC 进程，挂起恢复时 switch_session 接续原会话
 //   - dsh：在对应权限宿主上 session.create（恢复时原 sessionId 接回）
-func (m *Manager) startChannel(ss *store.Task, agent store.Role, dir string) error {
+func (m *Manager) startChannel(ss store.SessionTask, agent store.Role, dir string) error {
 	var ch sessionChannel
 	if agent.RuntimeID == "dsh" {
 		dc, err := m.spawnDsh(ss, agent, dir)
@@ -292,7 +312,7 @@ func (m *Manager) stopChannel(id int64) {
 }
 
 // spawnDsh 在按权限路由的 dsh 宿主上创建/恢复会话通道并订阅事件流。
-func (m *Manager) spawnDsh(ss *store.Task, agent store.Role, cwd string) (*dshChannel, error) {
+func (m *Manager) spawnDsh(ss store.SessionTask, agent store.Role, cwd string) (*dshChannel, error) {
 	perm := dshPermOf(ss.Perm)
 	addr, err := m.dshHosts.addr(context.Background(), perm)
 	if err != nil {
@@ -348,7 +368,7 @@ func applyDSHRoleModel(ch *dshChannel, role store.RoleConfig) error {
 }
 
 // spawn 启动 pi/omp RPC 进程并注入事件/退出回调。
-func (m *Manager) spawn(ss *store.Task, agent store.Role, cwd string) (*rpcProc, error) {
+func (m *Manager) spawn(ss store.SessionTask, agent store.Role, cwd string) (*rpcProc, error) {
 	driver, ok := m.runtimes.Session(agent.RuntimeID)
 	if !ok {
 		return nil, fmt.Errorf("Runtime %s 不提供结构化会话能力", agent.RuntimeID)
@@ -390,11 +410,11 @@ func (m *Manager) detach(id int64) sessionChannel {
 // Suspend 挂起会话：杀进程、释放槽位、状态 → suspended。transcript 由 pi
 // 会话文件持久化，随时可恢复。
 func (m *Manager) Suspend(ctx context.Context, id int64) error {
-	ss, err := m.st.GetSessionTask(id)
+	task, ss, err := m.loadSession(id)
 	if err != nil {
 		return err
 	}
-	if ss == nil {
+	if task == nil {
 		return ErrSessionNotFound
 	}
 	if !CanTransition(ss.Status, store.SessionStatusSuspended) {
@@ -410,7 +430,7 @@ func (m *Manager) Suspend(ctx context.Context, id int64) error {
 	}); err != nil {
 		return err
 	}
-	m.publishUpdated(*ss)
+	m.publishUpdated(*task)
 	return nil
 }
 
@@ -422,11 +442,11 @@ func (m *Manager) Suspend(ctx context.Context, id int64) error {
 //
 // active 时先终止进程并释放槽位。任务 body 在调用方未提供时预填会话摘要。
 func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, perm string) (*store.Task, error) {
-	ss, err := m.st.GetSessionTask(id)
+	sessionRecord, ss, err := m.loadSession(id)
 	if err != nil {
 		return nil, err
 	}
-	if ss == nil {
+	if sessionRecord == nil {
 		return nil, ErrSessionNotFound
 	}
 	if !CanTransition(ss.Status, store.SessionStatusDelivered) {
@@ -523,7 +543,7 @@ func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, pe
 	}); err != nil {
 		return nil, err
 	}
-	m.publishUpdated(*ss)
+	m.publishUpdated(*sessionRecord)
 	// 任务创建事件（看板实时刷新）。
 	m.hub.Publish(events.Event{Type: "task.created", Payload: map[string]any{"task_id": taskID}})
 	created, err := m.st.GetTask(taskID)
@@ -534,7 +554,7 @@ func (m *Manager) Deliver(ctx context.Context, id int64, taskTitle, taskBody, pe
 }
 
 // deliverBody 生成交付任务的默认正文：会话摘要（调用方未提供说明时使用）。
-func deliverBody(ss *store.Task, agent *store.Role, projectName string) string {
+func deliverBody(ss store.SessionTask, agent *store.Role, projectName string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "会话 #%d「%s」的交付成果，已转为任务进入审批/合并流程。\n\n", ss.ID, ss.Title)
 	fmt.Fprintf(&b, "- 角色：%s（%s）\n", agent.Name, agent.RuntimeID)
@@ -555,11 +575,11 @@ func deliverBody(ss *store.Task, agent *store.Role, projectName string) string {
 // Delete 丢弃会话：终止进程、清理 worktree、状态 → deleted。
 // 已交付会话不可删除（worktree 归任务管理）。
 func (m *Manager) Delete(ctx context.Context, id int64) error {
-	ss, err := m.st.GetSessionTask(id)
+	task, ss, err := m.loadSession(id)
 	if err != nil {
 		return err
 	}
-	if ss == nil {
+	if task == nil {
 		return ErrSessionNotFound
 	}
 	if !CanTransition(ss.Status, store.SessionStatusDeleted) {
@@ -578,7 +598,7 @@ func (m *Manager) Delete(ctx context.Context, id int64) error {
 	}); err != nil {
 		return err
 	}
-	m.publishUpdated(*ss)
+	m.publishUpdated(*task)
 	return nil
 }
 
@@ -616,11 +636,11 @@ func (m *Manager) Prompt(ctx context.Context, id int64, message string, images [
 // autoStart 在会话为 created/suspended 时自动启动进程（pi-web 行为：
 // 发送消息即恢复）。其他状态返回错误。
 func (m *Manager) autoStart(ctx context.Context, id int64) error {
-	ss, err := m.st.GetSessionTask(id)
+	task, ss, err := m.loadSession(id)
 	if err != nil {
 		return err
 	}
-	if ss == nil {
+	if task == nil {
 		return ErrSessionNotFound
 	}
 	if ss.Status == store.SessionStatusActive {
@@ -729,11 +749,11 @@ func (m *Manager) State(ctx context.Context, id int64) (json.RawMessage, error) 
 // （返回该 entry 之前的 limit 条，不含该条，即「上一页」）。返回 (entries, total, err)
 // ——total 为全部条目数（分页指示用）。
 func (m *Manager) Transcript(ctx context.Context, id int64, limit int, before string) ([]map[string]any, int, error) {
-	ss, err := m.st.GetSessionTask(id)
+	task, ss, err := m.loadSession(id)
 	if err != nil {
 		return nil, 0, err
 	}
-	if ss == nil {
+	if task == nil {
 		return nil, 0, ErrSessionNotFound
 	}
 	if m.isDSHSession(ss) {
@@ -785,15 +805,19 @@ func (m *Manager) Transcript(ctx context.Context, id int64, limit int, before st
 
 // increment 返回会话消息数 +1（并发安全：SQLite 单写者）。
 func increment(st *store.Store, id int64) int {
-	ss, err := st.GetSessionTask(id)
-	if err != nil || ss == nil {
+	tk, err := st.GetSessionTask(id)
+	if err != nil || tk == nil {
+		return 0
+	}
+	ss, ok := tk.AsSession()
+	if !ok {
 		return 0
 	}
 	return ss.MessageCount + 1
 }
 
 // isDSHSession 判断会话角色是否走 dsh HTTP 会话通道。
-func (m *Manager) isDSHSession(ss *store.Task) bool {
+func (m *Manager) isDSHSession(ss store.SessionTask) bool {
 	if ss.RoleID == nil {
 		return false
 	}
@@ -803,7 +827,7 @@ func (m *Manager) isDSHSession(ss *store.Task) bool {
 
 // dshTranscript 通过宿主 history API 读取并归一化 dsh 会话时间线。
 // 挂起/交付后仍可读（宿主侧持久化）；宿主未启动时惰性启动。
-func (m *Manager) dshTranscript(ctx context.Context, ss *store.Task, limit int, before string) ([]map[string]any, int, error) {
+func (m *Manager) dshTranscript(ctx context.Context, ss store.SessionTask, limit int, before string) ([]map[string]any, int, error) {
 	dshSess := readDSHSessionID(ss.SessionDir)
 	if dshSess == "" {
 		return []map[string]any{}, 0, nil
@@ -864,8 +888,8 @@ func (m *Manager) handleExit(id int64) {
 	if proc == nil {
 		return
 	}
-	ss, err := m.st.GetSessionTask(id)
-	if err != nil || ss == nil {
+	task, ss, err := m.loadSession(id)
+	if err != nil || task == nil {
 		return
 	}
 	if ss.Status != store.SessionStatusActive {
@@ -881,7 +905,7 @@ func (m *Manager) handleExit(id int64) {
 	if agent, err := m.st.GetRole(*ss.RoleID); err == nil && agent != nil {
 		m.ex.ReleaseRoleSlot(agent.ID)
 	}
-	m.publishUpdated(*ss)
+	m.publishUpdated(*task)
 }
 
 // Recover 服务重启时把遗留的 active 会话置为 suspended（进程已随服务退出
@@ -892,7 +916,12 @@ func (m *Manager) Recover() {
 		log.Printf("⚠ 扫描遗留会话失败: %v", err)
 		return
 	}
-	for _, ss := range list {
+	for _, task := range list {
+		ss, ok := task.AsSession()
+		if !ok {
+			log.Printf("⚠ 会话 %d 形态非法，跳过恢复", task.ID)
+			continue
+		}
 		now := store.Now()
 		if err := m.st.UpdateTask(ss.ID, map[string]any{
 			"status": store.SessionStatusSuspended, "suspended_at": now, "updated_at": now,
@@ -900,7 +929,7 @@ func (m *Manager) Recover() {
 			log.Printf("⚠ 会话 %d 状态恢复失败: %v", ss.ID, err)
 			continue
 		}
-		m.publishUpdated(ss)
+		m.publishUpdated(task)
 		log.Printf("↻ 服务重启：会话 %d「%s」已挂起（可恢复）", ss.ID, ss.Title)
 	}
 }
@@ -926,11 +955,11 @@ func (m *Manager) activeProc(id int64) (sessionChannel, error) {
 	proc := m.procs[id]
 	m.mu.Unlock()
 	if proc == nil {
-		ss, err := m.st.GetSessionTask(id)
+		task, ss, err := m.loadSession(id)
 		if err != nil {
 			return nil, err
 		}
-		if ss == nil {
+		if task == nil {
 			return nil, ErrSessionNotFound
 		}
 		if ss.Status == store.SessionStatusSuspended {
@@ -979,8 +1008,8 @@ func (m *Manager) StartIdleMonitor(idle time.Duration) {
 				}
 				m.mu.Unlock()
 				for _, id := range idleIDs {
-					ss, err := m.st.GetSessionTask(id)
-					if err != nil || ss == nil || ss.Status != store.SessionStatusActive {
+					task, ss, err := m.loadSession(id)
+					if err != nil || task == nil || ss.Status != store.SessionStatusActive {
 						continue
 					}
 					if err := m.Suspend(context.Background(), id); err != nil {
@@ -1023,7 +1052,7 @@ func projectNameOf(project *store.Project) string {
 }
 
 // projectDir / projectName 基于会话关联的项目记录（无项目时为空串）。
-func (m *Manager) projectDir(ss *store.Task) string {
+func (m *Manager) projectDir(ss store.SessionTask) string {
 	if ss.ProjectID == nil {
 		return ""
 	}
@@ -1031,7 +1060,7 @@ func (m *Manager) projectDir(ss *store.Task) string {
 	return projectDirOf(proj)
 }
 
-func (m *Manager) projectName(ss *store.Task) string {
+func (m *Manager) projectName(ss store.SessionTask) string {
 	if ss.ProjectID == nil {
 		return ""
 	}

@@ -216,27 +216,28 @@ func (s *Service) listArtifactsForTask(taskID int64) ([]ArtifactMeta, error) {
 // 权限不变量：会话必须存在、是编排者会话（其角色声明了 delegation）、处于
 // 活动状态，且子任务权限不超过 delegation 上限。
 
-func (s *Service) sessionContext(ctx context.Context, sessionID int64) (*store.Task, error) {
-	ss, err := s.st.GetSessionTask(sessionID)
+func (s *Service) sessionContext(ctx context.Context, sessionID int64) (store.SessionTask, error) {
+	tk, err := s.st.GetSessionTask(sessionID)
 	if err != nil {
-		return nil, err
+		return store.SessionTask{}, err
 	}
-	if ss == nil {
-		return nil, errors.New("编排者会话不存在")
+	if tk == nil {
+		return store.SessionTask{}, errors.New("编排者会话不存在")
 	}
-	if ss.Type != store.TaskTypeSession {
-		return nil, errors.New("工具令牌只能由会话使用")
+	ss, ok := tk.AsSession()
+	if !ok {
+		return store.SessionTask{}, errors.New("工具令牌只能由会话使用")
 	}
 	// 令牌只注入执行中的进程：非 active（未启动/已挂起/已交付/已删除）拒绝。
 	if ss.Status != store.SessionStatusActive {
-		return nil, fmt.Errorf("编排者会话未处于活动状态（%s）", ss.Status)
+		return store.SessionTask{}, fmt.Errorf("编排者会话未处于活动状态（%s）", ss.Status)
 	}
 	agent, err := s.st.GetRole(*ss.RoleID)
 	if err != nil || agent == nil {
-		return nil, errors.New("编排者角色不存在")
+		return store.SessionTask{}, errors.New("编排者角色不存在")
 	}
 	if !agent.DelegationEnabled {
-		return nil, errors.New("会话角色未声明 delegation，不允许派生任务")
+		return store.SessionTask{}, errors.New("会话角色未声明 delegation，不允许派生任务")
 	}
 	return ss, nil
 }

@@ -128,10 +128,11 @@ func (s *WorkflowService) UpdateWorkflow(id, expectedRevision int64, spec workfl
 	if err != nil {
 		return nil, err
 	}
-	if tk == nil || tk.Type != store.TaskTypeWorkflow {
+	workflowTask, ok := asWorkflowTask(tk)
+	if !ok {
 		return nil, sql.ErrNoRows
 	}
-	if tk.Revision != expectedRevision {
+	if workflowTask.Revision != expectedRevision {
 		return nil, store.ErrRevisionConflict
 	}
 	spec, err = s.prepareSpec(spec, cron, projectID)
@@ -158,10 +159,11 @@ func (s *WorkflowService) DeleteWorkflow(id, expectedRevision int64) error {
 	if err != nil {
 		return err
 	}
-	if tk == nil || tk.Type != store.TaskTypeWorkflow {
+	workflowTask, ok := asWorkflowTask(tk)
+	if !ok {
 		return sql.ErrNoRows
 	}
-	if tk.Revision != expectedRevision {
+	if workflowTask.Revision != expectedRevision {
 		return store.ErrRevisionConflict
 	}
 	if err := s.store.DeleteWorkflowTask(id, expectedRevision); err != nil {
@@ -182,23 +184,24 @@ func (s *WorkflowService) StartPlan(id, expectedRevision, projectID int64, task 
 	if err != nil {
 		return nil, err
 	}
-	if tk == nil {
+	workflowTask, ok := asWorkflowTask(tk)
+	if !ok {
 		return nil, sql.ErrNoRows
 	}
-	if tk.Revision != expectedRevision {
+	if workflowTask.Revision != expectedRevision {
 		return nil, store.ErrRevisionConflict
 	}
-	if tk.Status != workflow.WorkflowStatusAdopted {
+	if workflowTask.Status != workflow.WorkflowStatusAdopted {
 		return nil, fmt.Errorf("工作流定义不可用，无法启动")
 	}
-	spec, err := specOf(tk)
+	spec, err := specOf(workflowTask)
 	if err != nil {
 		return nil, err
 	}
 	if violations := s.policy.Validate(spec); len(violations) > 0 {
 		return nil, fmt.Errorf("Workflow 当前不可运行: %s", violations[0].Message)
 	}
-	run, err := s.store.InstantiateWorkflow(*tk, projectID, task)
+	run, err := s.store.InstantiateWorkflow(workflowTask, projectID, task)
 	if err != nil {
 		return nil, err
 	}
@@ -316,10 +319,17 @@ func (s *WorkflowService) runStatus(run workflow.Run) (status string, blocked bo
 	return workflow.RunStatusSucceeded, false
 }
 
+func asWorkflowTask(tk *store.Task) (store.WorkflowTask, bool) {
+	if tk == nil {
+		return store.WorkflowTask{}, false
+	}
+	return tk.AsWorkflow()
+}
+
 // specOf 解析工作流任务的 spec JSON。
-func specOf(tk *store.Task) (workflow.Spec, error) {
+func specOf(tk store.WorkflowTask) (workflow.Spec, error) {
 	var spec workflow.Spec
-	if tk == nil || tk.Spec == "" {
+	if tk.Spec == "" {
 		return spec, errors.New("工作流任务缺少 spec")
 	}
 	if err := json.Unmarshal([]byte(tk.Spec), &spec); err != nil {

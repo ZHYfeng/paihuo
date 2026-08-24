@@ -209,7 +209,11 @@ func TestUpdateWorkflowReplacesDefinitionAndGuardsRevision(t *testing.T) {
 	if updated.Status != workflow.WorkflowStatusAdopted {
 		t.Fatalf("status=%s, want adopted after edit", updated.Status)
 	}
-	spec, err := specOf(updated)
+	workflowTask, ok := updated.AsWorkflow()
+	if !ok {
+		t.Fatal("updated task must be a Workflow")
+	}
+	spec, err := specOf(workflowTask)
 	if err != nil || spec.Goal != "构建并发布" {
 		t.Fatalf("spec not replaced: %+v %v", spec, err)
 	}
@@ -233,7 +237,11 @@ func TestUpdateWorkflowReplacesDefinitionAndGuardsRevision(t *testing.T) {
 		t.Fatalf("policy-violating update must be rejected with violations, got %v", err)
 	}
 	unchanged, _ := st.GetWorkflowTask(wf.ID)
-	if spec, err := specOf(unchanged); err != nil || spec.Goal != "构建并发布" {
+	workflowTask, ok = unchanged.AsWorkflow()
+	if !ok {
+		t.Fatal("unchanged task must be a Workflow")
+	}
+	if spec, err := specOf(workflowTask); err != nil || spec.Goal != "构建并发布" {
 		t.Fatalf("rejected update must not persist: %+v %v", spec, err)
 	}
 

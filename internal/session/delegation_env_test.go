@@ -25,8 +25,8 @@ func TestDelegationEnvInjections(t *testing.T) {
 
 	// 委托角色 → 注入平台工具面环境
 	orchestrator := store.Role{ID: 1, DelegationEnabled: true, DelegationMaxPerm: store.PermReview}
-	ss := store.Task{ID: 42}
-	env := m.delegationEnv(&ss, orchestrator)
+	ss := store.SessionTask{ID: 42}
+	env := m.delegationEnv(ss, orchestrator)
 	if len(env) != 3 {
 		t.Fatalf("应注入 3 个环境变量，got %v", env)
 	}
@@ -51,12 +51,12 @@ func TestDelegationEnvInjections(t *testing.T) {
 	}
 
 	// 非委托角色 → 不注入
-	if env := m.delegationEnv(&ss, store.Role{ID: 2}); len(env) != 0 {
+	if env := m.delegationEnv(ss, store.Role{ID: 2}); len(env) != 0 {
 		t.Fatalf("非委托角色不应注入环境: %v", env)
 	}
 	// 未配置端点 → 不注入
 	m2 := New(st, hub, ex, t.TempDir(), t.TempDir())
-	if env := m2.delegationEnv(&ss, orchestrator); len(env) != 0 {
+	if env := m2.delegationEnv(ss, orchestrator); len(env) != 0 {
 		t.Fatalf("未配置端点不应注入: %v", env)
 	}
 }
