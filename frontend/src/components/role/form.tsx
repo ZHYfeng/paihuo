@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Field, inputClass } from "../ui";
-import type { Role, RoleConfig, RoleStudioDraft, RuntimeField, Skill } from "../../types";
+import type { Role, RoleConfigDraft, RoleStudioDraft, RuntimeField, Skill } from "../../types";
 
-export type RoleDraft = Partial<Role> & { role_config: RoleConfig };
+export type RoleDraft = Omit<Partial<Role>, "role_config"> & { role_config: RoleConfigDraft };
 
 /** 运行时字段分组渲染：
  *  - shorts（text/select）：两列并排，高度统一；
@@ -25,8 +25,8 @@ export function RoleFieldGroups({ fields, draft, setDraft, skills }: { fields: R
   const render = (field: RuntimeField) => {
     const setRoleField = (value: unknown) => setDraft({ ...draft, role_config: field.builtin ? { ...draft.role_config, [field.key]: value } : { ...draft.role_config, custom: { ...draft.role_config.custom, [field.key]: String(value) } } });
     return field.source === "skills"
-      ? <RoleSkillPicker key={field.key} skills={skills} value={field.builtin ? draft.role_config[field.key as keyof RoleConfig] : draft.role_config.custom?.[field.key]} onChange={setRoleField} />
-      : <RuntimeFieldInput key={field.key} field={resolveRuntimeField(field, draft.role_config, skills)} value={field.builtin ? draft.role_config[field.key as keyof RoleConfig] : draft.role_config.custom?.[field.key]} onChange={setRoleField} />;
+      ? <RoleSkillPicker key={field.key} skills={skills} value={field.builtin ? draft.role_config[field.key as keyof RoleConfigDraft] : draft.role_config.custom?.[field.key]} onChange={setRoleField} />
+      : <RuntimeFieldInput key={field.key} field={resolveRuntimeField(field, draft.role_config, skills)} value={field.builtin ? draft.role_config[field.key as keyof RoleConfigDraft] : draft.role_config.custom?.[field.key]} onChange={setRoleField} />;
   };
   return <div className="grid gap-4">
     {shorts.length ? <div className="grid gap-4 md:grid-cols-2">{shorts.map(render)}</div> : null}
@@ -39,7 +39,7 @@ export function statusLabelOf(status: string): string {
   return map[status] || status;
 }
 
-export function resolveRuntimeField(field: RuntimeField, config: RoleConfig, skills?: Skill[]): RuntimeField {
+export function resolveRuntimeField(field: RuntimeField, config: RoleConfigDraft, skills?: Skill[]): RuntimeField {
   if (field.source === "skills") return { ...field, suggestions: skills?.map(skill => skill.dir) || [] };
   if (field.key === "thinking" && config.model && field.thinking_options_by_model?.[config.model]) {
     return { ...field, options: ["", ...field.thinking_options_by_model[config.model].filter(option => option !== "")] };

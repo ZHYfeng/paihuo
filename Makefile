@@ -4,9 +4,9 @@ VERSION ?= dev
 BUILD_DIR := bin
 GO_BUILD_FLAGS ?= -trimpath -buildvcs=true
 LDFLAGS ?= -X main.version=$(VERSION)
-GO_PACKAGES := ./cmd/... ./internal/...
+GO_PACKAGES := ./cmd/... ./internal/... ./scripts
 
-.PHONY: help build release test test-race test-runtime vet fmt fmt-check mod-tidy-check frontend frontend-check frontend-test e2e check-go check-web check clean
+.PHONY: help build release test test-race test-runtime vet fmt fmt-check mod-tidy-check gen-types gen-types-check frontend frontend-check frontend-test e2e check-go check-web check clean
 
 help: ## Show available development commands.
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -45,6 +45,12 @@ fmt-check: ## Fail when Go source files are not gofmt-formatted.
 mod-tidy-check: ## Verify go.mod and go.sum are tidy without modifying them.
 	go mod tidy -diff
 
+gen-types: ## Generate frontend Store DTO types from Go structs.
+	go run ./scripts/gen-types.go
+
+gen-types-check: ## Verify generated frontend Store DTO types are current.
+	go run ./scripts/gen-types.go -check
+
 frontend: ## Build the React application embedded in the Go binary.
 	./scripts/build-frontend.sh
 
@@ -58,7 +64,7 @@ frontend-test: ## Run frontend component tests.
 e2e: ## Run browser end-to-end checks against an already-running server.
 	./scripts/e2e.sh
 
-check-go: fmt-check mod-tidy-check vet test ## Run the Go quality gate without Node or Vite.
+check-go: gen-types-check fmt-check mod-tidy-check vet test ## Run the Go quality gate without Node or Vite.
 
 check-web: frontend-check frontend-test frontend ## Run the Web quality gate and build the embedded frontend.
 

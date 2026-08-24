@@ -1,92 +1,33 @@
-export type ID = number;
+import type {
+  ID,
+  Project,
+  ProjectStatus,
+  Role,
+  RoleConfig,
+  Task,
+  TaskDependencyMode,
+  TaskPerm,
+  TaskRunMode,
+  TaskType,
+} from "./generated/store-types";
 
-export interface RoleConfig {
-  model?: string;
-  system_prompt?: string;
-  instructions?: string;
-  skills?: string[];
-  thinking?: string;
-  plugins?: string[];
-  extra_args?: string[];
-  env?: Record<string, string>;
-  custom?: Record<string, string>;
-}
-
-export interface Role {
-  id: ID;
-  name: string;
-  description: string;
-  runtime_id: string;
-  role_config: RoleConfig;
-  max_concurrency: number;
-  delegation_enabled: boolean;
-  delegation_max_perm: "full" | "review";
-  enabled: boolean;
-  revision: number;
-  created_at: string;
-  updated_at: string;
-}
+export type {
+  ID,
+  Project,
+  ProjectStatus,
+  Role,
+  RoleConfig,
+  Task,
+  TaskDependencyMode,
+  TaskPerm,
+  TaskRunMode,
+  TaskType,
+};
 
 export type TaskStatus = "queued" | "claimed" | "running" | "awaiting_review" | "succeeded" | "failed" | "cancelled";
-export type TaskType = "task" | "session" | "workflow";
 
-export interface Task {
-  id: ID;
-  type: TaskType;
-  title: string;
-  body: string;
-  status: string;
-  perm: "full" | "review";
-  run_mode: "batch" | "interactive";
-  concurrent: boolean;
-  role_id?: ID | null;
-  role_name?: string;
-  project_id?: ID | null;
-  project_name?: string;
-  project_dir?: string;
-  parent_id?: ID | null;
-  parent_session_id?: ID | null;
-  parent_task_id?: ID | null;
-  depends_on?: ID | null;
-  dependency_mode: "none" | "weak" | "strong";
-  block_on_failure: boolean;
-  error?: string;
-  exit_code?: number | null;
-  review_note?: string;
-  review_rounds: number;
-  merge_of?: ID | null;
-  merge_skipped?: boolean;
-  session_id?: ID | null;
-  workflow_run_id?: ID | null;
-  resume_of?: ID | null;
-  schedule_id?: ID | null;
-  worktree_branch?: string;
-  base_commit?: string;
-  sort_order?: number;
-  terminal_cols?: number;
-  terminal_rows?: number;
-  // 定时属性（正交：任何形态可挂；cron 非空 = 定时定义，永不直接执行）
-  cron?: string;
-  enabled?: boolean;
-  last_run_at?: string | null;
-  next_run_at?: string | null;
-  // 会话字段（type=session）
-  worktree_path?: string;
-  session_dir?: string;
-  last_message_at?: string;
-  message_count?: number;
-  suspended_at?: string | null;
-  delivered_at?: string | null;
-  // 工作流字段（type=workflow；spec/violations 为 JSON 字符串，需 parse）
-  spec?: string;
-  violations?: string;
-  spec_hash?: string;
-  revision: number;
-  created_at: string;
-  started_at?: string | null;
-  finished_at?: string | null;
-  updated_at: string;
-}
+/** 表单草稿允许逐项填写；API 返回的 RoleConfig 仍使用生成的完整 DTO。 */
+export type RoleConfigDraft = Partial<RoleConfig>;
 
 /** 会话 = type=session 的任务（字段全部在 Task 上）。 */
 export type Session = Task;
@@ -111,23 +52,6 @@ export interface Artifact {
   created_by: string;
   retention: string;
   created_at: string;
-}
-
-export interface Project {
-  id: ID;
-  name: string;
-  description: string;
-  status: "active" | "archived";
-  project_dir: string;
-  is_git: boolean;
-  github_repo: string;
-  github_role_id?: ID | null;
-  github_auto_issues: boolean;
-  github_auto_prs: boolean;
-  github_auto_security: boolean;
-  revision: number;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface RuntimeField {
@@ -281,7 +205,7 @@ export interface RoleStudioDraft {
   max_concurrency: number;
   delegation_enabled: boolean;
   delegation_max_perm: string;
-  role_config: RoleConfig;
+  role_config: RoleConfigDraft;
 }
 
 export interface RoleStudioMessage {
