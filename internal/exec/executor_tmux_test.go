@@ -190,6 +190,19 @@ func TestExecutorQueuesMergeTaskAfterSuccessfulFullTask(t *testing.T) {
 	if !strings.Contains(joined, "自动合并") {
 		t.Fatalf("无冲突合并任务应记录自动合并日志: %s", joined)
 	}
+	for _, id := range []int64{taskID, merge.ID} {
+		if _, err := os.Stat(workspace.WorktreePath(sessionsRoot, "proj", id)); !os.IsNotExist(err) {
+			t.Fatalf("成功合并后任务 #%d worktree 应自动清理，err=%v", id, err)
+		}
+	}
+	for _, taskID := range []int64{taskID, merge.ID} {
+		branch := workspace.Branch(taskID)
+		cmd := osexec.Command("git", "branch", "--list", branch)
+		cmd.Dir = projectDir
+		if out, err := cmd.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "" {
+			t.Fatalf("成功合并后任务分支应自动清理: %s out=%q err=%v", branch, out, err)
+		}
+	}
 }
 
 func TestExecutorFailsMergeTaskEarlyWhenMainWorktreeDirty(t *testing.T) {

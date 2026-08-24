@@ -183,8 +183,12 @@ systemctl --user start paihuo.service
 - Task 在 `tmux -L paihuo` 的 `paihuo` session 中运行。可用
   `tmux -L paihuo attach -t paihuo` 观察，但应从 Web 结束 Task，不要直接
   `kill-window` 或 `kill-pane`。
-- 服务每小时根据 `retention_days` 清理终态 Task，根据
-  `worktree_retention_days` 清理 worktree，并回收无引用 Artifact。
+- 服务每小时根据 `retention_days` 清理终态 Task，并同步清理其 Runtime 会话、
+  tmux 运行文件、worktree 和分支；根据 `worktree_retention_days` 清理过期
+  worktree，并回收无引用 Artifact。代码成功合并后，源任务和合并任务的
+  worktree/分支立即清理。
+- 设置页的手动历史清理与自动历史清理使用同一套资源清理逻辑，不会只删除
+  SQLite 任务记录而留下 `sessions/.runtime-sessions/.../task-*`。
 - Runtime 模型和能力在服务启动时探测，此后每七天刷新，也可从 Web 手动刷新。
 - 令牌遗失时重新生成 `token.env` 并重启服务；所有已有登录会话会失效。
 - 启动提示 schema 不受支持时，停止服务并按“全新部署（清空数据）”流程创建空数据库。

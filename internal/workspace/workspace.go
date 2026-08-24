@@ -267,6 +267,37 @@ func taskWorktreeDirOf(tk store.Task, sessionsRoot string) string {
 	return WorktreePath(sessionsRoot, tk.ProjectName, tk.ID)
 }
 
+// taskBranchOf 返回任务实际占用的分支。会话交付任务虽然仍是一条普通
+// task 记录，但它复用的是 session worktree，不能按 task ID 删除错误分支。
+func taskBranchOf(tk store.Task) string {
+	if tk.SessionID != nil {
+		return SessionBranch(*tk.SessionID)
+	}
+	return Branch(tk.ID)
+}
+
+// HasManagedTaskWorkspace 判断任务是否仍有实际代码工作区资源。数据库里的
+// worktree_branch 是历史记录，成功清理后仍会保留，不能仅凭该字段决定每小时
+// 是否重复清理。
+func HasManagedTaskWorkspace(tk store.Task, sessionsRoot string) bool {
+	if tk.ProjectDir == "" {
+		return false
+	}
+	wt := taskWorktreeDirOf(tk, sessionsRoot)
+	if fi, err := os.Stat(wt); err == nil && fi.IsDir() {
+		return true
+	}
+	if !isGitRepo(tk.ProjectDir) {
+		return false
+	}
+	branch := taskBranchOf(tk)
+	if registered, err := registeredWorktreePath(tk.ProjectDir, branch); err == nil && registered != "" {
+		return true
+	}
+	branches, err := git(tk.ProjectDir, "branch", "--list", branch)
+	return err == nil && strings.TrimSpace(branches) != ""
+}
+
 // Status 返回任务工作空间状态。
 func Status(tk store.Task, sessionsRoot string) Info {
 	info := Info{Path: tk.ProjectDir, Note: ""}
@@ -468,6 +499,7 @@ func Merge(tk store.Task, sessionsRoot string) (string, error) {
 }
 
 // Discard 丢弃任务分支：删除 worktree 与分支。已合并的分支一并清理。
+// 会话交付任务复用 session worktree，因此也必须按 session ID 清理。
 func Discard(tk store.Task, sessionsRoot string) error {
 	mutationMu.Lock()
 	defer mutationMu.Unlock()
@@ -478,17 +510,50 @@ func Discard(tk store.Task, sessionsRoot string) error {
 		return nil
 	}
 
-	wt := WorktreePath(sessionsRoot, tk.ProjectName, tk.ID)
-	if fi, err := os.Stat(wt); err == nil && fi.IsDir() {
-		if !isGitRepo(tk.ProjectDir) {
-			return fmt.Errorf("任务 worktree 存在，但项目不是 git 仓库")
+	wt := taskWorktreeDirOf(tk, sessionsRoot)
+	gitProject := isGitRepo(tk.ProjectDir)
+	if !gitProject {
+		if fi, err := os.Stat(wt); err == nil && fi.IsDir() {
+			// 非 Git 会话使用复制目录，不能调用 git worktree remove。
+			if err := os.RemoveAll(wt); err != nil {
+				return fmt.Errorf("删除任务工作目录失败: %v", err)
+			}
+			return nil
+		} else if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("读取工作目录失败: %v", err)
 		}
-		if _, err := git(tk.ProjectDir, "worktree", "remove", "--force", wt); err != nil {
-			return fmt.Errorf("删除 worktree 失败: %v", err)
+		return nil
+	}
+
+	// 先按分支读取 Git 注册路径，再回退到按项目名推导的路径。这样项目
+	// 改名、人工移动目录或 sessions 目录被外部清空后，仍能 prune 并删除分支。
+	registered, err := registeredWorktreePath(tk.ProjectDir, taskBranchOf(tk))
+	if err != nil {
+		return fmt.Errorf("读取任务 worktree 注册失败: %v", err)
+	}
+	removePath := registered
+	if removePath == "" {
+		if fi, statErr := os.Stat(wt); statErr == nil && fi.IsDir() {
+			removePath = wt
+		} else if statErr != nil && !os.IsNotExist(statErr) {
+			return fmt.Errorf("读取 worktree 失败: %v", statErr)
 		}
 	}
-	if !isGitRepo(tk.ProjectDir) {
-		return nil
+	if removePath != "" {
+		if _, statErr := os.Stat(removePath); statErr == nil {
+			if _, err := git(tk.ProjectDir, "worktree", "remove", "--force", removePath); err != nil {
+				if registered != "" {
+					return fmt.Errorf("删除 worktree 失败: %v", err)
+				}
+				// 注册已被外部删除但生成目录仍在时，git 已无法识别它；
+				// 该路径由 sessionsRoot + task/session ID 推导，允许直接移除。
+				if removeErr := os.RemoveAll(removePath); removeErr != nil {
+					return fmt.Errorf("删除 worktree 失败: %v（直接删除目录也失败: %v）", err, removeErr)
+				}
+			}
+		} else if !os.IsNotExist(statErr) {
+			return fmt.Errorf("读取已登记 worktree 失败: %v", statErr)
+		}
 	}
 	// 清理幽灵 worktree 注册：worktree 目录已被外部删除（如部署清空
 	// sessions/）时 remove 无从执行，.git/worktrees/<id> 注册会残留；
@@ -496,19 +561,44 @@ func Discard(tk store.Task, sessionsRoot string) error {
 	if _, err := git(tk.ProjectDir, "worktree", "prune"); err != nil {
 		return fmt.Errorf("清理 worktree 注册失败: %v", err)
 	}
-	branches, err := git(tk.ProjectDir, "branch", "--list", Branch(tk.ID))
+	branch := taskBranchOf(tk)
+	branches, err := git(tk.ProjectDir, "branch", "--list", branch)
 	if err != nil {
 		return fmt.Errorf("读取任务分支失败: %v", err)
 	}
 	if strings.TrimSpace(branches) != "" {
-		if _, err := git(tk.ProjectDir, "branch", "-D", Branch(tk.ID)); err != nil {
+		if _, err := git(tk.ProjectDir, "branch", "-D", branch); err != nil {
 			return fmt.Errorf("删除任务分支失败: %v", err)
 		}
 	}
 	return nil
 }
 
-// Cleanup 清理终态任务的过期 worktree（按保留天数）。
+// registeredWorktreePath 按分支读取 Git 当前登记的 worktree 路径。项目改名
+// 或人工移动目录后，路径可能与按项目名推导的默认路径不同；按分支找注册
+// 才能把历史资源清干净。
+func registeredWorktreePath(projectDir, branch string) (string, error) {
+	if branch == "" {
+		return "", nil
+	}
+	out, err := git(projectDir, "worktree", "list", "--porcelain")
+	if err != nil {
+		return "", err
+	}
+	var path string
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			path = strings.TrimSpace(strings.TrimPrefix(line, "worktree "))
+		case line == "branch refs/heads/"+branch:
+			return path, nil
+		}
+	}
+	return "", nil
+}
+
+// Cleanup 清理终态任务的过期 worktree（按保留天数）。它保留旧的无错误
+// 返回值 API，但内部使用 Discard，因而也会清理分支和幽灵 worktree 注册。
 func Cleanup(sessionsRoot string, retentionDays int, tasks []store.Task) (removed int) {
 	if retentionDays <= 0 || sessionsRoot == "" {
 		return 0
@@ -522,14 +612,19 @@ func Cleanup(sessionsRoot string, retentionDays int, tasks []store.Task) (remove
 		if err != nil || fin.After(cutoff) {
 			continue
 		}
-		wt := WorktreePath(sessionsRoot, tk.ProjectName, tk.ID)
-		if fi, err := os.Stat(wt); err == nil && fi.IsDir() {
-			if isGitRepo(tk.ProjectDir) {
-				git(tk.ProjectDir, "worktree", "remove", "--force", wt)
-				git(tk.ProjectDir, "branch", "-D", Branch(tk.ID))
-			} else {
-				os.RemoveAll(wt)
+		if tk.ProjectDir == "" {
+			continue
+		}
+		managed := tk.WorktreeBranch != "" || tk.WorktreePath != "" || tk.SessionID != nil
+		if !managed {
+			if fi, statErr := os.Stat(taskWorktreeDirOf(tk, sessionsRoot)); statErr == nil && fi.IsDir() {
+				managed = true
 			}
+		}
+		if !managed {
+			continue
+		}
+		if err := Discard(tk, sessionsRoot); err == nil {
 			removed++
 		}
 	}

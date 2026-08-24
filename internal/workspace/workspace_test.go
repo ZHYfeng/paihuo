@@ -128,6 +128,26 @@ func TestSessionDeliveredTaskSnapshotAndStatus(t *testing.T) {
 	}
 }
 
+func TestDiscardSessionDeliveredTask(t *testing.T) {
+	proj := gitInitTest(t)
+	sess := t.TempDir()
+	sid := int64(31)
+	dir, branch, base, err := EnsureSessionWorktree(proj, sess, "proj", sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk := store.Task{ID: 99, SessionID: &sid, ProjectDir: proj, ProjectName: "proj", WorktreeBranch: branch, BaseCommit: base}
+	if err := Discard(tk, sess); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("会话交付任务应清理 session worktree: %s err=%v", dir, err)
+	}
+	if out, err := git(proj, "branch", "--list", branch); err != nil || strings.TrimSpace(out) != "" {
+		t.Fatalf("会话分支应清理: %q err=%v", out, err)
+	}
+}
+
 func TestNonGitFallback(t *testing.T) {
 	proj := t.TempDir() // 非 git 目录
 	sess := t.TempDir()

@@ -1287,15 +1287,15 @@ func TestCleanupTasksOnlyTerminal(t *testing.T) {
 	mustTask(t, s, "run", &a, StatusRunning, "")
 	mustTask(t, s, "queued", &a, StatusQueued, "")
 
-	n, locators, err := s.CleanupTasks(nil, "")
+	result, err := s.CleanupTasks(nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Fatalf("应只删除 1 条终态任务，得到 %d", n)
+	if result.Deleted != 1 {
+		t.Fatalf("应只删除 1 条终态任务，得到 %d", result.Deleted)
 	}
-	if len(locators) != 0 {
-		t.Fatalf("无 Artifact 的任务不应返回 locator: %v", locators)
+	if len(result.Locators) != 0 || len(result.Tasks) != 1 {
+		t.Fatalf("CleanupTasks 返回结果异常: %+v", result)
 	}
 }
 

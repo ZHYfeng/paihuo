@@ -25,7 +25,6 @@ import (
 	"paihuo/internal/server"
 	"paihuo/internal/session"
 	"paihuo/internal/store"
-	"paihuo/internal/workspace"
 )
 
 // version is set at release build time with -ldflags "-X main.version=<version>".
@@ -179,34 +178,17 @@ func refreshModelCatalogs(ctx context.Context) {
 	}
 }
 
-// autoCleanup 每小时执行：清理超期任务、无引用 Artifact、孤儿 Runtime 会话
-// 和过期任务 worktree。
+// autoCleanup 每小时执行：清理超期任务、无引用 Artifact、已完成代码任务的
+// Runtime 会话、孤儿 Runtime 会话和过期任务 worktree。文件系统清理使用
+// Store 返回的任务快照，不能在删掉数据库记录后再反推路径。
 func autoCleanup(ctx context.Context, st *store.Store, ex *exec.Executor, sessionsRoot string) {
 	artifactStore, artifactErr := artifact.NewLocalStore(filepath.Join(filepath.Dir(sessionsRoot), "artifacts"))
 	if artifactErr != nil {
 		log.Printf("自动清理：ArtifactStore 不可用: %v", artifactErr)
 	}
 	run := func() {
-		days := "0"
-		if v, err := st.GetSetting("retention_days"); err == nil && v != "" {
-			days = v
-		}
-		if n, err := strconv.Atoi(days); err == nil && n > 0 {
-			before := time.Now().Add(-time.Duration(n) * 24 * time.Hour).UTC().Format(time.RFC3339)
-			if deleted, locators, err := st.CleanupTasks(nil, before); err == nil {
-				if deleted > 0 {
-					log.Printf("自动清理：删除 %d 条超过 %d 天的任务", deleted, n)
-				}
-				if artifactStore != nil {
-					for _, locator := range locators {
-						if count, countErr := st.CountArtifactsByLocator(locator); countErr == nil && count == 0 {
-							_ = artifactStore.Delete(ctx, locator)
-						}
-					}
-				}
-			}
-		}
-		// worktree 保留天数（默认 7 天）
+		// worktree 保留天数（默认 7 天）。先清理 worktree，再清理可能已经
+		// 过期的任务记录，避免任务行先消失后失去分支/项目定位信息。
 		wtDays := 7
 		if v, err := st.GetSetting("worktree_retention_days"); err == nil && v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
@@ -214,12 +196,54 @@ func autoCleanup(ctx context.Context, st *store.Store, ex *exec.Executor, sessio
 			}
 		}
 		if tasks, err := st.ListTasksForCleanup(); err == nil {
-			if n := workspace.Cleanup(sessionsRoot, wtDays, tasks); n > 0 {
+			if n, cleanupErr := ex.CleanupTaskWorkspaces(tasks, wtDays); cleanupErr != nil {
+				log.Printf("⚠ 自动清理：任务 worktree 部分失败（已清理 %d 个）: %v", n, cleanupErr)
+			} else if n > 0 {
 				log.Printf("自动清理：移除 %d 个过期任务 worktree", n)
+			}
+			if n, cleanupErr := ex.CleanupCompletedTaskRuntimeSessions(tasks); cleanupErr != nil {
+				log.Printf("⚠ 自动清理：已完成任务 Runtime 会话部分失败（已清理 %d 个）: %v", n, cleanupErr)
+			} else if n > 0 {
+				log.Printf("自动清理：移除 %d 个已完成代码任务 Runtime 会话", n)
+			}
+		} else {
+			log.Printf("⚠ 自动清理：读取任务资源失败: %v", err)
+		}
+
+		// 任务记录保留天数（默认关闭）。CleanupTasks 返回同一事务实际删除
+		// 的任务快照，删除记录后立即清理其 Runtime/worktree，避免产生孤儿。
+		days := "0"
+		if v, err := st.GetSetting("retention_days"); err == nil && v != "" {
+			days = v
+		}
+		if n, err := strconv.Atoi(days); err == nil && n > 0 {
+			before := time.Now().Add(-time.Duration(n) * 24 * time.Hour).UTC().Format(time.RFC3339)
+			if result, cleanupErr := st.CleanupTasks(nil, before); cleanupErr != nil {
+				log.Printf("⚠ 自动清理：删除历史任务失败: %v", cleanupErr)
+			} else {
+				if result.Deleted > 0 {
+					log.Printf("自动清理：删除 %d 条超过 %d 天的任务", result.Deleted, n)
+				}
+				for _, tk := range result.Tasks {
+					if resourceErr := ex.CleanupTaskResources(tk); resourceErr != nil {
+						log.Printf("⚠ 自动清理：任务 %d 资源清理失败: %v", tk.ID, resourceErr)
+					}
+				}
+				if artifactStore != nil {
+					for _, locator := range result.Locators {
+						if count, countErr := st.CountArtifactsByLocator(locator); countErr == nil && count == 0 {
+							if deleteErr := artifactStore.Delete(ctx, locator); deleteErr != nil {
+								log.Printf("⚠ 自动清理：删除无引用 Artifact %s 失败: %v", locator, deleteErr)
+							}
+						}
+					}
+				}
 			}
 		}
 		if n, err := ex.CleanupOrphanTaskSessions(); err == nil && n > 0 {
 			log.Printf("自动清理：移除 %d 个孤儿 Runtime 会话", n)
+		} else if err != nil {
+			log.Printf("⚠ 自动清理：孤儿 Runtime 会话清理失败: %v", err)
 		}
 	}
 	run()
