@@ -286,12 +286,60 @@ func (e *Executor) CancelTask(id int64) {
 	_ = e.runner.StopWithReason(id, "task_cancel")
 }
 
-// RemoveTask 在删除任务前停止 tmux window 并清理其运行时文件。
-func (e *Executor) RemoveTask(id int64) {
+// removeTaskRuntime 清理任务的 tmux、技能和 Runtime 会话文件。Runtime 会话
+// 默认保留到任务历史被删除，但删除任务/历史清理必须调用它，而不能只删 SQLite
+// 记录。resume_of 任务复用源任务目录；只有源任务也不再存在时才删除该目录。
+func (e *Executor) removeTaskRuntime(id int64, sessionID int64) error {
 	e.CancelTask(id)
-	_ = cleanupRoleSkills(e.runner.skillManifestPath(id))
+	var errs []error
+	if err := cleanupRoleSkills(e.runner.skillManifestPath(id)); err != nil {
+		errs = append(errs, fmt.Errorf("清理任务 %d 技能副本失败: %w", id, err))
+	}
 	e.runner.Cleanup(id)
-	_ = e.taskSessions.Remove(id)
+	if sessionID != id {
+		if exists, err := e.st.HasTask(sessionID); err != nil {
+			errs = append(errs, fmt.Errorf("确认 Runtime 会话 %d 是否仍被使用失败: %w", sessionID, err))
+		} else if exists {
+			return errors.Join(errs...)
+		}
+	}
+	if err := e.taskSessions.Remove(sessionID); err != nil {
+		errs = append(errs, fmt.Errorf("清理任务 Runtime 会话 %d 失败: %w", sessionID, err))
+	}
+	return errors.Join(errs...)
+}
+
+func (e *Executor) taskSessionID(tk store.Task) int64 {
+	if tk.ResumeOf != nil {
+		return *tk.ResumeOf
+	}
+	return tk.ID
+}
+
+// RemoveTask 在删除任务前停止 tmux window 并清理其运行时文件。调用方随后
+// 负责清理代码 worktree；历史清理使用 CleanupTaskResources 一次完成两者。
+func (e *Executor) RemoveTask(id int64) {
+	sessionID := id
+	if tk, err := e.st.GetTask(id); err == nil {
+		sessionID = e.taskSessionID(*tk)
+	}
+	if err := e.removeTaskRuntime(id, sessionID); err != nil {
+		log.Printf("⚠ 清理任务 %d 运行时资源失败: %v", id, err)
+	}
+}
+
+// CleanupTaskResources 清理一条任务的全部宿主机资源。tk 可以来自已删除事务
+// 返回的快照，此时数据库中已经找不到它，仍能按原项目/分支/ID 清理。
+func (e *Executor) CleanupTaskResources(tk store.Task) error {
+	runtimeErr := e.removeTaskRuntime(tk.ID, e.taskSessionID(tk))
+	workspaceErr := workspace.Discard(tk, e.sessionsRoot)
+	return errors.Join(runtimeErr, workspaceErr)
+}
+
+// CleanupTaskRuntime 只清理任务运行时资源，不触碰代码 worktree；成功合并后
+// 任务不可再续跑，执行器用它回收已完成源/合并任务的 Runtime 会话。
+func (e *Executor) CleanupTaskRuntime(tk store.Task) error {
+	return e.removeTaskRuntime(tk.ID, e.taskSessionID(tk))
 }
 
 // ResetTaskSession 让驳回重做等全新执行不复用旧会话。
@@ -303,6 +351,135 @@ func (e *Executor) ResetTaskSession(id int64) {
 // 不会读取或删除其他数据库/实例的目录。
 func (e *Executor) CleanupOrphanTaskSessions() (int, error) {
 	return e.taskSessions.CleanupOrphans(e.st.HasTask)
+}
+
+func (e *Executor) taskHasManagedWorkspace(tk store.Task) bool {
+	return workspace.HasManagedTaskWorkspace(tk, e.sessionsRoot)
+}
+
+func terminalTask(status string) bool {
+	switch status {
+	case store.StatusSucceeded, store.StatusFailed, store.StatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+func completedCodeDelivery(tk store.Task, merges map[int64]store.Task) bool {
+	if tk.Status != store.StatusSucceeded {
+		return false
+	}
+	if tk.MergeOf != nil || tk.MergeSkipped {
+		return true
+	}
+	if tk.WorktreeBranch == "" {
+		return false
+	}
+	merge, ok := merges[tk.ID]
+	return ok && merge.Status == store.StatusSucceeded
+}
+
+// CleanupTaskWorkspaces 清理任务代码工作区：正确合并/无改动交付的任务立即
+// 清理；失败、取消或仍未交付的终态任务按保留期限清理。合并源任务在合并
+// 子任务仍运行时必须保留，避免破坏待整合代码。
+func (e *Executor) CleanupTaskWorkspaces(tasks []store.Task, retentionDays int) (int, error) {
+	if e.sessionsRoot == "" {
+		return 0, nil
+	}
+	merges := make(map[int64]store.Task)
+	for _, tk := range tasks {
+		if tk.MergeOf != nil {
+			merges[*tk.MergeOf] = tk
+		}
+	}
+	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+	removed := 0
+	var errs []error
+	for _, tk := range tasks {
+		if !e.taskHasManagedWorkspace(tk) || !terminalTask(tk.Status) {
+			continue
+		}
+		completed := completedCodeDelivery(tk, merges)
+		expired := false
+		if !completed && retentionDays > 0 && tk.FinishedAt != nil {
+			if fin, err := time.Parse(time.RFC3339, *tk.FinishedAt); err == nil && !fin.After(cutoff) {
+				expired = true
+			}
+		}
+		if !completed && !expired {
+			continue
+		}
+		if tk.MergeOf == nil && tk.WorktreeBranch != "" && !tk.MergeSkipped {
+			merge, ok := merges[tk.ID]
+			if !ok || !terminalTask(merge.Status) {
+				continue
+			}
+		}
+		if err := workspace.Discard(tk, e.sessionsRoot); err != nil {
+			errs = append(errs, fmt.Errorf("清理任务 %d worktree 失败: %w", tk.ID, err))
+			continue
+		}
+		removed++
+	}
+	return removed, errors.Join(errs...)
+}
+
+func (e *Executor) taskRuntimeExists(tk store.Task) bool {
+	sessionID := e.taskSessionID(tk)
+	if _, err := os.Stat(e.taskSessions.dir(sessionID)); err == nil {
+		return true
+	}
+	_, err := os.Stat(e.runner.taskDir(tk.ID))
+	return err == nil
+}
+
+// CleanupCompletedTaskRuntimeSessions 回收已经不可续跑的成功代码任务的
+// Runtime 会话。失败/取消任务仍保留会话，供“继续对话/重做”复用。
+func (e *Executor) CleanupCompletedTaskRuntimeSessions(tasks []store.Task) (int, error) {
+	merges := make(map[int64]store.Task)
+	for _, tk := range tasks {
+		if tk.MergeOf != nil {
+			merges[*tk.MergeOf] = tk
+		}
+	}
+	cleaned := 0
+	var errs []error
+	for _, tk := range tasks {
+		if tk.Status != store.StatusSucceeded {
+			continue
+		}
+		if !completedCodeDelivery(tk, merges) || !e.taskRuntimeExists(tk) {
+			continue
+		}
+		if err := e.CleanupTaskRuntime(tk); err != nil {
+			errs = append(errs, fmt.Errorf("清理任务 %d Runtime 会话失败: %w", tk.ID, err))
+			continue
+		}
+		cleaned++
+	}
+	return cleaned, errors.Join(errs...)
+}
+
+// CleanupMergedTaskResources 在代码已成功写入主分支后立即清理合并任务和
+// 源任务的 worktree/分支及其不可再续跑的 Runtime 会话。失败或待审批路径不
+// 调用此方法，保留重试和审查所需的工作区。
+func (e *Executor) CleanupMergedTaskResources(merge store.Task) error {
+	all := []store.Task{merge}
+	if merge.MergeOf != nil {
+		source, err := e.st.GetTask(*merge.MergeOf)
+		if err != nil {
+			return fmt.Errorf("读取已合并源任务 %d 失败: %w", *merge.MergeOf, err)
+		}
+		all = append(all, *source)
+	}
+	var errs []error
+	for _, tk := range all {
+		if err := e.CleanupTaskResources(tk); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (e *Executor) loop(ctx context.Context) {
@@ -632,6 +809,9 @@ func (e *Executor) runTask(ctx context.Context, tk store.Task) {
 				e.log(tk.ID, "sys", "✓ 无冲突，平台已自动合并（主分支无需新增提交）")
 			} else {
 				e.log(tk.ID, "sys", "✓ 无冲突，平台已自动合并到主分支: "+hash)
+			}
+			if err := e.CleanupMergedTaskResources(tk); err != nil {
+				e.log(tk.ID, "sys", "⚠ 自动合并后清理资源失败: "+err.Error())
 			}
 			_ = e.st.UpdateTask(tk.ID, map[string]any{
 				"status": store.StatusSucceeded, "finished_at": store.Now(), "exit_code": 0,
@@ -1106,6 +1286,9 @@ func (e *Executor) finishRun(tk store.Task, code int, runErr error, canceled boo
 		changed, derr := workspace.HasTaskBranchChanges(tk.ProjectDir, tk)
 		if derr == nil && !changed {
 			e.log(tk.ID, "sys", "✓ 完成（无改动，跳过合并任务）")
+			if err := e.CleanupTaskResources(tk); err != nil {
+				e.log(tk.ID, "sys", "⚠ 无改动任务清理资源失败: "+err.Error())
+			}
 			_ = e.st.UpdateTask(tk.ID, map[string]any{
 				"status": store.StatusSucceeded, "finished_at": store.Now(), "exit_code": 0, "merge_skipped": true,
 			})
@@ -1147,6 +1330,11 @@ func (e *Executor) finishRun(tk store.Task, code int, runErr error, canceled boo
 			e.log(tk.ID, "sys", "✓ 代码合并完成（主分支无需新增提交）")
 		} else {
 			e.log(tk.ID, "sys", "✓ 已合并到主分支: "+hash)
+		}
+	}
+	if tk.MergeOf != nil {
+		if err := e.CleanupMergedTaskResources(tk); err != nil {
+			e.log(tk.ID, "sys", "⚠ 合并完成后清理资源失败: "+err.Error())
 		}
 	}
 	_ = e.st.UpdateTask(tk.ID, map[string]any{

@@ -562,6 +562,11 @@ func (s *Server) approveReviewTask(w http.ResponseWriter, source store.Task) {
 			writeErr(w, http.StatusConflict, err.Error())
 			return
 		}
+		if s.ex != nil {
+			if err := s.ex.CleanupTaskResources(source); err != nil {
+				log.Printf("⚠ 任务 %d 审批通过后清理资源失败: %v", source.ID, err)
+			}
+		}
 		if l, err := s.st.AppendLog(store.TaskLog{
 			TaskID: source.ID, Stream: "sys", Content: "✓ 审批通过（无改动，跳过合并任务）",
 		}); err == nil {
@@ -667,11 +672,8 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, tk := range tasks {
-		s.ex.RemoveTask(tk.ID)
-	}
-	for _, tk := range tasks {
-		if err := workspace.Discard(tk, s.sessionsRoot); err != nil {
-			writeErr(w, http.StatusConflict, fmt.Sprintf("清理任务 #%d 的 worktree 失败: %v", tk.ID, err))
+		if err := s.ex.CleanupTaskResources(tk); err != nil {
+			writeErr(w, http.StatusConflict, fmt.Sprintf("清理任务 #%d 资源失败: %v", tk.ID, err))
 			return
 		}
 	}
@@ -1071,21 +1073,38 @@ func (s *Server) cleanupTasks(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	n, locators, err := s.st.CleanupTasks(in.RoleID, in.Before)
+	result, err := s.st.CleanupTasks(in.RoleID, in.Before)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	cleanupErrors := make([]string, 0)
+	if s.ex != nil {
+		for _, tk := range result.Tasks {
+			if err := s.ex.CleanupTaskResources(tk); err != nil {
+				msg := fmt.Sprintf("任务 #%d 资源清理失败: %v", tk.ID, err)
+				cleanupErrors = append(cleanupErrors, msg)
+				log.Printf("⚠ 手动历史清理：%s", msg)
+			}
+		}
+		if _, err := s.ex.CleanupOrphanTaskSessions(); err != nil {
+			msg := "孤儿 Runtime 会话清理失败: " + err.Error()
+			cleanupErrors = append(cleanupErrors, msg)
+			log.Printf("⚠ 手动历史清理：%s", msg)
+		}
+	}
 	if s.artifacts != nil {
-		for _, locator := range locators {
+		for _, locator := range result.Locators {
 			if count, countErr := s.st.CountArtifactsByLocator(locator); countErr == nil && count == 0 {
 				if err := s.artifacts.Delete(r.Context(), locator); err != nil {
-					log.Printf("清理无引用 Artifact %s 失败: %v", locator, err)
+					msg := fmt.Sprintf("清理无引用 Artifact %s 失败: %v", locator, err)
+					cleanupErrors = append(cleanupErrors, msg)
+					log.Printf("⚠ 手动历史清理：%s", msg)
 				}
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": result.Deleted, "cleanup_errors": cleanupErrors})
 }
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
