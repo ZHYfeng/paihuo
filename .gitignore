@@ -10,6 +10,8 @@ paihuo.db*
 /sessions/
 /skills/
 node_modules/
+/internal/web/dist/*
+!/internal/web/dist/.gitkeep
 /playwright-report/
 /test-results/
 /coverage.out

@@ -99,12 +99,13 @@ SSE 位于 `/api/v1/events`，通过 `Last-Event-ID` 或 `?after=<seq>` 恢复�
 
 ## 开发
 
-前端源码位于 `frontend/`，Vite hashed assets 输出到 `internal/web/dist/` 并由 Go 嵌入。生产环境不运行 Node。
+前端源码位于 `frontend/`，Vite hashed assets 在构建时输出到已忽略的
+`internal/web/dist/`，再由 Go 嵌入；生成物不提交到 Git，生产环境不运行 Node。
 
 ```bash
 npm run dev             # Vite 开发服务器，代理 API 到 :8080
-npm run build:frontend  # 更新内嵌产物
-make check              # 完整质量门禁
+npm run build:frontend  # 在本地生成内嵌产物（不提交）
+make check              # 完整质量门禁（含一次 Vite 构建）
 make test-race          # Go 并发检查
 make test-runtime       # 显式调用已安装、已登录的 Pi 做 Session 冒烟
 ```

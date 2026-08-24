@@ -9,7 +9,6 @@
   "scripts": {
     "dev": "vite",
     "build:frontend": "./scripts/build-frontend.sh",
-    "check:frontend": "./scripts/build-frontend.sh --check",
     "typecheck": "tsc --noEmit",
     "lint": "eslint frontend/src vite.config.ts",
     "test": "vitest run",

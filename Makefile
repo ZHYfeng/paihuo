@@ -11,11 +11,11 @@ GO_PACKAGES := ./cmd/... ./internal/...
 help: ## Show available development commands.
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-build: ## Build a development binary at bin/paihuo.
+build: frontend ## Build a development binary at bin/paihuo.
 	@mkdir -p $(BUILD_DIR)
 	go build $(GO_BUILD_FLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/paihuo ./cmd/paihuo
 
-release: ## Build a smaller release binary; set VERSION=vX.Y.Z.
+release: frontend ## Build a smaller release binary; set VERSION=vX.Y.Z.
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) -ldflags "-s -w $(LDFLAGS)" -o $(BUILD_DIR)/paihuo ./cmd/paihuo
 
@@ -48,10 +48,9 @@ mod-tidy-check: ## Verify go.mod and go.sum are tidy without modifying them.
 frontend: ## Build the React application embedded in the Go binary.
 	./scripts/build-frontend.sh
 
-frontend-check: ## Typecheck, lint, and verify the embedded React build.
+frontend-check: ## Typecheck and lint the React application.
 	npm run typecheck
 	npm run lint
-	./scripts/build-frontend.sh --check
 
 frontend-test: ## Run frontend component tests.
 	npm test

@@ -206,7 +206,11 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.
 	m.HandleFunc("POST /login", s.login)
 	m.HandleFunc("POST /logout", s.logout)
 	m.Handle("GET /static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		name := "dist/" + strings.TrimPrefix(r.URL.Path, "/static/")
+		relative := strings.TrimPrefix(r.URL.Path, "/static/")
+		name := "dist/" + relative
+		if relative == "login.css" {
+			name = "static/login.css"
+		}
 		if !fs.ValidPath(name) {
 			http.NotFound(w, r)
 			return
@@ -376,7 +380,7 @@ func (s *Server) pageApp(w http.ResponseWriter, r *http.Request) {
 	}
 	b, err := fs.ReadFile(web.FS, "dist/index.html")
 	if err != nil {
-		http.Error(w, "前端资源未构建", http.StatusInternalServerError)
+		http.Error(w, "前端未构建，请运行 make frontend", http.StatusServiceUnavailable)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

@@ -45,7 +45,7 @@ Agent 运维控制台质感。所有改动集中在设计令牌与共享组件�
   对话框 `shadow-pop` + 毛玻璃遮罩；输入焦点 4px 品牌晕圈；Toast 状态点。
 - `styles.css`：统计条/工作台卡/看板列/消息卡/折叠面板/日志面板/开关/
   状态点/chips/进度条/活动坞等全部组件按上表令牌重写。
-- 登录页（`public/login.css` + `templates/login.html`）：品牌渐变 Logo 与
+- 登录页（`internal/web/static/login.css` + `templates/login.html`）：品牌渐变 Logo 与
   按钮、玻璃拟态登录卡、轨道动画环、点阵网格背景；favicon 同步为品牌蓝。
 
 ## 顺手修复（非视觉）

@@ -3,5 +3,5 @@ package web
 
 import "embed"
 
-//go:embed templates/login.html dist
+//go:embed templates/login.html static all:dist
 var FS embed.FS

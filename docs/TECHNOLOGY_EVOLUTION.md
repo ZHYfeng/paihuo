@@ -16,7 +16,7 @@ PaiHuo 是面向可信管理员的个人自托管 Agent 调度平台。它保持
 | 前端 | React 19、TypeScript、Vite、React Router、TanStack Query、Tailwind、Radix |
 | 终端与内容 | xterm.js adapter；Marked + DOMPurify 单一审计渲染器 |
 | 测试 | Go test、Vitest、Testing Library、Playwright |
-| 交付 | Vite hashed assets 由 `go:embed` 嵌入单二进制；生产不运行 Node |
+| 交付 | 构建时生成 Vite hashed assets，再由 `go:embed` 嵌入单二进制；生成物不入 Git，生产不运行 Node |
 
 ## 模块方向
 
@@ -133,4 +133,4 @@ make check
 make test-race
 ```
 
-`make check` 覆盖 Go 格式与依赖、TypeScript、ESLint、Vitest、Vite 产物同步、Go vet、Go tests 和二进制构建。`scripts/e2e.sh` 验证 React 路由、API revision 合同和桌面/移动端布局。
+`make check` 覆盖 Go 格式与依赖、TypeScript、ESLint、Vitest、一次 Vite 构建、Go vet、Go tests 和二进制构建。`scripts/e2e.sh` 验证 React 路由、API revision 合同和桌面/移动端布局。

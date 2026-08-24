@@ -18,7 +18,7 @@ make check
 make test-race
 ```
 
-`make help` 可查看全部本地命令。`make check` 是提交前的最低质量门禁：它检查 Go 格式、模块依赖整洁度、前端生成物同步、`go vet`、单元测试和构建。
+`make help` 可查看全部本地命令。`make check` 是提交前的最低质量门禁：它检查 Go 格式、模块依赖整洁度、前端类型与 lint、Vitest、一次 Vite 构建、`go vet`、Go 测试和二进制构建。
 
 真实 Runtime 不属于确定性单元门禁。已安装并登录 Pi 时，可显式运行 `make test-runtime` 做结构化 Session 冒烟。
 
@@ -33,14 +33,12 @@ make test-race
 
 ## 前端约定
 
-前端使用 React、TypeScript、React Router、TanStack Query、Tailwind 和 Radix。源码在 `frontend/`，Vite hashed assets 输出到 `internal/web/dist/`。修改源码后运行：
+前端使用 React、TypeScript、React Router、TanStack Query、Tailwind 和 Radix。源码在 `frontend/`，Vite hashed assets 构建到已忽略的 `internal/web/dist/`，由 Go 嵌入但不提交到 Git。修改源码后运行：
 
 ```bash
-npm run typecheck
-npm run lint
-npm test
-npm run build:frontend
 make frontend-check
+npm test
+make frontend
 ```
 
 认证后只有一个 React root。服务端状态使用 Query client，SSE 使用统一 hook，终端使用 `TerminalAdapter`；不要创建全局 window API 或第二套页面实现。Markdown 必须经过现有 DOMPurify renderer。前端的 `VisualizationSpec` 目前只是本地类型化 renderer，服务端尚未验证 Role 输出；不要把未受信任的 Agent 内容接入该组件。
