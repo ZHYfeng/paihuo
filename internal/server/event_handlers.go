@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func (s *Server) registerEventRoutes(mux *http.ServeMux) {
+func (s *Server) registerEventRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("GET /api/v1/events", s.sse)
 }
 

@@ -7,7 +7,7 @@ import (
 	"paihuo/internal/store"
 )
 
-func (s *Server) registerTemplateRoutes(mux *http.ServeMux) {
+func (s *Server) registerTemplateRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("GET /api/v1/templates", s.listTemplates)
 	mux.HandleFunc("POST /api/v1/templates", s.createTemplate)
 	mux.HandleFunc("PATCH /api/v1/templates/{id}", s.patchTemplate)

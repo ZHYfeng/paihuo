@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: PaiHuo API
   version: 1.0.0
-  description: PaiHuo control-plane contract. Browser sessions use an HttpOnly cookie obtained from POST /login.
+  description: PaiHuo control-plane contract. Browser sessions use an HttpOnly cookie obtained from POST /login; the MCP endpoint uses a Bearer token.
 servers:
   - url: /api/v1
 tags:
@@ -12,218 +12,934 @@ tags:
   - name: Workflows
   - name: Artifacts
   - name: Management
+  - name: Platform
 paths:
   /openapi.yaml:
-    get: {summary: Read this contract, responses: {'200': {description: OpenAPI YAML}}}
+    get:
+      tags: [Platform]
+      summary: Read this OpenAPI contract
+      responses:
+        '200': {description: OpenAPI YAML, content: {application/yaml: {schema: {type: string}}}}
+        '500': {$ref: '#/components/responses/Error'}
   /events:
     get:
+      tags: [Platform]
       summary: Resume the persistent server-sent event stream
       parameters:
         - {name: Last-Event-ID, in: header, schema: {type: integer, format: int64}}
         - {name: after, in: query, schema: {type: integer, format: int64}}
       responses:
         '200': {description: text/event-stream with stable event ids}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+  /mcp:
+    post:
+      tags: [Platform]
+      summary: Invoke the orchestrator MCP JSON-RPC tool surface
+      parameters:
+        - {name: Authorization, in: header, required: true, schema: {type: string, pattern: '^Bearer .+'}}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/MCPRequest'}}}
+      responses:
+        '200': {description: JSON-RPC result or protocol error}
+        '202': {description: Notification accepted without a response body}
+        '400': {description: Malformed JSON-RPC request}
+        '401': {description: Invalid or expired platform tool token}
   /tasks:
-    get: {tags: [Tasks], summary: List tasks, responses: {'200': {$ref: '#/components/responses/TaskList'}}}
+    get:
+      tags: [Tasks]
+      summary: List tasks
+      parameters:
+        - {name: role_id, in: query, schema: {type: integer, format: int64, minimum: 1}}
+        - {name: project_id, in: query, schema: {type: integer, format: int64, minimum: 1}}
+        - {name: status, in: query, schema: {type: string}}
+        - {name: type, in: query, schema: {type: string, enum: [task, session, workflow]}}
+        - {name: scheduled, in: query, schema: {type: integer, enum: [1]}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1}}
+      responses:
+        '200': {$ref: '#/components/responses/TaskList'}
+        '500': {$ref: '#/components/responses/Error'}
     post:
       tags: [Tasks]
-      summary: Create and enqueue a task
+      summary: Create a task or scheduled task definition
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TaskInput'}}}}
-      responses: {'201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Task'}}}}, '400': {$ref: '#/components/responses/Error'}}
+      responses:
+        '201': {description: Created task, content: {application/json: {schema: {$ref: '#/components/schemas/Task'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+  /tasks/cleanup:
+    post:
+      tags: [Tasks]
+      summary: Delete terminal task history and its managed resources
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TaskCleanupInput'}}}}
+      responses:
+        '200': {description: Deleted count and resource cleanup errors}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
   /tasks/{id}:
     parameters: [{$ref: '#/components/parameters/ID'}]
-    get: {tags: [Tasks], summary: Get a task, responses: {'200': {description: Task, content: {application/json: {schema: {$ref: '#/components/schemas/Task'}}}}, '404': {$ref: '#/components/responses/Error'}}}
+    get:
+      tags: [Tasks]
+      summary: Get a task
+      responses:
+        '200': {description: Task, content: {application/json: {schema: {$ref: '#/components/schemas/Task'}}}}
+        '404': {$ref: '#/components/responses/Error'}
     patch:
       tags: [Tasks]
-      summary: Mutate a task using optimistic concurrency
+      summary: Partially update a task using optimistic concurrency
       parameters: [{$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
-      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
-      responses: {'200': {description: Updated task}, '409': {$ref: '#/components/responses/Error'}, '428': {$ref: '#/components/responses/Error'}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TaskPatch'}}}}
+      responses:
+        '200': {description: Updated task, content: {application/json: {schema: {$ref: '#/components/schemas/Task'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '428': {$ref: '#/components/responses/Error'}
     delete:
       tags: [Tasks]
+      summary: Delete a task and its managed resources
       parameters: [{$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
-      responses: {'204': {description: Deleted}, '409': {$ref: '#/components/responses/Error'}}
+      responses:
+        '204': {description: Deleted}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '428': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+  /tasks/{id}/resume:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [Tasks]
+      summary: Requeue a terminal task while preserving its session and workspace
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Resumed task, content: {application/json: {schema: {$ref: '#/components/schemas/Task'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /tasks/{id}/input:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [Tasks]
+      summary: Send a line or raw keystrokes to an interactive task
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TaskInputMessage'}}}}
+      responses:
+        '200': {description: Input sent}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /tasks/{id}/resize:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [Tasks]
+      summary: Resize an interactive task terminal
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TerminalSize'}}}}
+      responses:
+        '200': {description: Terminal resized}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /tasks/{id}/end-session:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [Tasks]
+      summary: Send the Runtime exit command to an interactive task
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Exit command sent}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
   /tasks/{id}/logs:
-    get: {tags: [Tasks], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Ordered task logs}}}
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Tasks]
+      summary: Read task logs
+      parameters:
+        - {name: all, in: query, schema: {type: integer, enum: [1]}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, default: 200}}
+        - {name: before, in: query, schema: {type: integer, format: int64}}
+      responses:
+        '200': {description: Ordered logs or a paginated log envelope}
+        '500': {$ref: '#/components/responses/Error'}
   /tasks/{id}/diff:
-    get: {tags: [Tasks], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Workspace diff}}}
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Tasks]
+      summary: Read the task workspace Git diff
+      responses:
+        '200': {description: Diff text, stat, branch and optional note}
+  /tasks/{id}/children:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Tasks]
+      summary: List direct child tasks
+      responses:
+        '200': {$ref: '#/components/responses/TaskList'}
+        '500': {$ref: '#/components/responses/Error'}
   /projects:
-    get: {tags: [Resources], responses: {'200': {description: Projects}}}
-    post: {tags: [Resources], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Project created}}}
-  /projects/{id}:
-    patch: {tags: [Resources], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Project updated}, '409': {$ref: '#/components/responses/Error'}}}
-    delete: {tags: [Resources], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'204': {description: Project deleted}}}
-  /projects/{id}/github/sync:
+    get:
+      tags: [Resources]
+      summary: List projects
+      responses:
+        '200': {description: Projects, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Project'}}}}}
+        '500': {$ref: '#/components/responses/Error'}
     post:
       tags: [Resources]
-      summary: Manually sync GitHub issues, PRs and security alerts for a project
-      parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      summary: Create a project
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ProjectInput'}}}}
       responses:
-        '200': {description: GitHub sync finished}
+        '201': {description: Created project, content: {application/json: {schema: {$ref: '#/components/schemas/Project'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+  /projects/{id}:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    patch:
+      tags: [Resources]
+      summary: Partially update a project
+      parameters: [{$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ProjectPatch'}}}}
+      responses:
+        '200': {description: Updated project, content: {application/json: {schema: {$ref: '#/components/schemas/Project'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '428': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Resources]
+      summary: Delete a project
+      parameters: [{$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '204': {description: Deleted}
+        '409': {$ref: '#/components/responses/Error'}
+        '428': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+  /projects/{id}/tasks/order:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    put:
+      tags: [Resources]
+      summary: Replace the complete queued implementation task order for a project
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TaskOrder'}}}}
+      responses:
+        '200': {$ref: '#/components/responses/TaskList'}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /projects/{id}/github/sync:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [Resources]
+      summary: Synchronize configured GitHub issues, pull requests and security alerts
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Synchronization completed}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
         '500': {$ref: '#/components/responses/Error'}
   /roles:
-    get: {tags: [Resources], responses: {'200': {description: Roles}}}
-    post: {tags: [Resources], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Role created}}}
+    get:
+      tags: [Resources]
+      summary: List roles
+      responses:
+        '200': {description: Roles, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Role'}}}}}
+        '500': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Resources]
+      summary: Create a role
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RoleInput'}}}}
+      responses:
+        '201': {description: Created role, content: {application/json: {schema: {$ref: '#/components/schemas/Role'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
   /roles/{id}:
-    patch: {tags: [Resources], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Role updated}}}
-    delete: {tags: [Resources], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'204': {description: Role deleted}}}
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    patch:
+      tags: [Resources]
+      summary: Partially update a role
+      parameters: [{$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RolePatch'}}}}
+      responses:
+        '200': {description: Updated role, content: {application/json: {schema: {$ref: '#/components/schemas/Role'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '428': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Resources]
+      summary: Delete a role
+      parameters: [{$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '204': {description: Deleted}
+        '409': {$ref: '#/components/responses/Error'}
+        '428': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
   /runtimes:
-    get: {tags: [Resources], summary: Runtime catalog and capabilities, responses: {'200': {description: Runtime descriptors}}}
+    get:
+      tags: [Resources]
+      summary: List Runtime capabilities, fields and model catalogs
+      responses:
+        '200': {description: Runtime descriptors}
   /runtimes/refresh:
-    post: {tags: [Resources], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Refreshed catalog}}}
+    post:
+      tags: [Resources]
+      summary: Refresh Runtime model catalogs
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Refreshed Runtime descriptors}
   /runtimes/provisioning:
-    get: {tags: [Resources], responses: {'200': {description: Runtime installation state}}}
+    get:
+      tags: [Resources]
+      summary: Read Runtime installation state
+      responses:
+        '200': {description: Provisioning descriptors}
   /runtimes/install:
-    post: {tags: [Resources], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'202': {description: Installation started}}}
+    post:
+      tags: [Resources]
+      summary: Start installing a Runtime CLI
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeInstall'}}}}
+      responses:
+        '202': {description: Installation started and output will arrive on the event stream}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /role-studio/chat:
+    post:
+      tags: [Resources]
+      summary: Ask a creator Role to refine a Role draft
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RoleStudioChat'}}}}
+      responses:
+        '200': {description: Creator response and optional normalized Role draft}
+        '400': {$ref: '#/components/responses/Error'}
+        '502': {$ref: '#/components/responses/Error'}
+  /role-studio/test:
+    post:
+      tags: [Resources]
+      summary: Test an unsaved Role draft with a short-lived Runtime invocation
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RoleStudioTest'}}}}
+      responses:
+        '200': {description: Test output}
+        '400': {$ref: '#/components/responses/Error'}
+        '502': {$ref: '#/components/responses/Error'}
+  /stats/overview:
+    get:
+      tags: [Resources]
+      summary: Read platform-wide task statistics
+      responses:
+        '200': {description: Overview counts and recent activity}
+        '500': {$ref: '#/components/responses/Error'}
+  /stats/roles/{id}:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Resources]
+      summary: Read statistics for a Role
+      responses:
+        '200': {description: Role task statistics}
+        '404': {$ref: '#/components/responses/Error'}
+  /stats/projects/{id}:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Resources]
+      summary: Read statistics for a Project
+      responses:
+        '200': {description: Project progress, status, Role and daily statistics}
+        '404': {$ref: '#/components/responses/Error'}
   /sessions:
-    get: {tags: [Sessions], responses: {'200': {description: Sessions}}}
-    post: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Session created}}}
-  /sessions/{id}:
-    get: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Session}}}
-    delete: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Session deleted}}}
-  /sessions/{id}/start:
-    post: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Started}}}
-  /sessions/{id}/resume:
-    post: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Resumed}}}
-  /sessions/{id}/suspend:
-    post: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Suspended}}}
-  /sessions/{id}/prompt:
-    post: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Prompt accepted}}}
-  /sessions/{id}/deliver:
-    post: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Delivered as task}}}
-  /sessions/{id}/transcript:
-    get: {tags: [Sessions], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Transcript page}}}
-  /sessions/{id}/command:
+    get:
+      tags: [Sessions]
+      summary: List Sessions
+      parameters:
+        - {name: status, in: query, schema: {type: string}}
+        - {name: project_id, in: query, schema: {type: integer, format: int64, minimum: 1}}
+      responses:
+        '200': {description: Sessions, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Task'}}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
     post:
       tags: [Sessions]
-      summary: 转发运行时命令（get_commands / compact / set_model / set_thinking_level 等）
-      parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/IdempotencyKey'}]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [command]
-              properties:
-                command: {type: string, description: 运行时命令名（如 get_commands、compact）}
-                fields: {type: object, description: 命令附加字段（如 set_model 的 model、set_thinking_level 的 level）}
+      summary: Create a Session or scheduled Session definition
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SessionInput'}}}}
       responses:
-        '200': {description: 命令响应 data（原始 JSON，可能为 null）}
-        '409': {$ref: '#/components/responses/Error'}
-  /workflows:
-    get: {tags: [Workflows], responses: {'200': {description: Workflows}}}
-    post: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Workflow created}}}
-  /workflows/{id}:
-    get: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Workflow}}}
-    put:
-      tags: [Workflows]
-      parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+        '201': {description: Created Session, content: {application/json: {schema: {$ref: '#/components/schemas/Task'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+  /sessions/{id}:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Sessions]
+      summary: Get a Session
       responses:
-        '200': {description: Workflow replaced}
-        '409': {$ref: '#/components/responses/Error'}
-        '422': {$ref: '#/components/responses/Error'}
+        '200': {description: Session, content: {application/json: {schema: {$ref: '#/components/schemas/Task'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
     delete:
-      tags: [Workflows]
-      parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      tags: [Sessions]
+      summary: Delete a Session and its workspace
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       responses:
-        '204': {description: Workflow deleted}
+        '200': {description: Session deleted}
+        '400': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
-  /workflows/{id}/runs:
-    get: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Runs of a workflow}}}
+  /sessions/{id}/start:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [Sessions]
+      summary: Start a created Session
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Session started}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /sessions/{id}/resume:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [Sessions]
+      summary: Resume a suspended Session
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Session resumed}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /sessions/{id}/suspend:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [Sessions]
+      summary: Suspend an active Session
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Session suspended}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /sessions/{id}/deliver:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [Sessions]
+      summary: Deliver a Session as an approval Task
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SessionDelivery'}}}}
+      responses:
+        '200': {description: Created delivery Task, content: {application/json: {schema: {$ref: '#/components/schemas/Task'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+  /sessions/{id}/prompt:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [Sessions]
+      summary: Send a prompt or images to a Session
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SessionPrompt'}}}}
+      responses:
+        '200': {description: Prompt accepted}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /sessions/{id}/ask:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [Sessions]
+      summary: Answer an interactive Runtime question
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SessionAsk'}}}}
+      responses:
+        '200': {description: Answer accepted}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /sessions/{id}/abort:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [Sessions]
+      summary: Abort the current Session turn
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Current turn aborted}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /sessions/{id}/command:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [Sessions]
+      summary: Forward a structured Runtime command
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SessionCommand'}}}}
+      responses:
+        '200': {description: Raw Runtime command result}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /sessions/{id}/messages:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Sessions]
+      summary: Read Runtime-native Session messages
+      responses:
+        '200': {description: Raw Runtime message data}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /sessions/{id}/state:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Sessions]
+      summary: Read Runtime-native Session state
+      responses:
+        '200': {description: Raw Runtime state data}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /sessions/{id}/transcript:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Sessions]
+      summary: Read the normalized Session transcript
+      parameters:
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500}}
+        - {name: before, in: query, schema: {type: string}}
+      responses:
+        '200': {description: Transcript entries and total count}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+  /sessions/{id}/tasks:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Sessions]
+      summary: List all delegated child Tasks in a Session tree
+      responses:
+        '200': {$ref: '#/components/responses/TaskList'}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+  /workflows:
+    get:
+      tags: [Workflows]
+      summary: List adopted Workflow definitions
+      responses:
+        '200': {description: Workflows, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Task'}}}}}
+        '500': {$ref: '#/components/responses/Error'}
     post:
       tags: [Workflows]
-      parameters: [{$ref: '#/components/parameters/ID'}, {$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [project_id]
-              properties:
-                project_id: {type: integer, format: int64, description: 本次 Run 绑定的具体项目}
-                task: {type: string, description: '可选：本次 Run 的自定义任务描述；渲染进节点意图（{{.task}} 占位符，纯文本意图自动附加），并记录在 Run 上供审计'}
+      summary: Validate and create an adopted Workflow definition
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/WorkflowInput'}}}}
       responses:
-        '201': {description: Workflow run created atomically}
-        '422': {$ref: '#/components/responses/Error'}
+        '201': {description: Created Workflow, content: {application/json: {schema: {$ref: '#/components/schemas/Task'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/PolicyError'}
+  /workflows/{id}:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Workflows]
+      summary: Get an adopted Workflow definition
+      responses:
+        '200': {description: Workflow, content: {application/json: {schema: {$ref: '#/components/schemas/Task'}}}}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [Workflows]
+      summary: Validate and replace a complete Workflow definition
+      parameters: [{$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/WorkflowInput'}}}}
+      responses:
+        '200': {description: Replaced Workflow, content: {application/json: {schema: {$ref: '#/components/schemas/Task'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/PolicyError'}
+        '428': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Workflows]
+      summary: Delete a Workflow definition and its Run bookmarks
+      parameters: [{$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '204': {description: Deleted}
+        '409': {$ref: '#/components/responses/Error'}
+        '428': {$ref: '#/components/responses/Error'}
+  /workflows/{id}/runs:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Workflows]
+      summary: List Runs of a Workflow
+      responses:
+        '200': {description: Workflow Runs}
+        '404': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Workflows]
+      summary: Atomically instantiate a Workflow Run in a Project
+      parameters: [{$ref: '#/components/parameters/Revision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/WorkflowRunInput'}}}}
+      responses:
+        '201': {description: Created Workflow Run}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/PolicyError'}
+        '428': {$ref: '#/components/responses/Error'}
   /workflow-runs/{id}:
-    get: {tags: [Workflows], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Workflow run}}}
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Workflows]
+      summary: Get a Workflow Run with node-to-Task mappings
+      responses:
+        '200': {description: Workflow Run}
+        '404': {$ref: '#/components/responses/Error'}
   /artifacts:
     get:
       tags: [Artifacts]
+      summary: List Artifact metadata
       parameters:
         - {name: task_id, in: query, schema: {type: integer, format: int64, minimum: 1}}
         - {name: run_id, in: query, schema: {type: integer, format: int64, minimum: 1}}
-      responses: {'200': {description: Artifact metadata list, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Artifact'}}}}}}
+      responses:
+        '200': {description: Artifact metadata, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Artifact'}}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
     post:
       tags: [Artifacts]
+      summary: Store immutable Artifact content and metadata
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ArtifactInput'}}}}
-      responses: {'201': {description: Artifact stored, content: {application/json: {schema: {$ref: '#/components/schemas/Artifact'}}}}, '400': {$ref: '#/components/responses/Error'}}
+      responses:
+        '201': {description: Stored Artifact, content: {application/json: {schema: {$ref: '#/components/schemas/Artifact'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '413': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
   /artifacts/{id}:
     parameters: [{$ref: '#/components/parameters/ID'}]
-    get: {tags: [Artifacts], responses: {'200': {description: Artifact metadata, content: {application/json: {schema: {$ref: '#/components/schemas/Artifact'}}}}, '404': {$ref: '#/components/responses/Error'}}}
-    delete: {tags: [Artifacts], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'204': {description: Artifact metadata and unreferenced content deleted}}}
+    get:
+      tags: [Artifacts]
+      summary: Get Artifact metadata
+      responses:
+        '200': {description: Artifact metadata, content: {application/json: {schema: {$ref: '#/components/schemas/Artifact'}}}}
+        '404': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Artifacts]
+      summary: Delete Artifact metadata and unreferenced content
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '204': {description: Deleted}
+        '404': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
   /artifacts/{id}/content:
-    get: {tags: [Artifacts], parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Artifact bytes}, '404': {$ref: '#/components/responses/Error'}}}
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Artifacts]
+      summary: Download Artifact bytes
+      responses:
+        '200': {description: Artifact bytes, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+        '404': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
   /skills:
-    get: {tags: [Management], responses: {'200': {description: Skills}}}
-    post: {tags: [Management], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Skill imported}}}
+    get:
+      tags: [Management]
+      summary: List Skills
+      responses:
+        '200': {description: Skills, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Skill'}}}}}
+        '500': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Management]
+      summary: Import one Skill directory
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SkillImport'}}}}
+      responses:
+        '201': {description: Imported Skill, content: {application/json: {schema: {$ref: '#/components/schemas/Skill'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
     patch:
       tags: [Management]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [ids]
-              properties:
-                ids: {type: array, items: {type: integer, format: int64}, description: 选中的技能 id 列表}
-                tags: {type: array, items: {type: string}, description: 出现则整体替换选中技能的标签}
-                category: {type: string, description: 出现则设置选中技能的分类（文件夹）；空字符串 = 清空为未分类}
+      summary: Replace tags or category for selected Skills
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SkillBatchPatch'}}}}
       responses:
-        '200': {description: Skills updated}
+        '200': {description: Updated Skills}
+        '400': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
-    delete: {tags: [Management], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Skills deleted}}}
+        '500': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Management]
+      summary: Delete selected Skills and managed directory copies
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SkillBatchDelete'}}}}
+      responses:
+        '200': {description: Deleted Skill ids and count}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+  /skills/scan:
+    post:
+      tags: [Management]
+      summary: Discover and import Skills recursively
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SkillImport'}}}}
+      responses:
+        '200': {description: No new Skills; scan result returned}
+        '201': {description: One or more Skills imported}
+        '207': {description: Scan completed with per-Skill import errors}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+  /skills/{id}:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Management]
+      summary: Get Skill metadata and SKILL.md content
+      responses:
+        '200': {description: Skill detail}
+        '404': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+    patch:
+      tags: [Management]
+      summary: Replace a Skill's tags or category
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SkillPatch'}}}}
+      responses:
+        '200': {description: Updated Skill, content: {application/json: {schema: {$ref: '#/components/schemas/Skill'}}}}
+        '404': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Management]
+      summary: Delete a Skill and its managed directory copy
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Deleted Skill id}
+        '404': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
   /templates:
-    get: {tags: [Management], responses: {'200': {description: Task templates}}}
-    post: {tags: [Management], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'201': {description: Template created}}}
+    get:
+      tags: [Management]
+      summary: List Task templates
+      responses:
+        '200': {description: Task templates}
+        '500': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Management]
+      summary: Create a Task template
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TemplateInput'}}}}
+      responses:
+        '201': {description: Created template id}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+  /templates/{id}:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    patch:
+      tags: [Management]
+      summary: Partially update a Task template
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TemplatePatch'}}}}
+      responses:
+        '200': {description: Updated Task template}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Management]
+      summary: Delete a Task template
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '204': {description: Deleted}
+        '500': {$ref: '#/components/responses/Error'}
   /settings:
-    get: {tags: [Management], responses: {'200': {description: Settings}}}
-    put: {tags: [Management], parameters: [{$ref: '#/components/parameters/IdempotencyKey'}], responses: {'200': {description: Settings saved}}}
+    get:
+      tags: [Management]
+      summary: Read all settings
+      responses:
+        '200': {description: String setting map, content: {application/json: {schema: {$ref: '#/components/schemas/Settings'}}}}
+        '500': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [Management]
+      summary: Replace supplied setting values
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Settings'}}}}
+      responses:
+        '200': {description: Complete updated setting map, content: {application/json: {schema: {$ref: '#/components/schemas/Settings'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+  /extensions:
+    get:
+      tags: [Management]
+      summary: List installed Pi extensions
+      responses:
+        '200': {description: Raw Pi extension listing and optional command error}
+  /extensions/install:
+    post:
+      tags: [Management]
+      summary: Install a Pi extension from a package or path
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ExtensionInstall'}}}}
+      responses:
+        '200': {description: Raw Pi install output}
+        '400': {$ref: '#/components/responses/Error'}
+        '502': {$ref: '#/components/responses/Error'}
+  /extensions/{name}:
+    parameters:
+      - {name: name, in: path, required: true, schema: {type: string, minLength: 1}}
+    delete:
+      tags: [Management]
+      summary: Remove an installed Pi extension
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Raw Pi remove output}
+        '400': {$ref: '#/components/responses/Error'}
+        '502': {$ref: '#/components/responses/Error'}
+  /fs/dirs:
+    get:
+      tags: [Management]
+      summary: List selectable child directories
+      parameters:
+        - {name: path, in: query, schema: {type: string, description: Absolute directory; defaults to the service user's home}}
+      responses:
+        '200': {description: Absolute path, parent and sorted child directory names}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+  /fs/mkdir:
+    post:
+      tags: [Management]
+      summary: Create a directory tree
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PathInput'}}}}
+      responses:
+        '200': {description: Created absolute path}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+  /workspace/{id}:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    get:
+      tags: [Management]
+      summary: Read a Task workspace status
+      responses:
+        '200': {description: Workspace path, Git state and managed worktree metadata}
+        '404': {$ref: '#/components/responses/Error'}
+  /workspace/{id}/discard:
+    parameters: [{$ref: '#/components/parameters/ID'}]
+    post:
+      tags: [Management]
+      summary: Discard uncommitted changes in a Task workspace
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Workspace discarded}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /workspace/git-init:
+    post:
+      tags: [Management]
+      summary: Initialize Git in a project directory
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PathInput'}}}}
+      responses:
+        '200': {description: Git repository initialized}
+        '400': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
 components:
   parameters:
     ID: {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
     Revision: {name: If-Match, in: header, required: true, description: Quoted revision returned in the resource body or ETag, schema: {type: string, example: '"3"'}}
     IdempotencyKey: {name: Idempotency-Key, in: header, required: false, description: Replays the first completed response for the same method and path, schema: {type: string, maxLength: 200}}
   responses:
-    Error: {description: Error envelope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    Error: {description: Error response, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    PolicyError: {description: Deterministic Workflow policy violations, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
     TaskList: {description: Tasks, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Task'}}}}}
   schemas:
     Error:
+      oneOf:
+        - type: object
+          required: [error]
+          properties:
+            error:
+              type: object
+              required: [code, message]
+              properties: {code: {type: string}, message: {type: string}}
+        - type: object
+          required: [error]
+          properties: {error: {type: string, description: Legacy Session transport error}}
+    MCPRequest:
       type: object
-      required: [error]
+      required: [jsonrpc, method]
       properties:
-        error: {type: object, required: [code, message], properties: {code: {type: string}, message: {type: string}}}
+        jsonrpc: {type: string, const: '2.0'}
+        id: {description: JSON-RPC request id; omitted for notifications}
+        method: {type: string, enum: [initialize, notifications/initialized, notifications/cancelled, tools/list, tools/call, ping]}
+        params: {type: object}
+    RoleConfig:
+      type: object
+      properties:
+        model: {type: string}
+        system_prompt: {type: string}
+        instructions: {type: string}
+        skills: {type: array, items: {type: string}}
+        thinking: {type: string}
+        plugins: {type: array, items: {type: string}}
+        extra_args: {type: array, items: {type: string}}
+        env: {type: object, additionalProperties: {type: string}}
+        custom: {type: object, additionalProperties: {type: string}}
+    RoleInput:
+      type: object
+      required: [name, runtime_id]
+      properties:
+        name: {type: string, minLength: 1}
+        description: {type: string}
+        runtime_id: {type: string}
+        role_config: {$ref: '#/components/schemas/RoleConfig'}
+        max_concurrency: {type: integer, minimum: 1, default: 1}
+        delegation_enabled: {type: boolean, default: false}
+        delegation_max_perm: {type: string, enum: [full, review], default: review}
+        enabled: {type: boolean, default: true}
+    RolePatch:
+      type: object
+      properties:
+        name: {type: string, minLength: 1}
+        description: {type: string}
+        runtime_id: {type: string}
+        role_config: {$ref: '#/components/schemas/RoleConfig'}
+        max_concurrency: {type: integer, minimum: 1}
+        delegation_enabled: {type: boolean}
+        delegation_max_perm: {type: string, enum: [full, review]}
+        enabled: {type: boolean}
+    Role:
+      allOf:
+        - {$ref: '#/components/schemas/RoleInput'}
+        - type: object
+          required: [id, revision, created_at, updated_at]
+          properties:
+            id: {type: integer, format: int64}
+            revision: {type: integer, format: int64, minimum: 1}
+            created_at: {type: string, format: date-time}
+            updated_at: {type: string, format: date-time}
     TaskInput:
       type: object
       required: [title]
       properties:
-        title: {type: string}
+        type: {type: string, enum: [task, session, workflow], default: task}
+        title: {type: string, minLength: 1}
         body: {type: string}
-        project_id: {type: integer, format: int64}
-        role_id: {type: integer, format: int64}
+        project_id: {type: [integer, 'null'], format: int64}
+        role_id: {type: [integer, 'null'], format: int64}
         perm: {type: string, enum: [full, review], default: full}
         run_mode: {type: string, enum: [batch, interactive], default: batch}
         concurrent: {type: boolean, default: false}
-        dependency_mode: {type: string, enum: [none, weak, strong], description: 前置交付策略；weak=按项目顺序，strong=明确前置}
-        depends_on: {type: [integer, 'null'], format: int64, description: strong 模式的前置普通任务 ID}
+        parent_id: {type: [integer, 'null'], format: int64}
+        dependency_mode: {type: string, enum: [none, weak, strong]}
+        depends_on: {type: [integer, 'null'], format: int64}
         block_on_failure: {type: boolean, default: false}
-        cron: {type: string, description: 定时属性（正交）：非空时创建定时定义任务，永不直接执行}
+        cron: {type: string}
         enabled: {type: boolean, default: true}
+    TaskPatch:
+      type: object
+      properties:
+        title: {type: string}
+        body: {type: string}
+        status: {type: string}
+        perm: {type: string, enum: [full, review]}
+        run_mode: {type: string, enum: [batch, interactive]}
+        concurrent: {type: boolean}
+        role_id: {type: [integer, 'null'], format: int64}
+        project_id: {type: [integer, 'null'], format: int64}
+        parent_id: {type: [integer, 'null'], format: int64}
+        depends_on: {type: [integer, 'null'], format: int64}
+        dependency_mode: {type: string, enum: [none, weak, strong]}
+        block_on_failure: {type: boolean}
+        cron: {type: string}
+        enabled: {type: boolean}
+        review_note: {type: string}
     Task:
       allOf:
         - {$ref: '#/components/schemas/TaskInput'}
@@ -231,28 +947,192 @@ components:
           required: [id, type, status, revision, created_at, updated_at]
           properties:
             id: {type: integer, format: int64}
-            type: {type: string, enum: [task, session, workflow], description: 任务形态：四种形态物理统一在 tasks 表}
-            status: {type: string, description: 按形态解释：task→queued/claimed/running/awaiting_review/succeeded/failed/cancelled；session→created/active/suspended/delivered/deleted；workflow→adopted（已通过策略校验、可启动 Run；定义可编辑）}
+            status: {type: string}
             role_name: {type: string}
             project_name: {type: string}
-            session_id: {type: integer, format: int64}
-            workflow_run_id: {type: integer, format: int64}
-            schedule_id: {type: integer, format: int64}
-            last_run_at: {type: string, format: date-time}
-            next_run_at: {type: string, format: date-time}
+            project_dir: {type: string}
+            sort_order: {type: integer, format: int64}
+            error: {type: string}
+            exit_code: {type: [integer, 'null']}
+            review_note: {type: string}
+            review_rounds: {type: integer}
+            worktree_branch: {type: string}
+            base_commit: {type: string}
+            resume_of: {type: [integer, 'null'], format: int64}
+            merge_of: {type: [integer, 'null'], format: int64}
+            merge_skipped: {type: boolean}
+            session_id: {type: [integer, 'null'], format: int64}
+            workflow_run_id: {type: [integer, 'null'], format: int64}
+            schedule_id: {type: [integer, 'null'], format: int64}
+            parent_session_id: {type: [integer, 'null'], format: int64}
+            parent_task_id: {type: [integer, 'null'], format: int64}
+            last_run_at: {type: [string, 'null'], format: date-time}
+            next_run_at: {type: [string, 'null'], format: date-time}
+            worktree_path: {type: string}
+            session_dir: {type: string}
             last_message_at: {type: string}
             message_count: {type: integer}
-            spec: {type: string, description: workflow.Spec JSON（type=workflow）}
+            suspended_at: {type: [string, 'null'], format: date-time}
+            delivered_at: {type: [string, 'null'], format: date-time}
+            spec: {type: string}
+            violations: {type: string}
             spec_hash: {type: string}
+            external_key: {type: string}
+            revision: {type: integer, format: int64, minimum: 1}
+            created_at: {type: string, format: date-time}
+            started_at: {type: [string, 'null'], format: date-time}
+            finished_at: {type: [string, 'null'], format: date-time}
+            updated_at: {type: string, format: date-time}
+    TaskCleanupInput:
+      type: object
+      properties:
+        role_id: {type: [integer, 'null'], format: int64}
+        before: {type: string, format: date-time}
+    TaskInputMessage:
+      type: object
+      oneOf: [{required: [message]}, {required: [keys]}]
+      properties: {message: {type: string}, keys: {type: string}}
+    TerminalSize:
+      type: object
+      required: [cols, rows]
+      properties: {cols: {type: integer, minimum: 1}, rows: {type: integer, minimum: 1}}
+    TaskOrder:
+      type: object
+      required: [task_ids]
+      properties: {task_ids: {type: array, items: {type: integer, format: int64, minimum: 1}}}
+    ProjectInput:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, minLength: 1}
+        description: {type: string}
+        status: {type: string, enum: [active, archived], default: active}
+        project_dir: {type: string}
+        github_repo: {type: string}
+        github_role_id: {type: [integer, 'null'], format: int64}
+        github_auto_issues: {type: boolean}
+        github_auto_prs: {type: boolean}
+        github_auto_security: {type: boolean}
+    ProjectPatch:
+      type: object
+      properties:
+        name: {type: string, minLength: 1}
+        description: {type: string}
+        status: {type: string, enum: [active, archived]}
+        project_dir: {type: string}
+        github_repo: {type: string}
+        github_role_id: {type: [integer, 'null'], format: int64}
+        github_auto_issues: {type: boolean}
+        github_auto_prs: {type: boolean}
+        github_auto_security: {type: boolean}
+    Project:
+      allOf:
+        - {$ref: '#/components/schemas/ProjectInput'}
+        - type: object
+          required: [id, is_git, revision, created_at, updated_at]
+          properties:
+            id: {type: integer, format: int64}
+            is_git: {type: boolean}
             revision: {type: integer, format: int64, minimum: 1}
             created_at: {type: string, format: date-time}
             updated_at: {type: string, format: date-time}
+    RuntimeInstall:
+      type: object
+      required: [runtime_id]
+      properties: {runtime_id: {type: string}}
+    RoleStudioMessage:
+      type: object
+      required: [role, content]
+      properties: {role: {type: string, enum: [user, assistant, note]}, content: {type: string}}
+    RoleStudioDraft:
+      type: object
+      required: [name, runtime_id]
+      properties:
+        name: {type: string}
+        description: {type: string}
+        runtime_id: {type: string}
+        max_concurrency: {type: integer, minimum: 1}
+        role_config: {$ref: '#/components/schemas/RoleConfig'}
+    RoleStudioChat:
+      type: object
+      required: [draft, message]
+      properties:
+        creator_role_id: {type: integer, format: int64}
+        draft: {$ref: '#/components/schemas/RoleStudioDraft'}
+        message: {type: string, minLength: 1}
+        creator_messages: {type: array, items: {$ref: '#/components/schemas/RoleStudioMessage'}}
+        test_messages: {type: array, items: {$ref: '#/components/schemas/RoleStudioMessage'}}
+    RoleStudioTest:
+      type: object
+      required: [draft, message]
+      properties:
+        draft: {$ref: '#/components/schemas/RoleStudioDraft'}
+        message: {type: string, minLength: 1}
+        test_messages: {type: array, items: {$ref: '#/components/schemas/RoleStudioMessage'}}
+    SessionInput:
+      type: object
+      required: [role_id]
+      properties:
+        project_id: {type: [integer, 'null'], format: int64}
+        role_id: {type: integer, format: int64, minimum: 1}
+        title: {type: string}
+        body: {type: string}
+        cron: {type: string}
+        enabled: {type: boolean}
+        perm: {type: string, enum: [full, review]}
+    SessionDelivery:
+      type: object
+      properties:
+        task_title: {type: string}
+        task_body: {type: string}
+        perm: {type: string, enum: [full, review]}
+    SessionPrompt:
+      type: object
+      properties:
+        message: {type: string}
+        images: {type: array, items: {type: object}}
+        streaming_behavior: {type: string}
+    SessionAsk:
+      type: object
+      required: [id]
+      properties:
+        id: {type: string}
+        value: {type: string}
+        confirmed: {type: [boolean, 'null']}
+        cancelled: {type: boolean}
+    SessionCommand:
+      type: object
+      required: [command]
+      properties:
+        command: {type: string}
+        fields: {type: object}
+    WorkflowInput:
+      type: object
+      required: [spec]
+      properties:
+        spec:
+          type: object
+          required: [version, goal, limits, nodes]
+          description: Declarative Workflow spec validated by deterministic Policy
+          properties:
+            version: {type: integer, format: int64}
+            goal: {type: string}
+            created_by: {type: string}
+            limits: {type: object}
+            nodes: {type: array, items: {type: object}}
+        cron: {type: string}
+        enabled: {type: boolean}
+        project_id: {type: [integer, 'null'], format: int64, description: Required by scheduled Workflow definitions}
+    WorkflowRunInput:
+      type: object
+      required: [project_id]
+      properties:
+        project_id: {type: integer, format: int64, minimum: 1}
+        task: {type: string, description: Optional Run-specific task text rendered into node intents}
     ArtifactInput:
       type: object
       required: [name, content]
-      oneOf:
-        - required: [task_id]
-        - required: [run_id]
+      oneOf: [{required: [task_id]}, {required: [run_id]}]
       properties:
         task_id: {type: integer, format: int64, minimum: 1}
         run_id: {type: integer, format: int64, minimum: 1}
@@ -266,8 +1146,8 @@ components:
       required: [id, name, media_type, content_hash, size, locator, created_by, created_at]
       properties:
         id: {type: integer, format: int64}
-        task_id: {type: integer, format: int64}
-        run_id: {type: integer, format: int64}
+        task_id: {type: [integer, 'null'], format: int64}
+        run_id: {type: [integer, 'null'], format: int64}
         name: {type: string}
         media_type: {type: string}
         content_hash: {type: string, pattern: '^[a-f0-9]{64}$'}
@@ -276,3 +1156,58 @@ components:
         created_by: {type: string}
         retention: {type: string}
         created_at: {type: string, format: date-time}
+    Skill:
+      type: object
+      required: [id, name, description, category, tags, dir, source_path, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        description: {type: string}
+        category: {type: string}
+        tags: {type: array, items: {type: string}}
+        dir: {type: string}
+        source_path: {type: string}
+        created_at: {type: string, format: date-time}
+    SkillImport:
+      type: object
+      required: [source_path]
+      properties:
+        source_path: {type: string}
+        tags: {type: array, items: {type: string}}
+    SkillPatch:
+      type: object
+      properties:
+        tags: {type: array, items: {type: string}}
+        category: {type: string}
+    SkillBatchPatch:
+      allOf:
+        - {$ref: '#/components/schemas/SkillPatch'}
+        - type: object
+          required: [ids]
+          properties: {ids: {type: array, minItems: 1, items: {type: integer, format: int64, minimum: 1}}}
+    SkillBatchDelete:
+      type: object
+      required: [ids]
+      properties: {ids: {type: array, minItems: 1, items: {type: integer, format: int64, minimum: 1}}}
+    TemplateInput:
+      type: object
+      required: [name, body]
+      properties:
+        name: {type: string, minLength: 1}
+        body: {type: string, minLength: 1}
+        role_id: {type: [integer, 'null'], format: int64}
+    TemplatePatch:
+      type: object
+      properties:
+        name: {type: string, minLength: 1}
+        body: {type: string, minLength: 1}
+        role_id: {type: [integer, 'null'], format: int64}
+    Settings: {type: object, additionalProperties: {type: string}}
+    ExtensionInstall:
+      type: object
+      required: [source]
+      properties: {source: {type: string, minLength: 1, description: Package name or local path}}
+    PathInput:
+      type: object
+      required: [path]
+      properties: {path: {type: string, minLength: 1}}

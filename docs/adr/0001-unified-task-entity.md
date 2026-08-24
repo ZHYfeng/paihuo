@@ -98,8 +98,8 @@ URL 面尽量保留（前端路由不变），语义全部指向统一 tasks：
 | /schedules/* | **删除**；定时页改走 /tasks?scheduled=1，CRUD 走 /tasks（创建带 cron；PATCH 改 cron/enabled；DELETE 删定义） |
 
 设计要求同步 `openapi.yaml`：Task schema 加 type/定时/会话/工作流字段，
-Schedule/Proposal/Plan schema 移除。截至 2026-08-24，OpenAPI 仍只覆盖部分 HTTP
-operation；补全和双向守卫属于后续 API-1，不能把当前文件视为完整或权威合同。
+Schedule/Proposal/Plan schema 移除。当前 OpenAPI 已覆盖全部 `/api/v1` operation，
+route registrar 与合同的双向集合测试会阻止任一侧单独增删 operation。
 
 ## 6. 关键实现点
 

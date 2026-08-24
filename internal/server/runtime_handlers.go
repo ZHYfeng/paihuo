@@ -10,12 +10,12 @@ import (
 	"paihuo/internal/exec"
 )
 
-func (s *Server) registerRuntimeCatalogRoutes(mux *http.ServeMux) {
+func (s *Server) registerRuntimeCatalogRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("GET /api/v1/runtimes", s.listRuntimes)
 	mux.HandleFunc("POST /api/v1/runtimes/refresh", s.refreshRuntimes)
 }
 
-func (s *Server) registerRuntimeProvisionRoutes(mux *http.ServeMux) {
+func (s *Server) registerRuntimeProvisionRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("POST /api/v1/runtimes/install", s.provisionInstall)
 	mux.HandleFunc("GET /api/v1/runtimes/provisioning", s.provisionStatus)
 }

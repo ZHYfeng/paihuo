@@ -2,7 +2,7 @@ package server
 
 import "net/http"
 
-func (s *Server) registerStatsRoutes(mux *http.ServeMux) {
+func (s *Server) registerStatsRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("GET /api/v1/stats/overview", s.overviewStats)
 	mux.HandleFunc("GET /api/v1/stats/roles/{id}", s.roleStats)
 	mux.HandleFunc("GET /api/v1/stats/projects/{id}", s.projectStats)

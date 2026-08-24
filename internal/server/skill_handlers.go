@@ -8,7 +8,7 @@ import (
 	"paihuo/internal/store"
 )
 
-func (s *Server) registerSkillRoutes(mux *http.ServeMux) {
+func (s *Server) registerSkillRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("GET /api/v1/skills", s.listSkills)
 	mux.HandleFunc("POST /api/v1/skills", s.createSkill)
 	mux.HandleFunc("PATCH /api/v1/skills", s.patchSkills)

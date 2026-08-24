@@ -10,7 +10,7 @@ import (
 	"paihuo/internal/workspace"
 )
 
-func (s *Server) registerProjectRoutes(mux *http.ServeMux) {
+func (s *Server) registerProjectRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("GET /api/v1/projects", s.listProjects)
 	mux.HandleFunc("POST /api/v1/projects", s.createProject)
 	mux.HandleFunc("PATCH /api/v1/projects/{id}", s.patchProject)

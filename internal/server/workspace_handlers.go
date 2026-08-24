@@ -2,7 +2,7 @@ package server
 
 import "net/http"
 
-func (s *Server) registerWorkspaceRoutes(mux *http.ServeMux) {
+func (s *Server) registerWorkspaceRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("GET /api/v1/workspace/{id}", s.workspaceStatus)
 	mux.HandleFunc("POST /api/v1/workspace/{id}/discard", s.workspaceDiscard)
 	mux.HandleFunc("POST /api/v1/workspace/git-init", s.workspaceGitInit)

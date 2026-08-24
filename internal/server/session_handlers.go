@@ -408,7 +408,7 @@ func (s *Server) sessionTranscript(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"entries": entries, "total": total})
 }
 
-func (s *Server) registerSessionRoutes(mux *http.ServeMux) {
+func (s *Server) registerSessionRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("GET /api/v1/sessions", s.listSessions)
 	mux.HandleFunc("POST /api/v1/sessions", s.createSession)
 	mux.HandleFunc("GET /api/v1/sessions/{id}", s.getSession)

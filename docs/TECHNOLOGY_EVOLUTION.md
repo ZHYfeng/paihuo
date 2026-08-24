@@ -82,10 +82,11 @@ Policy 在创建时同步校验，拒绝即不落库：
 
 API 只暴露 `/api/v1`，资源路径段使用复数名称。完整替换使用 `PUT`，局部修改
 使用 `PATCH`；同一操作不以多个 method 或 path 提供别名。
-[`internal/server/openapi.yaml`](../internal/server/openapi.yaml) 是一份可由
-`GET /api/v1/openapi.yaml` 读取的 OpenAPI 3.1 描述，但目前只记录 54/86 个 HTTP
-operation（34/63 个 path），不是完整或权威合同。API-1 将补齐描述并增加路由与
-OpenAPI 的双向守卫；在此之前应以服务端已注册路由和实现为准。
+[`internal/server/openapi.yaml`](../internal/server/openapi.yaml) 是可由
+`GET /api/v1/openapi.yaml` 读取的权威 OpenAPI 3.1 HTTP 合同。所有 86 个
+`/api/v1` operation（63 个 path）在注册时由同一个 registrar 记录，测试将注册
+集合与 OpenAPI 集合双向比较；任一侧遗漏或多写 operation 都会阻断门禁。登录、
+静态资源和 React 页面 fallback 不属于 OpenAPI 集合。
 
 错误统一为：
 

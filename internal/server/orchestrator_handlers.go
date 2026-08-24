@@ -1,7 +1,5 @@
 package server
 
-import "net/http"
-
-func (s *Server) registerOrchestratorRoutes(mux *http.ServeMux) {
+func (s *Server) registerOrchestratorRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("POST /api/v1/mcp", s.orchestrator.HandleHTTP)
 }

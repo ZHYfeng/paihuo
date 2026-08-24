@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func (s *Server) registerExtensionRoutes(mux *http.ServeMux) {
+func (s *Server) registerExtensionRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("GET /api/v1/extensions", s.listExtensions)
 	mux.HandleFunc("POST /api/v1/extensions/install", s.installExtension)
 	mux.HandleFunc("DELETE /api/v1/extensions/{name}", s.removeExtension)

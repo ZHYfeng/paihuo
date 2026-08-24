@@ -25,7 +25,7 @@ func (s *Server) openArtifact(locator string) (io.ReadCloser, error) {
 	return s.artifacts.Open(context.Background(), locator)
 }
 
-func (s *Server) registerArtifactRoutes(mux *http.ServeMux) {
+func (s *Server) registerArtifactRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("GET /api/v1/artifacts", s.listArtifacts)
 	mux.HandleFunc("POST /api/v1/artifacts", s.createArtifact)
 	mux.HandleFunc("GET /api/v1/artifacts/{id}", s.getArtifact)

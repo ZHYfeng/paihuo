@@ -6,7 +6,7 @@ import (
 	"net/http"
 )
 
-func (s *Server) registerSettingsRoutes(mux *http.ServeMux) {
+func (s *Server) registerSettingsRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("GET /api/v1/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/v1/settings", s.putSettings)
 }

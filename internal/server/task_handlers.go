@@ -12,7 +12,7 @@ import (
 	"paihuo/internal/workspace"
 )
 
-func (s *Server) registerTaskRoutes(mux *http.ServeMux) {
+func (s *Server) registerTaskRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("GET /api/v1/tasks", s.listTasks)
 	mux.HandleFunc("POST /api/v1/tasks", s.createTask)
 	mux.HandleFunc("GET /api/v1/tasks/{id}", s.getTask)

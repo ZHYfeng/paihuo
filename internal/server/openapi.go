@@ -8,7 +8,7 @@ import (
 //go:embed openapi.yaml
 var apiContract embed.FS
 
-func (s *Server) registerOpenAPIRoutes(mux *http.ServeMux) {
+func (s *Server) registerOpenAPIRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("GET /api/v1/openapi.yaml", s.openAPISpec)
 }
 

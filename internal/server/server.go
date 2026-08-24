@@ -36,25 +36,26 @@ import (
 )
 
 type Server struct {
-	st           *store.Store
-	hub          *events.EventStream
-	ex           *exec.Executor
-	sess         *session.Manager
-	sched        *sched.Scheduler
-	workflows    *application.WorkflowService
-	tasks        *application.TaskLifecycle
-	workspaces   *application.WorkspaceService
-	artifacts    artifact.Store
-	orchestrator *orchestrator.Service
-	gh           *github.Client
-	token        string
-	skillsDir    string // 技能库工作目录（<db目录>/skills，导入或扫描发现的技能复制到这里）
-	sessionsRoot string // 任务 worktree 根目录（<db目录>/sessions）
-	loginPage    *template.Template
-	mux          *http.ServeMux
-	secureCookie bool            // only set during startup for TLS-terminating reverse proxies
-	provMu       sync.Mutex      // 安装互斥锁
-	provBusy     map[string]bool // 正在安装的 CLI
+	st            *store.Store
+	hub           *events.EventStream
+	ex            *exec.Executor
+	sess          *session.Manager
+	sched         *sched.Scheduler
+	workflows     *application.WorkflowService
+	tasks         *application.TaskLifecycle
+	workspaces    *application.WorkspaceService
+	artifacts     artifact.Store
+	orchestrator  *orchestrator.Service
+	gh            *github.Client
+	token         string
+	skillsDir     string // 技能库工作目录（<db目录>/skills，导入或扫描发现的技能复制到这里）
+	sessionsRoot  string // 任务 worktree 根目录（<db目录>/sessions）
+	loginPage     *template.Template
+	mux           *http.ServeMux
+	apiOperations map[apiOperation]struct{}
+	secureCookie  bool            // only set during startup for TLS-terminating reverse proxies
+	provMu        sync.Mutex      // 安装互斥锁
+	provBusy      map[string]bool // 正在安装的 CLI
 }
 
 const (
@@ -226,25 +227,27 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.
 		w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(r.URL.Path)))
 		w.Write(b)
 	}))
-	s.registerEventRoutes(m)
-	s.registerOrchestratorRoutes(m)
-	s.registerSessionRoutes(m)
-	s.registerWorkflowRoutes(m)
-	s.registerTaskRoutes(m)
-	s.registerSettingsRoutes(m)
-	s.registerTemplateRoutes(m)
-	s.registerRoleRoutes(m)
-	s.registerRuntimeCatalogRoutes(m)
-	s.registerRoleStudioRoutes(m)
-	s.registerRuntimeProvisionRoutes(m)
-	s.registerSkillRoutes(m)
-	s.registerExtensionRoutes(m)
-	s.registerWorkspaceRoutes(m)
-	s.registerFSRoutes(m)
-	s.registerProjectRoutes(m)
-	s.registerStatsRoutes(m)
-	s.registerOpenAPIRoutes(m)
-	s.registerArtifactRoutes(m)
+	api := newRouteRegistrar(m)
+	s.registerEventRoutes(api)
+	s.registerOrchestratorRoutes(api)
+	s.registerSessionRoutes(api)
+	s.registerWorkflowRoutes(api)
+	s.registerTaskRoutes(api)
+	s.registerSettingsRoutes(api)
+	s.registerTemplateRoutes(api)
+	s.registerRoleRoutes(api)
+	s.registerRuntimeCatalogRoutes(api)
+	s.registerRoleStudioRoutes(api)
+	s.registerRuntimeProvisionRoutes(api)
+	s.registerSkillRoutes(api)
+	s.registerExtensionRoutes(api)
+	s.registerWorkspaceRoutes(api)
+	s.registerFSRoutes(api)
+	s.registerProjectRoutes(api)
+	s.registerStatsRoutes(api)
+	s.registerOpenAPIRoutes(api)
+	s.registerArtifactRoutes(api)
+	s.apiOperations = api.operations
 
 	// All authenticated browser routes share one React root. More-specific API,
 	// login and static patterns above always win ServeMux routing.

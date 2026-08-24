@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-func (s *Server) registerFSRoutes(mux *http.ServeMux) {
+func (s *Server) registerFSRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("GET /api/v1/fs/dirs", s.fsDirs)
 	mux.HandleFunc("POST /api/v1/fs/mkdir", s.fsMkdir)
 }

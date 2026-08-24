@@ -24,7 +24,7 @@ import (
 	"paihuo/internal/store"
 )
 
-func (s *Server) registerRoleStudioRoutes(mux *http.ServeMux) {
+func (s *Server) registerRoleStudioRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("POST /api/v1/role-studio/chat", s.roleStudioChat)
 	mux.HandleFunc("POST /api/v1/role-studio/test", s.roleStudioTest)
 }
