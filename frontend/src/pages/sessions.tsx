@@ -8,7 +8,7 @@ import { Badge, Button, Card, Dialog, Empty, Field, inputClass, Spinner, useToas
 import { api, keys } from "../lib/api";
 import { PERM_LABEL } from "../lib/taskmeta";
 import type { Project, Role, Session, Task, TaskTemplate } from "../types";
-import { TaskStatus } from "./tasks";
+import { TaskStatus } from "../components/task/status";
 
 const sessionTone: Record<string, "neutral" | "good" | "warn" | "info"> = { created: "neutral", active: "good", suspended: "warn", delivered: "info", deleted: "neutral" };
 const sessionLabel: Record<string, string> = { created: "未启动", active: "活跃", suspended: "已挂起", delivered: "已交付", deleted: "已删除" };

@@ -8,7 +8,7 @@ import { Badge, Button, Card, cn, Dialog, Empty, Field, inputClass, Spinner, use
 import { api, keys } from "../lib/api";
 import { copyText } from "../lib/clipboard";
 import type { ExtensionOutput, Project, Role, Skill, Task, TaskTemplate } from "../types";
-import { NewTaskDialog } from "./tasks";
+import { NewTaskDialog } from "../components/task/create-dialog";
 
 export function SkillsPage() {
   const skills = useQuery({ queryKey: keys.skills, queryFn: () => api<Skill[]>("/skills") });
