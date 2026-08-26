@@ -9,6 +9,7 @@ paihuo.db*
 /artifacts/
 /sessions/
 /skills/
+/workdir/
 node_modules/
 /internal/web/dist/*
 !/internal/web/dist/.gitkeep

@@ -44,14 +44,15 @@ export PAIHUO_TOKEN="$(openssl rand -hex 32)"
 当前实例由用户级 systemd 托管：
 
 ```bash
-/home/yu/paihuo/paihuo --version
+/home/yu/git/paihuo/workdir/paihuo --version
 systemctl --user status paihuo.service
 journalctl --user -u paihuo.service -f
 ```
 
-- 服务目录：`/home/yu/paihuo`
+- 源码目录：`/home/yu/git/paihuo`
+- 运行目录：`/home/yu/git/paihuo/workdir`（整体不纳入 Git）
 - 访问地址：`http://服务器IP:8080`
-- 登录令牌：`/home/yu/paihuo/token.env`
+- 登录令牌：`/home/yu/git/paihuo/workdir/token.env`
 - 服务定义：`/home/yu/.config/systemd/user/paihuo.service`
 
 已有实例从最新 `main` 重新部署：

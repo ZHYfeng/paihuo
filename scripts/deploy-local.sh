@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 构建并替换 /home/yu/paihuo 中已有的 systemd 部署。
+# 构建并替换 /home/yu/git/paihuo/workdir 中已有的 systemd 部署。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -12,7 +12,7 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
-DEPLOY_DIR=/home/yu/paihuo
+DEPLOY_DIR=/home/yu/git/paihuo/workdir
 DB="$DEPLOY_DIR/paihuo.db"
 SERVICE=paihuo.service
 commit="$(git rev-parse --short HEAD)"

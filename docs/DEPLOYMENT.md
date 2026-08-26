@@ -1,8 +1,9 @@
 # 部署指南
 
-> 当前生产基线：Debian，用户 `yu`。服务以 systemd 用户服务 `paihuo.service`
-> 运行，目录为 `/home/yu/paihuo`，监听 `0.0.0.0:8080`。实际版本以
-> `/home/yu/paihuo/paihuo --version` 为准。
+> 当前生产基线：Debian，用户 `yu`。源码位于 `/home/yu/git/paihuo`；服务以
+> systemd 用户服务 `paihuo.service` 运行，运行目录为
+> `/home/yu/git/paihuo/workdir`，监听 `0.0.0.0:8080`。实际版本以
+> `/home/yu/git/paihuo/workdir/paihuo --version` 为准。
 
 ## 部署形态
 
@@ -10,13 +11,15 @@ PaiHuo 以一个内嵌 React 前端的 Go 二进制运行，使用 SQLite、专�
 server 和本机 Git worktree。生产环境不需要 Node.js。
 
 ```text
-/home/yu/paihuo/
-├── paihuo          # 当前服务二进制
-├── paihuo.db       # 当前 SQLite schema
-├── token.env       # PAIHUO_TOKEN，权限 0600
-├── sessions/       # Task/Session worktree、Runtime 状态和 .roles/ 技能挂载
-├── skills/         # 可复用技能库
-└── artifacts/      # SHA-256 内容寻址制品
+/home/yu/git/paihuo/
+├── ...             # Git 管理的源码
+└── workdir/        # 整体由 .gitignore 排除
+    ├── paihuo      # 当前服务二进制
+    ├── paihuo.db   # 当前 SQLite schema
+    ├── token.env   # PAIHUO_TOKEN，权限 0600
+    ├── sessions/   # Task/Session worktree、Runtime 状态和 .roles/ 技能挂载
+    ├── skills/     # 可复用技能库
+    └── artifacts/  # SHA-256 内容寻址制品
 ```
 
 `paihuo.db-shm` 与 `paihuo.db-wal` 是服务运行期间的 SQLite 文件。日志由
@@ -44,7 +47,7 @@ SQLite（包括 WAL 中已提交内容）与 Artifact 作为一个集合备份�
 | `deploy/systemd/paihuo.service` | `/home/yu/.config/systemd/user/paihuo.service` |
 | `deploy/systemd/paihuo.service.d/task-safe-restart.conf` | `/home/yu/.config/systemd/user/paihuo.service.d/task-safe-restart.conf` |
 
-服务从 `/home/yu/paihuo/token.env` 读取令牌。`KillMode=process` 使普通服务
+服务从 `/home/yu/git/paihuo/workdir/token.env` 读取令牌。`KillMode=process` 使普通服务
 重启不终止 tmux 中仍在执行的 Task；`Restart=on-failure` 在异常退出后自动
 拉起服务。
 
@@ -66,19 +69,19 @@ loginctl enable-linger yu
 构建机需要 Linux、Go 1.25+、Node.js 22.12+、npm、Git 和 tmux。
 
 ```bash
-cd /home/yu/Agents/paihuo
+cd /home/yu/git/paihuo
 npm ci
 make check
 make test-race
 VERSION="v$(git show -s --format=%cd --date=format:%Y.%m.%d HEAD)-$(git rev-parse --short HEAD)"
 make release VERSION="$VERSION"
 
-install -d -m 0755 /home/yu/paihuo
-install -m 0755 bin/paihuo /home/yu/paihuo/paihuo
+install -d -m 0755 /home/yu/git/paihuo/workdir
+install -m 0755 bin/paihuo /home/yu/git/paihuo/workdir/paihuo
 
 umask 077
 printf 'PAIHUO_TOKEN=%s\n' "$(openssl rand -hex 32)" \
-  > /home/yu/paihuo/token.env
+  > /home/yu/git/paihuo/workdir/token.env
 
 install -d -m 0755 /home/yu/.config/systemd/user/paihuo.service.d
 install -m 0644 deploy/systemd/paihuo.service \
@@ -98,14 +101,14 @@ systemctl --user enable --now paihuo.service
 标准目录中的已有实例使用仓库脚本部署：
 
 ```bash
-cd /home/yu/Agents/paihuo
+cd /home/yu/git/paihuo
 git pull --ff-only
 scripts/deploy-local.sh
 ```
 
 脚本会运行完整门禁并构建 release binary，然后停止服务、拒绝在仍有运行中
 Task/Session 时继续、checkpoint SQLite、把旧 binary/SQLite/Artifact 保存到
-`/home/yu/paihuo/backups/`，原子替换 binary，最后验证 systemd、HTTP 和 SQLite。
+`/home/yu/git/paihuo/workdir/backups/`，原子替换 binary，最后验证 systemd、HTTP 和 SQLite。
 默认版本由提交日期和短 SHA 生成；需要指定发布名时使用：
 
 ```bash
@@ -177,7 +180,7 @@ v10 使用 SQLite 官方 table-rebuild 顺序：创建 `tasks_new`、显式列�
 替换前先确认没有需要继续运行的 Task，然后执行：
 
 ```bash
-cd /home/yu/Agents/paihuo
+cd /home/yu/git/paihuo
 npm ci
 make check
 make test-race
@@ -188,13 +191,13 @@ make release VERSION="$VERSION"
 systemctl --user stop paihuo.service
 tmux -L paihuo kill-server 2>/dev/null || true
 
-find /home/yu/paihuo/sessions -depth -delete 2>/dev/null || true
-find /home/yu/paihuo/artifacts -depth -delete 2>/dev/null || true
-find /home/yu/paihuo -maxdepth 1 -type f \
+find /home/yu/git/paihuo/workdir/sessions -depth -delete 2>/dev/null || true
+find /home/yu/git/paihuo/workdir/artifacts -depth -delete 2>/dev/null || true
+find /home/yu/git/paihuo/workdir -maxdepth 1 -type f \
   \( -name 'paihuo.db' -o -name 'paihuo.db-shm' -o -name 'paihuo.db-wal' \) \
   -delete
 
-install -m 0755 bin/paihuo /home/yu/paihuo/paihuo
+install -m 0755 bin/paihuo /home/yu/git/paihuo/workdir/paihuo
 install -m 0644 deploy/systemd/paihuo.service \
   /home/yu/.config/systemd/user/paihuo.service
 install -m 0644 deploy/systemd/paihuo.service.d/task-safe-restart.conf \
@@ -207,14 +210,14 @@ systemctl --user start paihuo.service
 ## 验证
 
 ```bash
-/home/yu/paihuo/paihuo --version
+/home/yu/git/paihuo/workdir/paihuo --version
 systemctl --user status paihuo.service --no-pager
 journalctl --user -u paihuo.service -n 20 --no-pager
 curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/login
 ```
 
 预期服务为 `active (running)`，登录页返回 `200`。浏览器访问
-`http://服务器IP:8080`，使用 `/home/yu/paihuo/token.env` 中的令牌登录。
+`http://服务器IP:8080`，使用 `/home/yu/git/paihuo/workdir/token.env` 中的令牌登录。
 登录后可读取 `/api/v1/openapi.yaml` 并验证 `/api/v1/tasks`。
 
 ## 数据保护
@@ -224,8 +227,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/login
 
 ```bash
 systemctl --user stop paihuo.service
-cp /home/yu/paihuo/paihuo.db /backup/paihuo.db
-cp -a /home/yu/paihuo/artifacts /backup/artifacts
+cp /home/yu/git/paihuo/workdir/paihuo.db /backup/paihuo.db
+cp -a /home/yu/git/paihuo/workdir/artifacts /backup/artifacts
 systemctl --user start paihuo.service
 ```
 
