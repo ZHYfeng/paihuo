@@ -17,6 +17,7 @@ const groups = [
 export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dark, setDark] = useState(() => localStorage.getItem("paihuo:theme") !== "light");
+  const browserAuth = document.querySelector<HTMLMetaElement>('meta[name="paihuo-browser-auth"]')?.content !== "disabled";
   const events = useEventStream();
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -48,7 +49,7 @@ export function AppShell() {
       </div>
       <div className="flex gap-1.5">
         <button onClick={() => setDark(value => !value)} className="grid size-7 place-items-center rounded-md text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:ring-2 focus-visible:ring-focus" aria-label={dark ? "切换到亮色" : "切换到暗色"}>{dark ? <Sun size={14} /> : <Moon size={14} />}</button>
-        <form action="/logout" method="post" className="flex-1"><button className="h-7 w-full rounded-md text-[13px] text-muted transition-colors hover:bg-hover hover:text-ink">退出</button></form>
+        {browserAuth ? <form action="/logout" method="post" className="flex-1"><button className="h-7 w-full rounded-md text-[13px] text-muted transition-colors hover:bg-hover hover:text-ink">退出</button></form> : null}
       </div>
     </div>
   </>;

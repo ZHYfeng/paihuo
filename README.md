@@ -52,7 +52,8 @@ journalctl --user -u paihuo.service -f
 - 源码目录：`/home/yu/git/paihuo`
 - 运行目录：`/home/yu/git/paihuo/workdir`（整体不纳入 Git）
 - 访问地址：`http://服务器IP:8080`
-- 登录令牌：`/home/yu/git/paihuo/workdir/token.env`
+- 浏览器登录：本机实例通过显式的 `--no-browser-auth` 关闭，仅应暴露在受信网络
+- MCP/委托令牌：`/home/yu/git/paihuo/workdir/token.env`
 - 服务定义：`/home/yu/.config/systemd/user/paihuo.service`
 
 已有实例从最新 `main` 重新部署：

@@ -16,7 +16,7 @@ server 和本机 Git worktree。生产环境不需要 Node.js。
 └── workdir/        # 整体由 .gitignore 排除
     ├── paihuo      # 当前服务二进制
     ├── paihuo.db   # 当前 SQLite schema
-    ├── token.env   # PAIHUO_TOKEN，权限 0600
+    ├── token.env   # MCP/委托使用的 PAIHUO_TOKEN，权限 0600
     ├── sessions/   # Task/Session worktree、Runtime 状态和 .roles/ 技能挂载
     ├── skills/     # 可复用技能库
     └── artifacts/  # SHA-256 内容寻址制品
@@ -47,9 +47,10 @@ SQLite（包括 WAL 中已提交内容）与 Artifact 作为一个集合备份�
 | `deploy/systemd/paihuo.service` | `/home/yu/.config/systemd/user/paihuo.service` |
 | `deploy/systemd/paihuo.service.d/task-safe-restart.conf` | `/home/yu/.config/systemd/user/paihuo.service.d/task-safe-restart.conf` |
 
-服务从 `/home/yu/git/paihuo/workdir/token.env` 读取令牌。`KillMode=process` 使普通服务
-重启不终止 tmux 中仍在执行的 Task；`Restart=on-failure` 在异常退出后自动
-拉起服务。
+服务从 `/home/yu/git/paihuo/workdir/token.env` 读取 MCP/委托令牌。当前本机 unit 显式
+设置 `--no-browser-auth`，浏览器页面与普通 API 不要求登录；这只适用于可达客户端均
+受信任的网络。`KillMode=process` 使普通服务重启不终止 tmux 中仍在执行的 Task；
+`Restart=on-failure` 在异常退出后自动拉起服务。
 
 ```bash
 systemctl --user status paihuo.service
@@ -93,8 +94,10 @@ systemctl --user daemon-reload
 systemctl --user enable --now paihuo.service
 ```
 
-公开监听必须配置令牌。经 HTTPS 反向代理访问时，在 systemd 的
-`ExecStart` 中增加 `--secure-cookie`。
+默认模式下，公开监听必须配置令牌。当前本机 unit 还显式设置了
+`--no-browser-auth`：令牌继续保护 MCP，但不保护浏览器页面和普通 API，任何能连接
+8080 端口的客户端都可直接操作平台。仅在受信网络使用；经 HTTPS 反向代理且保留
+浏览器登录时，在 systemd 的 `ExecStart` 中增加 `--secure-cookie`。
 
 ## 重新部署（默认保存数据）
 
@@ -213,12 +216,12 @@ systemctl --user start paihuo.service
 /home/yu/git/paihuo/workdir/paihuo --version
 systemctl --user status paihuo.service --no-pager
 journalctl --user -u paihuo.service -n 20 --no-pager
-curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/login
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/api/v1/tasks
 ```
 
-预期服务为 `active (running)`，登录页返回 `200`。浏览器访问
-`http://服务器IP:8080`，使用 `/home/yu/git/paihuo/workdir/token.env` 中的令牌登录。
-登录后可读取 `/api/v1/openapi.yaml` 并验证 `/api/v1/tasks`。
+预期服务为 `active (running)`，工作台与 API 均返回 `200`。浏览器访问
+`http://服务器IP:8080` 可直接进入工作台；`/login` 会重定向到 `/`。
 
 ## 数据保护
 
@@ -247,7 +250,7 @@ systemctl --user start paihuo.service
 - 设置页的手动历史清理与自动历史清理使用同一套资源清理逻辑，不会只删除
   SQLite 任务记录而留下 `sessions/.runtime-sessions/.../task-*`。
 - Runtime 模型和能力在服务启动时探测，此后每七天刷新，也可从 Web 手动刷新。
-- 令牌遗失时重新生成 `token.env` 并重启服务；所有已有登录会话会失效。
+- 保留浏览器鉴权的部署在令牌遗失时应重新生成 `token.env` 并重启服务；所有已有登录会话会失效。当前 `--no-browser-auth` 本机实例仍需保管该令牌，因为 MCP/委托继续使用它。
 - 启动提示 schema 不受支持时，停止服务并按“全新部署（清空数据）”流程创建空数据库。
 
 ## 安全边界

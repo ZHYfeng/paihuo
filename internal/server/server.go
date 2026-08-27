@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -53,6 +54,7 @@ type Server struct {
 	loginPage     *template.Template
 	mux           *http.ServeMux
 	apiOperations map[apiOperation]struct{}
+	browserAuth   bool            // false only for explicitly trusted passwordless browser deployments
 	secureCookie  bool            // only set during startup for TLS-terminating reverse proxies
 	provMu        sync.Mutex      // 安装互斥锁
 	provBusy      map[string]bool // 正在安装的 CLI
@@ -133,6 +135,11 @@ func (s *Server) setSessionCookie(w http.ResponseWriter) bool {
 	return true
 }
 
+// DisableBrowserAuthentication removes the login/session check from browser
+// pages and APIs. The MCP endpoint keeps its independent Bearer-token check.
+// Call this only during startup for an instance confined to a trusted network.
+func (s *Server) DisableBrowserAuthentication() { s.browserAuth = false }
+
 // SetSecureCookies marks session cookies as Secure. Call it once during
 // startup when HTTPS is terminated by a reverse proxy; leave it disabled for
 // direct local HTTP development.
@@ -178,6 +185,7 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.
 		sched:        sc,
 		workflows:    workflows,
 		token:        token,
+		browserAuth:  token != "",
 		skillsDir:    skillsDir,
 		sessionsRoot: filepath.Join(filepath.Dir(skillsDir), "sessions"),
 		loginPage:    template.Must(template.ParseFS(web.FS, "templates/login.html")),
@@ -259,14 +267,13 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.
 	return s
 }
 
-// Handler 返回带会话鉴权的处理器。
-// 令牌只用于「一次性登录」：POST /login 校验通过后签发 HttpOnly 会话
-// cookie，之后所有请求（含 SSE 的 EventSource）凭 cookie 访问，令牌不再
-// 出现在 URL / 前端代码里。
+// Handler 返回按实例配置启用会话鉴权的处理器。默认在配置令牌时要求浏览器
+// 通过 POST /login 换取 HttpOnly cookie；显式关闭浏览器鉴权时，页面和普通
+// API 直接开放，但 MCP 仍使用独立的 Bearer 令牌。
 func (s *Server) Handler() http.Handler {
 	var next http.Handler
 	base := s.withIdempotency(s.mux)
-	if s.token == "" {
+	if !s.browserAuth {
 		next = base
 	} else {
 		next = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -331,16 +338,29 @@ func (s *Server) pageApp(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "前端未构建，请运行 make frontend", http.StatusServiceUnavailable)
 		return
 	}
+	if !s.browserAuth {
+		b = bytes.Replace(b,
+			[]byte(`<meta name="paihuo-browser-auth" content="enabled" />`),
+			[]byte(`<meta name="paihuo-browser-auth" content="disabled" />`), 1)
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(b)
 }
 
 func (s *Server) pageLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.browserAuth {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
 	s.renderLogin(w, pageData{})
 }
 
 // login 一次性验证令牌：正确则签发会话 cookie。
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	if !s.browserAuth {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
 	got := r.FormValue("token")
 	if !s.validToken(got) {
 		s.renderLogin(w, pageData{LoginError: "令牌不正确"})
@@ -364,6 +384,10 @@ func (s *Server) validToken(got string) bool {
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if !s.browserAuth {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
 	// 清除会话 cookie 时必须与应用会话 cookie 的属性一致（HttpOnly + 按配置
 	// 加 Secure），否则清除请求可能因签名/属性差异被忽略，或属性缺失被扫描告警。
 	http.SetCookie(w, &http.Cookie{

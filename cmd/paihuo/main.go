@@ -32,11 +32,12 @@ var version = "dev"
 
 func main() {
 	var addr, db, token string
-	var showVersion, secureCookie bool
+	var showVersion, secureCookie, noBrowserAuth bool
 	flag.StringVar(&addr, "addr", "127.0.0.1:8080", "监听地址（公开监听时必须设置访问令牌）")
 	flag.StringVar(&db, "db", "paihuo.db", "SQLite 数据库路径")
 	flag.StringVar(&token, "token", "", "访问令牌（也可用环境变量 PAIHUO_TOKEN）")
 	flag.BoolVar(&secureCookie, "secure-cookie", false, "为 HTTPS 反向代理部署将会话 cookie 标记为 Secure")
+	flag.BoolVar(&noBrowserAuth, "no-browser-auth", false, "关闭浏览器登录与 API 会话鉴权（仅限受信网络）")
 	flag.BoolVar(&showVersion, "version", false, "输出版本后退出")
 	flag.Parse()
 	if showVersion {
@@ -52,6 +53,9 @@ func main() {
 			log.Fatal(err)
 		}
 		log.Printf("⚠ 未设置访问令牌：仅允许来自本机的访问。若需公开监听，请设置 --token 或 PAIHUO_TOKEN。")
+	}
+	if noBrowserAuth {
+		log.Printf("⚠ 浏览器鉴权已关闭：所有能连接 %s 的客户端都可直接操作平台。", addr)
 	}
 
 	st, err := store.Open(db)
@@ -74,6 +78,9 @@ func main() {
 	go autoCleanup(ctx, st, ex, sessionsRoot)
 
 	srv := server.New(st, hub, ex, sc, sess, wf, token, filepath.Join(filepath.Dir(db), "skills"))
+	if noBrowserAuth {
+		srv.DisableBrowserAuthentication()
+	}
 	srv.SetSecureCookies(secureCookie)
 	// 编排委托工具面：服务端先写入 settings.mcp_auth_secret，再让会话管理器
 	// 从同一来源解析——签名密钥一致，签发令牌才可被端点校验。
@@ -96,7 +103,8 @@ func main() {
 
 	serveErr := make(chan error, 1)
 	go func() {
-		log.Printf("派活已启动: http://%s（数据库 %s%s）", addr, db, map[bool]string{true: "，已开启鉴权", false: ""}[token != ""])
+		authStatus := map[bool]string{true: "，已开启浏览器鉴权", false: "，浏览器鉴权已关闭"}[token != "" && !noBrowserAuth]
+		log.Printf("派活已启动: http://%s（数据库 %s%s）", addr, db, authStatus)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			serveErr <- err
 		}

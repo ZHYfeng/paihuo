@@ -85,6 +85,44 @@ func TestHandlerAuthenticationAndSecurityHeaders(t *testing.T) {
 	assertSecurityHeaders(t, asset.Header(), "no-cache")
 }
 
+func TestHandlerWithBrowserAuthenticationDisabled(t *testing.T) {
+	s := newSecurityTestServer(t, "mcp-token")
+	s.DisableBrowserAuthentication()
+	h := s.Handler()
+
+	api := httptest.NewRecorder()
+	h.ServeHTTP(api, httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil))
+	if api.Code != http.StatusOK {
+		t.Fatalf("关闭浏览器鉴权后 API 应直接可访问，得到 %d: %s", api.Code, api.Body.String())
+	}
+	if cookies := api.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("关闭浏览器鉴权后不应签发会话 cookie，得到 %d 个", len(cookies))
+	}
+
+	app := httptest.NewRecorder()
+	h.ServeHTTP(app, httptest.NewRequest(http.MethodGet, "/", nil))
+	if app.Code != http.StatusOK {
+		t.Fatalf("关闭浏览器鉴权后工作台应直接可访问，得到 %d", app.Code)
+	}
+	if !strings.Contains(app.Body.String(), `name="paihuo-browser-auth" content="disabled"`) {
+		t.Fatal("工作台应告知前端隐藏退出入口")
+	}
+
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		login := httptest.NewRecorder()
+		h.ServeHTTP(login, httptest.NewRequest(method, "/login", nil))
+		if login.Code != http.StatusFound || login.Header().Get("Location") != "/" {
+			t.Fatalf("%s /login 应重定向到工作台，得到 %d %q", method, login.Code, login.Header().Get("Location"))
+		}
+	}
+
+	logout := httptest.NewRecorder()
+	h.ServeHTTP(logout, httptest.NewRequest(http.MethodPost, "/logout", nil))
+	if logout.Code != http.StatusFound || logout.Header().Get("Location") != "/" {
+		t.Fatalf("关闭浏览器鉴权后退出应返回工作台，得到 %d %q", logout.Code, logout.Header().Get("Location"))
+	}
+}
+
 func TestReadJSONRejectsAmbiguousAndOversizedBodies(t *testing.T) {
 	t.Run("multiple JSON values", func(t *testing.T) {
 		r := httptest.NewRecorder()

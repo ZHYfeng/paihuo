@@ -129,7 +129,7 @@ schema 发布保留真实 Task、Session、Workflow 与 Artifact 状态，不再
 完整性对账；恢复单位是“旧 binary + 整体备份”。部署命令以
 [部署指南](DEPLOYMENT.md) 为准。
 
-默认 profile 是 `trusted-host`：Runtime 以 PaiHuo 服务用户权限访问主机、项目和凭据。令牌只用于登录，随后使用带 HMAC 的 HttpOnly session cookie。公开监听必须配置令牌；TLS 反向代理部署启用 Secure cookie。
+默认 profile 是 `trusted-host`：Runtime 以 PaiHuo 服务用户权限访问主机、项目和凭据。默认浏览器鉴权中，令牌只用于登录，随后使用带 HMAC 的 HttpOnly session cookie；MCP 始终使用独立 Bearer 令牌。公开监听必须配置令牌，TLS 反向代理部署启用 Secure cookie。受信网络部署可显式使用 `--no-browser-auth` 关闭页面与普通 API 的会话鉴权，但不得据此开放给不受信任客户端。
 
 这不是多租户沙箱。不要把不可信用户或仓库放入同一权限域，也不要把 Docker socket 或额外宿主机权限交给 Runtime。
 

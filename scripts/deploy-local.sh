@@ -65,7 +65,7 @@ systemctl --user start "$SERVICE"
 stopped=0
 
 for _ in $(seq 1 60); do
-  if systemctl --user is-active --quiet "$SERVICE" && curl -fsS -o /dev/null http://127.0.0.1:8080/login; then
+  if systemctl --user is-active --quiet "$SERVICE" && curl -fsS -o /dev/null http://127.0.0.1:8080/; then
     [ "$("$DEPLOY_DIR/paihuo" --version)" = "$VERSION" ]
     [ "$(sqlite3 -readonly "$DB" 'PRAGMA integrity_check;')" = ok ]
     [ -z "$(sqlite3 -readonly "$DB" 'PRAGMA foreign_key_check;')" ]

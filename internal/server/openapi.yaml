@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: PaiHuo API
   version: 1.0.0
-  description: PaiHuo control-plane contract. Browser sessions use an HttpOnly cookie obtained from POST /login; the MCP endpoint uses a Bearer token.
+  description: PaiHuo control-plane contract. By default browser sessions use an HttpOnly cookie obtained from POST /login; trusted deployments may explicitly disable browser authentication. The MCP endpoint always uses a Bearer token.
 servers:
   - url: /api/v1
 tags:
