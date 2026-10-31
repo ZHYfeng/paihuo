@@ -49,6 +49,7 @@
   --ink: #25282c;
   --muted: #686e74;
   --faint: #6b7176;
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23686e74' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   --brand: #5663d9;
   --brand-strong: #4551bf;
   --brand-soft: #505dc9;
@@ -71,6 +72,7 @@
   --ink: #edeef1;
   --muted: #afb4bd;
   --faint: #959da8;
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23afb4bd' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   --brand: #8993f4;
   --brand-strong: #737fe8;
   --brand-soft: #a4adff;
@@ -143,6 +145,25 @@ a {
 button:not(:disabled),
 select {
   cursor: pointer;
+}
+
+/* 原生箭头不受 padding 控制；统一留白，并为选项文字预留箭头空间。 */
+select:not([multiple]):not([size]),
+select:not([multiple])[size="1"] {
+  appearance: none;
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right .75rem center;
+  background-size: 1rem;
+  padding-right: 2.5rem;
+}
+
+@media (forced-colors: active) {
+  select:not([multiple]):not([size]),
+  select:not([multiple])[size="1"] {
+    appearance: auto;
+    background-image: none;
+  }
 }
 
 :where(a, button, input, select, textarea, summary):focus-visible {
