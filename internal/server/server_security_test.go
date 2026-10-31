@@ -4,21 +4,30 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func newSecurityTestServer(t *testing.T, token string) *Server {
 	t.Helper()
 	root := t.TempDir()
 	sessionsRoot := filepath.Join(root, "sessions")
-	return newTestServer(t,
+	s := newTestServer(t,
 		withTestRoot(root),
 		withTestExecutor(sessionsRoot, filepath.Join(root, "paihuo.db"), "paihuo-security-test"),
 		withTestSession(sessionsRoot, t.TempDir()),
 		withTestToken(token),
 	).server
+	// Exercise the real app shell without requiring a Vite build for Go tests.
+	index, err := os.ReadFile("../../frontend/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.appFS = fstest.MapFS{"dist/index.html": {Data: index}}
+	return s
 }
 
 func TestHandlerAuthenticationAndSecurityHeaders(t *testing.T) {
@@ -65,6 +74,17 @@ func TestHandlerAuthenticationAndSecurityHeaders(t *testing.T) {
 	refreshed := authorized.Result().Cookies()
 	if len(refreshed) != 1 || refreshed[0].Value == cookie.Value {
 		t.Fatal("已认证请求应轮换为新的会话 nonce")
+	}
+
+	appReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	appReq.AddCookie(cookie)
+	app := httptest.NewRecorder()
+	h.ServeHTTP(app, appReq)
+	if app.Code != http.StatusOK {
+		t.Fatalf("有效会话应可访问工作台，得到 %d: %s", app.Code, app.Body.String())
+	}
+	if !strings.Contains(app.Body.String(), `name="paihuo-browser-auth" content="enabled"`) {
+		t.Fatal("启用浏览器鉴权时工作台应保留退出入口")
 	}
 
 	badCookie := *cookie
@@ -120,6 +140,21 @@ func TestHandlerWithBrowserAuthenticationDisabled(t *testing.T) {
 	h.ServeHTTP(logout, httptest.NewRequest(http.MethodPost, "/logout", nil))
 	if logout.Code != http.StatusFound || logout.Header().Get("Location") != "/" {
 		t.Fatalf("关闭浏览器鉴权后退出应返回工作台，得到 %d %q", logout.Code, logout.Header().Get("Location"))
+	}
+}
+
+func TestHandlerWithoutFrontendBuild(t *testing.T) {
+	s := newSecurityTestServer(t, "mcp-token")
+	s.DisableBrowserAuthentication()
+	s.appFS = fstest.MapFS{}
+
+	app := httptest.NewRecorder()
+	s.Handler().ServeHTTP(app, httptest.NewRequest(http.MethodGet, "/", nil))
+	if app.Code != http.StatusServiceUnavailable {
+		t.Fatalf("前端未构建时应返回 503，得到 %d: %s", app.Code, app.Body.String())
+	}
+	if !strings.Contains(app.Body.String(), "make frontend") {
+		t.Fatal("前端未构建时应提示构建命令")
 	}
 }
 

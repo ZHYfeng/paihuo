@@ -52,6 +52,7 @@ type Server struct {
 	skillsDir     string // 技能库工作目录（<db目录>/skills，导入或扫描发现的技能复制到这里）
 	sessionsRoot  string // 任务 worktree 根目录（<db目录>/sessions）
 	loginPage     *template.Template
+	appFS         fs.FS
 	mux           *http.ServeMux
 	apiOperations map[apiOperation]struct{}
 	browserAuth   bool            // false only for explicitly trusted passwordless browser deployments
@@ -189,6 +190,7 @@ func New(st *store.Store, hub *events.EventStream, ex *exec.Executor, sc *sched.
 		skillsDir:    skillsDir,
 		sessionsRoot: filepath.Join(filepath.Dir(skillsDir), "sessions"),
 		loginPage:    template.Must(template.ParseFS(web.FS, "templates/login.html")),
+		appFS:        web.FS,
 		mux:          http.NewServeMux(),
 		provBusy:     map[string]bool{},
 	}
@@ -333,7 +335,7 @@ func (s *Server) pageApp(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "API endpoint 不存在")
 		return
 	}
-	b, err := fs.ReadFile(web.FS, "dist/index.html")
+	b, err := fs.ReadFile(s.appFS, "dist/index.html")
 	if err != nil {
 		http.Error(w, "前端未构建，请运行 make frontend", http.StatusServiceUnavailable)
 		return
