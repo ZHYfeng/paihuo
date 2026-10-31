@@ -11,9 +11,9 @@ import (
 	"paihuo/internal/store"
 )
 
-// 交互式任务按 Runtime 能力放行：pi / omp（RPC 消息流通道）支持；
-// dsh 的结构化会话走 HTTP ApiProxy（不提供终端交互任务）；opencode / claude /
-// codex 只能批处理。批处理对所有 CLI 开放，未指定 run_mode 时保持 batch。
+// 交互式任务按 Runtime 能力放行：pi（RPC 消息流通道）支持；
+// dsh 的结构化会话走 HTTP ApiProxy（不提供终端交互任务）；claude / codex
+// 只能批处理。批处理对所有 CLI 开放，未指定 run_mode 时保持 batch。
 func TestCreateInteractiveTaskOnlySupportsInteractiveRuntimes(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
@@ -26,9 +26,9 @@ func TestCreateInteractiveTaskOnlySupportsInteractiveRuntimes(t *testing.T) {
 	)
 	s := env.server
 
-	interactiveCLIs := map[string]bool{"pi": true, "omp": true}
+	interactiveCLIs := map[string]bool{"pi": true}
 	agentIDs := make(map[string]int64)
-	for _, cli := range []string{"omp", "opencode", "pi", "claude", "codex", "dsh"} {
+	for _, cli := range []string{"claude", "codex", "pi", "dsh"} {
 		id, err := st.CreateRole(store.Role{Name: cli, RuntimeID: cli, Enabled: true})
 		if err != nil {
 			t.Fatal(err)
@@ -37,7 +37,7 @@ func TestCreateInteractiveTaskOnlySupportsInteractiveRuntimes(t *testing.T) {
 	}
 
 	var piTask store.Task
-	for _, cli := range []string{"omp", "opencode", "pi", "claude", "codex", "dsh"} {
+	for _, cli := range []string{"claude", "codex", "pi", "dsh"} {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(`{"title":"interactive `+cli+`","role_id":`+itoa(agentIDs[cli])+`,"run_mode":"interactive"}`))
 		resp := httptest.NewRecorder()
 		s.createTask(resp, req)
@@ -63,7 +63,7 @@ func TestCreateInteractiveTaskOnlySupportsInteractiveRuntimes(t *testing.T) {
 	}
 
 	// 批处理对所有 CLI 开放，不受交互式限制影响。
-	for _, cli := range []string{"omp", "opencode", "pi", "claude", "codex", "dsh"} {
+	for _, cli := range []string{"claude", "codex", "pi", "dsh"} {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(`{"title":"batch `+cli+`","role_id":`+itoa(agentIDs[cli])+`}`))
 		resp := httptest.NewRecorder()
 		s.createTask(resp, req)
@@ -82,13 +82,17 @@ func TestCreateInteractiveTaskOnlySupportsInteractiveRuntimes(t *testing.T) {
 		t.Fatalf("交互式任务不应允许改派到 codex: code=%d body=%s", resp.Code, resp.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(piTask.ID), strings.NewReader(`{"role_id":`+itoa(agentIDs["omp"])+`}`))
+	otherPiID, err := st.CreateRole(store.Role{Name: "other-pi", RuntimeID: "pi", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(piTask.ID), strings.NewReader(`{"role_id":`+itoa(otherPiID)+`}`))
 	req.SetPathValue("id", itoa(piTask.ID))
 	setTaskRevision(t, st, piTask.ID, req)
 	resp = httptest.NewRecorder()
 	s.patchTask(resp, req)
 	if resp.Code != http.StatusOK {
-		t.Fatalf("交互式任务改派到 omp 失败: code=%d body=%s", resp.Code, resp.Body.String())
+		t.Fatalf("交互式任务改派到另一个 pi 角色失败: code=%d body=%s", resp.Code, resp.Body.String())
 	}
 
 	req = httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+itoa(piTask.ID), strings.NewReader(`{"role_id":null}`))

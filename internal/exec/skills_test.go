@@ -22,7 +22,7 @@ func TestPrepareRoleSkillsUsesNativeRootsAndCleansUp(t *testing.T) {
 	manifest := filepath.Join(t.TempDir(), "runtime", "role-skills.json")
 	workspace := filepath.Join(t.TempDir(), "workspace")
 
-	prepared, err := prepareRoleSkills(42, workspace, "opencode", manifest, []string{source, source})
+	prepared, err := prepareRoleSkills(42, workspace, "pi", manifest, []string{source, source})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestPrepareRoleSkillsUsesNativeRootsAndCleansUp(t *testing.T) {
 	if _, err := os.Stat(binding.Dir); !os.IsNotExist(err) {
 		t.Fatalf("staged skill should be removed, err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(workspace, ".opencode")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(workspace, ".agents")); !os.IsNotExist(err) {
 		t.Fatalf("new native parents should be removed, err=%v", err)
 	}
 	if _, err := os.Stat(filepath.Join(source, "SKILL.md")); err != nil {
@@ -80,7 +80,7 @@ func TestPrepareRoleSkillsMapsAllSupportedCLIs(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, "SKILL.md"), []byte("---\nname: test-skill\ndescription: test\n---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, cli := range []string{"omp", "codex", "pi", "claude", "opencode"} {
+	for _, cli := range []string{"claude", "codex", "pi", "dsh"} {
 		t.Run(cli, func(t *testing.T) {
 			workspace := filepath.Join(t.TempDir(), "workspace")
 			manifest := filepath.Join(t.TempDir(), "manifest.json")
@@ -151,23 +151,16 @@ func TestEnsureRoleSkillsBuildsSymlinkMountAndIsIdempotent(t *testing.T) {
 	if mount.Bindings[0].OriginalName != "design" {
 		t.Fatalf("提示词技能名应与挂载 slug 一致（各 CLI 可见名）: %+v", mount.Bindings[0])
 	}
-	// claude 镜像 + 插件清单 + omp overlay + opencode env
+	// claude 镜像 + 插件清单
 	if _, err := os.Stat(filepath.Join(roleDir, "skills", "design")); err != nil {
 		t.Fatalf("claude 镜像缺失: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(roleDir, ".claude-plugin", "plugin.json")); err != nil {
 		t.Fatalf("claude 插件清单缺失: %v", err)
 	}
-	if mount.OmpOverlay == "" || mount.ClaudePlugin != roleDir || mount.OpencodeConfig == "" {
-		t.Fatalf("CLI 挂载描述缺失: %+v", mount)
-	}
-	var cfg struct {
-		Skills struct {
-			Paths []string `json:"paths"`
-		} `json:"skills"`
-	}
-	if err := json.Unmarshal([]byte(mount.OpencodeConfig), &cfg); err != nil || len(cfg.Skills.Paths) != 1 {
-		t.Fatalf("opencode env 内容错误: %v %s", err, mount.OpencodeConfig)
+
+	if mount.ClaudePlugin != roleDir {
+		t.Fatalf("claude 挂载描述缺失: %+v", mount)
 	}
 
 	// 幂等：第二次调用不重建，symlink inode 不变（保留 mtime）。
@@ -467,7 +460,7 @@ func TestPrepareRoleSkillsStandalone(t *testing.T) {
 	src := writeSkill(t, "design", "design workflow")
 	workdir := t.TempDir()
 
-	for _, cli := range []string{"pi", "omp", "opencode", "claude", "codex"} {
+	for _, cli := range []string{"claude", "codex", "pi", "dsh"} {
 		t.Run(cli, func(t *testing.T) {
 			mount, cleanup, err := PrepareRoleSkillsStandalone(workdir, cli, []string{src})
 			if err != nil {
@@ -481,14 +474,6 @@ func TestPrepareRoleSkillsStandalone(t *testing.T) {
 				t.Fatal("合规技能应为 symlink")
 			}
 			switch cli {
-			case "omp":
-				if mount.OmpOverlay == "" {
-					t.Fatal("omp 需要 overlay")
-				}
-			case "opencode":
-				if mount.OpencodeConfig == "" {
-					t.Fatal("opencode 需要 env 配置")
-				}
 			case "claude":
 				if mount.ClaudePlugin != workdir {
 					t.Fatal("claude 需要 plugin-dir")

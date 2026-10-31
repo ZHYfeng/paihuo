@@ -1,3 +1,4 @@
+import { credentialLabel } from "../../lib/runtime-auth";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, ArrowUpRight, Boxes, CalendarDays, CheckCheck, ChevronRight, CirclePlus, ClipboardCheck, FolderKanban, Layers3, MessagesSquare, Workflow } from "lucide-react";
 import { useState } from "react";
@@ -77,7 +78,7 @@ export function DashboardPage() {
         </Card>
         <Card className="dashboard-panel runtime-panel">
           <div className="panel-heading"><span className="panel-icon"><Boxes size={18} /></span><h2>运行环境</h2><Link to="/runtimes" className="panel-link">管理<ArrowUpRight size={14} /></Link></div>
-          {provisioning.isLoading ? <Spinner /> : provisioning.isError ? <p className="quiet-empty">运行环境暂时无法加载。</p> : <><div className="runtime-grid">{provisioning.data?.map(runtime => <span key={runtime.id} className="runtime-item" title={`${runtime.name}${runtime.version ? ` ${runtime.version}` : ""} · ${runtime.installed ? runtime.login ? "已安装并登录" : "已安装，未登录" : "未安装"}`}><i className={runtime.installed ? runtime.login ? "ready" : "installed" : ""} /><span>{runtime.name}</span><span className="sr-only">{runtime.installed ? runtime.login ? "已安装并登录" : "已安装，未登录" : "未安装"}</span></span>)}</div><div className="runtime-summary"><span>{installed.length} / {provisioning.data?.length || 0} 已安装</span><Link to="/roles">{roles.isSuccess ? roles.data.filter(role => role.enabled).length : "—"} 个角色已启用<ChevronRight size={12} /></Link></div></>}
+          {provisioning.isLoading ? <Spinner /> : provisioning.isError ? <p className="quiet-empty">运行环境暂时无法加载。</p> : <><div className="runtime-grid">{provisioning.data?.map(runtime => <span key={runtime.id} className="runtime-item" title={`${runtime.name}${runtime.version ? ` ${runtime.version}` : ""} · ${runtime.installed ? `已安装，${credentialLabel(runtime)}` : "未安装"}`}><i className={runtime.installed ? runtime.login ? "ready" : "installed" : ""} /><span>{runtime.name}</span><span className="sr-only">{runtime.installed ? `已安装，${credentialLabel(runtime)}` : "未安装"}</span></span>)}</div><div className="runtime-summary"><span>{installed.length} / {provisioning.data?.length || 0} 已安装</span><Link to="/roles">{roles.isSuccess ? roles.data.filter(role => role.enabled).length : "—"} 个角色已启用<ChevronRight size={12} /></Link></div></>}
         </Card>
       </div>
     </div>

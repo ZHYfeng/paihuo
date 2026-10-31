@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	osexec "os/exec"
+	"strconv"
 
 	"paihuo/internal/events"
 	"paihuo/internal/exec"
@@ -13,6 +14,39 @@ import (
 func (s *Server) registerRuntimeCatalogRoutes(mux *routeRegistrar) {
 	mux.HandleFunc("GET /api/v1/runtimes", s.listRuntimes)
 	mux.HandleFunc("POST /api/v1/runtimes/refresh", s.refreshRuntimes)
+	mux.HandleFunc("GET /api/v1/runtimes/{id}/skills", s.runtimeSkills)
+}
+
+func (s *Server) runtimeSkills(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.ex.RuntimeService().Has(id) {
+		writeErr(w, http.StatusNotFound, "未知 Runtime: "+id)
+		return
+	}
+	var cwd string
+	if raw := r.URL.Query().Get("project_id"); raw != "" {
+		projectID, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || projectID <= 0 {
+			writeErr(w, http.StatusBadRequest, "project_id 无效")
+			return
+		}
+		project, err := s.st.GetProject(projectID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "读取项目失败")
+			return
+		}
+		if project == nil {
+			writeErr(w, http.StatusNotFound, "项目不存在")
+			return
+		}
+		cwd = project.ProjectDir
+	}
+	items, err := s.ex.RuntimeService().Skills(r.Context(), id, cwd)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (s *Server) registerRuntimeProvisionRoutes(mux *routeRegistrar) {
@@ -40,6 +74,7 @@ func (s *Server) listRuntimes(w http.ResponseWriter, r *http.Request) {
 // refreshRuntimes 强制从 Linux 主机重查各 CLI 的模型目录后返回 schema。
 // 角色定义和 role_config 仍在 SQLite；这里仅刷新可选模型与其发现到的能力。
 func (s *Server) refreshRuntimes(w http.ResponseWriter, r *http.Request) {
+	exec.RefreshProvisionStatus()
 	exec.RefreshModelCatalogs()
 	s.listRuntimes(w, r)
 }
@@ -79,17 +114,21 @@ func (s *Server) provisionInstall(w http.ResponseWriter, r *http.Request) {
 		push := func(line string) {
 			s.hub.Publish(events.Event{Type: "provision", Payload: map[string]any{"runtime_id": in.RuntimeID, "line": line}})
 		}
+		finish := func(line string) {
+			exec.RefreshProvisionStatus()
+			push(line)
+		}
 		push("$ " + cmd)
 		c := osexec.Command("bash", "-c", cmd)
 		c.Env = os.Environ()
 		out, err := c.StdoutPipe()
 		if err != nil {
-			push("执行失败: " + err.Error())
+			finish("执行失败: " + err.Error())
 			return
 		}
 		c.Stderr = c.Stdout // 合并输出
 		if err := c.Start(); err != nil {
-			push("启动失败: " + err.Error())
+			finish("启动失败: " + err.Error())
 			return
 		}
 		sc := bufio.NewScanner(out)
@@ -98,9 +137,9 @@ func (s *Server) provisionInstall(w http.ResponseWriter, r *http.Request) {
 			push(sc.Text())
 		}
 		if err := c.Wait(); err != nil {
-			push("[install] 退出码非零: " + err.Error())
+			finish("[install] 退出码非零: " + err.Error())
 		} else {
-			push("[install] 完成 ✓")
+			finish("[install] 完成 ✓")
 		}
 	}()
 }

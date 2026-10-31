@@ -68,7 +68,7 @@ review 不是第五种形态，是任何形态执行后都可能经过的审批�
 ## 4. 执行层
 
 ```
-Task ──► Role（指令/模型/并发/技能选择）──► Runtime（Pi/OMP/OpenCode/Claude Code/Codex）
+Task ──► Role（指令/模型/并发/技能选择）──► Runtime（Claude Code/Codex/Pi/DSH）
            │                                      │
            └── Skills 挂载（sessionsRoot/.roles/） ┘
                       │
@@ -105,7 +105,7 @@ full_permission、merge_workspace、delete_workspace）在创建和编辑时都�
 |---|---|---|
 | 项目管理 | Projects | 目录绑定、worktree 隔离、历史 |
 | 任务管理 | 工作台/任务/历史 | 状态机、依赖、重试、取消、日志 |
-| Agent Runtime | Runtimes | 五种 runtime 安装/探测/capability |
+| Agent Runtime | Runtimes | 四种 runtime 安装/探测/capability |
 | 角色和技能 | Roles / 技能 | Role 指令与约束；SKILL.md 导入与挂载 |
 | Pi 扩展 | 技能页 Pi 扩展 tab | 安装/移除 Pi 扩展 |
 | 模板 | 模板 | 调度模板 + MCP 任务创建模板 |

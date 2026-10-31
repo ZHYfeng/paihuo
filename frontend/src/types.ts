@@ -87,8 +87,22 @@ export interface ProvisionInfo {
   installed: boolean;
   version: string;
   login: boolean;
+  auth?: {
+    status: "authenticated" | "configured" | "missing" | "unknown" | "invalid" | "expired";
+    source?: string;
+    method?: string;
+    message?: string;
+  };
   install_cmd: string;
   login_hint: string;
+}
+
+export interface RuntimeSkillInventory {
+  runtime_id: string;
+  cwd: string;
+  skills: Array<{ name: string; description: string; path: string; scope: string; source: string; enabled: boolean | null }>;
+  complete: boolean;
+  warnings: string[];
 }
 
 export interface Skill {

@@ -86,7 +86,7 @@ func (a *piAdapter) Schema() []Field {
 	if f := byKey(fs, "skills"); f != nil {
 		f.Help = "执行器把所选技能挂载为角色级技能目录（symlink 视图），并用官方 --skill 逐目录加载（可多个）"
 	}
-	// pi 不复用通用 plugins 字段（其语义是 OMP/Claude 的配置路径）；Pi
+	// pi 不复用通用 plugins 字段（其语义是 Claude 的配置路径）；Pi
 	// 扩展单独存入 custom.extensions，并使用 --no-extensions + --extension
 	// 精确加载。字段缺失表示采用 Runtime 默认发现。
 	out := fs[:0]
@@ -177,10 +177,6 @@ func BuildPiRPCSessionArgs(role store.RoleConfig, skillDirs []string, sessionDir
 	return args, nil
 }
 
-// BuildOmpRPCSessionArgs 构造 omp --mode rpc 会话进程的启动参数（会话管理器用）。
-// 与 ompAdapter.Build 共用角色参数翻译，差异：不传 -p/位置参数（初始消息由
-// 前端 prompt 命令发送），并注入 --mode rpc。skillMount 非 nil 且带角色级
-// overlay 时用 --config overlay（含角色声明的 customDirectories）。
 // ---------------------------------------------------------------------------
 // pi：`pi --list-models`（权威：按 auth.json 凭据只列实际可用模型，表格式
 // provider model ...）；失败回退 settings.json（defaultProvider/defaultModel）

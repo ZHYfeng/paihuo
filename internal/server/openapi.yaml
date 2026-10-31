@@ -285,16 +285,27 @@ paths:
   /runtimes/refresh:
     post:
       tags: [Resources]
-      summary: Refresh Runtime model catalogs
+      summary: Refresh Runtime model catalogs and credential inspection
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       responses:
         '200': {description: Refreshed Runtime descriptors}
+  /runtimes/{id}/skills:
+    get:
+      tags: [Resources]
+      summary: Discover Runtime-native Skills without importing them
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - {name: project_id, in: query, schema: {type: integer, minimum: 1}}
+      responses:
+        '200': {description: Native Skill inventory, enabled state and discovery warnings, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeSkillInventory'}}}}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
   /runtimes/provisioning:
     get:
       tags: [Resources]
-      summary: Read Runtime installation state
+      summary: Read Runtime installation and credential inspection state
       responses:
-        '200': {description: Provisioning descriptors}
+        '200': {description: Provisioning descriptors without credential values, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/RuntimeProvisioning'}}}}}
   /runtimes/install:
     post:
       tags: [Resources]
@@ -1040,6 +1051,48 @@ components:
       type: object
       required: [runtime_id]
       properties: {runtime_id: {type: string}}
+    RuntimeCredentialStatus:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, enum: [authenticated, configured, missing, unknown, invalid, expired]}
+        source: {type: string}
+        method: {type: string}
+        message: {type: string}
+      description: authenticated means the CLI recognizes a login; configured means local credential configuration exists. Neither performs a remote inference check. Credential values and raw authentication output are never returned.
+    RuntimeProvisioning:
+      type: object
+      required: [id, name, installed, version, login, auth]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        docs: {type: string}
+        installed: {type: boolean}
+        version: {type: string}
+        login: {type: boolean, description: 'Compatibility flag: true for authenticated or configured; use auth.status for confidence.'}
+        auth: {$ref: '#/components/schemas/RuntimeCredentialStatus'}
+        install_cmd: {type: string}
+        login_hint: {type: string}
+    RuntimeSkillInventory:
+      type: object
+      required: [runtime_id, cwd, skills, complete, warnings]
+      properties:
+        runtime_id: {type: string}
+        cwd: {type: string}
+        complete: {type: boolean}
+        warnings: {type: array, items: {type: string}}
+        skills:
+          type: array
+          items:
+            type: object
+            required: [name, description, path, scope, source, enabled]
+            properties:
+              name: {type: string}
+              description: {type: string}
+              path: {type: string}
+              scope: {type: string}
+              source: {type: string}
+              enabled: {type: [boolean, 'null'], description: null means the runtime's effective loading state is not known.}
     RoleStudioMessage:
       type: object
       required: [role, content]

@@ -48,7 +48,7 @@ Application 负责 Task 用例、状态机和跨 Store/Executor/Workspace/Sessio
 - `TaskLifecycle` 校验任务目标、Role、Project、权限、运行方式和依赖，并统一编排创建、审批、驳回/重排、取消、续跑和删除；它在副作用前检查 revision/当前状态，状态变化后按既定顺序发布事件、管理 Runtime Session/Workspace 并唤醒执行器。
 - `WorkflowService` 管理工作流定义（增删查改）、确定性 Policy 和 Run。Run 在同一事务内创建全部 Task 与多边依赖，执行器不会观察到半张图。
 - `RuntimeService` 通过 capability 选择执行提供者。`ExecutionRequest` 被翻译为可审计 `CommandSpec`；Task 与 Workflow 不理解厂商 flag。
-- `SessionDriver` 只由支持结构化多轮消息的 Runtime 实现。Pi 与 OMP 用 `--mode rpc` 的 stdin/stdout JSONL 通道（rpcProc）；DSH 用其原生 HTTP ApiProxy——常驻 `dsh --profile web` 宿主（full/review 两个权限模式宿主），会话经 `session.create/prompt/history/cancel` 驱动、SSE 事件流订阅，事件在服务端归一化为统一 rpcEvent 形状；其他 Runtime 保持批处理。
+- `SessionDriver` 只由支持结构化多轮消息的 Runtime 实现。Pi 用 `--mode rpc` 的 stdin/stdout JSONL 通道（rpcProc）；DSH 用其原生 HTTP ApiProxy——常驻 `dsh --profile web` 宿主（full/review 两个权限模式宿主），会话经 `session.create/prompt/history/cancel` 驱动、SSE 事件流订阅，事件在服务端归一化为统一 rpcEvent 形状；其他 Runtime 保持批处理。
 - `WorkspaceService` 管理状态查询、丢弃和 Git 初始化；Git 项目中的 Task/Session 使用独占 worktree。
 - `EventStream` 先持久化再发布，事件具有稳定 `seq`。浏览器用 `Last-Event-ID` 或 `after` 补拉断线区间。
 - `ArtifactStore` 以 SHA-256 内容寻址保存不可变内容；SQLite 只保存归属、媒体类型、hash、大小、locator 与保留策略。
@@ -63,7 +63,11 @@ Role 表达责任、指令、技能和并发策略；Runtime 表达执行能力�
 - `SessionDriver`：准备结构化会话并声明退出语义。
 - `Provisioner`：检查安装、版本、登录状态和安装命令。
 
-内置 Runtime 为 OMP、OpenCode、Pi、Claude Code、Codex、DSH。FakeRuntime 可独立验证 TaskLifecycle 与 Workflow，不需要真实 CLI 或 tmux。
+内置 Runtime 为 Claude Code、Codex、Pi、DSH。FakeRuntime 可独立验证 TaskLifecycle 与 Workflow，不需要真实 CLI 或 tmux。
+
+Runtime 检测以 PaiHuo 服务账户的环境为准。Claude 与 Codex 优先使用 CLI 自带的登录状态查询，兼容其凭据存储；本地文件和环境变量回退会校验结构，并区分 CLI 已识别登录、仅发现凭据配置、缺失、格式无效、过期和未知。检测不会发起推理请求，`configured` 不表示已验证服务端有效性；API 不返回凭据内容或原始认证输出。手动刷新与安装结束都会失效凭据缓存。
+
+`GET /api/v1/runtimes/{id}/skills` 只读盘点原生技能，可用 `project_id` 选择项目范围，不会导入或修改技能库。Codex 与 Pi 优先读取原生目录，保留启用状态；Claude 读取用户、项目和已安装插件，DSH 读取用户、共享、自定义目录及预设。无法确认的加载状态返回 `null`，不完整发现附带说明，DSH 的实际加载取决于所选预设。技能扫描跟随目录软链接，按真实路径去重并跳过循环、断链与 PaiHuo 管理的副本。
 
 ## Workflow
 

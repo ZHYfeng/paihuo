@@ -40,7 +40,7 @@ const (
 - role_id：执行角色 ID，必填，取自 /api/v1/roles；
 - project_id：所属项目 ID，取自 /api/v1/projects；省略则不归属项目；
 - perm：权限模式，"full"=自动执行并在成功后自动派发代码合并任务，"review"=完成后人工审批；
-- run_mode："batch"=批处理（默认），"interactive"=交互式终端（仅 pi / omp 角色支持）；
+- run_mode："batch"=批处理（默认），"interactive"=交互式终端（仅 pi 角色支持）；
 - concurrent：是否允许与同项目其他任务并行；false=项目内串行（默认）；
 - dependency_mode："none"=无依赖，"weak"=弱依赖（项目任务默认，按创建时间自动排队），"strong"=强依赖（必须同时提供 depends_on）；
 - depends_on：强依赖的前置任务 ID；

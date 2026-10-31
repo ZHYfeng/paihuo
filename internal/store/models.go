@@ -87,14 +87,14 @@ type RoleConfig struct {
 	Plugins      []string          `json:"plugins"`      // 插件/配置文件
 	ExtraArgs    []string          `json:"extra_args"`
 	Env          map[string]string `json:"env"`
-	Custom       map[string]string `json:"custom,omitempty"` // CLI 特有参数（如 opencode 的 agent、claude 的 permission_mode）
+	Custom       map[string]string `json:"custom,omitempty"` // CLI 特有参数（如 claude 的 permission_mode）
 }
 
 type Role struct {
 	ID             int64      `json:"id"`
 	Name           string     `json:"name"`
 	Description    string     `json:"description"`
-	RuntimeID      string     `json:"runtime_id"` // Runtime ID：omp | opencode | pi | claude | codex | dsh
+	RuntimeID      string     `json:"runtime_id"` // Runtime ID：claude | codex | pi | dsh
 	RoleConfig     RoleConfig `json:"role_config"`
 	MaxConcurrency int        `json:"max_concurrency"` // 该角色同时运行的任务上限
 	// 委托（delegation）：开关 + 子任务最大权限。声明后，该角色的会话/任务

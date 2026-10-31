@@ -25,17 +25,6 @@ func TestAdaptersBuildNativeInteractiveCommands(t *testing.T) {
 		batchForbidden       []string
 	}{
 		{
-			name: "omp", build: (&ompAdapter{baseAdapter{id: "omp", name: "OMP", bin: "omp"}}).Build,
-			interactiveForbidden: []string{"-p", "--no-pty"},
-			batchRequired:        []string{"-p", "--no-pty"},
-		},
-		{
-			name: "opencode", build: (&openCodeAdapter{baseAdapter{id: "opencode", name: "OpenCode", bin: "opencode"}}).Build,
-			interactiveRequired: []string{"run", "--interactive", "--dir"},
-			batchRequired:       []string{"run", "--dir"},
-			batchForbidden:      []string{"--interactive"},
-		},
-		{
 			name: "pi", build: (&piAdapter{baseAdapter{id: "pi", name: "Pi Role", bin: "pi"}}).Build,
 			interactiveForbidden: []string{"-p"},
 			batchRequired:        []string{"-p"},

@@ -17,7 +17,7 @@ import (
 	"paihuo/internal/store"
 )
 
-// sessionChannel 是会话管理器持有的执行通道抽象：rpcProc（pi/omp 的
+// sessionChannel 是会话管理器持有的执行通道抽象：rpcProc（pi 的
 // stdin/stdout JSONL 子进程）与 dshChannel（dsh web 宿主的 HTTP + SSE 会话）
 // 都实现它，Manager 的生命周期/事件/空闲挂起逻辑与具体通道解耦。
 type sessionChannel interface {

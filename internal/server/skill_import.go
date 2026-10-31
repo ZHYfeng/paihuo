@@ -1,11 +1,13 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"paihuo/internal/skillfs"
 	"paihuo/internal/store"
 )
 
@@ -37,26 +39,13 @@ func skillSourceDir(raw string) (string, error) {
 	return filepath.Clean(src), nil
 }
 
-// discoverSkillDirs 返回 root 下每个直接包含 SKILL.md 的目录。它不会跟随
-// 目录软链，既避免循环，也避免意外扫描到根目录之外；s.skillsDir 则永远
-// 跳过，防止把 paihuo 已复制的技能再次导入。
-func discoverSkillDirs(root, skillsDir string) ([]string, error) {
-	dirs := make([]string, 0)
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			if isPathWithin(path, skillsDir) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if entry.Name() == "SKILL.md" {
-			dirs = append(dirs, filepath.Dir(path))
-		}
-		return nil
-	})
+// discoverSkillDirs 跟随目录软链并按真实路径去重，跳过循环及技能库副本。
+func discoverSkillDirs(ctx context.Context, root, skillsDir string) ([]string, error) {
+	files, err := skillfs.Discover(ctx, root, skillfs.Options{Exclude: []string{skillsDir}})
+	dirs := make([]string, 0, len(files))
+	for _, file := range files {
+		dirs = append(dirs, filepath.Dir(file))
+	}
 	return dirs, err
 }
 

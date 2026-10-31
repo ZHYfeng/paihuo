@@ -134,15 +134,15 @@ func TestCreateWorktree(t *testing.T) {
 }
 
 // 只有声明结构化 Session capability 的 Runtime 可以创建会话。
-func TestCreateSessionRejectsNonPiOmpAgents(t *testing.T) {
+func TestCreateSessionRequiresSessionCapability(t *testing.T) {
 	m, st, _, _ := newTestEnv(t)
-	for _, cli := range []string{"pi", "omp", "opencode", "claude", "codex"} {
+	for _, cli := range []string{"claude", "codex", "pi", "dsh", "omp", "opencode"} {
 		id, err := st.CreateRole(store.Role{Name: cli + "-sess", RuntimeID: cli, Enabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
 		_, err = m.Create(nil, id, "full")
-		if cli == "pi" || cli == "omp" {
+		if cli == "pi" || cli == "dsh" {
 			if err != nil {
 				t.Fatalf("%s 创建会话应成功: %v", cli, err)
 			}
@@ -155,26 +155,30 @@ func TestCreateSessionRejectsNonPiOmpAgents(t *testing.T) {
 }
 
 // 绕过创建校验落库的无 Session capability Runtime 也必须在启动时拒绝。
-func TestStartRejectsLegacyNonPiOmpSession(t *testing.T) {
+func TestStartRejectsLegacySessionWithoutSessionCapability(t *testing.T) {
 	m, st, _, _ := newTestEnv(t)
-	cxID, err := st.CreateRole(store.Role{Name: "codex-sess", RuntimeID: "codex", Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 绕过创建校验直接落库（Runtime 能力由角色 runtime_id 决定，启动时校验）。
-	id, err := st.CreateSessionTask(store.Task{
-		RoleID: &cxID, Title: "遗留", Status: store.SessionStatusCreated,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = m.Start(context.Background(), id)
-	if err == nil || !strings.Contains(err.Error(), "不提供结构化会话能力") {
-		t.Fatalf("遗留 codex 会话启动应被拒绝: %v", err)
-	}
-	got, _ := m.Get(id)
-	if got.Status != store.SessionStatusCreated {
-		t.Fatalf("启动失败不应改变状态，得到 %s", got.Status)
+	for _, cli := range []string{"codex", "omp", "opencode"} {
+		t.Run(cli, func(t *testing.T) {
+			roleID, err := st.CreateRole(store.Role{Name: cli + "-legacy-sess", RuntimeID: cli, Enabled: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// 绕过创建校验直接落库（Runtime 能力由角色 runtime_id 决定，启动时校验）。
+			id, err := st.CreateSessionTask(store.Task{
+				RoleID: &roleID, Title: "遗留", Status: store.SessionStatusCreated,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = m.Start(context.Background(), id)
+			if err == nil || !strings.Contains(err.Error(), "不提供结构化会话能力") {
+				t.Fatalf("遗留 %s 会话启动应被拒绝: %v", cli, err)
+			}
+			got, _ := m.Get(id)
+			if got.Status != store.SessionStatusCreated {
+				t.Fatalf("启动失败不应改变状态，得到 %s", got.Status)
+			}
+		})
 	}
 }
 

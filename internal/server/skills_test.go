@@ -310,6 +310,33 @@ func TestScanSkillsRejectsDirectoryWithoutSkillFiles(t *testing.T) {
 	}
 }
 
+func TestScanSkillsFollowsSymlinksWithoutLoopsOrManagedCopies(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(t.TempDir(), "linked-skill")
+	writeTestSkill(t, source, "---\nname: linked-skill\ndescription: linked skill\n---\n")
+	managed := filepath.Join(t.TempDir(), "managed")
+	writeTestSkill(t, filepath.Join(managed, "existing"), "---\nname: existing\ndescription: managed copy\n---\n")
+	for name, target := range map[string]string{"first": source, "second": source, "loop": root, "self": filepath.Join(root, "self"), "managed-link": managed, "broken": filepath.Join(root, "missing")} {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := newTestServer(t, withTestSkillsDir(managed))
+	body, _ := json.Marshal(map[string]string{"source_path": root})
+	resp := httptest.NewRecorder()
+	env.server.Handler().ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/api/v1/skills/scan", bytes.NewReader(body)))
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("linked skill scan failed: code=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var result skillScanResult
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Found != 1 || len(result.Imported) != 1 || result.Imported[0].SourcePath != source {
+		t.Fatalf("canonical symlink targets must be imported once: %+v", result)
+	}
+}
+
 func TestDeleteSkillsBatchDeletesRecordsAndCopies(t *testing.T) {
 	root := t.TempDir()
 	st, err := store.Open(":memory:")

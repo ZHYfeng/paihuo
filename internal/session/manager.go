@@ -37,7 +37,7 @@ type Manager struct {
 	dshHosts        *dshHostPool
 
 	mu    sync.Mutex
-	procs map[int64]sessionChannel // pi/omp RPC 进程 / dsh HTTP 会话通道
+	procs map[int64]sessionChannel // pi RPC 进程 / dsh HTTP 会话通道
 	// 编排委托：给声明了 delegation 的会话进程注入平台工具面环境（地址 + 令牌）。
 	mcpBaseURL string
 	mcpSecret  string
@@ -117,7 +117,7 @@ func (m *Manager) stderrPathOf(id int64) string {
 // Create 创建会话，标题自动使用对应角色名称：git 项目建隔离 worktree
 // （sessions/<project>/session-<id>），非 git 项目复制到专属会话目录，无项目时使用独立空目录
 // （sessions/session-<id>，不关联任何项目）。perm 决定 dsh 会话路由到哪个宿主
-// （full=免审批 / review=沙箱+人工审批）；pi/omp 会话不使用该字段。
+// （full=免审批 / review=沙箱+人工审批）；pi 会话不使用该字段。
 func (m *Manager) Create(projectID *int64, roleID int64, perm string) (*store.Task, error) {
 	if perm == "" {
 		perm = store.PermFull
@@ -253,7 +253,7 @@ func (m *Manager) Start(ctx context.Context, id int64) error {
 	if dir == "" {
 		dir = m.projectDir(ss) // 非 git / 无 worktree 回退
 	}
-	// 结构化会话只支持 pi / omp（RPC 消息流通道）与 dsh（HTTP ApiProxy 会话）。
+	// 结构化会话只支持 pi（RPC 消息流通道）与 dsh（HTTP ApiProxy 会话）。
 	if _, ok := m.runtimes.Session(agent.RuntimeID); !ok && agent.RuntimeID != "dsh" {
 		m.ex.ReleaseRoleSlot(agent.ID)
 		return fmt.Errorf("Runtime %s 不提供结构化会话能力", agent.RuntimeID)
@@ -274,7 +274,7 @@ func (m *Manager) Start(ctx context.Context, id int64) error {
 }
 
 // startChannel 按 Runtime 启动会话通道：
-//   - pi/omp：spawn RPC 进程，挂起恢复时 switch_session 接续原会话
+//   - pi：spawn RPC 进程，挂起恢复时 switch_session 接续原会话
 //   - dsh：在对应权限宿主上 session.create（恢复时原 sessionId 接回）
 func (m *Manager) startChannel(ss store.SessionTask, agent store.Role, dir string) error {
 	var ch sessionChannel
@@ -367,7 +367,7 @@ func applyDSHRoleModel(ch *dshChannel, role store.RoleConfig) error {
 	return ch.api.selectModel(ctx, ch.dshSession, provider, model, effort)
 }
 
-// spawn 启动 pi/omp RPC 进程并注入事件/退出回调。
+// spawn 启动 pi RPC 进程并注入事件/退出回调。
 func (m *Manager) spawn(ss store.SessionTask, agent store.Role, cwd string) (*rpcProc, error) {
 	driver, ok := m.runtimes.Session(agent.RuntimeID)
 	if !ok {
@@ -743,7 +743,7 @@ func (m *Manager) State(ctx context.Context, id int64) (json.RawMessage, error) 
 	return resp.Data, nil
 }
 
-// Transcript 返回会话完整时间线。pi/omp 解析会话 JSONL 文件（含全部 entry
+// Transcript 返回会话完整时间线。pi 解析会话 JSONL 文件（含全部 entry
 // 类型：message / model_change / compaction / branch_summary 等）；dsh 走宿主
 // history API。挂起/交付后仍可读。limit <= 0 表示全量；before 是分页游标
 // （返回该 entry 之前的 limit 条，不含该条，即「上一页」）。返回 (entries, total, err)

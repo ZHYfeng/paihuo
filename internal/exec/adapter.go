@@ -65,8 +65,6 @@ func commandAdapters() []commandAdapter {
 }
 
 func init() {
-	register(&ompAdapter{baseAdapter{id: "omp", name: "OMP（Oh My Pi）", bin: "omp"}})
-	register(&openCodeAdapter{baseAdapter{id: "opencode", name: "OpenCode", bin: "opencode"}})
 	register(&piAdapter{baseAdapter{id: "pi", name: "Pi Role", bin: "pi"}})
 	register(&claudeAdapter{baseAdapter{id: "claude", name: "Claude Code", bin: "claude"}})
 	register(&codexAdapter{baseAdapter{id: "codex", name: "Codex", bin: "codex"}})
@@ -83,7 +81,7 @@ func (a *baseAdapter) ID() string       { return a.id }
 func (a *baseAdapter) Name() string     { return a.name }
 func (a *baseAdapter) Models() []string { return nil }
 
-// ExitCommand 默认 /exit（opencode/claude/codex 的交互退出命令）。
+// ExitCommand 默认 /exit（claude/codex 的交互退出命令）。
 func (a *baseAdapter) ExitCommand() string { return "/exit" }
 
 func (a *baseAdapter) Detect() (string, error) {

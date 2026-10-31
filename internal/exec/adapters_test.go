@@ -36,135 +36,6 @@ func TestMergeEnvOverridesInPlace(t *testing.T) {
 	}
 }
 
-// omp 官方文档参数映射（omp.sh/docs / flag-tables）：skills→--skills 名称过滤、
-// 全权→--auto-approve、自定义字段→--tools/--max-time/--profile/--provider。
-func TestOmpAdapterBuild(t *testing.T) {
-	a := &ompAdapter{baseAdapter{id: "omp", name: "omp", bin: "omp"}}
-	o := ExecutionRequest{
-		Prompt:     "hi",
-		SessionDir: "/s/x",
-		Perm:       "full",
-		Role: store.RoleConfig{
-			Model:        "claude/claude-sonnet-4",
-			SystemPrompt: "sys",
-			Thinking:     "high",
-			Plugins:      []string{"/p.toml"},
-			ExtraArgs:    []string{"--no-lsp"},
-			Custom: map[string]string{
-				"tools":    "read,edit,bash",
-				"max_time": "30m",
-				"profile":  "work",
-				"provider": "claude",
-			},
-		},
-		SkillMount: &RoleSkillMount{OmpOverlay: "/runtime/omp-overlay.yml"},
-	}
-	bin, args, _, err := a.Build(o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bin != "omp" {
-		t.Fatalf("bin=%q", bin)
-	}
-	joined := strings.Join(args, " ")
-	for _, want := range []string{
-		"-p hi", "--no-pty", "--session-dir /s/x", "--model claude/claude-sonnet-4",
-		"--append-system-prompt sys", "--thinking high", "--config /runtime/omp-overlay.yml",
-		"--config /p.toml", "--tools read,edit,bash", "--max-time 30m",
-		"--profile work", "--provider claude", "--auto-approve", "--no-lsp",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("缺少参数 %q（完整: %s）", want, joined)
-		}
-	}
-	if strings.Contains(joined, "--smol") || strings.Contains(joined, "--slow") {
-		t.Fatalf("OMP 思考级别不应被误映射为模型角色 --smol/--slow: %s", joined)
-	}
-	if strings.Contains(joined, "--add-dir") {
-		t.Fatalf("旧参数 --add-dir 不应再出现: %s", joined)
-	}
-}
-
-// omp schema 含官方新增选项；review 权限不传 --auto-approve。
-func TestOmpSchemaAndPerm(t *testing.T) {
-	a := &ompAdapter{baseAdapter{id: "omp", name: "omp", bin: "omp"}}
-	keys := map[string]bool{}
-	var thinking *Field
-	for _, f := range a.Schema() {
-		keys[f.Key] = true
-		if f.Key == "thinking" {
-			copy := f
-			thinking = &copy
-		}
-	}
-	for _, want := range []string{"tools", "max_time", "profile", "provider"} {
-		if !keys[want] {
-			t.Fatalf("schema 缺少 %s", want)
-		}
-	}
-	if thinking == nil || strings.Join(thinking.Options, ",") != "" {
-		t.Fatalf("OMP 未探测到模型能力时只能保留默认思考档位: %+v", thinking)
-	}
-	if got := a.Docs(); got != "https://omp.sh/docs" {
-		t.Fatalf("Docs=%q", got)
-	}
-	_, args, _, err := a.Build(ExecutionRequest{Prompt: "p", Perm: "review", Role: store.RoleConfig{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(strings.Join(args, " "), "--auto-approve") {
-		t.Fatal("review 权限不应带 --auto-approve")
-	}
-}
-
-// omp RPC 会话参数：--mode rpc 注入、角色参数映射、overlay config 优先于 --skills。
-func TestBuildOmpRPCSessionArgs(t *testing.T) {
-	role := store.RoleConfig{
-		Model:        "claude/claude-sonnet-4",
-		SystemPrompt: "sys",
-		Thinking:     "high",
-		Skills:       []string{"/sk/a", "/sk/b"},
-		Plugins:      []string{"/p.toml"},
-		ExtraArgs:    []string{"--no-lsp"},
-		Custom: map[string]string{
-			"tools":    "read,edit,bash",
-			"max_time": "30m",
-			"profile":  "work",
-			"provider": "claude",
-		},
-	}
-	args, err := BuildOmpRPCSessionArgs(role, &RoleSkillMount{OmpOverlay: "/ov/overlay.toml"}, "/s/x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	joined := strings.Join(args, " ")
-	for _, want := range []string{
-		"--mode rpc", "--session-dir /s/x", "--model claude/claude-sonnet-4",
-		"--append-system-prompt sys", "--thinking high", "--config /ov/overlay.toml",
-		"--config /p.toml", "--tools read,edit,bash", "--max-time 30m",
-		"--profile work", "--provider claude", "--no-lsp",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("缺少参数 %q（完整: %s）", want, joined)
-		}
-	}
-	if strings.Contains(joined, "--skills") {
-		t.Fatalf("有 overlay 时不应再传 --skills: %s", joined)
-	}
-	if strings.Contains(joined, "-p ") || strings.Contains(joined, " --no-pty") {
-		t.Fatalf("RPC 会话不应带 -p/位置参数或 --no-pty: %s", joined)
-	}
-	// 无挂载时不允许命令翻译层直接读取 Role 中的技能源目录。
-	args2, err := BuildOmpRPCSessionArgs(role, nil, "/s/x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	joined2 := strings.Join(args2, " ")
-	if strings.Contains(joined2, "--skills") || !strings.Contains(joined2, "--mode rpc") {
-		t.Fatalf("无挂载时不应从源目录生成技能参数: %s", joined2)
-	}
-}
-
 // pi（pi.dev 官方文档 0.83+）：thinking→--thinking、skills→--skill 逐目录、
 // provider/tools/exclude_tools/models_cycle→官方参数。
 func TestPiAdapterBuild(t *testing.T) {
@@ -277,49 +148,12 @@ func TestPiExtensionSelectionAndRPC(t *testing.T) {
 	}
 }
 
-// 角色级技能挂载：omp 用 overlay --config（不再 --skills 过滤）、opencode 用
-// OPENCODE_CONFIG_CONTENT env（不再 --config）、claude 用 --plugin-dir。
+// 角色级技能挂载：claude 用 --plugin-dir，pi 用 --skill 逐目录。
 func TestSkillMountWiringAcrossAdapters(t *testing.T) {
 	mount := &RoleSkillMount{
-		SkillPaths:     []string{"/role/.agents/skills/design", "/role/.agents/skills/review"},
-		OmpOverlay:     "/role/overlay.yml",
-		OpencodeConfig: `{"skills":{"paths":["/role/.agents/skills/design"]}}`,
-		ClaudePlugin:   "/role",
+		SkillPaths:   []string{"/role/.agents/skills/design", "/role/.agents/skills/review"},
+		ClaudePlugin: "/role",
 	}
-
-	t.Run("omp", func(t *testing.T) {
-		a := &ompAdapter{baseAdapter{id: "omp", name: "omp", bin: "omp"}}
-		_, args, _, err := a.Build(ExecutionRequest{
-			Prompt: "p", Role: store.RoleConfig{Skills: []string{"/sk/a"}}, SkillMount: mount,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		joined := strings.Join(args, " ")
-		if !strings.Contains(joined, "--config /role/overlay.yml") {
-			t.Fatalf("omp 应使用 overlay --config: %s", joined)
-		}
-		if strings.Contains(joined, "--skills") {
-			t.Fatalf("有 SkillMount 时 omp 不应再用 --skills: %s", joined)
-		}
-	})
-
-	t.Run("opencode", func(t *testing.T) {
-		a := &openCodeAdapter{baseAdapter{id: "opencode", name: "opencode", bin: "opencode"}}
-		_, args, env, err := a.Build(ExecutionRequest{
-			Dir: "/repo", Prompt: "p", Role: store.RoleConfig{},
-			SkillMount: mount,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(strings.Join(args, " "), "--config") {
-			t.Fatalf("opencode 1.18 不应再传 --config: %v", args)
-		}
-		if !envHas(env, "OPENCODE_CONFIG_CONTENT", mount.OpencodeConfig) {
-			t.Fatalf("opencode env 应含 OPENCODE_CONFIG_CONTENT: %v", env)
-		}
-	})
 
 	t.Run("claude", func(t *testing.T) {
 		a := &claudeAdapter{baseAdapter{id: "claude", name: "claude", bin: "claude"}}
@@ -388,25 +222,6 @@ func envGet(env []string, key string) (string, bool) {
 	return "", false
 }
 
-func TestOpenCodeAdapterPassesVariantNameDirectly(t *testing.T) {
-	a := &openCodeAdapter{baseAdapter{id: "opencode", name: "opencode", bin: "opencode"}}
-	_, args, _, err := a.Build(ExecutionRequest{
-		Dir:    "/repo",
-		Prompt: "hi",
-		Role:   store.RoleConfig{Model: "opencode/deepseek-v4-flash-free", Thinking: "max"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "--variant max") {
-		t.Fatalf("OpenCode 应原样传递模型声明的 variant: %s", joined)
-	}
-	if strings.Contains(joined, "--variant minimal") {
-		t.Fatalf("OpenCode 不应把 low 猜测映射为 minimal: %s", joined)
-	}
-}
-
 func TestNativeSkillAdaptersDoNotTreatSkillsAsUnsupported(t *testing.T) {
 	claude := &claudeAdapter{baseAdapter{id: "claude", name: "claude", bin: "claude"}}
 	_, args, _, err := claude.Build(ExecutionRequest{Prompt: "p", Role: store.RoleConfig{Skills: []string{"/skill"}}})
@@ -418,16 +233,6 @@ func TestNativeSkillAdaptersDoNotTreatSkillsAsUnsupported(t *testing.T) {
 	}
 	if ws := (&codexAdapter{baseAdapter{id: "codex", name: "codex", bin: "codex"}}).Warnings(ExecutionRequest{Role: store.RoleConfig{Skills: []string{"/skill"}}}); len(ws) != 0 {
 		t.Fatalf("codex skills should be supported through native discovery, got %v", ws)
-	}
-	keys := map[string]bool{}
-	for _, field := range (&openCodeAdapter{baseAdapter{id: "opencode", name: "opencode", bin: "opencode"}}).Schema() {
-		keys[field.Key] = true
-		if field.Key == "thinking" && strings.Join(field.Options, ",") != "" {
-			t.Fatalf("OpenCode 未探测到模型能力时只能保留默认思考档位: %+v", field)
-		}
-	}
-	if !keys["skills"] {
-		t.Fatal("opencode schema must expose role skills")
 	}
 }
 
@@ -459,16 +264,14 @@ func TestSchemaBuiltinMarking(t *testing.T) {
 	}
 }
 
-// 每个 CLI 的交互退出命令映射：pi 用 /quit，其余（omp/opencode/claude/
-// codex/dsh）用 /exit。按钮「结束会话」据此发送，命令不对 agent 不会退出。
+// 每个 CLI 的交互退出命令映射：pi 用 /quit，claude/codex/dsh 用 /exit。
+// 按钮「结束会话」据此发送，命令不对 agent 不会退出。
 func TestAdapterExitCommands(t *testing.T) {
 	want := map[string]string{
-		"pi":       "/quit",
-		"omp":      "/exit",
-		"opencode": "/exit",
-		"claude":   "/exit",
-		"codex":    "/exit",
-		"dsh":      "/exit",
+		"pi":     "/quit",
+		"claude": "/exit",
+		"codex":  "/exit",
+		"dsh":    "/exit",
 	}
 	for _, a := range commandAdapters() {
 		if got := a.ExitCommand(); got != want[a.ID()] {

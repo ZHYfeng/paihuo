@@ -1,10 +1,8 @@
 // 模型候选探测：从本机各 CLI 实例的实际配置/目录里枚举可用模型，
 // 而不是硬编码「常用模型」。结果带内存缓存，磁盘/命令探测失败时优雅降级为空。
 //
-// 权威来源是各 CLI 自带的模型列表命令（pi --list-models / omp models --json /
-// opencode models --verbose）：它们只列出本实例「实际可用」的模型（按凭据过滤），
-// 而配置缓存文件（models-store.json / models.db）会包含无凭据 provider 的
-// 全量目录，直接解析会列出不可用的模型。
+// 权威来源是 CLI 自带的模型列表命令（如 pi --list-models）及本机配置，
+// 只列出本实例配置或实际可用的模型。
 package exec
 
 import (
@@ -13,7 +11,6 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -25,20 +22,15 @@ import (
 // /api/v1/runtimes，进而卡住前端首屏。调成 1 小时。
 const modelsCacheTTL = time.Hour
 
-// probeTimeout：模型列表命令的超时。这些命令（pi --list-models /
-// omp models --json / opencode models）冷启动要拉起 Node 进程，正常
-// 5~6s，但偶发走目录刷新/网络路径会拖到 15~20s，甚至超过 30s（实测 2025：
-// opencode models 5.5~20.8s、omp models 4.5~15.3s、pi --list-models 2.4~9.2s）。
-// 超时太短会触发配置回退，列出 agent 实际**不可用**的模型：opencode
-// 回退只剩 opencode.json 的 small_model；omp 回退 models.db 会带出
-// 无凭据/凭据已删除的 provider 目录（如 zenmux）。探测带 1h 缓存且
-// 后台并行加载，宽松超时几乎零成本——留 30s 保证权威命令总能跑完；
-// 仍超时时回退优先复用磁盘上最近一次成功结果（见 loadModelsDisk）。
+// probeTimeout：模型列表命令的超时。pi --list-models 冷启动需要拉起
+// Node 进程，目录刷新或网络访问可能进一步增加耗时。探测带 1h 缓存且
+// 后台并行加载，留 30s 给权威命令；超时时优先复用磁盘上最近一次成功
+// 结果（见 loadModelsDisk）。
 const probeTimeout = 30 * time.Second
 
 // ---------------------------------------------------------------------------
-// 探测结果磁盘缓存：权威命令偶发走网络目录刷新（opencode models 实测
-// 20~30s+，可能超过 probeTimeout），此时若直接回退到配置文件，候选会
+// 探测结果磁盘缓存：权威命令偶发走网络目录刷新，可能超过 probeTimeout，
+// 此时若直接回退到配置文件，候选会
 // 缩水到 1~2 个已配置模型。每次探测成功把候选列表落盘，命令超时/失败时
 // 优先复用 24h 内最近一次成功结果——既保证候选完整，又不含不可用模型。
 
@@ -160,7 +152,7 @@ func ModelThinkingOptions(in []ModelInfo) map[string][]string {
 		}
 		levels := uniqueModelStrings(m.ThinkingLevels)
 		if len(levels) == 0 {
-			// 目录中明确存在该模型，但来源没有声明 thinking/variants；
+			// 目录中明确存在该模型，但来源没有声明思考档位；
 			// 记录空数组，前端才能区分“该模型无已知档位”和“模型不在
 			// 能力目录中”，避免错误回退到其它模型的并集。
 			if _, ok := out[id]; !ok {
@@ -191,56 +183,12 @@ func uniqueModelStrings(in []string) []string {
 	return out
 }
 
-// addModelInfo 去重模型目录，同时允许后面的配置/缓存来源补充前一个来源
-// 没有声明的能力。模型 ID 是唯一键；能力档位不做猜测，只接受来源明确
-// 报告的值。
-func addModelInfo(out *[]ModelInfo, pos map[string]int, m ModelInfo) {
-	m.ID = strings.TrimSpace(m.ID)
-	m.ThinkingLevels = uniqueModelStrings(m.ThinkingLevels)
-	if m.ID == "" {
-		return
-	}
-	if i, ok := pos[m.ID]; ok {
-		if len(m.ThinkingLevels) > 0 {
-			// 同一模型可能从多个明确来源出现（例如 OMP 配置中多个
-			// modelRole 使用不同后缀）；保留这些来源报告的能力并集。
-			(*out)[i].ThinkingLevels = uniqueModelStrings(append((*out)[i].ThinkingLevels, m.ThinkingLevels...))
-		}
-		return
-	}
-	pos[m.ID] = len(*out)
-	*out = append(*out, m)
-}
-
 func modelInfosFromIDs(ids []string) []ModelInfo {
 	out := make([]ModelInfo, 0, len(ids))
-	pos := make(map[string]int, len(ids))
-	for _, id := range ids {
-		addModelInfo(&out, pos, ModelInfo{ID: id})
+	for _, id := range uniqueModelStrings(ids) {
+		out = append(out, ModelInfo{ID: id})
 	}
 	return out
-}
-
-// orderThinkingLevels 让 OpenCode 的 variants（JSON 对象无顺序）在 UI 中
-// 保持用户熟悉的思考强度顺序；自定义 variant 放在标准档位之后并按名称排。
-func orderThinkingLevels(in []string) []string {
-	levels := uniqueModelStrings(in)
-	preferred := map[string]int{
-		"off": 0, "none": 1, "minimal": 2, "low": 3, "medium": 4,
-		"high": 5, "xhigh": 6, "max": 7, "ultra": 8, "auto": 9,
-	}
-	sort.SliceStable(levels, func(i, j int) bool {
-		ai, aok := preferred[strings.ToLower(levels[i])]
-		aj, bok := preferred[strings.ToLower(levels[j])]
-		if aok && bok {
-			return ai < aj
-		}
-		if aok != bok {
-			return aok
-		}
-		return levels[i] < levels[j]
-	})
-	return levels
 }
 
 // cachedModels 按适配器 id 缓存探测结果（TTL 内复用）。
@@ -287,7 +235,7 @@ func cachedModels(id string, probe func() []string) []string {
 
 // cachedModelCatalog 是带逐模型能力的模型目录缓存。模型 ID 和能力必须
 // 共用一次 CLI 探测，否则打开 schema 时会先跑一遍 `models`，再跑一遍
-// `models --verbose/--json`，并且刷新按钮还可能把两次结果互相覆盖。
+// 另一条能力探测命令，并且刷新按钮还可能把两次结果互相覆盖。
 func cachedModelCatalog(id string, probe func() []ModelInfo) []ModelInfo {
 	modelsProbeGate.RLock()
 	defer modelsProbeGate.RUnlock()

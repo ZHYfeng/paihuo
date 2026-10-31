@@ -129,7 +129,7 @@ func (s *Server) scanSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dirs, err := discoverSkillDirs(root, s.skillsDir)
+	dirs, err := discoverSkillDirs(r.Context(), root, s.skillsDir)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "扫描技能目录失败: "+err.Error())
 		return

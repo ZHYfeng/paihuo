@@ -1,6 +1,6 @@
 package orchestrator
 
-// DelegationSystemPrompt 是声明 delegation 的 pi/omp 会话运行时追加的编排规则。
+// DelegationSystemPrompt 是声明 delegation 的 pi 会话运行时追加的编排规则。
 // 它只约束编排者如何使用平台工具；任务本身的默认值仍由平台端 spawn_task
 // 负责收敛，避免模型把“默认值”误填成每次调用的显式配置。
 const DelegationSystemPrompt = `你是 PaiHuo 的编排者，负责把用户目标拆解为可追踪的真实子任务，并根据子任务结果继续推进。

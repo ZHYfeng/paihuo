@@ -1,126 +1,11 @@
 package exec
 
 import (
-	"database/sql"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	_ "modernc.org/sqlite"
 )
-
-// omp 回退解析（命令超时/失败时）：models.db 的 authoritative 目录必须再按
-// auth_credentials 中凭据仍然有效的 provider 过滤——否则会把无凭据（zenmux）
-// 或凭据已删除（opencode-go）的模型列进角色表单候选，用户选了就跑不起来。
-func TestOmpModelsFallbackFiltersDeadCreds(t *testing.T) {
-	home := t.TempDir()
-	agentDir := filepath.Join(home, ".omp", "agent")
-	if err := os.MkdirAll(agentDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	// models.db：deepseek（有效凭据）与 zenmux（无凭据）都有 authoritative 目录。
-	md, err := sql.Open("sqlite", filepath.Join(agentDir, "models.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer md.Close()
-	if _, err := md.Exec(`CREATE TABLE model_cache (provider_id TEXT, authoritative INTEGER, models TEXT)`); err != nil {
-		t.Fatal(err)
-	}
-	insert := func(prov, models string) {
-		if _, err := md.Exec(`INSERT INTO model_cache (provider_id, authoritative, models) VALUES (?, 1, ?)`,
-			prov, `[{"provider":"`+prov+`","id":"`+models+`"}]`); err != nil {
-			t.Fatal(err)
-		}
-	}
-	insert("deepseek", "deepseek-v4-flash")
-	insert("zenmux", "anthropic/claude-opus-5")
-
-	// agent.db：deepseek 凭据有效；zenmux 从未登录（无行）。
-	ad, err := sql.Open("sqlite", filepath.Join(agentDir, "agent.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ad.Close()
-	if _, err := ad.Exec(`CREATE TABLE auth_credentials (
-		id INTEGER PRIMARY KEY, provider TEXT, credential_type TEXT, data TEXT,
-		disabled_cause TEXT, identity_key TEXT, created_at INTEGER, updated_at INTEGER)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ad.Exec(`INSERT INTO auth_credentials (provider, credential_type, data) VALUES ('deepseek', 'api_key', '{}')`); err != nil {
-		t.Fatal(err)
-	}
-
-	// 命令探测在测试环境不可用（omp 未安装/超时），必然走回退路径。
-	got := ompModelsFallback(home)
-	joined := strings.Join(got, " ")
-	if !strings.Contains(joined, "deepseek/deepseek-v4-flash") {
-		t.Fatalf("应包含凭据有效的 deepseek 模型，得到: %v", got)
-	}
-	for _, m := range got {
-		if strings.HasPrefix(m, "zenmux/") {
-			t.Fatalf("无凭据的 zenmux 模型不应出现在候选中: %v", got)
-		}
-	}
-}
-
-// 凭据被停用（disabled_cause 非空，如 "deleted by user"）的 provider
-// 同样要过滤——对应本机 opencode-go 凭据被删但 models.db 仍留目录的场景。
-func TestOmpActiveProvidersSkipsDisabled(t *testing.T) {
-	home := t.TempDir()
-	agentDir := filepath.Join(home, ".omp", "agent")
-	if err := os.MkdirAll(agentDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	ad, err := sql.Open("sqlite", filepath.Join(agentDir, "agent.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ad.Close()
-	if _, err := ad.Exec(`CREATE TABLE auth_credentials (
-		id INTEGER PRIMARY KEY, provider TEXT, credential_type TEXT, data TEXT,
-		disabled_cause TEXT, identity_key TEXT, created_at INTEGER, updated_at INTEGER)`); err != nil {
-		t.Fatal(err)
-	}
-	for _, row := range []string{
-		`('deepseek', 'api_key', '{}', NULL)`,
-		`('opencode-go', 'api_key', '{}', 'deleted by user')`,
-	} {
-		if _, err := ad.Exec(`INSERT INTO auth_credentials (provider, credential_type, data, disabled_cause) VALUES ` + row); err != nil {
-			t.Fatal(err)
-		}
-	}
-	provs := ompActiveProviders(home)
-	if !provs["deepseek"] {
-		t.Fatal("deepseek 凭据有效，应被列为可用 provider")
-	}
-	if provs["opencode-go"] {
-		t.Fatal("opencode-go 凭据已删除，不应被列为可用 provider")
-	}
-}
-
-func TestOmpFallbackPreservesConfiguredThinkingSuffix(t *testing.T) {
-	home := t.TempDir()
-	agentDir := filepath.Join(home, ".omp", "agent")
-	if err := os.MkdirAll(agentDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	config := "modelRoles:\n  default: deepseek/deepseek-v4-flash:max\n  smol: deepseek/deepseek-v4-flash:off\n"
-	if err := os.WriteFile(filepath.Join(agentDir, "config.yml"), []byte(config), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got := ompModelsFallbackCatalog(home)
-	byID := map[string]ModelInfo{}
-	for _, model := range got {
-		byID[model.ID] = model
-	}
-	if levels := strings.Join(byID["deepseek/deepseek-v4-flash"].ThinkingLevels, ","); levels != "max,off" {
-		t.Fatalf("OMP 回退应保留配置中明确的 thinking 后缀，得到 %q（%v）", levels, got)
-	}
-}
 
 // pi 模型候选必须全部是 provider/model 限定形式。裸 id（如 deepseek-v4-flash、
 // glm-5.1）在多个 provider 存在同名模型时是歧义的（本机 deepseek 与
@@ -166,79 +51,7 @@ opencode-go  glm-5.1            202.8K   32.8K    yes       no`)
 	}
 }
 
-func TestOmpModelsJSONPreservesPerModelThinkingLevels(t *testing.T) {
-	raw := `{"models":[
-  {"provider":"deepseek","id":"deepseek-v4-flash","selector":"deepseek/deepseek-v4-flash","reasoning":true,"thinking":["high","max"]},
-  {"provider":"zai","id":"glm-5.1","selector":"zai/glm-5.1","reasoning":true,"thinking":["low","medium","high"]},
-  {"provider":"plain","id":"chat","selector":"plain/chat","reasoning":false}
-]}`
-	got := parseOmpModelsJSON(raw)
-	if len(got) != 3 {
-		t.Fatalf("应解析出 3 个模型，得到 %v", got)
-	}
-	if strings.Join(got[0].ThinkingLevels, ",") != "high,max" {
-		t.Fatalf("OMP 第一模型的 thinking 档位错误: %v", got)
-	}
-	if len(got[2].ThinkingLevels) != 0 {
-		t.Fatalf("未声明 thinking 的模型不应猜测档位: %v", got[2])
-	}
-	opts := ModelThinkingOptions(got)
-	if strings.Join(opts[got[0].ID], ",") != "high,max" {
-		t.Fatalf("OMP schema 未保留逐模型档位: %v", opts)
-	}
-	if levels, ok := opts[got[2].ID]; !ok || len(levels) != 0 {
-		t.Fatalf("OMP 未声明档位的模型应记录为空能力集合: %v", opts)
-	}
-}
-
-func TestOpenCodeVerboseModelsPreservesVariants(t *testing.T) {
-	raw := `opencode/deepseek-v4-flash-free
-{
-  "id": "deepseek-v4-flash-free",
-  "providerID": "opencode",
-  "variants": {
-    "max": {"reasoningEffort": "max"},
-    "disabled": {"disabled": true},
-    "low": {"reasoningEffort": "low"},
-    "high": {"reasoningEffort": "high"}
-  }
-}
-opencode/big-pickle
-{
-  "id": "big-pickle",
-  "providerID": "opencode",
-  "variants": {}
-}`
-	got := parseOpenCodeVerboseModels(raw)
-	if len(got) != 2 {
-		t.Fatalf("应解析出 2 个 OpenCode 模型，得到 %v", got)
-	}
-	if got[0].ID != "opencode/deepseek-v4-flash-free" {
-		t.Fatalf("模型 selector 错误: %v", got)
-	}
-	if strings.Join(got[0].ThinkingLevels, ",") != "low,high,max" {
-		t.Fatalf("OpenCode variants 解析/排序错误: %v", got[0])
-	}
-	if len(got[1].ThinkingLevels) != 0 {
-		t.Fatalf("空 variants 不应猜测档位: %v", got[1])
-	}
-}
-
-func TestOpenCodeVariantNamesSupportsArrayForms(t *testing.T) {
-	if got := parseOpenCodeVariantNames(json.RawMessage(`["max", "low", "max"]`)); strings.Join(got, ",") != "low,max" {
-		t.Fatalf("OpenCode 字符串数组 variants 解析/排序错误: %v", got)
-	}
-	got := parseOpenCodeVariantNames(json.RawMessage(`[
-  {"name":"high"},
-  {"id":"disabled","disabled":true},
-  {"id":"low"}
-]`))
-	if strings.Join(got, ",") != "low,high" {
-		t.Fatalf("OpenCode 对象数组 variants 解析错误: %v", got)
-	}
-}
-
-// 磁盘缓存回退：权威命令偶发超时（opencode 目录刷新 20~30s+）时，
+// 磁盘缓存回退：权威命令偶发超时时，
 // 回退应复用最近一次成功结果而不是缩水到配置文件里的 1~2 个模型。
 func TestModelsDiskCacheRoundTrip(t *testing.T) {
 	cacheDir := t.TempDir()
@@ -256,6 +69,24 @@ func TestModelsDiskCacheRoundTrip(t *testing.T) {
 	saveModelsDisk("pi", nil)
 	if got := loadModelsDisk("pi"); len(got) != 2 {
 		t.Fatalf("空列表不应覆盖已有缓存: %v", got)
+	}
+}
+
+func TestModelThinkingOptionsPreservesPerModelCapabilities(t *testing.T) {
+	models := []ModelInfo{
+		{ID: "reasoning-a", ThinkingLevels: []string{"high", "max"}},
+		{ID: "reasoning-b", ThinkingLevels: []string{"low", "medium", "high"}},
+		{ID: "plain"},
+	}
+	opts := ModelThinkingOptions(models)
+	if strings.Join(opts["reasoning-a"], ",") != "high,max" || strings.Join(opts["reasoning-b"], ",") != "low,medium,high" {
+		t.Fatalf("应保留逐模型思考档位: %v", opts)
+	}
+	if levels, ok := opts["plain"]; !ok || len(levels) != 0 {
+		t.Fatalf("未声明档位的模型应记录为空能力集合: %v", opts)
+	}
+	if strings.Join(opts[""], ",") != "high,max,low,medium" {
+		t.Fatalf("默认模型的选项应合并且去重: %v", opts)
 	}
 }
 

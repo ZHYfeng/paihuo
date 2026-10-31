@@ -69,7 +69,7 @@ type SessionDriver interface {
 }
 
 // ExitProvider 是只声明交互退出命令的运行时（如 dsh-tui）。结构化会话驱动
-// 缺失的 Runtime（claude/opencode/codex/dsh 等）通过它让「结束会话」按钮
+// 缺失的 Runtime（claude/codex/dsh 等）通过它让「结束会话」按钮
 // 仍能优雅收尾，而不是要求它们实现整套 RPC 通道。
 type ExitProvider interface {
 	ExitCommand() string
@@ -114,9 +114,7 @@ func NewDefaultRuntimeService() *RuntimeService {
 		runtimes = append(runtimes, builtinCommandRuntime{adapter: adapter})
 	}
 	s := NewRuntimeService(runtimes...)
-	for _, id := range []string{"pi", "omp"} {
-		s.sessions[id] = builtinSessionDriver{id: id, runtime: s.commands[id]}
-	}
+	s.sessions["pi"] = builtinSessionDriver{runtime: s.commands["pi"]}
 	for _, adapter := range items {
 		s.provisioners[adapter.ID()] = builtinProvisioner{adapter: adapter}
 	}
@@ -256,7 +254,7 @@ func (r builtinCommandRuntime) Descriptor() RuntimeDescriptor {
 		Fields:       Enrich(r.adapter.Schema()),
 		Models:       ModelCatalog(r.adapter),
 	}
-	if r.adapter.ID() == "pi" || r.adapter.ID() == "omp" {
+	if r.adapter.ID() == "pi" {
 		d.Capabilities = append(d.Capabilities, CapabilityInteractive, CapabilitySession)
 	}
 	// dsh：结构化会话走 HTTP ApiProxy（dsh --profile web 宿主），见
@@ -286,26 +284,19 @@ func (r builtinCommandRuntime) Prepare(request ExecutionRequest) (CommandSpec, e
 }
 
 type builtinSessionDriver struct {
-	id      string
 	runtime CommandRuntime
 }
 
 func (d builtinSessionDriver) PrepareSession(request SessionRequest) (CommandSpec, error) {
 	descriptor := d.runtime.Descriptor()
 	if !descriptor.Healthy {
-		return CommandSpec{}, fmt.Errorf("Runtime %s 不可用: %s", d.id, descriptor.Health)
+		return CommandSpec{}, fmt.Errorf("Runtime %s 不可用: %s", descriptor.ID, descriptor.Health)
 	}
-	var args []string
-	var err error
-	if d.id == "omp" {
-		args, err = BuildOmpRPCSessionArgs(request.Role, request.SkillMount, request.SessionDir)
-	} else {
-		var paths []string
-		if request.SkillMount != nil {
-			paths = request.SkillMount.SkillPaths
-		}
-		args, err = BuildPiRPCSessionArgs(request.Role, paths, request.SessionDir)
+	var paths []string
+	if request.SkillMount != nil {
+		paths = request.SkillMount.SkillPaths
 	}
+	args, err := BuildPiRPCSessionArgs(request.Role, paths, request.SessionDir)
 	if err != nil {
 		return CommandSpec{}, err
 	}
@@ -313,10 +304,7 @@ func (d builtinSessionDriver) PrepareSession(request SessionRequest) (CommandSpe
 }
 
 func (d builtinSessionDriver) ExitCommand() string {
-	if d.id == "pi" {
-		return "/quit"
-	}
-	return "/exit"
+	return "/quit"
 }
 
 type builtinProvisioner struct{ adapter commandAdapter }

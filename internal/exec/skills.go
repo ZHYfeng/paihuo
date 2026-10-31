@@ -5,7 +5,7 @@ package exec
 // 每个角色在 <sessionsRoot>/.roles/<roleID>/ 下
 // 拥有一个只读技能视图：.agents/skills/<name> 默认是到技能库目录的 symlink
 // （frontmatter 不合规的技能回退为副本+改写 name），claude 用 skills/ 镜像 +
-// .claude-plugin/plugin.json，omp 用 overlay.yml，opencode 用 OPENCODE_CONFIG_CONTENT。
+// .claude-plugin/plugin.json。
 // 角色目录位于所有 worktree / 用户项目目录之外，结构性消灭 git 提交污染与
 // 目录污染；EnsureRoleSkills 幂等对账，崩溃/重启后自动重建。
 //
@@ -18,7 +18,6 @@ package exec
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,18 +33,15 @@ const roleMountManifestVersion = 1
 const roleMountManifestName = "manifest.json"
 
 // RoleSkillMount 描述一个角色的技能挂载视图，适配器据此选择各 CLI 的
-// 原生挂载方式（pi --skill 逐目录 / omp overlay / opencode env / claude
+// 原生挂载方式（pi --skill 逐目录 / claude
 // plugin-dir / codex $HOME 任务级 symlink）。
 type RoleSkillMount struct {
-	RoleDir        string             // <sessionsRoot>/.roles/<roleID>
-	SkillNames     []string           // 挂载的技能名（即目录名）
-	SkillPaths     []string           // .agents/skills/<name> 完整路径（pi --skill 用）
-	SkillsRoot     string             // .agents/skills 目录（omp/opencode 用）
-	ClaudePlugin   string             // claude --plugin-dir 用（RoleDir 本身）
-	OmpOverlay     string             // overlay.yml 路径（omp --config 用）
-	OpencodeConfig string             // OPENCODE_CONFIG_CONTENT JSON 串
-	Bindings       []roleSkillBinding // system prompt 展示用
-	Warnings       []string           // 对账发现的非致命问题（缺技能/断裂/回退）
+	RoleDir      string             // <sessionsRoot>/.roles/<roleID>
+	SkillNames   []string           // 挂载的技能名（即目录名）
+	SkillPaths   []string           // .agents/skills/<name> 完整路径（pi --skill 用）
+	ClaudePlugin string             // claude --plugin-dir 用（RoleDir 本身）
+	Bindings     []roleSkillBinding // system prompt 展示用
+	Warnings     []string           // 对账发现的非致命问题（缺技能/断裂/回退）
 }
 
 // roleMountEntry 是角色挂载清单中的一条技能。
@@ -95,7 +91,7 @@ func PrepareRoleSkillsForWorkspace(workspaceDir, cli, manifestPath string, taskI
 
 // prepareRoleSkills 将选中的技能复制到 CLI 原生的项目技能目录。每个任务
 // 使用带 task id 的唯一目录名，避免并发任务互相覆盖；SKILL.md 的 name
-// 同步改成该目录名，以满足 OpenCode 的目录/name 一致性要求。
+// 同步改成该目录名，保持技能名与目录名一致。
 func prepareRoleSkills(taskID int64, workspaceDir, cli, manifestPath string, selected []string) (preparedRoleSkills, error) {
 	selected = uniqueNonEmpty(selected)
 	if len(selected) == 0 {
@@ -216,13 +212,11 @@ func hasSymlinkComponent(path, workspaceDir string) bool {
 
 func nativeSkillRoot(cli string) (string, bool) {
 	switch cli {
-	case "omp", "codex", "pi", "dsh":
-		// .agents/skills 是 Role Skills/Codex/OMP/DSH 共同支持的项目根目录。
+	case "codex", "pi", "dsh":
+		// .agents/skills 是 Codex/Pi/DSH 共同支持的项目技能目录。
 		return ".agents/skills", true
 	case "claude":
 		return ".claude/skills", true
-	case "opencode":
-		return ".opencode/skills", true
 	default:
 		return "", false
 	}
@@ -360,8 +354,8 @@ func cleanupRoleSkillsManifest(manifestPath string, manifest roleSkillsManifest)
 	for _, root := range roots {
 		base := filepath.Base(root)
 		parent := filepath.Base(filepath.Dir(root))
-		validNativeRoot := base == "skills" && (parent == ".agents" || parent == ".claude" || parent == ".opencode")
-		validNativeParent := base == ".agents" || base == ".claude" || base == ".opencode"
+		validNativeRoot := base == "skills" && (parent == ".agents" || parent == ".claude")
+		validNativeParent := base == ".agents" || base == ".claude"
 		if !validNativeRoot && !validNativeParent {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("技能清单包含非原生目录: %s", root)
@@ -399,16 +393,15 @@ func EnsureRoleSkills(roleID int64, roleName string, selected []string, roleDir 
 	}
 	selected = uniqueNonEmpty(selected)
 	if len(selected) == 0 {
-		// 角色没有技能：只清理历史残留，不创建目录结构，不写空 overlay。
+		// 角色没有技能：只清理历史残留，不创建目录结构。
 		if err := reconcileRoleMountEntries(roleID, roleDir, nil, mount); err != nil {
 			return nil, err
 		}
 		return mount, nil
 	}
-	roleSkills := filepath.Join(roleDir, ".agents", "skills")
 	claudeSkills := filepath.Join(roleDir, "skills")
 	pluginDir := filepath.Join(roleDir, ".claude-plugin")
-	for _, dir := range []string{roleSkills, claudeSkills, pluginDir} {
+	for _, dir := range []string{filepath.Join(roleDir, ".agents", "skills"), claudeSkills, pluginDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("创建角色技能目录失败: %w", err)
 		}
@@ -418,31 +411,17 @@ func EnsureRoleSkills(roleID int64, roleName string, selected []string, roleDir 
 		return nil, err
 	}
 	if len(mount.SkillPaths) == 0 {
-		// 角色当前没有可挂载技能：清掉旧的 overlay/插件包装，避免空配置残留。
-		_ = os.Remove(filepath.Join(roleDir, "overlay.yml"))
+		// 角色当前没有可挂载技能：清掉旧的插件包装，避免空配置残留。
 		_ = os.RemoveAll(filepath.Join(roleDir, ".claude-plugin"))
 		_ = os.RemoveAll(filepath.Join(roleDir, "skills"))
 		return mount, nil
 	}
-
-	overlayPath := filepath.Join(roleDir, "overlay.yml")
-	if err := writeOmpOverlay(overlayPath, ompOverlayDirs(roleDir)); err != nil {
-		return nil, fmt.Errorf("生成 omp overlay 失败: %w", err)
-	}
-	mount.OmpOverlay = overlayPath
-
-	cfg, err := opencodeSkillsConfigJSON(mount.SkillPaths)
-	if err != nil {
-		return nil, fmt.Errorf("生成 opencode 技能配置失败: %w", err)
-	}
-	mount.OpencodeConfig = cfg
 
 	pluginPath := filepath.Join(pluginDir, "plugin.json")
 	if err := writeClaudePluginJSON(pluginPath, fmt.Sprintf("paihuo-role-%d", roleID), roleName); err != nil {
 		return nil, fmt.Errorf("生成 claude 插件清单失败: %w", err)
 	}
 	mount.ClaudePlugin = roleDir
-	mount.SkillsRoot = roleSkills
 	return mount, nil
 }
 
@@ -473,9 +452,6 @@ func reconcileRoleMountEntries(roleID int64, roleDir string, selected []string, 
 		if ok, reason := validateSkillFrontmatter(src, name); !ok {
 			kind = "copy"
 			mount.Warnings = append(mount.Warnings, fmt.Sprintf("技能 %q 的 SKILL.md %s；已回退为副本并改写 name", name, reason))
-		}
-		if _, desc, _ := parseSkillFrontmatter(filepath.Join(src, "SKILL.md")); strings.TrimSpace(desc) == "" {
-			mount.Warnings = append(mount.Warnings, fmt.Sprintf("技能 %q 缺少 frontmatter description，omp 下不可见；请在技能库补充", name))
 		}
 		desired = append(desired, roleMountEntry{Name: name, Target: src, Kind: kind})
 	}
@@ -599,7 +575,7 @@ func removeRoleMountEntry(roleDir, name string) {
 }
 
 // validateSkillFrontmatter 预检技能 frontmatter name 是否与挂载目录名一致且
-// 合法（kebab-case、≤64 字符）。opencode 要求目录名=name，不满足时调用方
+// 合法（kebab-case、≤64 字符）。不满足时调用方
 // 回退为副本并改写 name。
 func validateSkillFrontmatter(dir, mountName string) (ok bool, reason string) {
 	name, _, _ := parseSkillFrontmatter(filepath.Join(dir, "SKILL.md"))
@@ -625,114 +601,6 @@ func uniqueSkillSlug(slug string, used map[string]bool) string {
 		name = fmt.Sprintf("%s-%d", slug, i)
 	}
 	return name
-}
-
-// writeOmpOverlay 生成 omp --config overlay：skills.customDirectories 限定为
-// 角色技能目录（customDirs 已含 global 合并结果，global 在前、角色目录在后）。
-// omp 的数组键是整体替换语义，因此必须在生成时合并用户全局配置。
-func writeOmpOverlay(path string, customDirs []string) error {
-	var b strings.Builder
-	b.WriteString("skills:\n  customDirectories:\n")
-	for _, dir := range customDirs {
-		fmt.Fprintf(&b, "    - %s\n", yamlQuote(dir))
-	}
-	return writeJSONAtomic(path, []byte(b.String()))
-}
-
-// ompOverlayDirs 读取用户全局 ~/.omp/agent/config.yml 的 skills.customDirectories
-// 并与角色技能目录合并（global 在前）。解析失败降级为只含角色目录。
-func ompOverlayDirs(roleDir string) []string {
-	dirs := []string{}
-	home, err := os.UserHomeDir()
-	if err == nil {
-		globalPath := filepath.Join(home, ".omp", "agent", "config.yml")
-		if global, gerr := readOmpCustomDirectories(globalPath); gerr == nil && len(global) > 0 {
-			dirs = append(dirs, global...)
-		} else if gerr != nil && !os.IsNotExist(gerr) {
-			log.Printf("⚠ 读取 omp 全局技能目录失败（overlay 将只含角色技能）: %v", gerr)
-		}
-	}
-	return uniqueNonEmpty(append(dirs, filepath.Join(roleDir, ".agents", "skills")))
-}
-
-// readOmpCustomDirectories 用最简解析读取 YAML 里的
-// skills:
-//
-//	customDirectories:
-//	  - /path
-//
-// 结构（含内联列表）。解析失败返回错误，调用方降级处理。
-func readOmpCustomDirectories(path string) ([]string, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	lines := strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n")
-	var out []string
-	inBlock := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		key, rest, has := strings.Cut(trimmed, ":")
-		if has && strings.TrimSpace(key) == "customDirectories" {
-			rest = strings.TrimSpace(rest)
-			if rest != "" {
-				out = append(out, parseYAMLInlineList(rest)...)
-			} else {
-				inBlock = true
-			}
-			continue
-		}
-		if inBlock {
-			if !strings.HasPrefix(trimmed, "-") {
-				inBlock = false
-				continue
-			}
-			item := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
-			item = strings.Trim(item, `"'`)
-			if item != "" {
-				out = append(out, item)
-			}
-		}
-	}
-	return out, nil
-}
-
-func parseYAMLInlineList(raw string) []string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	if strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]") {
-		raw = strings.TrimSpace(raw[1 : len(raw)-1])
-	}
-	var out []string
-	for _, part := range strings.Split(raw, ",") {
-		item := strings.Trim(strings.TrimSpace(part), `"'`)
-		if item != "" {
-			out = append(out, item)
-		}
-	}
-	return out
-}
-
-func yamlQuote(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `"`, `\"`)
-	return `"` + s + `"`
-}
-
-// opencodeSkillsConfigJSON 生成 OPENCODE_CONFIG_CONTENT 的 JSON：
-// {"skills":{"paths":[...]}}。
-func opencodeSkillsConfigJSON(paths []string) (string, error) {
-	v := map[string]any{"skills": map[string]any{"paths": paths}}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
 }
 
 func writeClaudePluginJSON(path, pluginName, description string) error {
@@ -780,7 +648,7 @@ func writeJSONAtomic(path string, v any) error {
 //  2. ~/.codex/skills（codex 的 CODEX_HOME 默认配置目录）；
 //  3. $HOME/.agents/skills（官方文档 USER scope 兜底）。
 //
-// 前两个位置只被 codex 扫描，不会混入 pi/omp 等其它 CLI 的上下文。
+// 前两个位置只被 codex 扫描，不会混入 pi 等其它 CLI 的上下文。
 func codexSkillsRoot() (string, error) {
 	if home := strings.TrimSpace(os.Getenv("CODEX_HOME")); home != "" {
 		return filepath.Join(home, "skills"), nil
@@ -836,6 +704,9 @@ func MountCodexSkills(taskID int64, mount *RoleSkillMount, manifestPath string) 
 func PrepareRoleSkillsStandalone(workdir, cli string, selected []string) (*RoleSkillMount, func(), error) {
 	mount := &RoleSkillMount{RoleDir: workdir}
 	noop := func() {}
+	if _, ok := nativeSkillRoot(cli); !ok {
+		return nil, noop, fmt.Errorf("CLI %s 没有可用的原生技能目录", cli)
+	}
 	selected = uniqueNonEmpty(selected)
 	if len(selected) == 0 {
 		return mount, noop, nil
@@ -847,7 +718,7 @@ func PrepareRoleSkillsStandalone(workdir, cli string, selected []string) (*RoleS
 	cleanup := func() {
 		for _, p := range []string{
 			filepath.Join(workdir, ".agents"), filepath.Join(workdir, "skills"),
-			filepath.Join(workdir, ".claude-plugin"), filepath.Join(workdir, "overlay.yml"),
+			filepath.Join(workdir, ".claude-plugin"),
 		} {
 			_ = os.RemoveAll(p)
 		}
@@ -875,22 +746,7 @@ func PrepareRoleSkillsStandalone(workdir, cli string, selected []string) (*RoleS
 		mount.SkillPaths = append(mount.SkillPaths, p)
 		mount.Bindings = append(mount.Bindings, roleSkillBinding{OriginalName: name, NativeName: name, Dir: p})
 	}
-	mount.SkillsRoot = roleSkills
 	switch cli {
-	case "omp":
-		overlay := filepath.Join(workdir, "overlay.yml")
-		if err := writeOmpOverlay(overlay, []string{roleSkills}); err != nil {
-			cleanup()
-			return nil, noop, fmt.Errorf("生成 omp overlay 失败: %w", err)
-		}
-		mount.OmpOverlay = overlay
-	case "opencode":
-		cfg, err := opencodeSkillsConfigJSON(mount.SkillPaths)
-		if err != nil {
-			cleanup()
-			return nil, noop, fmt.Errorf("生成 opencode 技能配置失败: %w", err)
-		}
-		mount.OpencodeConfig = cfg
 	case "claude":
 		pluginDir := filepath.Join(workdir, ".claude-plugin")
 		if err := os.MkdirAll(pluginDir, 0o755); err != nil {
