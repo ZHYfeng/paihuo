@@ -18,7 +18,13 @@ try {
   await page.getByRole("heading", { name: "工作台" }).waitFor();
   await page.waitForLoadState("networkidle");
 
-  const routes = ["/board", "/sessions", "/workflows", "/history", "/projects", "/roles", "/runtimes", "/skills", "/templates", "/schedules", "/settings"];
+  await page.getByRole("button", { name: "切换到暗色" }).click();
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "切换到亮色" }).waitFor();
+  if (!await page.evaluate(() => document.documentElement.classList.contains("dark"))) throw new Error("theme preference was not restored");
+  await page.getByRole("button", { name: "切换到亮色" }).click();
+
+  const routes = ["/board", "/approvals", "/sessions", "/workflows", "/history", "/projects", "/roles", "/runtimes", "/skills", "/templates", "/schedules", "/settings"];
   for (const route of routes) {
     await page.goto(baseURL + route, { waitUntil: "domcontentloaded" });
     await page.locator("#main-content h1").waitFor();
@@ -31,9 +37,13 @@ try {
     if (!response.ok) throw new Error(await response.text());
     return response.json();
   }, `e2e-${Date.now()}`);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "搜索任务、项目或页面" }).waitFor();
+  await page.keyboard.press("Control+k");
+  await page.getByRole("textbox", { name: "搜索工作空间内容" }).fill(project.name);
   const [statsResponse] = await Promise.all([
     page.waitForResponse(response => new URL(response.url()).pathname === `/api/v1/stats/projects/${project.id}`),
-    page.goto(`${baseURL}/projects/${project.id}`, { waitUntil: "domcontentloaded" })
+    page.getByRole("dialog").getByRole("link", { name: project.name, exact: true }).click()
   ]);
   if (!statsResponse.ok()) throw new Error(`project stats failed: ${statsResponse.status()}`);
   await page.getByRole("heading", { name: project.name }).waitFor();
@@ -48,13 +58,36 @@ try {
   }, project);
 
   await page.setViewportSize({ width: 390, height: 844 });
+  for (const route of ["/", ...routes]) {
+    await page.goto(baseURL + route, { waitUntil: "domcontentloaded" });
+    await page.locator("#main-content h1").waitFor();
+    if (await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)) throw new Error(`mobile ${route} overflows`);
+  }
   await page.goto(baseURL + "/board", { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "打开导航" }).click();
   await page.getByRole("navigation", { name: "主导航" }).waitFor();
   if (await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)) throw new Error("mobile viewport overflows");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "打开导航" }).click();
+  await page.getByRole("navigation", { name: "主导航" }).waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "新建任务" }).click();
+  await page.getByRole("dialog", { name: "新建任务" }).waitFor();
+  if (await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)) throw new Error("mobile task dialog overflows");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "搜索任务、项目或页面" }).click();
+  await page.getByRole("textbox", { name: "搜索工作空间内容" }).fill("审批");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("n");
+  if (await page.getByRole("dialog").count() !== 1) throw new Error("task shortcut opened another dialog during search");
+  await page.keyboard.press("Enter");
+  await page.getByRole("heading", { name: "审批", exact: true }).waitFor();
 
   if (errors.length) throw new Error(`browser errors:\n${errors.join("\n")}`);
-  console.log("React routes, API concurrency contract, and responsive shell ✓");
+  console.log("React routes (desktop/mobile), search, theme persistence, dialogs, and API concurrency contract ✓");
 } finally {
   await browser.close();
 }

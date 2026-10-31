@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CirclePlus, FolderKanban, Pencil, Search, Trash2 } from "lucide-react";
+import { ArrowUpRight, CirclePlus, FolderKanban, Pencil, Search, Trash2 } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { DirectoryPicker } from "../../components/directory-picker";
@@ -31,26 +31,28 @@ export function ProjectsPage() {
     return (query.data || []).filter(project => project.name.toLowerCase().includes(q) || (project.description || "").toLowerCase().includes(q));
   }, [query.data, search]);
   return <>
-    <PageHeader title="项目" copy="项目定义代码目录、隔离边界与工作流归属。" actions={<Button variant="primary" onClick={() => setEditing({ status: "active" })}><CirclePlus size={17} />新建项目</Button>} />
+    <PageHeader title="项目" copy="把目标、任务和交付放在一起，让每个项目稳步向前。" actions={<Button variant="primary" onClick={() => setEditing({ status: "active" })}><CirclePlus size={17} />新建项目</Button>} />
     <Card className="mb-4 flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
       <span className="flex items-center gap-2 px-2 text-sm text-muted"><Search size={16} />搜索</span>
       <input className={inputClass + " sm:w-64"} placeholder="搜索项目…" value={search} onChange={e => setSearch(e.target.value)} aria-label="搜索项目" />
       <span className="text-sm text-muted sm:ml-auto">{visible.length} 个项目</span>
     </Card>
-    {query.isLoading ? <Spinner /> : visible.length ? <div className="grid gap-3 lg:grid-cols-2">{visible.map(project => {
-      const ts = (tasks.data || []).filter(t => t.project_id === project.id);
+    {query.isLoading ? <Spinner /> : visible.length ? <div className="grid gap-5 lg:grid-cols-2">{visible.map(project => {
+      const ts = (tasks.data || []).filter(t => t.project_id === project.id && t.type === "task" && !t.cron);
       const source = ts.filter(t => t.merge_of == null);
       const merges = ts.filter(t => t.merge_of != null);
       const done = source.filter(t => t.status === "succeeded").length;
       const pct = source.length ? Math.round(done / source.length * 100) : 0;
       const roles = new Set(ts.map(t => t.role_name).filter(Boolean));
-      return <Link key={project.id} to={`/projects/${project.id}`} className="project-card rounded-xl border border-line bg-surface p-3.5 shadow-card transition hover:border-brand/35">
+      return <article key={project.id} className="project-card rounded-xl border border-line bg-surface shadow-card transition hover:border-brand/35">
         <div className="flex items-start gap-3">
-          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">{project.name}</h2>{project.is_git ? <span className="chip git-chip" title="git 仓库，任务将获得独立 worktree">git</span> : <span className="chip" title="非 git 仓库，任务直接在项目目录执行">非 git</span>}<Badge tone={project.status === "active" ? "good" : "neutral"}>{project.status === "active" ? "进行中" : "已归档"}</Badge></div>
+          <span className="project-card-icon"><FolderKanban size={21} strokeWidth={1.7} /></span>
+          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold"><Link to={`/projects/${project.id}`} className="hover:text-brand-soft">{project.name}</Link></h2>{project.is_git ? <span className="chip git-chip" title="git 仓库，任务将获得独立 worktree">git</span> : <span className="chip" title="非 git 仓库，任务直接在项目目录执行">非 git</span>}<Badge tone={project.status === "active" ? "good" : "neutral"}>{project.status === "active" ? "进行中" : "已归档"}</Badge></div>
           {project.description ? <p className="mt-2 text-sm leading-6 text-muted">{project.description}</p> : null}</div>
           <div className="ml-auto flex gap-1"><Button size="sm" variant="ghost" aria-label={`编辑 ${project.name}`} onClick={e => { e.preventDefault(); setEditing(project); }}><Pencil size={15} /></Button><Button size="sm" variant="danger" aria-label={`删除 ${project.name}`} onClick={e => { e.preventDefault(); if (confirm(`删除项目“${project.name}”？`)) remove.mutate(project); }}><Trash2 size={15} /></Button></div>
         </div>
-        <div className="pc-progress mt-3"><div className="pp-bar"><div style={{ width: `${pct}%` }} /></div><span className="pc-pct">{pct}%</span></div>
+        <div className="mt-6 mb-2 flex items-center justify-between text-[11px] text-faint"><span>交付进度</span><span>{done} / {source.length} 个实现任务完成</span></div>
+        <div className="pc-progress"><div className="pp-bar"><div style={{ width: `${pct}%` }} /></div><span className="pc-pct">{pct}%</span></div>
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
           {project.project_dir ? <code className="max-w-56 truncate" title={project.project_dir}>{project.project_dir}</code> : null}
           <span>{source.length} 任务</span>
@@ -59,7 +61,8 @@ export function ProjectsPage() {
           <span>{roles.size} 角色</span>
           <span className="ml-auto">{formatTime(project.updated_at || project.created_at)}</span>
         </div>
-      </Link>;
+        <div className="mt-5 flex items-center justify-between border-t border-line pt-3 text-xs text-muted"><span>{project.status === "active" ? "持续推进中" : "项目已归档"}</span><Link to={`/projects/${project.id}`} className="inline-flex items-center gap-1.5 text-brand-soft">打开项目<ArrowUpRight size={14} /></Link></div>
+      </article>;
     })}</div> : <Empty title={search ? "没有匹配的项目" : "还没有项目"} copy={search ? "调整搜索条件。" : "创建项目并绑定代码目录，任务和工作流才有明确的执行边界。"} />}
     <Dialog open={editing !== null} onOpenChange={open => !open && setEditing(null)} title={editing?.id ? "编辑项目" : "新建项目"}>
       {editing && <form className="grid gap-4" onSubmit={(event: FormEvent) => { event.preventDefault(); save.mutate(editing); }}>

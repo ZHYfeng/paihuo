@@ -4,6 +4,8 @@ import { BOARD_COLS, ST_COLOR, isMergeTask, mergeBlockReason } from "../../lib/t
 import type { Role, Task } from "../../types";
 import { DependencyChip, DependencyStateChip, SourceMergeChip } from "./dependency-editor";
 import { formatTime } from "./format";
+import { TaskStatus } from "./status";
+import { ArrowUpRight, GitMerge } from "lucide-react";
 
 function TaskKindChip({ task }: { task: Task }) {
   return isMergeTask(task)
@@ -29,20 +31,13 @@ export function avatarInitial(name: string) { return (name || "?").slice(0, 1); 
 
 /* ---- 工作台卡片（旧 dashboard.js dashCardHTML） ---- */
 
-export function DashCard({ task, actions, onOpen }: { task: Task; actions?: React.ReactNode; onOpen(): void }) {
-  return <article className="card dash-card rounded-xl border border-line bg-surface p-3 shadow-card transition hover:border-brand/35" style={{ "--st-color": ST_COLOR[task.status] } as React.CSSProperties} onClick={onOpen} role="button" tabIndex={0} onKeyDown={e => { if (e.key === "Enter") onOpen(); }}>
-    <div className="c-top"><span className="st-dot" style={{ background: ST_COLOR[task.status] }} /><span className="c-id">#{task.id}</span>
-      <span className="c-time">{formatTime(task.created_at)}</span>
-      {task.perm === "review" ? <span className="chip review">审批</span> : null}</div>
-    <Link to={`/tasks/${task.id}`} onClick={e => e.stopPropagation()} className="c-title mt-1 block truncate text-sm group-hover:text-brand-soft">{task.title}</Link>
-    <div className="c-meta mt-1">
-      {task.project_name ? <span className="chip">{task.project_name}</span> : null}
-      <span className="ml-auto flex items-center gap-1 text-xs text-muted">
-        {task.role_name ? <span className="flex items-center gap-1"><span className="grid size-5 place-items-center rounded-full bg-brand/10 text-[10px] font-semibold text-brand-soft">{avatarInitial(task.role_name)}</span>{task.role_name}</span> : <span className="text-faint">未指派</span>}
-      </span>
-    </div>
-    {actions ? <div className="dash-actions mt-2.5 border-t border-line pt-2.5" onClick={e => e.stopPropagation()}>{actions}</div> : null}
-  </article>;
+export function DashCard({ task }: { task: Task }) {
+  return <Link to={`/tasks/${task.id}`} className="queue-task">
+    <span className="queue-task-symbol">{isMergeTask(task) ? <GitMerge size={17} /> : <span className="st-dot" style={{ background: ST_COLOR[task.status] }} />}</span>
+    <span className="queue-task-content"><b>{task.title}</b><span><code>#{task.id}</code><i />{task.project_name || "未绑定项目"}<i />{formatTime(task.created_at)}</span></span>
+    <span className="queue-task-role" title={task.role_name || "未指派"}><span>{avatarInitial(task.role_name || "")}</span>{task.role_name || "未指派"}</span>
+    <TaskStatus status={task.status} /><ArrowUpRight size={15} className="queue-task-arrow" />
+  </Link>;
 }
 
 /* ============================================================
@@ -56,7 +51,7 @@ export function TaskCard({ task, tasks, roles }: { task: Task; tasks: Task[]; ro
     {task.error ? <div className="mt-1 line-clamp-2 text-xs leading-4 text-danger" title={task.error}>{task.error}</div> : null}
     <div className="mt-1.5 flex flex-wrap items-center gap-1">{taskChips(task, tasks, roles)}</div>
     <div className="c-meta mt-1.5 flex items-center gap-1.5 text-xs text-muted">
-      {task.project_id && task.project_name ? <Link to={`/projects/${task.project_id}`} className="chip chip-link hover:text-brand-soft" onClick={e => e.stopPropagation()} title="打开项目页">{task.project_name}</Link> : null}
+      {task.project_id && task.project_name ? <span className="chip" title={task.project_name}>{task.project_name}</span> : null}
       <span className="ml-auto flex items-center gap-1">{task.role_name ? <span className="flex items-center gap-1"><span className="grid size-5 place-items-center rounded-full bg-brand/10 text-[10px] font-semibold text-brand-soft">{avatarInitial(task.role_name)}</span><span className="c-agent-name">{task.role_name}</span></span> : <span className="text-faint">未指派</span>}
         {task.error ? <span className="text-danger">✗</span> : null}</span>
     </div>

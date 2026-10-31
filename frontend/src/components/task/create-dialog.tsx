@@ -74,7 +74,7 @@ export function NewTaskDialog({ open, onOpenChange, initialProjectID }: { open: 
   if (kind === "workflow") {
     return <WorkflowDialog open={open} onOpenChange={next => { onOpenChange(next); if (!next) setKind("task"); }} projects={projects.data} roles={roles.data} initialProjectID={initialProjectID} />;
   }
-  return <><Dialog open={open} onOpenChange={onOpenChange} title="新建任务" description="在项目的任务系统中创建任务；定时是正交属性——任何形态都可挂 cron，到点自动创建实例。" wide>
+  return <><Dialog open={open} onOpenChange={onOpenChange} title="新建任务" description="选择项目和角色，描述想完成的工作。也可以开启会话、编排工作流或设置定时执行。" wide>
     <form className="grid gap-4" onSubmit={submit}>
       <div className="flex w-fit items-center gap-1 rounded-lg border border-line bg-elevated p-1 text-sm">
         {kindTabs.map(([value, label]) => <button key={value} type="button" onClick={() => setKind(value)} className={cn("flex items-center gap-1.5 rounded-md px-3 py-1.5 transition", kind === value ? "bg-surface font-medium text-ink shadow-sm" : "text-muted hover:text-ink")}>{label}</button>)}

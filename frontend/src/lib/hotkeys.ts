@@ -37,6 +37,7 @@ export function useHotkeys(options: {
       }
       if (event.key === "n" || event.key === "N") {
         if (inField) return;
+        if (document.querySelector("[role='dialog'][data-state='open']")) return;
         if (options.enabled === false) return;
         const detailOpen = document.querySelector("#detailShell") || location.pathname.startsWith("/tasks/");
         if (detailOpen) return;

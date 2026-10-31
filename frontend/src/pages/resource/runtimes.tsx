@@ -38,7 +38,7 @@ export function RuntimesPage() {
     }
   };
   return <>
-    <PageHeader title="智能体" copy="智能体目录统一声明批处理、结构化会话、技能与安装能力。" actions={<Button onClick={() => refresh.mutate()} disabled={refresh.isPending}><RefreshCcw size={16} />刷新模型与健康状态</Button>} />
+    <PageHeader title="运行环境" copy="管理本机的执行提供者，检查安装、登录与可用能力。" actions={<Button onClick={() => refresh.mutate()} disabled={refresh.isPending}><RefreshCcw size={16} />刷新模型与健康状态</Button>} />
     <div className="mb-4 text-sm text-muted">已安装 {provisioning.data?.filter(p => p.installed).length || 0}/{provisioning.data?.length || 0}</div>
     {runtimes.isLoading ? <Spinner /> : <div className="grid gap-3 lg:grid-cols-2">{runtimes.data?.map(runtime => { const provision = byID.get(runtime.id); return <Card key={runtime.id}>
       <div className="flex items-start gap-3"><div><div className="flex items-center gap-2"><h2 className="font-semibold">{runtime.name}</h2><Badge tone={runtime.healthy ? "good" : "bad"}>{runtime.healthy ? "可用" : "不可用"}</Badge></div><a className="mt-1 block text-xs text-brand-soft hover:underline" href={runtime.docs} target="_blank" rel="noreferrer">官方文档 ↗</a></div>{provision?.version ? <span className="ml-auto text-sm text-faint">{provision.version}</span> : null}</div>

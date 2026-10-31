@@ -101,7 +101,7 @@ export function WorkflowsPage() {
   const roles = useQuery({ queryKey: keys.roles, queryFn: () => api<Role[]>("/roles") });
   const [open, setOpen] = useState(false);
   return <>
-    <PageHeader title="工作流" copy="定义经确定性策略校验即可用，可随时编辑或删除；启动 Run 时绑定具体项目并填写自定义任务，按固定工作流完成该任务。" actions={<Button variant="primary" onClick={() => setOpen(true)}><CirclePlus size={16} />新建工作流</Button>} />
+    <PageHeader title="工作流" copy="把多步协作编排成可复用的流程，为不同项目快速启动。" actions={<Button variant="primary" onClick={() => setOpen(true)}><CirclePlus size={16} />新建工作流</Button>} />
     {workflows.isLoading ? <Spinner /> : workflows.data?.length ? <div className="grid gap-3">
       {workflows.data.map(item => {
         const spec = parseWorkflowSpec(item.spec);

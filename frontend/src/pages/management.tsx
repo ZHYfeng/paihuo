@@ -133,7 +133,7 @@ export function SkillsPage() {
   );
 
   return <>
-    <PageHeader title="技能" copy="导入带 SKILL.md 的目录；角色只保存技能选择，执行时由平台物化挂载。" />
+    <PageHeader title="技能" copy="导入和整理可复用的技能，为角色补充专业能力。" />
     <div className="mb-4 flex gap-1 rounded-xl border border-line bg-surface p-1">
       <button className={cn("flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all", tab === "skills" ? "bg-brand text-white" : "text-muted hover:bg-hover hover:text-ink")} onClick={() => setTab("skills")}>技能库</button>
       <button className={cn("flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all", tab === "extensions" ? "bg-brand text-white" : "text-muted hover:bg-hover hover:text-ink")} onClick={() => setTab("extensions")}>Pi 扩展</button>
@@ -321,7 +321,7 @@ export function SchedulesPage() {
   };
   const preview = unsupported && !dirty ? "当前定时定义使用了自定义周期；调整上面的选项后会转换为常用周期。" : `将按“${scheduleLabel(cronFromFields(frequency, weekday, monthday, time))}”执行`;
   return <>
-    <PageHeader title="定时任务" copy="定时属性与任务形态正交：任务/会话/工作流都可挂 cron，到点按形态创建实例；本页汇总全部定时定义。" actions={<Button variant="primary" onClick={() => setCreateOpen(true)}><CalendarPlus size={16} />新建定时任务</Button>} />
+    <PageHeader title="定时任务" copy="为任务、会话或工作流安排时间，让重复工作按时开始。" actions={<Button variant="primary" onClick={() => setCreateOpen(true)}><CalendarPlus size={16} />新建定时任务</Button>} />
     {schedules.isLoading ? <Spinner /> : schedules.data?.length ? <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
       <th className="whitespace-nowrap px-3 py-2 font-medium">标题</th><th className="whitespace-nowrap px-3 py-2 font-medium">形态</th><th className="whitespace-nowrap px-3 py-2 font-medium">周期</th><th className="whitespace-nowrap px-3 py-2 font-medium">角色</th><th className="whitespace-nowrap px-3 py-2 font-medium">项目</th><th className="whitespace-nowrap px-3 py-2 font-medium">上次执行</th><th className="whitespace-nowrap px-3 py-2 font-medium">启用</th><th className="whitespace-nowrap px-3 py-2 font-medium">操作</th>
     </tr></thead><tbody className="divide-y divide-line">{schedules.data.map(item => <tr key={item.id} className="hover:bg-hover">

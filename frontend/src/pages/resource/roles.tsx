@@ -69,7 +69,7 @@ export function RolesPage() {
     return out;
   }, [tasks.data]);
   return <>
-    <PageHeader title="角色" copy="角色只描述职责与策略；具体命令翻译由 Runtime 承担。" actions={<><Button onClick={() => setStudio({ draft: { name: "", description: "", runtime_id: runtimes.data?.[0]?.id || "pi", max_concurrency: 1, delegation_enabled: false, delegation_max_perm: "review", role_config: {} } })}><MessagesSquare size={16} />角色助手</Button><Button variant="primary" onClick={() => setDraft({ runtime_id: runtimes.data?.[0]?.id || "pi", max_concurrency: 1, delegation_enabled: false, delegation_max_perm: "review", enabled: true, role_config: {} })}><CirclePlus size={17} />新建角色</Button></>} />
+    <PageHeader title="角色" copy="定义职责、能力与执行约束，把工作交给合适的角色。" actions={<><Button onClick={() => setStudio({ draft: { name: "", description: "", runtime_id: runtimes.data?.[0]?.id || "pi", max_concurrency: 1, delegation_enabled: false, delegation_max_perm: "review", role_config: {} } })}><MessagesSquare size={16} />角色助手</Button><Button variant="primary" onClick={() => setDraft({ runtime_id: runtimes.data?.[0]?.id || "pi", max_concurrency: 1, delegation_enabled: false, delegation_max_perm: "review", enabled: true, role_config: {} })}><CirclePlus size={17} />新建角色</Button></>} />
     <Card className="mb-4 flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
       <span className="flex items-center gap-2 px-2 text-sm text-muted"><Search size={16} />搜索</span>
       <input className={inputClass + " sm:w-64"} placeholder="搜索角色…" value={search} onChange={e => setSearch(e.target.value)} aria-label="搜索角色" />

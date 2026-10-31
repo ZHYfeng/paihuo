@@ -44,9 +44,9 @@ export function BoardPage() {
   });
   useHotkeys({ newTask: () => setCreateOpen(true) });
   return <>
-    <PageHeader title="任务" copy="任务状态机、依赖交付、审批和代码整合保持确定性。" actions={<Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={17} />新建任务</Button>} />
+    <PageHeader title="任务" copy="从派发到交付，在一个看板里掌握每项工作的进展。" actions={<Button variant="primary" onClick={() => setCreateOpen(true)}><CirclePlus size={17} />新建任务</Button>} />
     <StatsStrip />
-    <Card className="mb-4 mt-3 flex flex-col gap-2 p-3 sm:flex-row sm:flex-wrap sm:items-center">
+    <Card className="board-toolbar mb-4 mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
       <span className="flex shrink-0 items-center gap-2 px-2 text-sm text-muted whitespace-nowrap"><ListFilter size={16} />筛选</span>
       <select className={inputClass + " sm:w-40"} value={roleID} onChange={event => setRoleID(event.target.value)} aria-label="按角色筛选"><option value="">全部角色</option>{roles.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
       <select className={inputClass + " sm:w-44"} value={project} onChange={event => setProject(event.target.value)} aria-label="按项目筛选"><option value="">全部项目</option>{projects.data?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
@@ -58,9 +58,9 @@ export function BoardPage() {
       </div>
     </Card>
     {tasks.isLoading ? <Spinner /> : view === "board" ? <div className="grid grid-cols-1 gap-4">
-      <section className="board-section"><div className="board-section-head"><div><h2>实现任务</h2><p>项目任务默认按创建时间顺序交付，也可在项目页调整；每项完成后会先处理自己的代码合并。</p></div><div className="board-section-counts"><span>{sourceTasks.length} 个</span></div></div>
-        <div className="board-section-lanes">{sourceTasks.length ? <BoardColumnsHTML tasks={sourceTasks} roles={roles.data || []} mergeSection={false} /> : <div className="board-section-empty">没有符合条件的实现任务。</div>}</div></section>
-      <section className="board-section merge-section"><div className="board-section-head"><div><h2>代码合并</h2><p>无冲突时平台直接整合；有冲突时 agent 在独立 worktree 中解决后写入主分支。</p></div><div className="board-section-counts"><span>{mergeTasks.length} 个</span>{mergeTasks.filter(t => mergeBlockReason(t, roles.data || [])).length ? <span className="chip merge-blocked">{mergeTasks.filter(t => mergeBlockReason(t, roles.data || [])).length} 个角色不可用</span> : null}</div></div>
+      <section className="board-section"><div className="board-section-head"><div><h2>实现任务</h2><p>按进展查看任务；交付顺序可在项目中调整。</p></div><div className="board-section-counts"><span>{sourceTasks.length} 个任务</span></div></div>
+        <div className="board-section-lanes"><BoardColumnsHTML tasks={sourceTasks} roles={roles.data || []} mergeSection={false} /></div></section>
+      <section className="board-section merge-section"><div className="board-section-head"><div><h2>代码合并</h2><p>任务成果进入项目的最后一步，合并进展在这里单独展示。</p></div><div className="board-section-counts"><span>{mergeTasks.length} 个</span>{mergeTasks.filter(t => mergeBlockReason(t, roles.data || [])).length ? <span className="chip merge-blocked">{mergeTasks.filter(t => mergeBlockReason(t, roles.data || [])).length} 个角色不可用</span> : null}</div></div>
         <div className="board-section-lanes">{mergeTasks.length ? <BoardColumnsHTML tasks={mergeTasks} roles={roles.data || []} mergeSection={true} /> : <div className="board-section-empty">还没有代码合并任务；实现任务完成后会自动出现在这里。</div>}</div></section>
     </div> : <Card className="overflow-x-auto p-0"><table className="w-full text-sm"><thead><tr className="border-b border-line text-left text-xs text-faint">
       <th className="whitespace-nowrap px-3 py-2 font-medium">ID</th><th className="whitespace-nowrap px-3 py-2 font-medium">标题</th><th className="whitespace-nowrap px-3 py-2 font-medium">类型</th><th className="whitespace-nowrap px-3 py-2 font-medium">角色</th><th className="whitespace-nowrap px-3 py-2 font-medium">项目</th><th className="whitespace-nowrap px-3 py-2 font-medium">状态</th><th className="whitespace-nowrap px-3 py-2 font-medium">轮次</th><th className="whitespace-nowrap px-3 py-2 font-medium">创建</th><th className="whitespace-nowrap px-3 py-2 font-medium">结束</th><th className="whitespace-nowrap px-3 py-2 font-medium">操作</th>

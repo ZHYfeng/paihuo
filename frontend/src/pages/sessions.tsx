@@ -52,7 +52,7 @@ export function SessionsPage() {
   const eligible = roles.data?.filter(role => role.enabled && ["pi", "omp", "dsh"].includes(role.runtime_id)) || [];
   const filtered = useMemo(() => filter === "all" ? (sessions.data || []) : (sessions.data || []).filter(item => item.status === filter), [sessions.data, filter]);
   return <>
-    <PageHeader title="会话" copy="常驻会话保存结构化消息与工作区；形成明确成果后再交付为任务。" actions={<Button variant="primary" onClick={() => setOpen(true)}><CirclePlus size={16} />新建会话</Button>} />
+    <PageHeader title="会话" copy="和角色一起探索、讨论与迭代，准备好后再交付成果。" actions={<Button variant="primary" onClick={() => setOpen(true)}><CirclePlus size={16} />新建会话</Button>} />
     <Card className="mb-4 flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
       <span className="flex items-center gap-2 px-2 text-sm text-muted">筛选</span>
       <div className="flex flex-wrap gap-1 rounded-xl border border-line bg-elevated p-0.5">{FILTERS.map(([value, label]) => <button key={value} className={`rounded-[10px] px-2.5 py-1 text-[13px] ${filter === value ? "bg-surface font-semibold text-ink shadow-sm" : "text-muted"}`} onClick={() => setFilter(value)}>{label}</button>)}</div>

@@ -43,12 +43,12 @@ export function ApprovalsPage() {
   const reviewTasks = (tasks.data || []).filter(t => t.status === "awaiting_review").sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 
   return <>
-    <PageHeader title="审批" copy="主线上的一道闸口：review 任务的交付集中在这里裁决；批准后进入代码整合。" />
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(18rem,.8fr)]">
+    <PageHeader title="审批" copy="审查每一份交付，让满意的成果进入项目。" />
+    <div className="approval-layout">
       <section>
         <div className="mb-3 flex items-center"><h2 className="font-semibold">任务交付</h2><span className="ml-auto text-sm text-faint">{reviewTasks.length} 条等待裁决</span></div>
         {tasks.isLoading ? <Spinner /> : reviewTasks.length ? <div className="grid gap-2">
-          {reviewTasks.map(task => <article key={task.id} className="rounded-xl border border-line bg-elevated p-3.5 transition hover:border-brand/35">
+          {reviewTasks.map(task => <article key={task.id} className="approval-card rounded-xl border border-line transition hover:border-brand/35">
             <div className="flex flex-wrap items-center gap-2"><span className="text-xs text-faint">#{task.id}</span>
               <Link to={`/tasks/${task.id}`} className="truncate font-semibold text-ink hover:text-brand-soft" onClick={e => e.stopPropagation()}>{task.title}</Link>
               {task.project_name ? <span className="chip">{task.project_name}</span> : null}
@@ -62,8 +62,13 @@ export function ApprovalsPage() {
               <Button size="sm" variant="ghost" onClick={() => navigate(`/tasks/${task.id}`)}>查看详情与改动</Button>
             </div>
           </article>)}
-        </div> : <Card><Empty title="当前无需审批" copy="review 任务执行完毕后会出现在这里。" /></Card>}
+        </div> : <Card><Empty title="当前无需审批" copy="需要你确认的任务交付会集中出现在这里。" /></Card>}
       </section>
+      <aside className="approval-guide"><h2>让交付更进一步</h2><ol>
+        <li><span>1</span><div><b>审查成果</b><p>打开任务详情，检查执行结果和代码改动。</p></div></li>
+        <li><span>2</span><div><b>确认或提出修改</b><p>满意即可通过；需要调整时，附上意见并驳回重做。</p></div></li>
+        <li><span>3</span><div><b>进入代码整合</b><p>通过审批后，继续跟进合并任务的执行结果。</p></div></li>
+      </ol></aside>
     </div>
     <Dialog open={rejectTask !== null} onOpenChange={open => !open && setRejectTask(null)} title="驳回重做" description="填写驳回原因 / 修改意见（将追加到任务提示词，重新执行）。">
       <form className="grid gap-4" onSubmit={(event: FormEvent) => {
